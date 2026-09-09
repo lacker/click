@@ -1386,11 +1386,18 @@ fn validate_algebraic_expression(
             )?;
             Ok(None)
         }
-        ContractExpression::BitwiseNot(inner)
-        | ContractExpression::Old(inner)
+        ContractExpression::Old(inner)
         | ContractExpression::At {
             expression: inner, ..
-        } => {
+        } => validate_algebraic_expression(
+            inner,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        ),
+        ContractExpression::BitwiseNot(inner) => {
             validate_algebraic_expression(
                 inner,
                 variables,

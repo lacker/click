@@ -18,6 +18,7 @@ mod primitives;
 pub(crate) mod proof;
 mod reasoning;
 mod spec;
+pub(crate) use spec::capture_spec_algebraic_value;
 mod termination;
 
 pub use api::*;

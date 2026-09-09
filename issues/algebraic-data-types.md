@@ -73,8 +73,11 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   introduce fresh child resource identities. Model values and C pointer
   identities are not changed by this logical exchange.
 - Plain memory bodies support explicit construction from raw ownership:
-  `let c = fold(cell(p), { value: value });` supplies every C-valued field and
-  checks the complete body ownership and facts. The legacy `fold(c)` shorthand
+  `let c = fold(cell(p), { model: Mark::Set(value) });` supplies every field and
+  checks the complete body ownership and facts. Initializers accept typed
+  symbolic expressions, including ADT constructors, entry-model values,
+  matches, and pure-function applications; they do not execute pure functions
+  or split arbitrary models into cases. The legacy `fold(c)` shorthand
   selects entry-state fields without requiring an open handle. Guarded and
   matched bodies still require a matching open handle and unchanged fields.
   A declaration or field value alone grants no memory authority.
@@ -99,6 +102,7 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_instance_bindings.md](../mdtests/resource_instance_bindings.md)
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
 - [resource_cell_construction.md](../mdtests/resource_cell_construction.md)
+- [resource_adt_construction.md](../mdtests/resource_adt_construction.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
 - [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
@@ -117,12 +121,12 @@ expansion/rechecking, and deterministic multi-size scaling:
    resource `if/else` remain unsupported. Keep recursion finite and avoid
    eagerly traversing an unknown model when extending these cases.
 2. **Field establishment and updates.** Plain unconditional memory bodies
-   support `let c = fold(cell(p), { value: value });`, with every C-valued field
+   support `let c = fold(cell(p), { model: Mark::Set(value) });`, with every field
    supplied explicitly. `produces c: cell(p);` can introduce a result resource
    from raw ownership. Folding checks the body with the proposed fields;
    unfolding consumes the instance without an open handle. Existing
    `fold(c)` proofs use entry-state fields as a compatibility template.
-   Extend this to ADT fields and pure expressions, then migrate guarded and
+   Migrate guarded and
    recursive bodies away from their open-handle protocol. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the
    relation to concrete memory. Support arbitrary symbolic terms in post-state

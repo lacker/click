@@ -1543,6 +1543,14 @@ pub(super) fn finish_ordered_proof<'a>(
             "execution path finishing",
             || -> Result<(), ClickError> {
                 'execution_path: for (path_index, path) in execution.paths().iter().enumerate() {
+                    // Entry resource rewrites may precede the first C step.
+                    // Contract `old` still denotes the original function entry,
+                    // not the rewritten representation where execution began.
+                    let contract_pre_state = proof_execution
+                        .core
+                        .function_entry
+                        .as_ref()
+                        .map_or(pre_state, |entry| entry.caller_state());
                     let _path_preparation_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
                         &proof_label,
@@ -2715,7 +2723,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let kernel_goals = kernel_claim_goal_forms(
                                         function,
                                         claim,
-                                        pre_state,
+                                        contract_pre_state,
                                         arguments,
                                         &outcome,
                                         &assumptions_from_propositions(&path_requirements),
@@ -2968,7 +2976,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let kernel_goals = kernel_claim_goal_forms(
                                         function,
                                         claim,
-                                        pre_state,
+                                        contract_pre_state,
                                         arguments,
                                         &outcome,
                                         &assumptions_from_propositions(&path_requirements),
@@ -3148,7 +3156,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let kernel_goals = kernel_claim_goal_forms(
                                         function,
                                         claim,
-                                        pre_state,
+                                        contract_pre_state,
                                         arguments,
                                         &outcome,
                                         &assumptions_from_propositions(&path_requirements),

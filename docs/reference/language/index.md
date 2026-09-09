@@ -800,9 +800,21 @@ and checks the body facts with the proposed fields. No earlier resource is
 required. Rebinding a contract's resource name also permits changed fields
 after C updates the memory; the name must not currently own another instance.
 Field order is irrelevant, but missing, duplicate, unknown, or ill-typed
-fields are rejected. This slice accepts C-valued fields and C expression
-initializers; ADT fields, pure-function initializers, and ordinary call
-transport of newly constructed resources remain deferred.
+fields are rejected. Initializers accept C-valued and ADT-valued symbolic
+expressions, including constructors, `old(c.model)`, matches, and pure-function
+applications. For example:
+
+<!-- verified-example: mdtests/resource_adt_construction.md -->
+```click
+let c = fold(cell(p), { model: Mark::Set(value) });
+```
+
+The complete declaration and proof are in `mdtests/resource_adt_construction.md`.
+Pure-function applications remain symbolic;
+fold checks the resource relation against the proposed value. Initializer
+memory reads must be justified. A consumed name does not supply a current
+field value; use an entry snapshot when that is the intended model.
+Ordinary call transport of newly constructed resources remains deferred.
 
 Guarded and constructor-matched bodies still use the older open-handle
 protocol pending a separate migration. Such handles permit field projections

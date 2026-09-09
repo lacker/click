@@ -31,6 +31,37 @@ struct SpecAlgebraicPath {
     obligations: Vec<ProofObligation>,
 }
 
+/// Capture a symbolic ADT value without admitting case assumptions or
+/// unresolved memory reads into a resource initializer.
+pub(crate) fn capture_spec_algebraic_value(
+    state: &CState,
+    expression: &SpecAlgebraicExpression,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<AlgebraicTerm, String> {
+    let paths = evaluate_spec_algebraic_at_state_with_bindings(
+        state,
+        expression,
+        entry_state,
+        assumptions,
+        &BTreeMap::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|limit| format!("algebraic initializer evaluation hit {limit:?}"))?;
+    let [path] = paths.as_slice() else {
+        return Err("algebraic initializer must denote one symbolic value".into());
+    };
+    if !path.facts.is_empty()
+        || path
+            .obligations
+            .iter()
+            .any(|o| !assumptions.proves(o.proposition()))
+    {
+        return Err("algebraic initializer has unproved evaluation obligations".into());
+    }
+    Ok(path.value.clone())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecAlgebraicCasePath {
     variant: String,
@@ -1794,6 +1825,39 @@ mod algebraic_term_tests {
             schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
                 value_type, variants,
             )]))),
+        }
+    }
+
+    #[test]
+    fn resource_initializer_capture_keeps_unknowns_and_calls_symbolic() {
+        for variant_count in [1, 8, 128] {
+            let ty = wide_type(variant_count);
+            let variable = SpecAlgebraicExpression {
+                algebraic_type: ty.clone(),
+                node: SpecAlgebraicExpressionNode::Variable(Variable(41)),
+            };
+            let captured = capture_spec_algebraic_value(
+                &CState::new(),
+                &variable,
+                None,
+                &PureFactContext::new(),
+            )
+            .unwrap();
+            assert_eq!(captured.node, AlgebraicTermNode::Variable(Variable(41)));
+            let call = SpecAlgebraicExpression {
+                algebraic_type: ty,
+                node: SpecAlgebraicExpressionNode::PureFunctionApplication {
+                    name: "identity".into(),
+                    arguments: vec![SpecPureFunctionArgument::Algebraic(variable)],
+                },
+            };
+            let captured =
+                capture_spec_algebraic_value(&CState::new(), &call, None, &PureFactContext::new())
+                    .unwrap();
+            assert!(matches!(
+                captured.node,
+                AlgebraicTermNode::PureFunctionApplication { .. }
+            ));
         }
     }
 

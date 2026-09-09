@@ -77,28 +77,24 @@ impl<'a> Proof<'a> {
             let (values, array_refs) = contract_environment_at_state(&values, &array_refs, before);
             let mut proposed = Vec::new();
             for (name, ty) in schema.fields() {
-                let crate::kernel::ResourceFieldType::C(expected) = ty else {
-                    return Err(
-                        self.step_error("explicit fold fields currently support C-valued fields")
-                    );
-                };
                 let expression = supplied
                     .get(name.as_str())
                     .ok_or_else(|| self.step_error(format!("missing fold field `{name}`")))?;
-                let expression = resource_argument_to_c_expression(expression)?;
-                let value = evaluate_resource_fragment_through_kernel(
+                let expression = self.substitute_goal_surface_bindings_in_expression(expression)?;
+                let value = capture_resource_field_initializer(
                     &expression,
+                    ty,
                     self.facts().assumptions(),
                     &values,
                     &array_refs,
+                    pre_state,
                     before,
-                    None,
+                    &execution.presentation.recorded_snapshots,
+                    context.predicate_environment,
+                    context.click_function_environment,
                 )
-                .map_err(|message| self.step_error(message))?;
-                if value.c_type() != *expected {
-                    return Err(self.step_error(format!("fold field `{name}` has the wrong type")));
-                }
-                proposed.push(crate::kernel::AlgebraicValue::C(value));
+                .map_err(|message| self.step_error(format!("fold field `{name}`: {message}")))?;
+                proposed.push(value);
             }
             let identity = pre_state
                 .owned_resource_instance(binding.identity)
