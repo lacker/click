@@ -338,10 +338,8 @@ fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
         let (open, facts) =
             rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
         assert_eq!(open.resources().is_empty(), is_null);
-        assert_eq!(
-            open.resource_instance_fields(instance.identity()),
-            Some(&instance)
-        );
+        assert!(open.resource_instance_fields(instance.identity()).is_none());
+        assert!(open.open_instances.is_empty());
         assert_eq!(
             facts
                 .iter()
@@ -352,6 +350,16 @@ fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
         let (closed, _) =
             rewrite_resource_instance(&open, &instance, &definition, &assumptions, false).unwrap();
         assert_eq!(closed, state);
+        let raw = CState::new().with_resource_context(open.resources().clone());
+        let mut fresh = instance.clone();
+        fresh.identity = Variable(999);
+        let (constructed, _) =
+            rewrite_resource_instance(&raw, &fresh, &definition, &assumptions, false).unwrap();
+        assert!(constructed.open_instances.is_empty());
+        assert_eq!(
+            constructed.owned_resource_instance(fresh.identity()),
+            Some(&fresh)
+        );
         if is_null {
             let nonnull = unknown.clone().assume_condition(guard.clone(), false);
             assert!(
@@ -476,6 +484,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
     let (empty, facts) =
         rewrite_resource_instance(&state, &instance, &definition, &clear, true).unwrap();
     assert!(empty.resources().is_empty());
+    assert!(empty.open_instances.is_empty());
     assert!(
         !facts
             .iter()
@@ -484,6 +493,21 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
     assert!(rewrite_resource_instance(&empty, &instance, &definition, &set, false).is_err());
     let (open, _) = rewrite_resource_instance(&state, &instance, &definition, &set, true).unwrap();
     assert!(!open.resources().is_empty());
+    assert!(open.open_instances.is_empty());
+    let mut fresh = instance.clone();
+    fresh.identity = Variable(999);
+    fresh.fields = vec![AlgebraicValue::Algebraic(constructor("Set"))].into();
+    let raw = CState::new().with_resource_context(open.resources().clone());
+    let (constructed, _) =
+        rewrite_resource_instance(&raw, &fresh, &definition, &unknown, false).unwrap();
+    assert_eq!(
+        constructed.owned_resource_instance(fresh.identity()),
+        Some(&fresh)
+    );
+    assert!(constructed.open_instances.is_empty());
+    assert!(
+        rewrite_resource_instance(&CState::new(), &fresh, &definition, &unknown, false).is_err()
+    );
     assert_eq!(
         rewrite_resource_instance(&open, &instance, &definition, &set, false)
             .unwrap()

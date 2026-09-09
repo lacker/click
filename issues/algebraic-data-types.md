@@ -49,9 +49,9 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   The guard must be proved true or false; unknown guards do not eagerly split.
   The false case exposes no body ownership or facts. Bare field names in the
   body denote the instance's fields.
-  Plain unconditional memory bodies leave no open handle. Guarded and matched
-  bodies still retain one during their migration; it grants no folded
-  ownership for calls or returns.
+  Memory-only bodies, including guarded and matched bodies, leave no open
+  handle. Bodies with recursive children still retain one; it grants no
+  folded ownership for calls or returns.
 - A resource body may instead `match` one ADT field with exhaustive
   `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
   arm without implicit proof-by-cases. Bindings have the constructor's
@@ -79,7 +79,10 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   matches, and pure-function applications; they do not execute pure functions
   or split arbitrary models into cases. The legacy `fold(c)` shorthand
   selects entry-state fields without requiring an open handle. Guarded and
-  matched bodies still require a matching open handle and unchanged fields.
+  matched memory-only bodies also support explicit fields: fold selects the
+  proved guard or constructor case from the proposed instance and checks its
+  complete body. Recursive-child bodies still require a matching open handle
+  and unchanged fields.
   A declaration or field value alone grants no memory authority.
 - Checked folds may follow C returns on multiple retained execution paths.
   Each fold is tied to its exact path's ownership, memory, and guard case;
@@ -103,6 +106,7 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_fields_memory_body.md](../mdtests/resource_fields_memory_body.md)
 - [resource_cell_construction.md](../mdtests/resource_cell_construction.md)
 - [resource_adt_construction.md](../mdtests/resource_adt_construction.md)
+- [resource_conditional_construction.md](../mdtests/resource_conditional_construction.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
 - [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
@@ -120,14 +124,13 @@ expansion/rechecking, and deterministic multi-size scaling:
    witnesses, nested resource guards/matches, arbitrary scrutinees, and general
    resource `if/else` remain unsupported. Keep recursion finite and avoid
    eagerly traversing an unknown model when extending these cases.
-2. **Field establishment and updates.** Plain unconditional memory bodies
+2. **Field establishment and updates.** Memory-only bodies, including guards and matches,
    support `let c = fold(cell(p), { model: Mark::Set(value) });`, with every field
    supplied explicitly. `produces c: cell(p);` can introduce a result resource
    from raw ownership. Folding checks the body with the proposed fields;
    unfolding consumes the instance without an open handle. Existing
    `fold(c)` proofs use entry-state fields as a compatibility template.
-   Migrate guarded and
-   recursive bodies away from their open-handle protocol. Fields are symbolic values,
+   Migrate recursive-child bodies away from their open-handle protocol. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the
    relation to concrete memory. Support arbitrary symbolic terms in post-state
    snapshots, not just entry variables or concrete constructors. Independently

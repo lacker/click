@@ -51,10 +51,9 @@ impl<'a> Proof<'a> {
                 .function
                 .composite_resource_definition(&name)
                 .ok_or_else(|| self.step_error("fold resource has no checked definition"))?;
-            if !definition.has_plain_instance_body() {
-                return Err(self.step_error(
-                    "explicit fold fields currently require an unconditional memory body",
-                ));
+            if !definition.has_memory_only_instance_body() {
+                return Err(self
+                    .step_error("explicit fold fields do not yet support recursive child bodies"));
             }
             let schema = definition
                 .instance_field_schema()

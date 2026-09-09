@@ -773,7 +773,7 @@ Explicit callback applications such as
 `step(Read(first))` transport ownership with fresh post-call fields constrained
 by the selected contract. `unfold(cell)` exposes an instance's immediate memory
 body and its facts; field names in the body denote that instance's fields.
-For unconditional, witness-free memory bodies, unfolding consumes the named
+For witness-free memory-only bodies, including guarded and matched bodies, unfolding consumes the named
 instance without retaining an open handle. Current field projections require
 owned instances; entry snapshots such as `old(cell.value)` remain available.
 The legacy `fold(cell)` form uses the instance's entry-state fields as its
@@ -816,13 +816,13 @@ memory reads must be justified. A consumed name does not supply a current
 field value; use an entry snapshot when that is the intended model.
 Ordinary call transport of newly constructed resources remains deferred.
 
-Guarded and constructor-matched bodies still use the older open-handle
-protocol pending a separate migration. Such handles permit field projections
-but do not count as folded ownership for calls or returns. Their `fold(cell)`
-restores the same identity and unchanged fields. Guarded bodies support the
+Guarded and constructor-matched memory-only bodies support explicit construction
+and field updates with the same `let c = fold(...)` syntax. No earlier unfold
+is required. Guarded bodies support the
 existing single `if` guard with an empty false case. Fold/unfold requires proof
 of the selected guard case. The false case exposes no memory or body facts;
-the exclusive open handle and fields remain available in either case.
+unfold consumes the instance in either case. A fold checks the guard with the
+proposed fields and must justify the selected body's ownership and facts.
 Post-return folds are checked separately against each return path's memory,
 ownership, and guard assumptions. Every returning path must restore the
 ownership promised by the contract; a sibling's fold cannot supply it.
@@ -851,7 +851,11 @@ cannot shadow resource parameters or fields. Fold/unfold requires constructor
 evidence for the actual instance field (for example,
 `c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
 implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
-The same ownership, unchanged-field, and path-local return checks still apply.
+An explicit fold selects the arm from its proposed model, so an update can
+change constructors when the new arm's ownership and facts are established.
+The regression is `mdtests/resource_conditional_construction.md`.
+The same ownership and path-local return checks apply. Resources with recursive
+children retain the open-handle protocol until independent child selection is supported.
 Match arms can also expose named, directly recursive child instances:
 
 <!-- verified-example: mdtests/resource_recursive_children.md -->

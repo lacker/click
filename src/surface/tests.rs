@@ -214,6 +214,134 @@ int32 read(int32* p, int32 expected) {
 "#;
 
 #[test]
+fn conditional_explicit_folds_update_models_and_expand() {
+    let source = r#"verifying "cell.c";
+        spec enum Model { Zero, Value(int32) }
+        resource cell(p: int32*) {
+            field model: Model;
+            match model {
+                Model::Zero => { owns p[0..1]; fact p[0] == 0; },
+                Model::Value(value) => { owns p[0..1]; fact p[0] == value; },
+            }
+        }
+        void set(int32* p, int32 value) {
+            owns c: cell(p);
+            requires c.model == Model::Zero;
+            ensures c.model == Model::Value(value);
+            ensures old(c.model) == Model::Zero;
+        } by {
+            unfold(c);
+            execute();
+            let c = fold(cell(p), { model: Model::Value(value) });
+            simp();
+        }
+    "#;
+    let sources = [("cell.c", "void set(int32* p, int32 value) { *p = value; }")];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "set", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for (from, to) in [
+        ("model: Model::Value(value)", "model: Model::Zero"),
+        ("model: Model::Value(value)", "model: Model::Value(0)"),
+        ("model: Model::Value(value)", "model: c.model"),
+        ("model: Model::Value(value)", "model: old(c.model)"),
+        ("unfold(c);", ""),
+        (
+            "simp();",
+            "let duplicate = fold(cell(p), { model: Model::Value(value) }); simp();",
+        ),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &sources).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("model: Model::Value(value)", "model: Model::Zero"),
+            &sources
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn conditional_empty_fold_requires_arm_facts_and_no_live_result() {
+    let source = r#"verifying "empty.c";
+        spec enum Maybe<T> { None, Some(T) }
+        resource cell(p: int32*) {
+            field model: Maybe<int32>;
+            match model {
+                Maybe::None => { fact p == 0; },
+                Maybe::Some(value) => { owns p[0..1]; fact p[0] == value; },
+            }
+        }
+        void empty(int32* p) {
+            requires p == 0;
+            produces c: cell(p);
+            ensures c.model == Maybe<int32>::None;
+        } by {
+            let c = fold(cell(p), { model: Maybe<int32>::None });
+            execute(); simp();
+        }
+    "#;
+    let sources = [("empty.c", "void empty(int32* p) { }")];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "empty", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for (from, to) in [
+        ("requires p == 0;", ""),
+        ("model: Maybe<int32>::None", "model: Maybe<int32>::Some(0)"),
+        (
+            "execute();",
+            "let c = fold(cell(p), { model: Maybe<int32>::None }); execute();",
+        ),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &sources).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn guarded_explicit_folds_check_each_return_path() {
+    let source = r#"verifying "cell.c";
+        resource cell(p: int32*) {
+            field value: int32;
+            if p != 0 { owns p[0..1]; fact p[0] == value; }
+        }
+        void set(int32* p, int32 value) {
+            owns c: cell(p);
+            ensures c.value == value;
+        } by {
+            if p == 0 {
+                unfold(c); execute();
+                let c = fold(cell(p), { value: value }); simp();
+            } else {
+                unfold(c); execute();
+                let c = fold(cell(p), { value: value }); simp();
+            }
+        }
+    "#;
+    let sources = [(
+        "cell.c",
+        "void set(int32* p, int32 value) { if (p != 0) *p = value; }",
+    )];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, "set", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    assert!(verify_c0_sources(&source.replace("value: value", "value: 0"), &sources).is_err());
+    assert!(
+        verify_c0_sources(
+            &source.replace("unfold(c); execute();", "unfold(c); unfold(c); execute();"),
+            &sources
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn resource_match_expands_and_rechecks() {
     let c = [(
         "read.c",
