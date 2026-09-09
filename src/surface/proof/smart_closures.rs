@@ -269,9 +269,15 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
+        // Retain the selected premises for the anchored fallbacks. The proof
+        // is unchanged by a declined candidate, so repeating derivation
+        // discovery here would perform the same search a second time.
+        let mut anchored_pairs = Vec::new();
         let atomic = (|| {
             let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) = self
                 .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)?;
+            anchored_pairs = premise_pairs;
+            let premise_pairs = &anchored_pairs;
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
@@ -295,10 +301,6 @@ impl<'a> Proof<'a> {
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
         }
-        let anchored_pairs = self
-            .selected_simp_derivation_with_surfaces(exclude_exact_goal, introduced_surfaces)
-            .map(|(_, _, pairs, _)| pairs)
-            .unwrap_or_default();
         if let Some(anchored) = self
             .try_outcome_anchored_order_transitivity(&anchored_pairs)
             .or_else(|| self.try_outcome_anchored_increment_order(&anchored_pairs))

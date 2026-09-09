@@ -12,6 +12,19 @@ constructing those proofs, not accepting a new kind of success token.
 
 ## Current green checkpoint
 
+The unchanged two-pass sorting C now has a saved expanded proof in
+`mdtests/bubble_sort3_two_pass_sorted.md`. All four invariant closers have
+explicit bodies, with no remaining `simp` calls. The regression
+`sorting_rewritten_invariant_body_checks_and_expands` verifies that saved
+proof, expands/rechecks it, and asserts zero legacy discovery throughout.
+Its isolated aggregate runtime is 0.86 seconds. The old search-heavy
+construction and expected-miss tests were replaced by this positive check;
+the reduced missing-transport rejection test remains.
+
+This resolves the sorting example blocker without strengthening `simp`.
+Automatic emission and legacy closer removal remain open. Investigation
+sections below describe historical prototypes, not the current fixture.
+
 Entry/current snapshot presentation now lets copy3's explicit closure body
 verify, expand, and independently recheck without legacy invariant discovery.
 The regression is `explicit_invariant_body_copy3_checks_and_expands`.
@@ -26,9 +39,10 @@ The existing four-size, small-stack kernel reasoning regression remains enabled.
 Bare closers and automatic preservation still use the legacy preparation
 path. Do not describe this checkpoint as a completed loop migration.
 
-## Remaining reproduction
+## Historical unassisted reproduction
 
-`explicit_invariant_body_two_pass_sort_has_a_bounded_planning_miss`:
+The former `explicit_invariant_body_two_pass_sort_has_a_bounded_planning_miss`
+test used the pre-expansion fixture:
 
 1. Verify the unchanged `mdtests/bubble_sort3_two_pass_sorted.md`.
 2. Expand its grouped claim using the current green implementation.
@@ -73,11 +87,12 @@ reverted. No C, contract, or fixture expectations were weakened.
 
 ## Next implementation
 
-1. Generalize the existing-step composition demonstrated below to the full
-   quantified invariant context. Do not start by adding a value-flow witness:
-   the reduced loop already verifies and expands with existing transport.
-2. Replace the expected miss with positive verification, expansion, and
-   rewritten verification. Preserve the copy3 and bubble-pass regressions.
+1. Use explicit branch proofs where smart planning misses; stronger `simp`
+   is not a prerequisite for migration. A full sorting prototype supplied
+   both branch arguments with existing tactics (see below); reduce its
+   regression runtime before landing it.
+2. Preserve positive verification, expansion, and rewritten verification
+   of explicit bodies, including copy3 and bubble-pass.
 3. Re-enable automatic bodies only when the full gate passes; then delete
    `verify_lowered_invariant_path`, the legacy prefix probe, and legacy
    lowering-record builders. Preserve do-while paths with no continuing edge.
@@ -143,6 +158,114 @@ run took 11.9 seconds. This is existing test-level slowness, not a resource-matc
 regression. Keep the unchanged-C budget-exhaustion reproduction, but reduce
 or separate its setup/verification work so the regression itself is prompt;
 do not raise the tactic or test limits or expand the failing proof.
+
+## Exact closure census (2026-09-08, d25256e6)
+
+Temporary diagnostics on the explicit-body variant of
+`sorting_rewritten_invariant_body_checks_and_expands` first attempted the
+complete closure body, then split the actual failing root into checked child
+scopes. Each child was tested separately with ordinary `simp`, introducing
+its outer implication premises first. The diagnostics were removed afterward;
+neither the C nor the proof fixture was changed.
+
+The augmented swap arm closes successfully. The subsequent no-swap arm in
+the second loop has eight children:
+
+| Obligation | Individual planning result |
+| --- | --- |
+| `j >= 0`, `j <= 1` | Both prove |
+| Fixed-range index and endpoint load safety | Both prove |
+| Fixed-range maximum value invariant | Proves |
+| Growing-range index and endpoint load safety | Both prove |
+| Growing-range maximum value invariant | Bounded miss |
+
+The remaining value goal is
+`forall (k: int32) { 0 <= k and 0 <= k and k < j implies p[k] <= p[j] }`.
+It still misses after introducing all six outer implication premises,
+returning `None` after 48,724 measured work units, not a budget error.
+Thus this reproduction is not blocked on load safety or merely conjunction
+assembly. At this edge the index has advanced from zero to one, and the
+no-swap condition supplies the ordering needed for the singleton range.
+
+The next bounded investigation should isolate composition of that branch
+ordering, the index update, and finite-range quantifier planning in the exact
+checked scope. The census does not yet establish whether a simple-step
+evidence gap exists. Do not add a new proof rule or broaden search based only
+on this miss. These results concern the augmented regression, not a claim
+that unassisted automatic preservation now handles the original fixture.
+
+## Explicit no-swap proof follow-up
+
+An uncommitted prototype resolved the census miss in
+`sorting_rewritten_invariant_body_checks_and_expands` by spelling out the
+no-swap argument, without changing C, invariants, or `simp`:
+
+1. Prove current `j == 1` with local `simp`.
+2. Transport `at(before_swap, not (p[j + 1] < p[j]))` to
+   `not (p[1] < p[0])`, explicitly supplying the entry `j == 0` fact.
+3. Apply `int32_not_lt_implies_ge(p[1], p[0])`, then use local `simp`
+   to finish the goal spelled `p[0] <= p[1]`.
+4. Unfold the growing invariant, rewrite `j == 1`, and `enumerate()`.
+
+The prototype passed explicit closure verification, expansion, and
+expanded-proof rechecking, with zero legacy discovery across those runs.
+However, the aggregate test took 22.75 seconds even after removing redundant
+augmented legacy-closure verification/expansion. Per tooling-stability policy,
+the test edits were reverted to the existing checkpoint; the committed test
+still expects the original bounded miss. The next task is to isolate timing
+of setup, verification, expansion, and rechecking, then reduce or separate
+the regression work without raising limits or removing expansion coverage.
+The successful explicit argument establishes that strengthening `simp` or
+adding a proof rule is not necessary for this no-swap obligation.
+
+### Stage timing follow-up
+
+The 22.75-second result was the aggregate test, not one verification.
+Temporary stage timers (wall and thread CPU) reproduced the successful
+prototype. A concurrent test suite in another worktree caused visible
+contention in the first measurement. A quieter repeat, without the optional
+deterministic-work counter, measured:
+
+| Stage | Wall seconds | Thread CPU seconds |
+| --- | ---: | ---: |
+| Original verification | 0.739 | 0.737 |
+| Original expansion/setup | 0.727 | 0.725 |
+| Explicit-body verification | 11.823 | 11.791 |
+| Explicit-body expansion | 13.123 | 13.023 |
+| Expanded proof rechecking | 0.400 | 0.399 |
+
+All stages passed, with zero legacy discovery across the explicit stages.
+Contention affects wall time but does not explain the expensive explicit
+planning: the quieter run consumed nearly the same wall and CPU time.
+Expanded simple-proof checking is much cheaper. Next isolate the retained
+smart-tactic planning sites, not the final expanded proof checker. These
+are unoptimized test-build measurements; no release timing claim is implied.
+Temporary timing and prototype changes were removed afterward.
+
+### Planning-site attribution and duplicate-query cleanup
+
+Structured profiling of the successful explicit prototype attributes the
+large costs to the closure bodies, not the newly added no-swap argument.
+Second-loop `close_invariants` at statement 17/source 45 (swap) took about
+3–4 seconds per execution, and source 54 (no swap) about 1.4 seconds.
+Both sites execute twice during verification. The enclosing loop events
+are inclusive, not additional costs. First-loop closers cost about 0.2–0.4
+seconds each. Atomic attempts include unsuccessful reasoning on conjunctions
+and quantified load-safety obligations before structural decomposition.
+
+One avoidable operation was found: after an atomic candidate declined,
+`try_simp_closure_after_direct_with_surfaces_and_function_unfold` repeated
+`selected_simp_derivation_with_surfaces` solely to recover its premises.
+It now retains those premises from the first query, without changing search
+order or proof rules. The same prototype still verifies; deterministic work
+for the two swap executions fell from 610,389/372,083 to 577,752/339,446,
+and for no-swap from 163,864/155,300 to 146,824/138,260. First-loop closure
+work dropped about 27–32%. This is a modest constant-factor cleanup, not a
+claim that smart planning is now cheap or asymptotically improved.
+
+The explicit prototype and profiling diagnostics were removed afterward.
+Expanded simple checking remains the important performance boundary; do not
+broaden `simp` search merely to automate the explicit branch argument.
 
 ## Acceptance criteria
 
