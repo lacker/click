@@ -1787,6 +1787,14 @@ pub enum C0Statement {
     HeapFree {
         pointer: C0Expression,
     },
+    /// A generated proof check for an index into a declared array dimension.
+    /// This is not source-level `assert`; it is inserted while flattening
+    /// multidimensional and inline array accesses so C's subobject bounds are
+    /// checked before the enclosing allocation is accessed.
+    Assert {
+        condition: C0Expression,
+        label: String,
+    },
     Seq(Box<C0Statement>, Box<C0Statement>),
     Return(C0Expression),
     Store {
@@ -1972,6 +1980,12 @@ pub enum C0Expression {
         union_name: String,
     },
     Index(Box<C0Expression>, Box<C0Expression>),
+    /// An array index whose declared subobject bound must be established
+    /// before the enclosing flattened offset is used.
+    CheckedArrayIndex {
+        index: Box<C0Expression>,
+        length: u32,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3064,6 +3078,9 @@ impl C0Statement {
             Self::HeapFree { pointer } => {
                 crate::kernel::c_heap_free(pointer.to_kernel_expression())
             }
+            Self::Assert { condition, label } => {
+                crate::kernel::c_labeled_assert(condition.to_kernel_expression(), label.clone())
+            }
             Self::Seq(first, second) => {
                 crate::kernel::c_seq(first.to_kernel_statement(), second.to_kernel_statement())
             }
@@ -3318,6 +3335,7 @@ impl C0Expression {
             Self::Index(base, index) => {
                 crate::kernel::c_index(base.to_kernel_expression(), index.to_kernel_expression())
             }
+            Self::CheckedArrayIndex { index, .. } => index.to_kernel_expression(),
         }
     }
 }
@@ -3458,7 +3476,8 @@ fn validate_function_returns(
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
         | C0Statement::AggregateCopy { .. }
-        | C0Statement::Update { .. } => Ok(()),
+        | C0Statement::Update { .. }
+        | C0Statement::Assert { .. } => Ok(()),
     }
 }
 
@@ -3973,6 +3992,7 @@ fn evaluate_static_integer_expression(
         C0Expression::Cast {
             expression, c_type, ..
         } => cast_static_integer(evaluate_static_integer_expression(expression)?, *c_type),
+        C0Expression::CheckedArrayIndex { index, .. } => evaluate_static_integer_expression(index),
         C0Expression::Void
         | C0Expression::Variable(_)
         | C0Expression::Call { .. }
@@ -4467,7 +4487,10 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         }
         | C0Expression::Not(expression)
         | C0Expression::BitwiseNot(expression)
-        | C0Expression::Load(expression) => contains_aggregate_value(expression),
+        | C0Expression::Load(expression)
+        | C0Expression::CheckedArrayIndex {
+            index: expression, ..
+        } => contains_aggregate_value(expression),
         C0Expression::Conditional {
             condition,
             then_branch,
@@ -11329,7 +11352,8 @@ impl Parser {
             | C0Expression::BitwiseOr(_, _)
             | C0Expression::BitwiseXor(_, _)
             | C0Expression::BitwiseNot(_)
-            | C0Expression::Index(_, _) => None,
+            | C0Expression::Index(_, _)
+            | C0Expression::CheckedArrayIndex { .. } => None,
         }
     }
 
@@ -11378,6 +11402,9 @@ impl Parser {
                     || self.expression_contains_aggregate(else_branch)
             }
             C0Expression::Field { .. } => false,
+            C0Expression::CheckedArrayIndex { index, .. } => {
+                self.expression_contains_aggregate(index)
+            }
             C0Expression::LessThan(left, right)
             | C0Expression::LessEqual(left, right)
             | C0Expression::GreaterThan(left, right)
@@ -11524,6 +11551,11 @@ impl Parser {
                     }
                 }
                 C0Statement::IndirectCall { .. } => return true,
+                C0Statement::Assert { condition, .. } => {
+                    if self.expression_contains_lowerable_expression(condition) {
+                        return true;
+                    }
+                }
                 C0Statement::Store { pointer, value, .. } => {
                     if self.expression_contains_lowerable_expression(pointer)
                         || self.expression_contains_lowerable_expression(value)
@@ -11623,6 +11655,7 @@ impl Parser {
                 | C0Expression::UnionAddress { pointer, .. }
                 | C0Expression::Field { pointer, .. }
                 | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
+                C0Expression::CheckedArrayIndex { .. } => return true,
                 C0Expression::Conditional {
                     condition,
                     then_branch,
@@ -11682,6 +11715,13 @@ impl Parser {
             | C0Statement::Continue
             | C0Statement::Declare { .. }
             | C0Statement::DeclareStructValue { .. } => Ok(statement),
+            C0Statement::Assert { condition, label } => {
+                let (prefix, condition) = self.lower_expression_calls(condition)?;
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::Assert { condition, label },
+                ))
+            }
             C0Statement::Assign { name, expression } => {
                 let (prefix, expression) = self.lower_expression_calls(expression)?;
                 Ok(prepend_statements(
@@ -11725,7 +11765,7 @@ impl Parser {
             } => {
                 let (mut prefix, function) = self.lower_expression_calls(function)?;
                 let (argument_prefix, arguments) = self.lower_call_arguments(arguments)?;
-                if !prefix.is_empty() && !argument_prefix.is_empty() {
+                if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
                     return Err(self.error_at_position(
                         position,
                         "multiple unsequenced calls in one expression are not supported",
@@ -11958,7 +11998,7 @@ impl Parser {
         for argument in arguments {
             let argument_position = first_embedded_call_position(&argument);
             let (argument_prefix, argument) = self.lower_expression_calls(argument)?;
-            if !prefix.is_empty() && !argument_prefix.is_empty() {
+            if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
                 return Err(self.error_at_position(
                     argument_position,
                     "multiple unsequenced calls in one expression are not supported",
@@ -11978,7 +12018,7 @@ impl Parser {
         let right_position = first_embedded_call_position(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
-        if !left_prefix.is_empty() && !right_prefix.is_empty() {
+        if prefix_has_non_assertion(&left_prefix) && prefix_has_non_assertion(&right_prefix) {
             return Err(self.error_at_position(
                 right_position,
                 "multiple unsequenced calls in one expression are not supported",
@@ -12312,6 +12352,22 @@ impl Parser {
             C0Expression::Or(left, right) => {
                 self.lower_short_circuit_calls(*left, *right, C0Expression::Or)
             }
+            C0Expression::CheckedArrayIndex { index, length } => {
+                let (mut prefix, index) = self.lower_expression_calls(*index)?;
+                let lower = C0Expression::GreaterEqual(
+                    Box::new(index.clone()),
+                    Box::new(C0Expression::Int32Literal(0)),
+                );
+                let upper = C0Expression::LessThan(
+                    Box::new(index.clone()),
+                    Box::new(C0Expression::Int32Literal(length)),
+                );
+                prefix.push(C0Statement::Assert {
+                    condition: C0Expression::And(Box::new(lower), Box::new(upper)),
+                    label: format!("array subobject index must be in [0, {length})"),
+                });
+                Ok((prefix, index))
+            }
             C0Expression::Index(left, right) => {
                 self.lower_binary_calls(*left, *right, C0Expression::Index)
             }
@@ -12328,7 +12384,7 @@ impl Parser {
     ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
         let (mut prefix, function) = self.lower_expression_calls(function)?;
         let (argument_prefix, arguments) = self.lower_call_arguments(arguments)?;
-        if !prefix.is_empty() && !argument_prefix.is_empty() {
+        if prefix_has_non_assertion(&prefix) && prefix_has_non_assertion(&argument_prefix) {
             return Err(self.error_at_position(
                 position,
                 "multiple unsequenced calls in one expression are not supported",
@@ -13059,7 +13115,7 @@ impl Parser {
                                 indexes.len()
                             )));
                         }
-                        let offset = flatten_array_indices(indexes, &shape);
+                        let offset = flatten_array_indices(indexes, &shape, false);
                         let stride = C0Expression::Multiply(
                             Box::new(offset),
                             Box::new(C0Expression::Int32Literal(element_width)),
@@ -13087,7 +13143,7 @@ impl Parser {
                                 indexes.len()
                             )));
                         }
-                        let offset = flatten_array_indices(indexes, &shape);
+                        let offset = flatten_array_indices(indexes, &shape, false);
                         expression = C0Expression::Index(Box::new(expression), Box::new(offset));
                         continue;
                     }
@@ -13139,7 +13195,11 @@ impl Parser {
                                 indexes.len()
                             )));
                         }
-                        let offset = flatten_array_indices(indexes, &shape);
+                        let unbounded_outer = self
+                            .global_arrays
+                            .get(name)
+                            .is_some_and(C0GlobalArray::is_incomplete);
+                        let offset = flatten_array_indices(indexes, &shape, unbounded_outer);
                         let struct_array = self.variable_structs.contains_key(name);
                         let offset = if struct_array {
                             let struct_name = self
@@ -13273,15 +13333,23 @@ impl Parser {
 
     fn scalar_array_field_shape(&self, expression: &C0Expression) -> Option<Vec<u32>> {
         let C0Expression::Field {
-            field_type: C0Type::Int32Array(_) | C0Type::CharArray(_) | C0Type::UInt8Array(_),
+            field_type,
             field_struct_name: None,
-            array_shape: Some(shape),
+            array_shape,
             ..
         } = expression
         else {
             return None;
         };
-        Some(shape.clone())
+        let length = match field_type {
+            C0Type::Int32Array(length)
+            | C0Type::CharArray(length)
+            | C0Type::UInt8Array(length)
+            | C0Type::Float32Array(length)
+            | C0Type::Float64Array(length) => *length,
+            _ => return None,
+        };
+        Some(array_shape.clone().unwrap_or_else(|| vec![length]))
     }
 
     fn expression_is_float(&self, expression: &C0Expression) -> bool {
@@ -13301,7 +13369,9 @@ impl Parser {
                 matches!(field_type, C0Type::Float32 | C0Type::Float64)
             }
             C0Expression::Load(pointer) => self.expression_pointee_is_float(pointer),
-            C0Expression::Index(base, _) => self.expression_pointee_is_float(base),
+            C0Expression::Index(base, _) | C0Expression::CheckedArrayIndex { index: base, .. } => {
+                self.expression_pointee_is_float(base)
+            }
             C0Expression::Conditional {
                 then_branch,
                 else_branch,
@@ -13548,6 +13618,7 @@ impl Parser {
             C0Expression::Load(pointer) | C0Expression::Index(pointer, _) => {
                 self.source_expression_type(pointer)?.pointee_type()
             }
+            C0Expression::CheckedArrayIndex { index, .. } => self.source_expression_type(index),
             C0Expression::AddressOf(value) => self.source_expression_type(value)?.pointer_type(),
             C0Expression::PointerOffsetBytes { pointer, .. } => {
                 self.source_expression_type(pointer)
@@ -14043,9 +14114,25 @@ fn static_integer_value(expression: &C0Expression) -> Option<u32> {
     }
 }
 
-fn flatten_array_indices(indexes: Vec<C0Expression>, dimensions: &[u32]) -> C0Expression {
+fn flatten_array_indices(
+    indexes: Vec<C0Expression>,
+    dimensions: &[u32],
+    unbounded_outer: bool,
+) -> C0Expression {
     let mut terms = Vec::with_capacity(indexes.len());
     for (index, expression) in indexes.into_iter().enumerate() {
+        let length = dimensions[index];
+        let expression = if unbounded_outer && index == 0 {
+            expression
+        } else {
+            match static_integer_value(&expression) {
+                Some(value) if value < length => expression,
+                _ => C0Expression::CheckedArrayIndex {
+                    index: Box::new(expression),
+                    length,
+                },
+            }
+        };
         let stride = dimensions[index + 1..]
             .iter()
             .copied()
@@ -14574,6 +14661,15 @@ fn prepend_statements(prefix: Vec<C0Statement>, statement: C0Statement) -> C0Sta
     balanced_statement_sequence(statements).expect("the statement prefix is non-empty")
 }
 
+/// Generated array-bound checks are pure proof statements and may safely be
+/// combined when one expression contains more than one indexed subobject.
+/// Calls still require the existing sequencing restriction.
+fn prefix_has_non_assertion(prefix: &[C0Statement]) -> bool {
+    prefix
+        .iter()
+        .any(|statement| !matches!(statement, C0Statement::Assert { .. }))
+}
+
 /// Run a lowered loop-condition prefix and condition check before each
 /// `continue` that targets the current loop. Nested loops consume their own
 /// `continue` statements, while a `switch` does not introduce a continue
@@ -14615,7 +14711,8 @@ fn statement_continues_enclosing_loop(statement: &C0Statement) -> bool {
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
         | C0Statement::AggregateCopy { .. }
-        | C0Statement::Update { .. } => false,
+        | C0Statement::Update { .. }
+        | C0Statement::Assert { .. } => false,
     }
 }
 
@@ -14694,7 +14791,8 @@ fn prepend_condition_check_before_loop_continues(
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
         | C0Statement::AggregateCopy { .. }
-        | C0Statement::Update { .. }) => statement,
+        | C0Statement::Update { .. }
+        | C0Statement::Assert { .. }) => statement,
     })
 }
 
@@ -14756,6 +14854,7 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::Index(left, right) => {
             first_embedded_call_position(left).or_else(|| first_embedded_call_position(right))
         }
+        C0Expression::CheckedArrayIndex { index, .. } => first_embedded_call_position(index),
         C0Expression::Void
         | C0Expression::Variable(_)
         | C0Expression::FunctionAddress(_)

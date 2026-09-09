@@ -1730,7 +1730,8 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
             | syntax::C0Statement::AggregateCopy { .. }
-            | syntax::C0Statement::Update { .. } => {}
+            | syntax::C0Statement::Update { .. }
+            | syntax::C0Statement::Assert { .. } => {}
         }
     }
 
@@ -1769,6 +1770,9 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Expression::PointerOffsetBytes {
                 pointer: expression,
                 ..
+            }
+            | syntax::C0Expression::CheckedArrayIndex {
+                index: expression, ..
             }
             | syntax::C0Expression::Not(expression)
             | syntax::C0Expression::BitwiseNot(expression)
@@ -1958,6 +1962,11 @@ pub(in crate::surface) fn c0_statement_calls(
                 let mut dependencies = BTreeSet::new();
                 collect_function_addresses(target, &mut dependencies);
                 collect_function_addresses(operand, &mut dependencies);
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::Assert { condition, .. } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(condition, &mut dependencies);
                 calls.push(dependencies);
             }
         }

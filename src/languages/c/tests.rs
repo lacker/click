@@ -3620,7 +3620,8 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
             | syntax::C0Statement::AggregateCopy { .. }
-            | syntax::C0Statement::Update { .. } => false,
+            | syntax::C0Statement::Update { .. }
+            | syntax::C0Statement::Assert { .. } => false,
         }
     }
 
