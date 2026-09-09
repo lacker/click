@@ -1368,6 +1368,76 @@ fn surface_lowering_map_forks_and_local_updates_scale_logarithmically() {
 }
 
 #[test]
+fn qualified_storage_source_index_preserves_forks_and_scales() {
+    fn pair(index: u32) -> (Pointer, ContractExpression, ClickProposition, Proposition) {
+        let pointer = Pointer {
+            block: PointerBlock::Concrete(format!("global:state#file-static:file{index}.c")),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let expression = ContractExpression::QualifiedC {
+            name: format!("file{index}::state"),
+            lowered: CExpression::TypedLoad {
+                pointer: Box::new(CExpression::Value(CValue::Pointer(
+                    crate::kernel::CPointerValue::new(pointer.clone(), CType::UInt64Pointer),
+                ))),
+                value_type: CType::UInt64,
+            },
+        };
+        let surface = ClickProposition::Comparison {
+            left: expression.clone(),
+            operator: ComparisonOperator::Equal,
+            right: current_int(index),
+        };
+        let kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector64Equal(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(CMemory::new()),
+                    Box::new(pointer.clone()),
+                )),
+                Box::new(Bitvector32Term::UInt64Constant(u64::from(index))),
+            ),
+            true,
+        );
+        (pointer, expression, surface, kernel)
+    }
+    for size in [16_u32, 64, 256, 1024] {
+        let mut sources = SurfacePropositionMap::default();
+        for i in 0..size {
+            let (_, _, surface, kernel) = pair(i);
+            sources.record_lowering(&surface, &kernel).unwrap();
+        }
+        let ancestor = sources.clone();
+        assert!(sources.shares_persistent_storage_with(&ancestor));
+        let (pointer, expression, surface, kernel) = pair(size);
+        let before = crate::persistent::persistent_node_allocations();
+        sources.record_lowering(&surface, &kernel).unwrap();
+        let allocations = crate::persistent::persistent_node_allocations() - before;
+        assert!(
+            allocations <= 16 * (size.ilog2() as usize + 1) + 32,
+            "{size}: {allocations}"
+        );
+        assert!(
+            ancestor
+                .storage
+                .qualified_load_sources
+                .get(&pointer)
+                .is_none()
+        );
+        assert_eq!(
+            sources.storage.qualified_load_sources.get(&pointer),
+            Some(&expression)
+        );
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            sources.storage.qualified_load_sources.get(&pointer)
+        });
+        assert!(
+            work <= 4 * (size.ilog2() as usize + 1) + 4,
+            "{size}: {work}"
+        );
+    }
+}
+
+#[test]
 fn current_c_variable_fact_selection_scales_by_index_height() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut spellings = SurfacePropositionMap::default();

@@ -3771,10 +3771,11 @@ pub(super) enum AtomicPropositionDerivationEvidence {
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
     /// True 64-bit equalities as an undirected adjacency map, derived
-    /// lazily from `condition_facts`. Pointer-tag reasoning uses it to find
-    /// the recorded address form of a word without scanning every fact.
-    pub(super) bitvector64_equality_facts: std::sync::Arc<
-        std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>>>,
+    /// incrementally from `condition_facts`. Unchanged branches share it;
+    /// inserting an equality updates only its two endpoints.
+    pub(super) bitvector64_equality_facts: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<Bitvector32Term, ConditionTerm>,
     >,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
     /// Exact signed-order bounds keyed by either endpoint — under the term

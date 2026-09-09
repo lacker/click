@@ -8,7 +8,7 @@ the C or gain source-level access to the private object. Initialization and
 call boundaries must not duplicate ownership or silently strengthen a helper's
 precondition by assuming its argument cannot alias static storage.
 
-## Reproduction
+## Original reproduction (now covered)
 
 Use two translation units and an ordinary public prototype:
 
@@ -25,12 +25,12 @@ unsigned long twice(void) { next(); return next(); }
 
 Give `bump` a loadable/consumes/produces contract for `p->value`, proving
 `p->value == old(p->value) + 1u64` and `result == p->value`. The global struct
-address parses with its correct nominal type, but `next` fails when the helper
-requires ownership of the private field. Removing the helper's ownership
-clauses instead fails its abstract pointer read with a missing view resource.
-Adding a `mutable` footprint alone does not supply ownership.
+address parses with its correct nominal type. This originally failed when the
+helper required ownership of the private field. Qualified field ownership now
+supports that transfer; a `mutable` footprint alone still does not supply
+ownership.
 
-This blocks the proposed unchanged pcg-c-basic global-state example at upstream
+The remaining acceptance target is the unchanged pcg-c-basic global-state example at upstream
 revision `bc39cd76ac3d541e618606bcc6e1e5ba5e5e6aa3`:
 <https://github.com/imneme/pcg-c-basic/tree/bc39cd76ac3d541e618606bcc6e1e5ba5e5e6aa3>.
 Its generator and reentrant seeding helpers can be proved with explicit field
@@ -44,16 +44,21 @@ allows a resource body to own `library::state.value`. Resources can contain
 objects from multiple translation units without making private C names visible
 to another C file. The qualified-static mdtests cover scalar/array storage,
 cross-file resource ownership, and a private struct passed to a read helper.
-The original incrementing wrapper and unchanged PCG seed/draw client below
-remain follow-up acceptance work, not evidence supplied by the read-helper test.
+The mutating-wrapper regression is now `mdtests/private_state_mutation_reset.md`:
+it keeps the C unchanged while checking helper mutation, repeated calls, reset,
+and independent same-named statics. Its expansion tests reverify each grouped
+contract and reject missing, duplicated, or wrong-file ownership and false
+effect/result claims. The unchanged PCG seed/draw client below remains
+follow-up acceptance work, not evidence supplied by that reduced regression.
 
 The startup policy is now chosen: a distinguished, parameterless `main`
 proof starts with the program's initialized static ownership and is not
 published as a reusable call contract. This is not a module abstraction.
 Resource proof steps now retain static bindings, and unsigned composite ranges
 preserve their element types. The private wrapper/PCG acceptance tests below
-are still outstanding. A reduced 64-bit wrapper client now reaches the
-[symbolic wide return conversion gap](symbolic-wide-return-to-int.md).
+are still outstanding for the pinned upstream program. The reduced 64-bit
+wrapper client is covered by `mdtests/private_state_wide_return.md`, with
+checked representability obligations for symbolic 64-to-int returns.
 
 - Choose and document a checked mechanism for private static ownership at
   public call boundaries; do not unconditionally mint ownership on every call.

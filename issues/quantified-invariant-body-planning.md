@@ -1,109 +1,97 @@
-# Plan quantified invariant bodies without legacy discovery
+# Finish explicit invariant-body planning
 
 ## Violated invariant
 
-Automatic preservation must emit a complete checked proof of the exact
-back-edge value and safety obligations. It cannot depend on hidden legacy
-invariant discovery after expansion. Its ordinary bounded search must report
-a local miss, not overflow the verifier stack.
+Automatic loop preservation must emit a complete checked proof of its exact
+back-edge value and safety obligations. Expanded simple proofs must not
+invoke the legacy invariant discovery ladder.
 
-The context-bound `close_invariants by { ... }` evidence interface is already
-implemented. The remaining gap is constructing its proof, not accepting it.
-This blocks the automatic-planning part of
-[loop closure migration](loop-closure-quantified-evidence.md).
+The kernel-owned `close_invariants by { ... }` scope already binds a completed
+proof to its exact goal, snapshot, premises, and execution evidence. The gap is
+constructing those proofs, not accepting a new kind of success token.
 
-## Reproduction at the green checkpoint
+## Current green checkpoint
 
-`explicit_invariant_body_copy3_has_a_bounded_planning_miss` verifies the
-unchanged `mdtests/copy3_array_demo.md`, expands its grouped claim, and replaces
-only `close_invariants();` with `close_invariants by { simp(); }`. This now
-returns the local error `closure body did not prove every invariant obligation`
-on the ordinary test stack. The regression is enabled in the normal gate:
+Entry/current snapshot presentation now lets copy3's explicit closure body
+verify, expand, and independently recheck without legacy invariant discovery.
+The regression is `explicit_invariant_body_copy3_checks_and_expands`.
+It preserves the original C and converts only the already-expanded closer to
+`close_invariants by { simp(); }`.
 
-```sh
-cargo nextest run --lib -E 'test(explicit_invariant_body_copy3_has_a_bounded_planning_miss)'
-```
+The recursive Surface structural planner's implication case is outlined into
+a non-inlined helper. This keeps its large local temporaries off every nested
+conjunction/quantifier frame without changing search order or stack limits.
+The existing four-size, small-stack kernel reasoning regression remains enabled.
 
-When the missing proof construction is implemented, replace that expected miss
-with successful verification, expansion, and rewritten verification. Do not
-expand the currently failing explicit proof. Never edit the fixture's C or
-increase stack limits to bypass this gap.
+Bare closers and automatic preservation still use the legacy preparation
+path. Do not describe this checkpoint as a completed loop migration.
 
-## Stack-frame reduction (2026-09-08)
+## Remaining reproduction
 
-The original explicit-body crash had sixteen live `derive_proposition_using`
-calls, mainly ordinary descent through conjunctions and implications. Debug
-ARM64 disassembly showed a 74,304-byte frame per call, 57,744 bytes for atomic
-premise selection, and 189,088 bytes for atomic evidence selection. Large
-by-value enum temporaries, rather than extreme recursion depth, exhausted the
-stack. These sizes are build-specific, not portable limits.
+`explicit_invariant_body_two_pass_sort_has_a_bounded_planning_miss`:
 
-Outlining the structural rule cases into non-inlined helpers keeps other
-rules' temporaries out of each recursive dispatch. Its frame fell to 27,632
-bytes in the measured build. Search order, eager evaluation of both `And`
-children, fallback rules, proof representation, and budgets are unchanged.
-The unchanged copy3 reproducer now reports the ordinary miss in about 3.4s
-including its preceding original verification and expansion.
+1. Verify the unchanged `mdtests/bubble_sort3_two_pass_sorted.md`.
+2. Expand its grouped claim using the current green implementation.
+3. Replace only bare closers with `close_invariants by { simp(); }`.
+4. Require a local planning miss and zero legacy discovery during that
+   explicit-body run. Never expand the failing explicit proof.
 
-`nested_simp_derivations_keep_rule_temporaries_off_the_recursive_stack` proves
-and independently checks nested conjunction/implication goals with quantified
-arithmetic leaves on a 1.75 MiB stack at four sizes, measuring planning and
-checking work separately. This fixes the reproduced kernel-reasoner overflow;
-it does not establish arbitrary-depth stack safety or prove that the reverted
-entry-aware automatic-planner prototype has no further stack pressure.
+The fixed-range maximum invariant in the second loop is
+`all_le_range(p, 0, 2, p[2])`. Its finite instances include
+`p[0] <= p[2]` and `p[1] <= p[2]`. After the conditional swap, proving one
+destination cell can require a different source cell's entry fact.
 
-## Automatic-planner investigation (2026-09-08)
+## Migration investigation (2026-09-08)
 
-The attempted replacement in `verify_one_loop_preservation_proof` removed
-`legacy_loop_invariant_prefix_holds` and planned a body through the same
-kernel-created scope as written bodies. Scalar tests passed. Bubble required
-the existing named invariant lemmas to be proved at the execution frontier
-before opening that scope. Proving them inside the already-created scope did
-not discharge the original quantified goal. With frontier lemmas, the original
-and expanded bubble fixture passed with zero legacy discovery calls.
+A task-worktree prototype made automatic preservation and bare closers emit
+explicit bodies. Copy3 and bubble-pass verification, expansion, and rewritten
+verification passed with zero legacy discovery. Most loop tests passed.
+Countdown loops additionally needed a checked conversion from the existing
+`0 <= n - 1` predecessor theorem to the written `n - 1 >= 0` goal.
 
-Copy3 still failed. Its collected goals include current and old source-read
-safety, destination-read safety, and wrapped quantified copy equalities.
-`synthesize_surface_proposition` cannot present the old-state equality goals;
-the missing presentation also hides the enclosing conjunction from structural
-planning. Using `synthesize_surface_proposition_at_entry_and_post` with
-`ExecutionProofContext::old_reference_state` exposes more of the goal, but
-ordinary verification then overflowed the default test stack.
+The full gate stopped at the two-pass sorting expansion test:
+1,273 tests passed before that failure. Its second-loop named maximum
+invariants and the exact closure body reported local planning misses.
 
-The crash stack contained roughly a dozen repeated structural-simp / smart
-closure frames, followed by upper-bound splitting, quantified premise
-selection, loadability reasoning, and capture-free substitution. The worker
-exited after the abort. No stack or tactic limits were raised.
+Further bounded experiments established that:
 
-An explicit pending-join traversal for conjunctions avoided that observed
-overflow, but skipped intermediate atomic/direct closure opportunities. It
-increased search substantially and still failed copy3's quantified proof.
-That is not a finished fix or an acceptable performance result. All runtime
-prototypes were reverted; no failing planner or traversal is enabled.
+- The fixed-range entry universal can be instantiated explicitly at both
+  constant indices. The loop index's singleton value can also be proved with
+  existing integer theorems.
+- Instantiating at symbolic store indices lets the existing certified-store
+  rewrite change the source fact, but the compound inequality still does not
+  reach the target through the checked transport route.
+- Neither trying operand equalities separately nor supplying finite current
+  cells as intermediate equality goals completed the proof.
+- Broader candidate composition exhausted the existing 2,000,000-unit smart
+  budget. No budget or stack limit was raised. That prototype is not a fix.
+
+These experiments do not establish the precise missing primitive: distinguish
+a planner omission from insufficient simple-step evidence before adding a
+new rule. All automatic-migration and speculative transport changes were
+reverted. No C, contract, or fixture expectations were weakened.
 
 ## Next implementation
 
-1. Preserve exact entry/current snapshot presentation for each lowered goal.
-   Do not equate goals by their printed spelling or a snapshot-blind binder key.
-2. Recheck the entry-aware path on the ordinary stack after the kernel frame
-   reduction. If further stack pressure appears, outline the bulky planner
-   frames without skipping cheap intermediate closure opportunities. Keep the
-   four-size/small-stack regression; a large stack is not a remedy.
-3. Construct the missing copy3 value proof with checked operations in the exact
-   goal scopes. Named lemmas may be premises only after their proofs complete.
-   Separately retained read-safety goals must not become assumptions.
-4. Enable automatic bodies only once the unchanged copy3 and bubble fixtures,
-   their expansions, and the full gate pass without legacy discovery. Preserve
-   do-while paths with no continuing back edge.
+1. Reduce the second-loop post-swap cell relation to a small proof test with
+   its exact retained store equations, load origins, and snapshot bindings.
+2. Identify a checkable, bounded composition from source instance through the
+   stores to the destination cell. Prefer existing equality/transport steps;
+   if execution must retain an additional value-flow witness, specify its
+   exact inputs and rejection cases before changing the authority boundary.
+3. Replace the expected miss with positive verification, expansion, and
+   rewritten verification. Preserve the copy3 and bubble-pass regressions.
+4. Re-enable automatic bodies only when the full gate passes; then delete
+   `verify_lowered_invariant_path`, the legacy prefix probe, and legacy
+   lowering-record builders. Preserve do-while paths with no continuing edge.
 
 ## Acceptance criteria
 
 - Original copy3, bubble-pass, and sorting fixtures verify and expand to
-  explicit closure bodies; expanded proofs recheck without legacy back-edge
-  discovery (`invariant_discovery_calls` supplies a test counter).
-- Missing child/value/safety evidence and wrong snapshot/premise roots reject.
-- Quantified conjunction planning is bounded, stack-safe, and has deterministic
-  scaling coverage without dropping existing useful closure strategies.
-- The current expected-miss reproducer becomes a positive verification and
-  expansion regression, and `scripts/check.sh` passes. Delete this issue and
-  its index line when the positive regressions and documentation land.
+  explicit closure bodies; expanded proofs recheck without legacy discovery.
+- Missing value/safety children, wrong proof roots, stale snapshots, changed
+  premises, and incomplete path evidence reject.
+- Planning stays within existing limits. Simple checking remains
+  output-sensitive, with deterministic scaling coverage.
+- `scripts/check.sh` passes. Delete this issue and its index line together
+  with the completed migration and updated documentation.

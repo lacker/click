@@ -1048,6 +1048,26 @@ and `counter::state.value`. Private objects with identical names in different
 files remain distinct; qualifications of the same external object retain its
 shared identity. This does not make private names visible in another C file.
 
+A mutating wrapper can transfer its private field to a pointer-taking helper
+and return ownership with the updated contents:
+
+<!-- verified-example: mdtests/private_state_mutation_reset.md -->
+```click
+unsigned long left() {
+    owns left_file::state.value;
+    ensures left_file::state.value == old(left_file::state.value) + 1u64;
+    ensures result == left_file::state.value;
+    ensures result == old(left_file::state.value) + 1u64;
+} by { execute(); simp(); }
+```
+
+Here `left_file` aliases the C file containing `state`; its unchanged C wrapper
+calls `bump(&state)`. Ownership is transferred, not recreated on each call.
+The fixture covers repeated calls, reset, and another file's independent
+`state`. An implicit 64-bit integer return conversion to `int` requires proof
+that the value is representable: signed sources need both bounds, unsigned
+sources need the upper bound. This differs from the low-bit `uint32` cast.
+
 This slice supports file-scope scalars, scalar arrays, and struct objects.
 It does not qualify functions, function-local statics, or arrays of structs.
 Aliases must be unique and cannot share a name with a specification datatype.

@@ -53,7 +53,7 @@ Soundness and kernel shape:
 - [Preserve initialization requirements across resource transfers](uninitialized-callee-resource-transfer.md)
 - [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
-- [Plan quantified invariant bodies without legacy discovery](quantified-invariant-body-planning.md)
+- [Finish explicit invariant-body planning](quantified-invariant-body-planning.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
@@ -81,6 +81,8 @@ Specification and proof:
 
 ## P2: after launch (16)
 
+- [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
+
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
 it turns out to block that claim: if P1 work exposes one of the tooling
 failures described in `AGENTS.md`, that issue becomes a blocker under the
@@ -91,7 +93,6 @@ C language coverage:
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
 - [Lower calls in short-circuit right operands](short-circuit-operand-calls.md)
-- [Convert representable symbolic wide results to int](symbolic-wide-return-to-int.md)
 - [Resolve linked initializers in their defining file](linked-initializer-private-names.md)
 - [Model forward and backward goto edges](goto.md)
 - [Model variadic functions](variadic-functions.md)
