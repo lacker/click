@@ -6570,7 +6570,8 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
-/// The open handle is linear proof state, not folded ownership or ghost storage.
+/// Plain bodies need no open token. Guarded/matched bodies retain the legacy
+/// open-handle protocol until their separate migration.
 pub(crate) fn rewrite_resource_instance(
     state: &CState,
     instance: &ResourceInstance,
@@ -6584,6 +6585,15 @@ pub(crate) fn rewrite_resource_instance(
         || definition.counted_population
         || !definition.witnesses.is_empty()
         || definition.parameters.len() != instance.arguments.len()
+        || instance
+            .arguments
+            .iter()
+            .zip(&definition.parameters)
+            .any(|(argument, parameter)| {
+                argument
+                    .as_c_value()
+                    .is_none_or(|value| value.c_type() != parameter.c_type())
+            })
         || definition
             .contains
             .iter()
@@ -6591,6 +6601,10 @@ pub(crate) fn rewrite_resource_instance(
     {
         return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
+    // Plain memory bodies are assertions, not a protocol with an open token.
+    // Matched/guarded bodies retain the legacy handle path until their child
+    // selection interface is migrated separately.
+    let body_only = definition.matched.is_none() && definition.condition.is_none();
     let mut folded_instance = instance.clone();
     folded_instance.opened_children = Default::default();
     let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
@@ -6603,10 +6617,21 @@ pub(crate) fn rewrite_resource_instance(
         {
             return Err("instance is not exclusively owned in folded form");
         }
-    } else if state.open_instances.owned_instance(instance.identity) != Some(instance)
+    } else if (!body_only
+        && state.open_instances.owned_instance(instance.identity) != Some(instance))
         || state.resources.owned_instance(instance.identity).is_some()
+        || (body_only
+            && (state
+                .open_instances
+                .owned_instance(instance.identity)
+                .is_some()
+                || !instance.opened_children.is_empty()))
     {
-        return Err("instance has no matching open handle");
+        return Err(if body_only {
+            "fold result identity is already in use or carries open-child metadata"
+        } else {
+            "instance has no matching open handle"
+        });
     }
     let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
@@ -6756,12 +6781,14 @@ pub(crate) fn rewrite_resource_instance(
                 assumptions,
             )
             .map_err(|_| "instance body overlaps existing ownership")?;
-        let mut handle = folded_instance;
-        children.sort_by(|(left, _), (right, _)| left.cmp(right));
-        handle.opened_children = children.into();
-        next.open_instances = next
-            .open_instances
-            .unchecked_with_fact(CResourceFact::own(CResource::Instance(handle)));
+        if !body_only {
+            let mut handle = folded_instance.clone();
+            children.sort_by(|(left, _), (right, _)| left.cmp(right));
+            handle.opened_children = children.into();
+            next.open_instances = next
+                .open_instances
+                .unchecked_with_fact(CResourceFact::own(CResource::Instance(handle)));
+        }
     } else {
         for fact in body.facts() {
             next.resources = next
@@ -6773,12 +6800,14 @@ pub(crate) fn rewrite_resource_instance(
             .resources
             .try_compose_into_valid_context_delaying_normalization([folded.clone()], assumptions)
             .map_err(|_| "fold would duplicate instance ownership")?;
-        next.open_instances = next
-            .open_instances
-            .without_exact_representation(&CResourceFact::own(CResource::Instance(
-                instance.clone(),
-            )))
-            .ok_or("open handle is missing")?;
+        if !body_only {
+            next.open_instances = next
+                .open_instances
+                .without_exact_representation(&CResourceFact::own(CResource::Instance(
+                    instance.clone(),
+                )))
+                .ok_or("open handle is missing")?;
+        }
     }
     evaluation.resources = if unfold {
         next.resources.clone()
@@ -6791,6 +6820,13 @@ pub(crate) fn rewrite_resource_instance(
         state.open_instances.clone()
     };
     evaluation.resource_bindings = Some(std::sync::Arc::new(resource_bindings));
+    if body_only {
+        // Local field interpretation only. This scratch view never escapes
+        // into proof state and supplies no additional memory ownership.
+        evaluation.open_instances = evaluation
+            .open_instances
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(folded_instance)));
+    }
     let mut facts = body.observable_facts_assuming_valid(assumptions);
     for fact in body.facts() {
         let Some(range) = fact.memory_range() else {
@@ -6844,7 +6880,7 @@ pub(crate) fn rewrite_resource_instance(
         }
         let proposition = paths[0].proposition.clone();
         if !unfold && !assumptions.proves(&proposition) {
-            return Err("fold requires the unchanged instance body facts");
+            return Err("fold requires the instance body facts for the proposed fields");
         }
         facts.push(proposition);
     }

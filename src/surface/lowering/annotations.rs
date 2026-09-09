@@ -138,10 +138,22 @@ pub(in crate::surface) fn check_resource_field_schemas(
             bindings.insert(binding.identity, binding.clone());
         }
         for ensure in &mut function.ensures {
-            if let Ensure::Resource(ResourceClause::Named { binding, .. }) = &mut ensure.ensure {
-                *binding = bindings.get(&binding.identity).cloned().ok_or_else(|| {
-                    ClickError::new("returned resource instance has no entry binding")
-                })?;
+            if let Ensure::Resource(ResourceClause::Named { binding, resource }) =
+                &mut ensure.ensure
+            {
+                if let Some(entry) = bindings.get(&binding.identity) {
+                    *binding = entry.clone();
+                } else {
+                    let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                        unreachable!()
+                    };
+                    binding.schema = Some(
+                        schemas
+                            .get(name)
+                            .ok_or_else(|| ClickError::new("returned resource has no schema"))?
+                            .clone(),
+                    );
+                }
             }
         }
     }

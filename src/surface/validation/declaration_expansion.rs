@@ -652,7 +652,10 @@ fn expand_declared_resource_clause(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ResourceClause, ClickError> {
     match resource {
-        ResourceClause::Named { binding, resource } => {
+        ResourceClause::Named {
+            mut binding,
+            resource,
+        } => {
             let ResourceClause::Declared {
                 access: ResourceAccessMode::Own,
                 name,
@@ -674,6 +677,19 @@ fn expand_declared_resource_clause(
                 return Err(ClickError::new(format!(
                     "resource `{name}` has no fields; use ordinary unnamed ownership"
                 )));
+            }
+            if let Some(fields) = binding.fold_fields.take() {
+                binding.fold_fields = Some(
+                    fields
+                        .into_iter()
+                        .map(|(name, value)| {
+                            Ok((
+                                name,
+                                expand_declared_resource_expression(value, resource_definitions)?,
+                            ))
+                        })
+                        .collect::<Result<_, ClickError>>()?,
+                );
             }
             Ok(ResourceClause::Named {
                 binding,

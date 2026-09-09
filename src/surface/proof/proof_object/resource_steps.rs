@@ -6,6 +6,7 @@ impl<'a> Proof<'a> {
     fn apply_instance_rewrite(
         &self,
         binding: &ResourceInstanceBinding,
+        resource: &ResourceClause,
         unfold: bool,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -28,9 +29,105 @@ impl<'a> Proof<'a> {
             }
         };
         let before: &CState = outcome.map_or(&*execution.core.state, |goal| &*goal.data.core.state);
-        let instance = before
-            .resource_instance_at_path(binding.identity, &binding.children)
-            .ok_or_else(|| self.step_error("resource instance has no owned or open handle"))?;
+        let pre_state = context.old_reference_state(&execution.core.frontier, before);
+        let constructed;
+        let instance = if let Some(fields) = &binding.fold_fields {
+            if unfold || !binding.children.is_empty() {
+                return Err(self.step_error("explicit fields require a fold construction"));
+            }
+            let ResourceClause::Named { resource, .. } = resource else {
+                unreachable!()
+            };
+            let lowered = lower_resource_clause_at_state(
+                resource,
+                context.parsed_function.parameters(),
+                context.arguments,
+                before,
+            )?;
+            let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
+                return Err(self.step_error("fold construction requires an owned resource"));
+            };
+            let definition = context
+                .function
+                .composite_resource_definition(&name)
+                .ok_or_else(|| self.step_error("fold resource has no checked definition"))?;
+            if !definition.has_plain_instance_body() {
+                return Err(self.step_error(
+                    "explicit fold fields currently require an unconditional memory body",
+                ));
+            }
+            let schema = definition
+                .instance_field_schema()
+                .ok_or_else(|| self.step_error("fold resource has no fields"))?;
+            let mut supplied = BTreeMap::new();
+            for (name, value) in fields {
+                if supplied.insert(name.as_str(), value).is_some() {
+                    return Err(self.step_error(format!("duplicate fold field `{name}`")));
+                }
+            }
+            if supplied.len() != schema.fields().len() {
+                return Err(self.step_error("fold must explicitly supply every resource field"));
+            }
+            let values = parameter_values(context.parsed_function.parameters(), context.arguments)?;
+            let array_refs = array_refs_for_parameters(
+                context.parsed_function.parameters(),
+                &values,
+                before.memory(),
+            );
+            let (values, array_refs) = contract_environment_at_state(&values, &array_refs, before);
+            let mut proposed = Vec::new();
+            for (name, ty) in schema.fields() {
+                let crate::kernel::ResourceFieldType::C(expected) = ty else {
+                    return Err(
+                        self.step_error("explicit fold fields currently support C-valued fields")
+                    );
+                };
+                let expression = supplied
+                    .get(name.as_str())
+                    .ok_or_else(|| self.step_error(format!("missing fold field `{name}`")))?;
+                let expression = resource_argument_to_c_expression(expression)?;
+                let value = evaluate_resource_fragment_through_kernel(
+                    &expression,
+                    self.facts().assumptions(),
+                    &values,
+                    &array_refs,
+                    before,
+                    None,
+                )
+                .map_err(|message| self.step_error(message))?;
+                if value.c_type() != *expected {
+                    return Err(self.step_error(format!("fold field `{name}` has the wrong type")));
+                }
+                proposed.push(crate::kernel::AlgebraicValue::C(value));
+            }
+            let identity = pre_state
+                .owned_resource_instance(binding.identity)
+                .map_or(binding.identity, |instance| instance.identity());
+            constructed = crate::kernel::ResourceInstance::new(
+                identity,
+                name,
+                arguments,
+                schema.clone(),
+                proposed.into(),
+            )
+            .ok_or_else(|| self.step_error("invalid fold fields"))?;
+            &constructed
+        } else {
+            before
+                .resource_instance_at_path(binding.identity, &binding.children)
+                .or_else(|| {
+                    if !unfold && binding.children.is_empty() {
+                        pre_state.owned_resource_instance(binding.identity)
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    self.step_error(
+                        "resource instance is not owned and has no entry-state fold template",
+                    )
+                })?
+        };
         let definition = context
             .function
             .composite_resource_definition(instance.name())
@@ -724,7 +821,7 @@ impl<'a> Proof<'a> {
         resource: &ResourceClause,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         if let ResourceClause::Named { binding, .. } = resource {
-            return self.apply_instance_rewrite(binding, true);
+            return self.apply_instance_rewrite(binding, resource, true);
         }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `unfold` requires an execution-frontier proof"));
@@ -791,7 +888,7 @@ impl<'a> Proof<'a> {
         resource: &ResourceClause,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         if let ResourceClause::Named { binding, .. } = resource {
-            return self.apply_instance_rewrite(binding, false);
+            return self.apply_instance_rewrite(binding, resource, false);
         }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `fold` requires an execution-frontier proof"));
@@ -927,7 +1024,7 @@ impl<'a> Proof<'a> {
         resource: &ResourceClause,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         if let ResourceClause::Named { binding, .. } = resource {
-            return self.apply_instance_rewrite(binding, false);
+            return self.apply_instance_rewrite(binding, resource, false);
         }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("outcome resource `fold` requires an execution proof"));
