@@ -72,7 +72,7 @@ C import and execution:
 Specification and proof:
 
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
-- [Add algebraic data types to specifications](algebraic-data-types.md)
+- [Complete algebraic data types and modeled resource ownership](algebraic-data-types.md)
 - [Give function-pointer values checked named contracts](function-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
