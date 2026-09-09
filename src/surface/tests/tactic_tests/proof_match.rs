@@ -29,6 +29,76 @@ int read(int* p) {
 "#;
 
 #[test]
+fn proof_match_fields_survive_function_unfold_in_have() {
+    let source = SOURCE
+        .replace("resource cell", "function identity(m: Maybe) -> Maybe { m }\nresource cell")
+        .replace("            unfold(c);", "            have identity(Maybe::Some(value)) == Maybe::Some(value) by {\n                unfold(identity(Maybe::Some(value)));\n                normalize();\n            }\n            have Maybe::Some(value) != Maybe::None by {\n                rewrite(Maybe::Some(value) == identity(Maybe::Some(value)));\n                rewrite(identity(Maybe::Some(value)) == Maybe::Some(value));\n                normalize();\n            }\n            unfold(c);");
+    let sources = [("read.c", C)];
+    for source in [
+        source.clone(),
+        source
+            .replace("Some(int)", "Some(Maybe)")
+            .replace("p[0] == value", "p[0] == 0")
+            .replace("result == value", "result == 0"),
+    ] {
+        verify_c0_sources(&source, &sources).unwrap();
+        let expanded =
+            expand_c0_claim_source(&source, &sources, "read", CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &sources).unwrap();
+        let bad = source.replace("== Maybe::Some(value) by", "== Maybe::None by");
+        assert!(verify_c0_sources(&bad, &sources).is_err());
+    }
+}
+
+#[test]
+fn modeled_tree_rotate_left_checks_model_and_ownership() {
+    let source = include_str!("../../../../examples/modeled-binary-tree/modeled_binary_tree.click");
+    let c = include_str!("../../../../examples/modeled-binary-tree/modeled_binary_tree.c");
+    let header = include_str!("../../../../examples/modeled-binary-tree/modeled_binary_tree.h");
+    let sources = [
+        ("modeled_binary_tree.c", c),
+        ("modeled_binary_tree.h", header),
+    ];
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(source, &sources, "tree_rotate_left", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+    for bad in [
+        source.replace("    requires heap_right(t.model) != HeapTree::Empty;", ""),
+        source.replace(
+            "model: HeapTree::Node(node, value, left_model, middle_model)",
+            "model: HeapTree::Node(node, pivot_value, left_model, middle_model)",
+        ),
+        source.replace("{ left: l, right: m }", "{ left: l, right: z }"),
+        source.replace("{ left: l, right: m }", "{ left: l, right: l }"),
+        source.replace(
+            "let rotated = fold(tree_at(result)",
+            "let rotated = fold(tree_at(root)",
+        ),
+    ] {
+        assert_ne!(bad, source);
+        assert!(verify_c0_sources(&bad, &sources).is_err());
+    }
+    // The real source stays the positive boundary; broken-store mutants must fail.
+    for bad_c in [
+        c.replace("root->right = middle;", "root->right = pivot;"),
+        c.replace("pivot->left = root;", "pivot->left = middle;"),
+    ] {
+        assert_ne!(bad_c, c);
+        assert!(
+            verify_c0_sources(
+                source,
+                &[
+                    ("modeled_binary_tree.c", &bad_c),
+                    ("modeled_binary_tree.h", header)
+                ]
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn proof_match_closes_impossible_constructor_without_executing_c() {
     let source = SOURCE
         .replace(

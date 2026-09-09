@@ -118,7 +118,7 @@ expansion/rechecking, and deterministic multi-size scaling:
 
 ## Remaining work toward the C tree
 
-### Constructor elimination in execution proofs (blocks left rotation)
+### Constructor elimination in execution proofs
 
 An arbitrary resource model needs an explicit proof operation that splits on
 its constructors and introduces typed field names. An entry proof match now
@@ -126,7 +126,7 @@ exposes the unknown fields of `Node`, with `model != Empty` discharging the
 empty arm through `contradiction(model == Empty)`. Pure `match` remains
 a symbolic expression, and theorem-level `induct` is not an execution-proof
 case split. Do not specialize the rotation to concrete payloads or subtree
-models to bypass this gap.
+models to bypass unsupported proof shapes.
 
 The reduced regression is
 [resource_nonempty_model_needs_constructor_cases.md](../mdtests/resource_nonempty_model_needs_constructor_cases.md):
@@ -163,9 +163,10 @@ Still extend exclusion to local proof prefixes and matches whose every arm
 is contradictory (currently rejected), and extend joins to wider constructor families without quadratic selector
 construction, shared continuations, and matches after C/resource transitions
 with indexed witness freshness. These are implementation limits, not changes
-to pure match semantics. Then verify unchanged `tree_rotate_left` for arbitrary
-nonempty root/right-child models, preserving both node identities/payloads and
-all three arbitrary subtrees. Its sidecar still has no rotation contract.
+to pure match semantics. The unchanged `tree_rotate_left` now verifies for
+arbitrary nonempty root/right-child models, preserving both node identities
+and payloads and all three arbitrary subtrees. Its proof uses scoped function
+unfolding, ADT equality rewrites, and explicit return-state folds at `result`.
 
 ### Other remaining work
 
@@ -205,7 +206,10 @@ through the stored links. The initializer consumes separate parent memory and
 two arbitrary modeled children to construct the modeled parent. The focused
 fixture and kernel/surface tests cover expansion, invalid models and links,
 missing/duplicated ownership, overlap, and unrelated-resource scaling.
-No C traversal or rotation is verified yet.
+The unchanged left rotation also verifies its exact `heap_rotate_left` model
+transformation. Source and expanded-proof regressions reject missing nonempty
+premises, incorrect fields or links, and duplicated or incorrect children.
+Traversals, right rotation, and a separate in-order sequence theorem remain.
 
 ## Other ADT gaps
 

@@ -41,12 +41,22 @@ impl<'a> Proof<'a> {
             let ResourceClause::Named { resource, .. } = resource else {
                 unreachable!()
             };
-            let lowered = lower_resource_clause_at_state(
-                resource,
-                context.parsed_function.parameters(),
-                context.arguments,
-                before,
-            )?;
+            let lowered = if let Some(goal) = outcome {
+                lower_resource_clause_at_state_with_result(
+                    resource,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    before,
+                    &goal.data.core.result,
+                )?
+            } else {
+                lower_resource_clause_at_state(
+                    resource,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    before,
+                )?
+            };
             let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
                 return Err(self.step_error("fold construction requires an owned resource"));
             };
@@ -78,7 +88,7 @@ impl<'a> Proof<'a> {
                 let expression = supplied
                     .get(name.as_str())
                     .ok_or_else(|| self.step_error(format!("missing fold field `{name}`")))?;
-                let expression = self.substitute_goal_surface_bindings_in_expression(expression)?;
+                let expression = self.substitute_fixed_state_locals_in_expression(expression)?;
                 let value = capture_resource_field_initializer(
                     &expression,
                     ty,
@@ -335,10 +345,15 @@ impl<'a> Proof<'a> {
                     application.name
                 ))
             })?;
+        let checked_arguments = application
+            .arguments
+            .iter()
+            .map(|argument| self.substitute_fixed_state_locals_in_expression(argument))
+            .collect::<Result<Vec<_>, _>>()?;
         let variable_types = generics::concrete_variable_types(&values, &algebraic_values);
         let definition = generics::instantiate_function_for_surface_call_with_variables(
             definition,
-            &application.arguments,
+            &checked_arguments,
             &variable_types,
         )
         .map_err(|message| self.step_error(message))?;
@@ -351,11 +366,6 @@ impl<'a> Proof<'a> {
             )));
         }
 
-        let checked_arguments = application
-            .arguments
-            .iter()
-            .map(|argument| self.substitute_goal_surface_bindings_in_expression(argument))
-            .collect::<Result<Vec<_>, _>>()?;
         let checked_substitutions = definition
             .parameters()
             .iter()
@@ -472,7 +482,7 @@ impl<'a> Proof<'a> {
                 });
                 let kernel = if let Some(surface) = &surface {
                     let checked_surface =
-                        self.substitute_goal_surface_bindings_in_proposition(surface)?;
+                        self.substitute_fixed_state_locals_in_proposition(surface)?;
                     let mut opaque_calls = BTreeSet::new();
                     crate::surface::validation::collect_click_function_calls_in_proposition(
                         &checked_surface,
