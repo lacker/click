@@ -50,8 +50,8 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   The false case exposes no body ownership or facts. Bare field names in the
   body denote the instance's fields.
   Memory-only bodies, including guarded and matched bodies, leave no open
-  handle. Recursive children can be independently named with `as { ... }`;
-  only the older parent-qualified compatibility syntax retains a handle.
+  handle. Recursive children must be independently named with `as { ... }`;
+  parent-qualified handles such as `root.left` are rejected.
 - A resource body may instead `match` one ADT field with exhaustive
   `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
   arm without implicit proof-by-cases. Bindings have the constructor's
@@ -71,14 +71,14 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   must occur exactly once with a distinct owned identity. Child arguments and
   fields must match the proposed model; replacement identities and reordered
   children are allowed. Named `consumes` inputs support constructing parents
-  from separately owned children. The older parent-qualified syntax remains
-  compatible and requires its recorded children unchanged.
+  from separately owned children. No open-parent ledger or recorded-child
+  identity requirement remains.
 - Plain memory bodies support explicit construction from raw ownership:
   `let c = fold(cell(p), { model: Mark::Set(value) });` supplies every field and
   checks the complete body ownership and facts. Initializers accept typed
   symbolic expressions, including ADT constructors, entry-model values,
   matches, and pure-function applications; they do not execute pure functions
-  or split arbitrary models into cases. The legacy `fold(c)` shorthand
+  or split arbitrary models into cases. The `fold(c)` shorthand
   selects entry-state fields without requiring an open handle. Guarded and
   matched memory-only bodies also support explicit fields: fold selects the
   proved guard or constructor case from the proposed instance and checks its
@@ -189,7 +189,7 @@ all three arbitrary subtrees. Its sidecar still has no rotation contract.
    reuse that captured model in a later explicit fold without a live handle.
 3. **Contract and witness transport.** Complete ordinary inline-call transport
    and concrete-function formation/refinement for resource-parameterized
-   contracts, and transport parent-qualified child handles through explicit
+   contracts, and transport independently owned children through explicit
    contract arguments. Resource-body witnesses currently admit only C pointers, not
    existential child models. Contract `let ... where` witnesses are separate
    per clause; they must not silently become shared instance bindings.

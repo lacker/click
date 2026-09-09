@@ -1260,7 +1260,7 @@ pub fn c_function_entry_state(
     let mut entry = bind_c_function_arguments(caller_state, function, &values)?;
     // This API rebinds a proof frontier, including an explicitly unfolded
     // entry representation. It is not the modular call ownership transfer.
-    entry.open_instances = caller_state.open_instances.clone();
+    entry.instance_field_scope = caller_state.instance_field_scope.clone();
     Some(entry)
 }
 

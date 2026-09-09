@@ -9,6 +9,9 @@ impl<'a> Proof<'a> {
         resource: &ResourceClause,
         unfold: bool,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if !binding.children.is_empty() {
+            return Err(self.step_error("parent-qualified resource handles are not supported; use `unfold(parent) as { slot: child }` and the independent child name"));
+        }
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("instance fold/unfold requires a C execution proof"));
         };
