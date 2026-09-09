@@ -116,12 +116,15 @@ leaf/binder work is now outlined without changing proof rules, traversal
 order, synthesis depth/work limits, or the ordinary stack size. Four-size
 1 MiB-stack regressions check linear visits/work in both directions.
 
-`explicit_sorting_transport_has_a_bounded_lowering_result` retains that full
-unchanged-C reproduction. It now returns the existing local smart-work-budget
-failure from `close_invariants` (2,000,001 units against the 2,000,000 limit),
-not a stack overflow. The failing proof is not expanded. The full quantified
-planner task remains open; the successful reduced C is not substituted for
-the original fixture.
+The initial full reproduction returned a local smart-work-budget failure
+from `close_invariants`, not a stack overflow. Further explicit steps now
+enumerate the fixed-range invariant and carry the branch ordering through the
+swap. The growing invariant's `unfold; rewrite(j == 1); simp` body exposes a
+more specific proof-body conversion failure. The regression is now named
+`explicit_sorting_rewritten_invariant_reports_body_failure`; see
+[the focused tooling issue](rewritten-invariant-proof-body.md). Fix that
+boundary before resuming automatic migration. The failing proof is not
+expanded, and the reduced C is not substituted for the original fixture.
 
 ## Acceptance criteria
 

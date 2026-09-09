@@ -1,9 +1,9 @@
 use super::*;
 
-/// The former stack-overflow reproduction must return a local search result.
-/// The full quantified proof remains a planner task; never expand its failure.
+/// Keep the original C while isolating the post-rewrite proof-body failure.
+/// Never expand this failing proof; see rewritten-invariant-proof-body.md.
 #[test]
-fn explicit_sorting_transport_has_a_bounded_lowering_result() {
+fn explicit_sorting_rewritten_invariant_reports_body_failure() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/bubble_sort3_two_pass_sorted.md");
     let source = std::fs::read_to_string(&path).unwrap();
@@ -51,19 +51,34 @@ fn explicit_sorting_transport_has_a_bounded_lowering_result() {
         transport(at(before_swap, p[0] <= p[2]), p[1] <= p[2]) using {
             at(before_swap, p[0] <= p[2]); at(before_swap, j) == 0;
         }
+        have forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] } by {
+            enumerate();
+        }
+        have j == 1 by simp;
+        transport(at(before_swap, p[j + 1] < p[j]), p[0] < p[1]) using {
+            at(before_swap, j) == 0; at(before_swap, p[j + 1] < p[j]);
+        }
+        have p[0] <= p[1] by {
+            apply(int32_lt_implies_le(p[0], p[1])) using { p[0] < p[1]; }
+            assumption();
+        }
+        have all_le_range(p, 0, j, p[j]) by {
+            unfold(all_le_range);
+            rewrite(j == 1);
+            simp();
+        }
     "#,
     );
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
     let discovery_before = crate::kernel::invariant_discovery_calls();
-    if let Err(error) = verify_c0_sources(&explicit, &sources) {
-        let message = error.message();
-        assert!(
-            message.contains("closure body did not prove every invariant obligation")
-                || (message.contains("deterministic smart work budget")
-                    && message.contains("close_invariants")),
-            "{message}"
-        );
-    }
+    let error = verify_c0_sources(&explicit, &sources).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("`have` body is not surface-expressible"),
+        "{}",
+        error.message()
+    );
     assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
