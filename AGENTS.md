@@ -37,11 +37,17 @@ reading output, but the verdict comes from an unpiped run. The default `cargo
 test --lib` is also not the gate: it passes while both proof-fixture gates
 fail.
 
-## File issues as one markdown file each in `issues/`
+## Create issues only when the user explicitly asks
 
-Any problem worth tracking becomes one kebab-case `.md` file in `issues/`
-plus a one-line entry in the Open list in `issues/README.md` — bugs, design
-gaps, and deferred work alike, not only tooling failures. State the violated
+Do not create new issue files or new issue-list entries unless the user
+explicitly asks you to create or file issues. Discovering a bug, design gap,
+deferred task, or tooling blocker is not authorization to file one. Report
+the finding to the user instead; a general request to implement, investigate,
+or fix something does not implicitly authorize new issues. This rule also
+applies when another document recommends filing an issue.
+
+When requested, create one kebab-case `.md` file per independent problem in
+`issues/` plus a one-line entry in `issues/README.md`. State the violated
 invariant, a small intended regression, and acceptance criteria, written so
 a fresh agent can act on the file alone without the conversation that
 produced it. Delete the file and its list line when the fix, its regression
@@ -91,10 +97,11 @@ completeness is a non-goal; sound certificate validation, enforced bounds, usefu
 and sufficient simple tactics are requirements.
 
 Reduce and fix the tooling problem before resuming feature work. If it cannot
-be fixed in the same coherent chunk, create a focused file in `issues/` with a
-regression design and acceptance criteria, then restore the worktree to a green,
-check-in-ready checkpoint. Do not silently work around the problem, raise time
-limits, accept a slow successful run, or leave the only reproduction inside an
+be fixed in the same coherent chunk, report the blocker and a proposed
+regression to the user, then restore the worktree to a green, check-in-ready
+checkpoint. Create an issue only if the user explicitly asks. Do not silently
+work around the problem, raise time limits, accept a slow successful run, or
+leave the only reproduction inside an
 unverified example.
 
 After any timeout or interrupted bounded command, confirm that its verifier

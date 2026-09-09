@@ -1,22 +1,28 @@
 # Open issues
 
-One `.md` file per independent open problem. Each issue contains a small
-intended regression, the violated invariant, and acceptance criteria. Delete
+Agents must not create new issue files or issue-list entries unless the user
+explicitly asks them to. Discovering a problem during other work is not
+authorization; report it to the user instead. This applies to bugs, design
+gaps, deferred work, and tooling blockers, even when another document
+recommends filing an issue.
+
+When requested, use one `.md` file per independent open problem. Each issue
+contains a small intended regression, the violated invariant, and acceptance criteria. Delete
 an issue when its fix, regression coverage, and documentation land. Do not
 leave the only reproduction in an uncommitted example, and do not quarantine
 a regression (in `tests/mdtests.rs` or `tests/examples.rs`) without a
 corresponding issue here.
 
 Policy lives in the docs, not here: `AGENTS.md` for when tooling failures
-block feature work and what always warrants an issue, the
+block feature work and the user-authorization rule for issue creation, the
 [proof-failure triage guide](../docs/concepts/proof-failure-triage.md) for
 classifying a failure before filing (including the smart-versus-simple
 tactic rule), [Testing Click](../docs/internals/testing.md) for
 quarantine, profiling order, and the expansion workflow, and
 [Verification Efficiency](../docs/internals/verification-efficiency.md) for
 the complexity contract and scaling-regression policy. Proposals without a
-failing deterministic curve are not open roadmap items; file a narrow issue
-when evidence exposes one.
+failing deterministic curve are not open roadmap items; when the user requests
+an issue, scope it narrowly to the evidence.
 
 ## P1: before launch (24)
 
