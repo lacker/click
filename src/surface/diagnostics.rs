@@ -1168,7 +1168,22 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         ContractExpression::CBinding(name) => format!("c({name})"),
         ContractExpression::ResourceWildcard => "_".to_string(),
         ContractExpression::ResourceCount(resource) => {
-            format!("count({})", describe_resource_clause(resource))
+            // Population patterns name the resource, not the permission of
+            // the observation that supplied it. `count(view r(...))` is not
+            // syntax, and count lowering ignores that access annotation.
+            match resource.as_ref() {
+                ResourceClause::Declared {
+                    name, arguments, ..
+                } => format!(
+                    "count({name}({}))",
+                    arguments
+                        .iter()
+                        .map(describe_contract_expression)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ => format!("count({})", describe_resource_clause(resource)),
+            }
         }
         ContractExpression::Old(expression) => {
             format!("old({})", describe_contract_expression(expression))

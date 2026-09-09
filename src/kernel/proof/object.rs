@@ -631,6 +631,23 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .ok_or(PropositionCloseError::Unavailable)
     }
 
+    /// An interface leaf uses indexed premises, direct intrinsic facts, or
+    /// an exact kernel-issued load definition; it never selects a derivation.
+    pub(super) fn apply_interface_leaf(
+        &self,
+        definition: Option<&super::execution::CheckedInterfaceLoadDefinition>,
+        read_premise: Option<&Proposition>,
+    ) -> Option<Self> {
+        let (goal, facts) = self.focused_proposition()?;
+        (super::execution::checked_branch_fact_is_available(facts, goal.proposition())
+            || definition.is_some_and(|definition| definition.proves(goal.proposition()))
+            || read_premise.is_some_and(|premise| {
+                facts.contains(premise)
+                    && super::execution::interface_read_is_subrange(goal.proposition(), premise)
+            }))
+        .then(|| self.closed_focused())
+    }
+
     pub(crate) fn apply_normalize(&self) -> Result<Self, PropositionCloseError> {
         let (goal, _) = self
             .focused_proposition()

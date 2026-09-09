@@ -20,7 +20,8 @@ pub(crate) use execution::{
     CheckedBranchSplit, CheckedBranchSplitError, CheckedCallEvent, CheckedCallEvents,
     CheckedExecutionEvent, CheckedProofCasePartition, EvidenceRefusal, ExecutionFrontier,
     ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal, OutcomeEvidenceFork,
-    ProofExecutionContinuation, ProofExecutionState, old_reference_state,
+    ProofExecutionContinuation, ProofExecutionState, checked_branch_fact_is_available,
+    old_reference_state,
 };
 pub(crate) use fact_keys::{
     QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,

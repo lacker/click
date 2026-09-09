@@ -2575,7 +2575,7 @@ impl<'a> Proof<'a> {
                 return Ok(false);
             };
             let fact = self.lower_surface_proposition(surface, "`branch ensuring` fact")?;
-            if !self.facts().contains(&fact) && !self.facts().assumptions().proves(&fact) {
+            if !crate::kernel::proof::checked_branch_fact_is_available(self.facts(), &fact) {
                 return Err(self.step_error(format!(
                     "`branch ensuring` did not establish fact `{}`",
                     describe_click_proposition(surface)

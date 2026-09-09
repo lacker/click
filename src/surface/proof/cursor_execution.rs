@@ -54,9 +54,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     .presentation
                     .surface_propositions
                     .record_lowering(surface_fact, &fact)?;
-                if !concrete_facts.contains_top_level(&fact)
-                    && !concrete_facts.assumptions().proves(&fact)
-                {
+                if !crate::kernel::proof::checked_branch_fact_is_available(&concrete_facts, &fact) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `branch ensuring` did not establish fact: {}",
                         describe_missing_pure_fact(
@@ -181,7 +179,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     }
                 }
                 for fact in entry_loadables {
-                    if pre_advance_facts.assumptions().proves(&fact)
+                    if pre_advance_facts.assumptions().proves_exact(&fact)
                         && !exported_pure_facts.contains(&fact)
                     {
                         exported_pure_facts.push(fact);

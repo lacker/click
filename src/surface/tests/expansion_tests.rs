@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn branch_interface_fixture_proofs_verify_expand_and_recheck() {
+    for name in [
+        "frontier_branch_return.md",
+        "proof_branch_memory_continuation.md",
+        "proof_branch_pointer_local.md",
+        "step_nested_branches.md",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(name);
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(source, &sources)
+            .unwrap_or_else(|error| panic!("{name}: {}", error.message()));
+        // The nested-branch fixture is already fully expanded. For the others,
+        // expand their closing tactic and reparse/recheck the full proof.
+        if let Some(offset) = source.rfind("simp();") {
+            let position = expansion::position_at_offset(source, offset);
+            let expanded =
+                expand_c0_tactic_source_at(source, &sources, position.line, position.column)
+                    .unwrap();
+            verify_c0_sources(&expanded, &sources)
+                .unwrap_or_else(|error| panic!("{name}: {}", error.message()));
+        }
+    }
+}
+
+#[test]
+fn branch_interface_service_frame_expands_and_rechecks() {
+    let source = include_str!("../../../examples/perpetual-service/perpetual_service.click");
+    let sources = [
+        (
+            "service_init.c",
+            include_str!("../../../examples/perpetual-service/service_init.c"),
+        ),
+        (
+            "service_step.c",
+            include_str!("../../../examples/perpetual-service/service_step.c"),
+        ),
+        (
+            "service_run.c",
+            include_str!("../../../examples/perpetual-service/service_run.c"),
+        ),
+    ];
+    verify_c0_sources(source, &sources).unwrap();
+    let start = source.find("int32 service_step").unwrap();
+    let offset = start + source[start..].find("frame();").unwrap();
+    let position = expansion::position_at_offset(source, offset);
+    let expanded =
+        expand_c0_tactic_source_at(source, &sources, position.line, position.column).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!(
+            "{}\n{}",
+            error.message(),
+            expanded
+                .lines()
+                .skip(position.line - 1)
+                .take(8)
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    });
+}
+
+#[test]
 fn callback_branch_ground_premises_verify_expand_and_recheck() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/c_step_contract_frontier_branch.md");
@@ -7874,10 +7944,12 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
                 then {
                     open(cell(p)) {
                         step();
+                        have value == old(p[0]) or value == 0 by { normalize(); }
                     }
                 }
                 else {
                     step();
+                    have value == old(p[0]) or value == 0 by { normalize(); }
                 }
             }
             step();
@@ -7996,10 +8068,12 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
                         then {
                             open(marker(flag)) {
                                 step();
+                                have value == old(p[0]) or value == 0 by { normalize(); }
                             }
                         }
                         else {
                             step();
+                            have value == old(p[0]) or value == 0 by { normalize(); }
                         }
                     }
                 }

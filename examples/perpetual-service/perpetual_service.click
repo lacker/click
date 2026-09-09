@@ -51,9 +51,11 @@ int32 service_step(struct service* owner) {
         }
         then {
             step();
+            have owner->cell == old(owner->cell) by { normalize(); }
         }
         else {
             step();
+            have owner->cell == old(owner->cell) by { normalize(); }
         }
     }
     step();

@@ -1204,7 +1204,7 @@ pub(crate) struct CheckedExecutionBranch {
     interface_effect_facts: Vec<ExecutionPureFact>,
     interface_resource_definitions: Option<Vec<crate::kernel::CCompositeResourceDefinition>>,
     // Keep the actual selected lowering results, not just their boolean verdicts.
-    // Contextual checking remains below until these judgments have proof bodies.
+    // Every retained judgment has a completed local proof.
     interface_lowerings: Arc<Vec<[CheckedInterfaceLowering; 3]>>,
 }
 
@@ -1504,6 +1504,22 @@ impl CheckedExecutionBranch {
             .execution_start_state
             .as_ref()
             .unwrap_or(&split.state);
+        let concrete_access = [0, 1].map(|index| {
+            InterfaceReadPremises::new(
+                interface_resource_specs
+                    .iter()
+                    .zip(&arm_interface_resources[index])
+                    .filter_map(|(spec, resource)| {
+                        interface_resource_intrinsic_fact(
+                            spec,
+                            resource,
+                            arms[index].reached_state(),
+                        )
+                    }),
+            )
+        });
+        let successor_access =
+            InterfaceReadPremises::new(successor_interface_resource_facts.iter().cloned());
         let mut interface_lowerings = Vec::with_capacity(interface_specs.len());
         for spec in interface_specs {
             let concrete = |index: usize| {
@@ -1512,6 +1528,7 @@ impl CheckedExecutionBranch {
                     arms[index].reached_state(),
                     reference_state,
                     arm_facts[index],
+                    &concrete_access[index],
                 )
                 .ok_or("an interface fact is not established by both concrete arms")
             };
@@ -1522,6 +1539,7 @@ impl CheckedExecutionBranch {
                 joined_state,
                 reference_state,
                 successor_facts,
+                &successor_access,
             )
             .ok_or("an interface fact is not retained at the abstract successor")?;
             interface_lowerings.push([then_lowering, else_lowering, successor]);
@@ -1680,7 +1698,10 @@ impl CheckedExecutionBranch {
             .as_ref()
             .is_none_or(|definitions| definitions == function.composite_resource_definitions())
             && self.interface_lowerings.iter().all(|lowerings| {
-                lowerings[0].spec == lowerings[1].spec
+                lowerings
+                    .iter()
+                    .all(CheckedInterfaceLowering::has_complete_proof)
+                    && lowerings[0].spec == lowerings[1].spec
                     && lowerings[0].spec == lowerings[2].spec
                     && lowerings[0].reference == lowerings[1].reference
                     && lowerings[0].reference == lowerings[2].reference
@@ -2086,9 +2107,9 @@ fn interface_resource_intrinsic_fact(
 }
 
 /// The selected kernel lowering and the precise context in which it passed
-/// the existing checks. This is retained lowering evidence, NOT a replacement
-/// for a completed proposition proof. In particular, generated load-variable
-/// equations remain distinct from safety obligations and the asserted value.
+/// the local proof rules. Every value, generated fact, and safety obligation
+/// has a completed proof rooted in these exact premises. Load definitions
+/// use their kernel origin, not a contextual proof search.
 #[derive(Clone)]
 struct CheckedInterfaceLowering {
     spec: Arc<SpecProposition>,
@@ -2096,35 +2117,183 @@ struct CheckedInterfaceLowering {
     reference: CState,
     facts: ProofFacts,
     path: Arc<crate::kernel::spec::SpecPropositionPath>,
+    proofs: Arc<Vec<super::CheckedProposition>>,
 }
 
 impl CheckedInterfaceLowering {
+    fn has_complete_proof(&self) -> bool {
+        let expected = std::iter::once(&self.path.proposition)
+            .chain(self.path.facts.iter().map(ExecutionPureFact::proposition))
+            .chain(
+                self.path
+                    .obligations
+                    .iter()
+                    .map(crate::kernel::ProofObligation::proposition),
+            );
+        self.proofs.len() == 1 + self.path.facts.len() + self.path.obligations.len()
+            && expected.zip(self.proofs.iter()).all(|(goal, proof)| {
+                crate::instrumentation::record_deterministic_work(1);
+                goal == proof.proposition()
+            })
+    }
+
     fn check(
         spec: &SpecProposition,
         state: &CState,
         reference_state: &CState,
         facts: &ProofFacts,
+        access: &InterfaceReadPremises,
     ) -> Option<Self> {
         let paths = interface_spec_paths(spec, state, reference_state)?;
-        let path = paths.into_iter().find(|path| {
+        paths.into_iter().find_map(|path| {
             crate::instrumentation::record_deterministic_work(1);
-            facts.assumptions().proves(&path.proposition)
-                && path
-                    .facts
-                    .iter()
-                    .all(|fact| facts.assumptions().proves(fact.proposition()))
-                && path
-                    .obligations
-                    .iter()
-                    .all(|obligation| facts.assumptions().proves(obligation.proposition()))
-        })?;
-        Some(Self {
-            spec: Arc::new(spec.clone()),
-            snapshot: state.clone(),
-            reference: reference_state.clone(),
-            facts: facts.clone(),
-            path: Arc::new(path),
+            let prove =
+                |goal: &Proposition, definition: Option<&CheckedInterfaceLoadDefinition>| {
+                    use super::{
+                        OutcomeProofState, ProofBranch, ProofBranchState, ProofObject,
+                        ProofObligation, PropositionObligation,
+                    };
+                    type Leaf =
+                        ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()>;
+                    let read_premise = access.for_goal(goal);
+                    let root_facts = read_premise
+                        .map_or_else(|| facts.clone(), |premise| facts.with_fact(premise.clone()));
+                    let root = Leaf::root(
+                        (),
+                        ProofBranch::new(
+                            ProofObligation::Proposition(PropositionObligation::new(
+                                goal.clone(),
+                                (),
+                            )),
+                            ProofBranchState {
+                                facts: root_facts,
+                                unfolded_predicates: Default::default(),
+                                execution: None,
+                            },
+                        ),
+                    );
+                    let closed = root.apply_interface_leaf(definition, read_premise)?;
+                    closed.completed_proposition()
+                };
+            let mut proofs = vec![prove(&path.proposition, None)?];
+            for fact in &path.facts {
+                let definition = CheckedInterfaceLoadDefinition::check(fact.proposition());
+                proofs.push(prove(fact.proposition(), definition.as_ref())?);
+            }
+            for obligation in &path.obligations {
+                proofs.push(prove(obligation.proposition(), None)?);
+            }
+            Some(Self {
+                spec: Arc::new(spec.clone()),
+                snapshot: state.clone(),
+                reference: reference_state.clone(),
+                facts: facts.clone(),
+                path: Arc::new(path),
+                proofs: Arc::new(proofs),
+            })
         })
+    }
+}
+
+/// An index over the explicitly exported, already ownership-checked resource
+/// clauses. Building it is output-sized; no ambient resource/fact scan occurs
+/// per interface judgment. Equal bases retain the largest constant extent.
+#[derive(Default)]
+struct InterfaceReadPremises {
+    by_base: std::collections::BTreeMap<
+        (crate::kernel::CMemory, crate::kernel::Pointer),
+        (u32, Proposition),
+    >,
+}
+
+impl InterfaceReadPremises {
+    fn new(premises: impl IntoIterator<Item = Proposition>) -> Self {
+        let mut index = Self::default();
+        for premise in premises {
+            crate::instrumentation::record_deterministic_work(1);
+            let Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes,
+            } = &premise
+            else {
+                continue;
+            };
+            let Some(width) = bytes.as_const() else {
+                continue;
+            };
+            let key = (memory.clone(), base.clone());
+            if index.by_base.get(&key).is_none_or(|(old, _)| *old < width) {
+                index.by_base.insert(key, (width, premise));
+            }
+        }
+        index
+    }
+
+    fn for_goal(&self, goal: &Proposition) -> Option<&Proposition> {
+        let Proposition::CMemoryLoadable { memory, base, .. } = goal else {
+            return None;
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        self.by_base
+            .get(&(memory.clone(), base.clone()))
+            .map(|(_, premise)| premise)
+    }
+}
+
+pub(super) fn interface_read_is_subrange(goal: &Proposition, premise: &Proposition) -> bool {
+    let (
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        },
+        Proposition::CMemoryLoadable {
+            memory: source_memory,
+            base: source_base,
+            bytes: source_bytes,
+        },
+    ) = (goal, premise)
+    else {
+        return false;
+    };
+    memory == source_memory
+        && base == source_base
+        && bytes
+            .as_const()
+            .zip(source_bytes.as_const())
+            .is_some_and(|(width, source_width)| width <= source_width)
+}
+
+/// An exact registered load identity. The witness cannot be supplied by the
+/// surface or inferred merely from a reserved variable's spelling.
+pub(super) struct CheckedInterfaceLoadDefinition {
+    proposition: Proposition,
+}
+
+impl CheckedInterfaceLoadDefinition {
+    fn check(proposition: &Proposition) -> Option<Self> {
+        let Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::Bitvector32Equal(left, right),
+            true,
+        ) = proposition
+        else {
+            return None;
+        };
+        let (Bitvector32Term::Variable(variable), Bitvector32Term::MemoryLoad(memory, pointer)) =
+            (left.as_ref(), right.as_ref())
+        else {
+            return None;
+        };
+        let (defined_memory, defined_pointer) =
+            crate::kernel::registered_load_for_variable(variable)?;
+        (&defined_memory == memory && &defined_pointer == pointer.as_ref()).then(|| Self {
+            proposition: proposition.clone(),
+        })
+    }
+
+    pub(super) fn proves(&self, goal: &Proposition) -> bool {
+        &self.proposition == goal
     }
 }
 
@@ -2548,7 +2717,7 @@ fn ground_comparison_premise_holds(premise: &Proposition) -> bool {
 /// Branch evidence names its exact arm context. Do not derive a missing
 /// prerequisite from other facts at the join. Literal comparisons and
 /// integer reflexivity are context-free rules, not premise search.
-fn checked_branch_fact_is_available(facts: &ProofFacts, fact: &Proposition) -> bool {
+pub(crate) fn checked_branch_fact_is_available(facts: &ProofFacts, fact: &Proposition) -> bool {
     crate::instrumentation::record_deterministic_work(1);
     facts.contains(fact)
         || facts.assumptions().proves_exact(fact)
@@ -6713,12 +6882,33 @@ mod tests {
         for fact in &path.facts {
             facts = facts.with_fact(fact.proposition().clone());
         }
-        assert!(CheckedInterfaceLowering::check(&spec, &state, &state, &facts).is_none());
+        assert!(
+            CheckedInterfaceLowering::check(
+                &spec,
+                &state,
+                &state,
+                &facts,
+                &InterfaceReadPremises::default()
+            )
+            .is_none()
+        );
         for obligation in &path.obligations {
             facts = facts.with_fact(obligation.proposition().clone());
         }
-        let checked = CheckedInterfaceLowering::check(&spec, &state, &state, &facts).unwrap();
+        let checked = CheckedInterfaceLowering::check(
+            &spec,
+            &state,
+            &state,
+            &facts,
+            &InterfaceReadPremises::default(),
+        )
+        .unwrap();
         assert_eq!(checked.path.as_ref(), &path);
+        assert!(checked.has_complete_proof());
+        assert_eq!(
+            checked.proofs.len(),
+            1 + path.facts.len() + path.obligations.len()
+        );
         assert!(checked.facts.shares_premises_with(&facts));
         assert_eq!(checked.snapshot, state);
         assert_eq!(checked.reference, state);
@@ -6726,6 +6916,144 @@ mod tests {
         let copy = checked.clone();
         assert!(Arc::ptr_eq(&copy.path, &checked.path));
         assert!(Arc::ptr_eq(&copy.spec, &checked.spec));
+        assert!(Arc::ptr_eq(&copy.proofs, &checked.proofs));
+        let mut incomplete = checked.clone();
+        incomplete.proofs = Arc::new(checked.proofs[..checked.proofs.len() - 1].to_vec());
+        assert!(!incomplete.has_complete_proof());
+    }
+
+    #[test]
+    fn interface_assertion_requires_an_available_proof_not_derivability() {
+        use crate::kernel::ConditionTerm;
+        let term = Bitvector32Term::Variable(Variable(949_000));
+        let state = CState::new().with_local("x", CValue::Int32(term.clone()));
+        let spec = SpecProposition::Comparison {
+            left: SpecExpression::CExpression(CExpression::Variable("x".into())),
+            operator: CComparisonOperator::GreaterEqual,
+            right: SpecExpression::Value(int32(0)),
+        };
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(term.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let facts = ProofFacts::default().with_fact(Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(term, Bitvector32Term::Constant(0)),
+            true,
+        ));
+        assert!(
+            facts.assumptions().proves(&goal),
+            "the removed contextual checker could derive this consequence"
+        );
+        assert!(
+            CheckedInterfaceLowering::check(
+                &spec,
+                &state,
+                &state,
+                &facts,
+                &InterfaceReadPremises::default()
+            )
+            .is_none()
+        );
+        let established = facts.with_fact(goal);
+        assert!(
+            CheckedInterfaceLowering::check(
+                &spec,
+                &state,
+                &state,
+                &established,
+                &InterfaceReadPremises::default()
+            )
+            .unwrap()
+            .has_complete_proof()
+        );
+    }
+
+    #[test]
+    fn interface_load_definition_rejects_wrong_variable_address_and_snapshot() {
+        use crate::kernel::{CMemory, ConditionTerm, Pointer};
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let pointer = Pointer {
+            block: "interface_definition".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let variable = crate::kernel::eval::load_variable_for_cell(&memory, &pointer);
+        let equation = |variable, memory, pointer| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(variable)),
+                    Box::new(Bitvector32Term::MemoryLoad(memory, Box::new(pointer))),
+                ),
+                true,
+            )
+        };
+        let correct = equation(variable, memory.clone(), pointer.clone());
+        let definition = CheckedInterfaceLoadDefinition::check(&correct).unwrap();
+        assert!(definition.proves(&correct));
+        let wrong_variable = equation(Variable(17), memory.clone(), pointer.clone());
+        let wrong_address = equation(
+            variable,
+            memory,
+            Pointer {
+                block: "other".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+        );
+        let wrong_snapshot = equation(
+            variable,
+            crate::kernel::intern_c_memory(CMemory::new().with_block("different", 4)),
+            pointer,
+        );
+        for wrong in [wrong_variable, wrong_address, wrong_snapshot] {
+            assert!(CheckedInterfaceLoadDefinition::check(&wrong).is_none());
+            assert!(!definition.proves(&wrong));
+        }
+    }
+
+    #[test]
+    fn interface_read_premises_are_indexed_and_check_the_exact_range() {
+        use crate::kernel::{CMemory, Pointer};
+        let memory = CMemory::new();
+        let readable = |memory: CMemory, block: String, width| Proposition::CMemoryLoadable {
+            memory,
+            base: Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(width),
+        };
+        let goal = readable(memory.clone(), "selected".into(), 4);
+        let source = readable(memory.clone(), "selected".into(), 8);
+        let samples = [16, 32, 64, 128].map(|size| {
+            let inputs = (0..size)
+                .map(|i| readable(memory.clone(), format!("unrelated_{i}"), 8))
+                .chain(std::iter::once(source.clone()))
+                .collect::<Vec<_>>();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let index = InterfaceReadPremises::new(inputs);
+                let selected = index.for_goal(&goal).unwrap();
+                assert_eq!(selected, &source);
+                assert!(interface_read_is_subrange(&goal, selected));
+                assert!(!interface_read_is_subrange(
+                    &readable(memory.clone(), "selected".into(), 9),
+                    selected
+                ));
+                assert!(!interface_read_is_subrange(
+                    &readable(memory.clone(), "other".into(), 4),
+                    selected
+                ));
+                assert!(!interface_read_is_subrange(
+                    &readable(CMemory::new().with_block("other", 4), "selected".into(), 4),
+                    selected
+                ));
+            });
+            work
+        });
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] * 2),
+            "explicit resource index scaled superlinearly: {samples:?}"
+        );
+        assert!(InterfaceReadPremises::default().for_goal(&goal).is_none());
     }
 
     #[test]
@@ -6746,8 +7074,14 @@ mod tests {
                 state = state.with_local(format!("unrelated_{index}"), int32(index));
             }
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-                let checked =
-                    CheckedInterfaceLowering::check(&spec, &state, &state, &facts).unwrap();
+                let checked = CheckedInterfaceLowering::check(
+                    &spec,
+                    &state,
+                    &state,
+                    &facts,
+                    &InterfaceReadPremises::default(),
+                )
+                .unwrap();
                 let copy = checked.clone();
                 assert!(copy.facts.shares_premises_with(&facts));
                 assert_eq!(copy.snapshot, state);
