@@ -64,6 +64,14 @@ fn modeled_tree_rotate_left_checks_model_and_ownership() {
         expand_c0_claim_source(source, &sources, "tree_rotate_left", CProofClaim::Grouped).unwrap();
     verify_c0_sources(&expanded, &sources).unwrap();
     for bad in [
+        source.replace(
+            "ensures heap_inorder(heap_rotate_left(tree)) == heap_inorder(tree) by",
+            "ensures heap_inorder(heap_rotate_left(tree)) == List<struct tree_node*>::Nil by",
+        ),
+        source.replace(
+            "ensures heap_inorder(rotated.model) == heap_inorder(old(t.model));",
+            "ensures heap_inorder(rotated.model) == list_append(heap_inorder(old(t.model)), List<struct tree_node*>::Cons(root, List<struct tree_node*>::Nil));",
+        ),
         source.replace("    requires heap_right(t.model) != HeapTree::Empty;", ""),
         source.replace(
             "model: HeapTree::Node(node, value, left_model, middle_model)",

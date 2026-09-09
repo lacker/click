@@ -198,20 +198,9 @@ fn algebraic_terms_equal(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {
     {
         return false;
     }
-    match (&left.node, &right.node) {
-        (AlgebraicTermNode::Variable(left), AlgebraicTermNode::Variable(right)) => left == right,
-        (
-            AlgebraicTermNode::Constructor {
-                variant: left_variant,
-                fields: left_fields,
-            },
-            AlgebraicTermNode::Constructor {
-                variant: right_variant,
-                fields: right_fields,
-            },
-        ) => left_variant == right_variant && left_fields == right_fields,
-        _ => false,
-    }
+    // Reflexivity applies to opaque applications and symbolic matches too.
+    // This checks exact terms, not injectivity or evaluation of pure calls.
+    left.node == right.node
 }
 
 fn algebraic_terms_definitely_distinct(left: &AlgebraicTerm, right: &AlgebraicTerm) -> bool {

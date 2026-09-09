@@ -13,14 +13,16 @@ The logical list algebra and its algebraic-data-type foundation are tracked in
 [algebraic-data-types.md](algebraic-data-types.md). This issue begins once
 those immutable values can be used as resource fields. Recursive `HeapTree`
 fields now connect parent models to child models across ownership and mutation;
-the remaining work includes the derived in-order list and broader algorithms.
+the derived in-order list also has a checked left-rotation preservation theorem.
+The remaining work is extending these guarantees to broader algorithms.
 
 The fixed synthetic C scaffold for this work lives in
 [`examples/modeled-binary-tree`](../examples/modeled-binary-tree/README.md).
 Its sidecar verifies the unchanged initializer and left rotation against an
 exact `HeapTree` model carrying node addresses, payloads, and both subtrees.
 Left rotation preserves both affected nodes and all three arbitrary subtrees.
-The in-order list theorem, right rotation, and insert/erase regressions remain.
+Its C contract also preserves the exact derived in-order node-identity list.
+Right rotation and insert/erase regressions remain.
 
 ## Violated invariant
 

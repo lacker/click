@@ -209,7 +209,9 @@ missing/duplicated ownership, overlap, and unrelated-resource scaling.
 The unchanged left rotation also verifies its exact `heap_rotate_left` model
 transformation. Source and expanded-proof regressions reject missing nonempty
 premises, incorrect fields or links, and duplicated or incorrect children.
-Traversals, right rotation, and a separate in-order sequence theorem remain.
+The derived `heap_inorder` list and its left-rotation preservation theorem
+are checked, and the C rotation contract guarantees exact in-order list
+preservation. Traversals and right rotation remain.
 
 ## Other ADT gaps
 
