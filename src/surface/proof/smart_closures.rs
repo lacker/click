@@ -1486,6 +1486,8 @@ impl<'a> Proof<'a> {
         premise_anchor: Option<&ProgramPointRef>,
         kernel: &Proposition,
     ) -> Option<ClickProposition> {
+        let _qualified_sources =
+            super::surface_synthesis::QualifiedSynthesisScope::enter(surface_facts);
         let matches_kernel = |candidate: &ClickProposition| {
             if self.focused_outcome_data().is_some()
                 && surface_facts
@@ -1844,10 +1846,10 @@ impl<'a> Proof<'a> {
                 let equality_has_literal_endpoint = matches!(
                     &equality,
                     Proposition::ConditionIs(
-                        ConditionTerm::Bitvector32Equal(left, right),
+                        ConditionTerm::Bitvector32Equal(left, right) | ConditionTerm::Bitvector64Equal(left, right),
                         true
-                    ) if matches!(left.as_ref(), Bitvector32Term::Constant(_))
-                        || matches!(right.as_ref(), Bitvector32Term::Constant(_))
+                    ) if matches!(left.as_ref(), Bitvector32Term::Constant(_) | Bitvector32Term::Int64Constant(_) | Bitvector32Term::UInt64Constant(_))
+                        || matches!(right.as_ref(), Bitvector32Term::Constant(_) | Bitvector32Term::Int64Constant(_) | Bitvector32Term::UInt64Constant(_))
                 );
                 if used.contains(&equality) {
                     continue;
@@ -1949,6 +1951,7 @@ impl<'a> Proof<'a> {
                 matches!(
                     kernel,
                     Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+                        | Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(_, _), true)
                         | Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
                 )
             })

@@ -6575,7 +6575,6 @@ pub(crate) fn rewrite_resource_instance(
 ) -> Result<(CState, Vec<Proposition>), &'static str> {
     if definition.name() != instance.name()
         || definition.instance_schema.as_ref() != Some(instance.schema())
-        || definition.condition.is_some()
         || definition.recursive
         || definition.counted_population
         || !definition.witnesses.is_empty()
@@ -6585,7 +6584,7 @@ pub(crate) fn rewrite_resource_instance(
             .iter()
             .any(|body| !matches!(body, CResourceSpec::OwnMemory(_)))
     {
-        return Err("instance fold/unfold requires an unguarded, witness-free memory body");
+        return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
     let folded = CResourceFact::own(CResource::Instance(instance.clone()));
     if unfold {
@@ -6602,28 +6601,18 @@ pub(crate) fn rewrite_resource_instance(
     {
         return Err("instance has no matching open handle");
     }
-    let mut evaluation = state.clone();
-    evaluation.resource_bindings = Some(std::sync::Arc::new(BTreeMap::from([(
-        Variable(u64::MAX),
-        instance.identity,
-    )])));
-    for (parameter, value) in definition.parameters.iter().zip(instance.arguments.iter()) {
-        let value = value
-            .as_c_value()
-            .ok_or("resource argument is not a C value")?;
-        if value.c_type() != parameter.c_type() {
-            return Err("resource argument type mismatch");
-        }
-        evaluation.locals.set_typed(
-            parameter.name().to_owned(),
-            value.clone(),
-            parameter.c_type(),
-        );
-    }
+    let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
+    let active = evaluate_composite_resource_body_condition(
+        definition,
+        &evaluation,
+        assumptions,
+        &mut budget,
+    )
+    .ok_or("instance fold/unfold requires a proved body guard case")?;
     let body = evaluate_function_resource_context(
         &evaluation,
-        &definition.contains,
+        if active { &definition.contains } else { &[] },
         assumptions,
         &mut budget,
     )
@@ -6692,7 +6681,7 @@ pub(crate) fn rewrite_resource_instance(
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
-    for fact in &definition.facts {
+    for fact in definition.facts.iter().filter(|_| active) {
         let paths = lower_spec_proposition_at_state_with_loop_entry(
             &evaluation,
             fact,
@@ -6720,6 +6709,47 @@ pub(crate) fn rewrite_resource_instance(
         facts.push(proposition);
     }
     Ok((next, if unfold { facts } else { vec![] }))
+}
+
+fn instance_body_evaluation(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+) -> Result<CState, &'static str> {
+    let mut evaluation = state.clone();
+    evaluation.resource_bindings = Some(std::sync::Arc::new(BTreeMap::from([(
+        Variable(u64::MAX),
+        instance.identity,
+    )])));
+    for (parameter, value) in definition.parameters.iter().zip(instance.arguments.iter()) {
+        let value = value
+            .as_c_value()
+            .ok_or("resource argument is not a C value")?;
+        if value.c_type() != parameter.c_type() {
+            return Err("resource argument type mismatch");
+        }
+        evaluation.locals.set_typed(
+            parameter.name().to_owned(),
+            value.clone(),
+            parameter.c_type(),
+        );
+    }
+    Ok(evaluation)
+}
+
+pub(in crate::kernel) fn instance_body_guard_case(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+) -> Option<bool> {
+    let evaluation = instance_body_evaluation(state, instance, definition).ok()?;
+    evaluate_composite_resource_body_condition(
+        definition,
+        &evaluation,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
 }
 
 pub(super) fn expand_composite_resource_fact(

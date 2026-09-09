@@ -1523,6 +1523,8 @@ pub(super) fn finish_ordered_proof<'a>(
             })
             .collect();
         let mut verified = Vec::new();
+        let mut returned_core = proof_execution.core.clone();
+        let mut any_return_instance_rewrite = false;
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
@@ -4406,8 +4408,8 @@ pub(super) fn finish_ordered_proof<'a>(
                     // Explicit instance folds are checked resource events,
                     // including after C returns. Certify their retained trace
                     // before accepting the resulting ownership representation.
-                    let rewritten_execution;
-                    let final_execution = if has_return_instance_rewrite {
+                    let rewritten_path;
+                    let certified_path = if has_return_instance_rewrite {
                         let core = &outcome_proof
                             .as_ref()
                             .and_then(Proof::execution)
@@ -4415,30 +4417,33 @@ pub(super) fn finish_ordered_proof<'a>(
                                 ClickError::new("return instance fold lost its checked execution")
                             })?
                             .core;
-                        rewritten_execution = core
-                            .checked_function_execution(
+                        rewritten_path = core
+                            .checked_return_path(
                                 execution,
                                 function,
-                                assumptions_from_propositions(&base_certification_facts),
-                                function_environment.clone(),
-                                execution_semantics,
-                                execution_mode,
+                                &assumptions_from_propositions(&base_certification_facts),
+                                path_index,
                             )
                             .map_err(|message| {
                                 ClickError::new(format!(
                                     "could not certify return instance fold: {message}"
                                 ))
                             })?;
-                        &rewritten_execution
+                        returned_core
+                            .collect_return_resource_rewrites(core, path_index)
+                            .map_err(|message| ClickError::new(message))?;
+                        any_return_instance_rewrite = true;
+                        &rewritten_path
                     } else {
-                        &completed_execution
+                        completed_execution
+                            .paths()
+                            .get(certified_path_index)
+                            .ok_or_else(|| {
+                                ClickError::new(
+                                    "return instance fold changed execution path coverage",
+                                )
+                            })?
                     };
-                    let certified_path = final_execution
-                        .paths()
-                        .get(certified_path_index)
-                        .ok_or_else(|| {
-                            ClickError::new("return instance fold changed execution path coverage")
-                        })?;
                     let Proposition::CFunctionVerifies {
                         outcome: specification_outcome,
                         ..
@@ -4503,7 +4508,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .frontier_loop_clauses
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
-                            checked_execution: final_execution.clone(),
+                            checked_execution: completed_execution.clone(),
                             checked_proposition,
                         });
                     }
@@ -4552,6 +4557,23 @@ pub(super) fn finish_ordered_proof<'a>(
                 Ok(())
             },
         )?;
+        if any_return_instance_rewrite {
+            let completed = returned_core
+                .checked_function_execution(
+                    execution,
+                    function,
+                    assumptions_from_propositions(&base_certification_facts),
+                    function_environment.clone(),
+                    execution_semantics,
+                    execution_mode,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("could not certify all return folds: {message}"))
+                })?;
+            for theorem in &mut verified {
+                theorem.checked_execution = completed.clone();
+            }
+        }
         // A context that recorded a proof-branch choice appends its
         // post-execution tactics as a flat suffix after the choice point,
         // where cross-context synthesis will place the surface `if`.

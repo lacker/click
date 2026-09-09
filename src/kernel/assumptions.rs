@@ -1516,31 +1516,51 @@ impl PureFactContext {
     pub(super) fn rebuild_memory_load_condition_facts(&mut self) {
         self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
-        self.bitvector64_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
+        self.bitvector64_equality_facts = crate::persistent::PersistentMap::default();
+        let conditions = self.condition_facts.clone();
+        for (condition, value) in conditions.iter() {
+            self.adjust_bitvector64_equality(condition, *value, true);
+        }
     }
 
-    fn bitvector64_equality_index(
-        &self,
-    ) -> &BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>> {
-        self.bitvector64_equality_facts.get_or_init(|| {
-            let mut index: BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, ConditionTerm>> =
-                BTreeMap::new();
-            for (condition, value) in self.condition_facts.iter() {
-                let (ConditionTerm::Bitvector64Equal(left, right), true) = (condition, value)
-                else {
-                    continue;
-                };
-                index
-                    .entry(left.as_ref().clone())
-                    .or_default()
-                    .insert(right.as_ref().clone(), condition.clone());
-                index
-                    .entry(right.as_ref().clone())
-                    .or_default()
-                    .insert(left.as_ref().clone(), condition.clone());
-            }
-            index
-        })
+    fn adjust_bitvector64_equality(
+        &mut self,
+        condition: &ConditionTerm,
+        value: bool,
+        insert: bool,
+    ) {
+        let ConditionTerm::Bitvector64Equal(left, right) = condition else {
+            return;
+        };
+        if !value {
+            return;
+        }
+        for (endpoint, other) in [
+            (left.as_ref(), right.as_ref()),
+            (right.as_ref(), left.as_ref()),
+        ] {
+            let neighbors = self
+                .bitvector64_equality_facts
+                .get(endpoint)
+                .cloned()
+                .unwrap_or_default();
+            let neighbors = if insert {
+                neighbors.with_inserted(other.clone(), condition.clone())
+            } else {
+                let reversed = ConditionTerm::Bitvector64Equal(right.clone(), left.clone());
+                if reversed != *condition && self.condition_facts.get(&reversed) == Some(&true) {
+                    neighbors.with_inserted(other.clone(), reversed)
+                } else {
+                    neighbors.without_key(other)
+                }
+            };
+            self.bitvector64_equality_facts = if neighbors.is_empty() {
+                self.bitvector64_equality_facts.without_key(endpoint)
+            } else {
+                self.bitvector64_equality_facts
+                    .with_inserted(endpoint.clone(), neighbors)
+            };
+        }
     }
 
     /// The terms recorded as 64-bit equal to `term` by one exact fact, each
@@ -1553,7 +1573,7 @@ impl PureFactContext {
         term: &Bitvector32Term,
     ) -> Vec<(Bitvector32Term, ConditionTerm)> {
         let exact = self
-            .bitvector64_equality_index()
+            .bitvector64_equality_facts
             .get(term)
             .map(|neighbors| {
                 neighbors
@@ -2378,12 +2398,15 @@ impl PureFactContext {
         }
         let old = self.condition_facts.get(&condition).copied();
         self.condition_facts = self.condition_facts.with_inserted(condition.clone(), value);
-        self.rebuild_memory_load_condition_facts();
+        self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
+        self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         if let Some(old) = old {
+            self.adjust_bitvector64_equality(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
         }
         self.adjust_signed_order_bound(&condition, value, true);
+        self.adjust_bitvector64_equality(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
     }

@@ -448,6 +448,8 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    let _qualified_sources =
+        super::surface_synthesis::QualifiedSynthesisScope::enter(view.surface_propositions);
     let matches_kernel = |lowered: &Proposition| {
         if matches!(match_kind, SurfaceFactMatch::CanonicalExact) {
             return lowered.clone() == kernel.clone();

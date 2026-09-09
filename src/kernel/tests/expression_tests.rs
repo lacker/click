@@ -1,6 +1,173 @@
 use super::*;
 
 #[test]
+fn wide_to_int_narrowing_requires_each_representability_bound() {
+    let value = Bitvector32Term::Variable(Variable(912));
+    let lower = ConditionTerm::int64_signed_greater_equal(
+        value.clone(),
+        Bitvector32Term::Int64Constant(i64::from(i32::MIN)),
+    );
+    let signed_upper = ConditionTerm::int64_signed_less_equal(
+        value.clone(),
+        Bitvector32Term::Int64Constant(i64::from(i32::MAX)),
+    );
+    let unsigned_upper = ConditionTerm::uint64_less_equal(
+        value.clone(),
+        Bitvector32Term::UInt64Constant(i32::MAX as u64),
+    );
+    for (input, bounds) in [
+        (CValue::Int64(value.clone()), vec![lower, signed_upper]),
+        (CValue::UInt64(value.clone()), vec![unsigned_upper]),
+    ] {
+        for provided in 0..=bounds.len() {
+            let mut assumptions = PureFactContext::new();
+            for bound in &bounds[..provided] {
+                assumptions = assumptions.assume_condition(bound.clone(), true);
+            }
+            let mut obligations = Vec::new();
+            let result = crate::kernel::eval::coerce_c_value_to_type(
+                input.clone(),
+                CType::Int32,
+                &mut obligations,
+                &assumptions,
+            )
+            .unwrap();
+            assert_eq!(
+                result,
+                CValue::Int32(Bitvector32Term::uint32_from_64(value.clone()))
+            );
+            assert_eq!(obligations.len(), bounds.len() - provided);
+            for (obligation, bound) in obligations.iter().zip(&bounds[provided..]) {
+                assert_eq!(
+                    obligation.proposition(),
+                    &Proposition::ConditionIs(bound.clone(), true)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn wide_to_int_narrowing_checks_signed_and_unsigned_boundaries() {
+    for value in [
+        i64::MIN,
+        i64::from(i32::MIN) - 1,
+        i64::from(i32::MIN),
+        -1,
+        0,
+        i64::from(i32::MAX),
+        i64::from(i32::MAX) + 1,
+        i64::MAX,
+    ] {
+        let mut obligations = Vec::new();
+        let result = crate::kernel::eval::coerce_c_value_to_type(
+            CValue::Int64(Bitvector32Term::Int64Constant(value)),
+            CType::Int32,
+            &mut obligations,
+            &PureFactContext::new(),
+        );
+        assert_eq!(result.is_some(), i32::try_from(value).is_ok());
+        if let Some(result) = result {
+            assert_eq!(result, int32(value as u32));
+            assert!(obligations.is_empty());
+        }
+    }
+    for value in [
+        0,
+        i32::MAX as u64,
+        i32::MAX as u64 + 1,
+        u32::MAX as u64,
+        u64::MAX,
+    ] {
+        let mut obligations = Vec::new();
+        let result = crate::kernel::eval::coerce_c_value_to_type(
+            CValue::UInt64(Bitvector32Term::UInt64Constant(value)),
+            CType::Int32,
+            &mut obligations,
+            &PureFactContext::new(),
+        );
+        assert_eq!(result.is_some(), value <= i32::MAX as u64);
+        if let Some(result) = result {
+            assert_eq!(result, int32(value as u32));
+            assert!(obligations.is_empty());
+        }
+    }
+}
+
+#[test]
+fn wide_equality_bounds_use_incremental_index_and_preserve_branches() {
+    for size in [16usize, 64, 256, 1024] {
+        let start = crate::persistent::persistent_node_allocations();
+        let mut facts = PureFactContext::new();
+        for i in 0..size {
+            facts = facts.assume_condition(
+                ConditionTerm::uint64_equal(
+                    Bitvector32Term::Variable(Variable(1000 + i as u64)),
+                    Bitvector32Term::UInt64Constant(i as u64),
+                ),
+                true,
+            );
+        }
+        let allocations = crate::persistent::persistent_node_allocations() - start;
+        assert!(
+            allocations < 80 * size * (size.ilog2() as usize + 1),
+            "{size}: {allocations}"
+        );
+        let target = Bitvector32Term::Variable(Variable(1000));
+        let bound =
+            ConditionTerm::uint64_less_equal(target.clone(), Bitvector32Term::UInt64Constant(1));
+        let (answer, work) =
+            crate::instrumentation::measure_deterministic_work(|| facts.decide(&bound));
+        assert_eq!(answer, Some(true));
+        assert!(
+            work <= 16,
+            "unrelated equalities inflated query work: {size}: {work}"
+        );
+        let original = facts.clone();
+        let equality = ConditionTerm::uint64_equal(target, Bitvector32Term::UInt64Constant(0));
+        let changed = facts.assume_condition(equality, false);
+        assert_eq!(changed.decide(&bound), None);
+        assert_eq!(original.decide(&bound), Some(true));
+    }
+}
+
+#[test]
+fn wide_equality_bounds_keep_width_sign_and_exact_premises() {
+    let x = Bitvector32Term::Variable(Variable(950));
+    let y = Bitvector32Term::Variable(Variable(951));
+    let signed_bound =
+        ConditionTerm::int64_signed_less_equal(x.clone(), Bitvector32Term::Int64Constant(0));
+    let unsigned_bound =
+        ConditionTerm::uint64_less_equal(x.clone(), Bitvector32Term::UInt64Constant(0));
+    let facts = PureFactContext::new()
+        .assume_condition(ConditionTerm::uint64_equal(x.clone(), y.clone()), true)
+        .assume_condition(
+            ConditionTerm::uint64_equal(y, Bitvector32Term::UInt64Constant(u64::MAX)),
+            true,
+        );
+    assert_eq!(facts.decide(&signed_bound), Some(true));
+    assert_eq!(facts.decide(&unsigned_bound), Some(false));
+    let narrowed = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::uint32_from_64(x.clone()),
+            Bitvector32Term::Constant(u32::MAX),
+        ),
+        true,
+    );
+    assert!(facts.proves(&narrowed));
+    assert!(facts.derive_atomic_proposition(&narrowed).is_some());
+    assert!(facts.derive_simp_atomic_proposition(&narrowed).is_some());
+    // A 32-bit equality is not evidence about all 64 bits of a wide term.
+    let narrow_facts = PureFactContext::new()
+        .assume_condition(ConditionTerm::equal(x, Bitvector32Term::Constant(0)), true);
+    assert_eq!(narrow_facts.decide(&unsigned_bound), None);
+    let proposition = Proposition::ConditionIs(signed_bound, true);
+    let derivation = facts.derive_atomic_proposition(&proposition).unwrap();
+    assert!(derivation.check(&facts));
+    assert!(!derivation.check(&PureFactContext::new()));
+}
+
+#[test]
 fn unsigned_64_to_32_narrowing_preserves_only_low_bits() {
     for (input, expected) in [
         (Bitvector32Term::UInt64Constant(u64::MAX), u32::MAX),

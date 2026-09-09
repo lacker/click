@@ -769,8 +769,14 @@ body and its facts; field names in the body denote that instance's fields.
 `fold(cell)` requires the complete memory body and re-establishes its facts,
 preserving the same identity and fields. The open handle permits field
 projections but does not count as folded ownership for calls or returns.
-This supports unguarded, nonrecursive, witness-free memory bodies only.
-Post-return instance folds currently require a single retained execution trace.
+This supports nonrecursive, witness-free memory bodies, optionally under the
+existing single `if` guard with an empty false case. Fold/unfold requires proof
+of the selected guard case. The false case exposes no memory or body facts;
+the exclusive open handle and fields remain available in either case.
+Post-return folds are checked separately against each return path's memory,
+ownership, and guard assumptions. Every returning path must restore the
+ownership promised by the contract; a sibling's fold cannot supply it.
+The regression is `mdtests/resource_fields_guarded_memory_body.md`.
 Field establishment, updates, and ordinary inline-call transport remain
 unsupported. A declaration alone grants no ownership, and binding an instance
 does not implicitly expose its memory body.
@@ -1047,6 +1053,26 @@ Qualified objects also work in expressions, including `old(counter::count)`
 and `counter::state.value`. Private objects with identical names in different
 files remain distinct; qualifications of the same external object retain its
 shared identity. This does not make private names visible in another C file.
+
+A mutating wrapper can transfer its private field to a pointer-taking helper
+and return ownership with the updated contents:
+
+<!-- verified-example: mdtests/private_state_mutation_reset.md -->
+```click
+unsigned long left() {
+    owns left_file::state.value;
+    ensures left_file::state.value == old(left_file::state.value) + 1u64;
+    ensures result == left_file::state.value;
+    ensures result == old(left_file::state.value) + 1u64;
+} by { execute(); simp(); }
+```
+
+Here `left_file` aliases the C file containing `state`; its unchanged C wrapper
+calls `bump(&state)`. Ownership is transferred, not recreated on each call.
+The fixture covers repeated calls, reset, and another file's independent
+`state`. An implicit 64-bit integer return conversion to `int` requires proof
+that the value is representable: signed sources need both bounds, unsigned
+sources need the upper bound. This differs from the low-bit `uint32` cast.
 
 This slice supports file-scope scalars, scalar arrays, and struct objects.
 It does not qualify functions, function-local statics, or arrays of structs.

@@ -741,7 +741,11 @@ fn index_bitvector_equality_fact(
     mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
     fact: &Proposition,
 ) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>> {
-    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = fact else {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(left, right) | ConditionTerm::Bitvector64Equal(left, right),
+        true,
+    ) = fact
+    else {
         return index;
     };
     for term in [left.as_ref(), right.as_ref()] {

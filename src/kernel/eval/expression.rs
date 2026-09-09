@@ -654,17 +654,45 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             Some(CValue::UInt32(Bitvector32Term::uint32_from_64(value)))
         }
         (CType::Int32, CValue::Int64(value)) => {
-            let value = value.int64_as_const()?;
-            let value = i32::try_from(value).ok()?;
-            Some(CValue::Int32(Bitvector32Term::Constant(value as u32)))
+            for (condition, context) in [
+                (
+                    ConditionTerm::int64_signed_greater_equal(
+                        value.clone(),
+                        Bitvector32Term::Int64Constant(i64::from(i32::MIN)),
+                    ),
+                    "int32 narrowing lower bound",
+                ),
+                (
+                    ConditionTerm::int64_signed_less_equal(
+                        value.clone(),
+                        Bitvector32Term::Int64Constant(i64::from(i32::MAX)),
+                    ),
+                    "int32 narrowing upper bound",
+                ),
+            ] {
+                add_proof_obligation_with_context(
+                    obligations,
+                    assumptions,
+                    Proposition::ConditionIs(condition, true),
+                    Some(context),
+                )?;
+            }
+            Some(CValue::Int32(Bitvector32Term::uint32_from_64(value)))
         }
         (CType::Int32, CValue::UInt64(value)) => {
-            let value = value.uint64_as_const()?;
-            let value = u32::try_from(value).ok()?;
-            if value > i32::MAX as u32 {
-                return None;
-            }
-            Some(CValue::Int32(Bitvector32Term::Constant(value)))
+            add_proof_obligation_with_context(
+                obligations,
+                assumptions,
+                Proposition::ConditionIs(
+                    ConditionTerm::uint64_less_equal(
+                        value.clone(),
+                        Bitvector32Term::UInt64Constant(i32::MAX as u64),
+                    ),
+                    true,
+                ),
+                Some("int32 narrowing upper bound"),
+            )?;
+            Some(CValue::Int32(Bitvector32Term::uint32_from_64(value)))
         }
         (
             CType::UInt32,

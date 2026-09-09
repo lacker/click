@@ -881,6 +881,9 @@ pub struct SurfacePropositionMap {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SurfacePropositionStorage {
+    /// Source names for qualified storage reads, independent of the heap
+    /// snapshot. These are synthesis hints, never evidence of a fact.
+    qualified_load_sources: PersistentMap<Pointer, ContractExpression>,
     by_kernel: PersistentMap<Proposition, KernelSurfaceForms>,
     /// Recorded kernel facts grouped by a structural key that forgets only
     /// memory snapshot identities. Typed proof steps use this to recover a
@@ -1204,8 +1207,12 @@ impl SurfacePropositionMap {
     #[cfg(test)]
     pub(crate) fn shares_persistent_storage_with(&self, other: &Self) -> bool {
         self.storage
-            .by_kernel
-            .shares_root_with(&other.storage.by_kernel)
+            .qualified_load_sources
+            .shares_root_with(&other.storage.qualified_load_sources)
+            && self
+                .storage
+                .by_kernel
+                .shares_root_with(&other.storage.by_kernel)
             && self
                 .storage
                 .by_surface
@@ -1234,6 +1241,39 @@ impl SurfacePropositionMap {
         let surface_key = format!("{surface:?}");
         {
             let storage = std::sync::Arc::make_mut(&mut self.storage);
+            if let ClickProposition::Comparison { left, right, .. } = surface {
+                let resolved = crate::kernel::resolve_load_variables_from_registry(kernel);
+                if let Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(a, b) | ConditionTerm::Bitvector64Equal(a, b),
+                    _,
+                ) = &resolved
+                {
+                    for (expression, term) in [(left, a), (right, b)] {
+                        let mut expression = expression;
+                        while let ContractExpression::At {
+                            expression: inner, ..
+                        }
+                        | ContractExpression::Old(inner) = expression
+                        {
+                            expression = inner;
+                        }
+                        let mut base = expression;
+                        while let ContractExpression::Field { base: inner, .. } = base {
+                            base = inner;
+                        }
+                        if matches!(base, ContractExpression::QualifiedC { .. })
+                            && let Bitvector32Term::MemoryLoad(_, pointer) = term.as_ref()
+                            && !storage
+                                .qualified_load_sources
+                                .contains_key(pointer.as_ref())
+                        {
+                            storage.qualified_load_sources = storage
+                                .qualified_load_sources
+                                .with_inserted(pointer.as_ref().clone(), expression.clone());
+                        }
+                    }
+                }
+            }
             if let ClickProposition::PredicateCall { name, .. } = surface {
                 let existing = storage.by_predicate.get(name);
                 if !existing.is_some_and(|facts| facts.contains(kernel)) {

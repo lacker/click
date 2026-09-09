@@ -76,6 +76,48 @@ fn instance_memory_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
 }
 
 #[test]
+fn instance_memory_guard_requires_a_proved_case_and_exposes_only_that_case() {
+    let (instance, mut definition, state) = instance_memory_fixture();
+    definition.condition = Some(SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("p")),
+        operator: CComparisonOperator::NotEqual,
+        right: SpecExpression::CExpression(c_int32_literal(0)),
+    });
+    let CValue::Pointer(pointer) = instance.arguments()[0].as_c_value().unwrap() else {
+        panic!("fixture pointer");
+    };
+    let guard = ConditionTerm::pointer_equal(pointer.pointer().clone(), Pointer::null());
+    let unknown = PureFactContext::new();
+    assert!(rewrite_resource_instance(&state, &instance, &definition, &unknown, true).is_err());
+    for is_null in [false, true] {
+        let assumptions = unknown.clone().assume_condition(guard.clone(), is_null);
+        let (open, facts) =
+            rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+        assert_eq!(open.resources().is_empty(), is_null);
+        assert_eq!(
+            open.resource_instance_fields(instance.identity()),
+            Some(&instance)
+        );
+        assert_eq!(
+            facts
+                .iter()
+                .any(|fact| matches!(fact, Proposition::CMemoryLoadable { .. })),
+            !is_null
+        );
+        assert!(rewrite_resource_instance(&open, &instance, &definition, &unknown, false).is_err());
+        let (closed, _) =
+            rewrite_resource_instance(&open, &instance, &definition, &assumptions, false).unwrap();
+        assert_eq!(closed, state);
+        if is_null {
+            let nonnull = unknown.clone().assume_condition(guard.clone(), false);
+            assert!(
+                rewrite_resource_instance(&open, &instance, &definition, &nonnull, false).is_err()
+            );
+        }
+    }
+}
+
+#[test]
 fn instance_memory_fold_requires_exact_handle_and_complete_ownership() {
     let (instance, definition, state) = instance_memory_fixture();
     let assumptions = PureFactContext::new();

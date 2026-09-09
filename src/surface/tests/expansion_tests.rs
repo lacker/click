@@ -12709,6 +12709,131 @@ fn qualified_static_struct_startup_and_expansion() {
     }
 }
 
+fn check_private_state_expansion(fixture_name: &str, name: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join(fixture_name);
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded = expand_c0_claim_source(source, &sources, name, CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources)
+        .unwrap_or_else(|error| panic!("{name}: {error:?}\n{expanded}"));
+}
+
+#[test]
+fn private_state_bump_expands() {
+    check_private_state_expansion("private_state_mutation_reset.md", "bump");
+}
+#[test]
+fn private_state_reset_expands() {
+    check_private_state_expansion("private_state_mutation_reset.md", "reset");
+}
+#[test]
+fn private_state_left_expands() {
+    check_private_state_expansion("private_state_mutation_reset.md", "left");
+}
+#[test]
+fn private_state_right_expands() {
+    check_private_state_expansion("private_state_mutation_reset.md", "right");
+}
+#[test]
+fn private_state_reset_left_expands() {
+    check_private_state_expansion("private_state_mutation_reset.md", "reset_left");
+}
+#[test]
+fn private_state_main_expands() {
+    check_private_state_expansion("private_state_mutation_reset.md", "main");
+}
+#[test]
+fn private_state_wide_return_expands() {
+    check_private_state_expansion("private_state_wide_return.md", "main");
+}
+#[test]
+fn private_state_narrowing_call_expands() {
+    check_private_state_expansion("private_state_narrowing_call.md", "main");
+}
+#[test]
+fn private_state_signed_bounds_expand() {
+    check_private_state_expansion("private_state_narrowing_bounds.md", "signed_value");
+}
+#[test]
+fn private_state_unsigned_bounds_expand() {
+    check_private_state_expansion("private_state_narrowing_bounds.md", "unsigned_value");
+}
+
+#[test]
+fn private_state_wrappers_reject_invalid_ownership_and_effects() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/private_state_mutation_reset.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &sources).unwrap();
+    for (old, new) in [
+        ("owns left_file::state.value;", ""),
+        (
+            "owns left_file::state.value;",
+            "owns right_file::state.value;",
+        ),
+        (
+            "owns left_file::state.value;",
+            "owns left_file::state.value; owns left_file::state.value;",
+        ),
+        (
+            "ensures left_file::state.value == old(left_file::state.value) + 1u64;",
+            "ensures left_file::state.value == old(left_file::state.value);",
+        ),
+        (
+            "ensures right_file::state.value == 41u64;",
+            "ensures right_file::state.value == 40u64;",
+        ),
+        ("ensures result == 1;", "ensures result == 2;"),
+    ] {
+        let invalid = source.replacen(old, new, 1);
+        assert_ne!(invalid, source);
+        assert!(
+            verify_c0_sources(&invalid, &sources).is_err(),
+            "incorrect change accepted: {old} -> {new}"
+        );
+    }
+}
+
+#[test]
+fn private_state_narrowing_rejects_unproved_bounds() {
+    let fixture_name = "private_state_narrowing_bounds.md";
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join(fixture_name);
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &sources).unwrap();
+    for bound in [
+        "requires value >= -2147483648i64;",
+        "requires value <= 2147483647i64;",
+        "requires value <= 2147483647u64;",
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(bound, ""), &sources).is_err(),
+            "missing bound accepted: {bound}"
+        );
+    }
+}
+
 #[test]
 fn grouped_residual_normalization_expansion_checks_original_claims() {
     let path =
