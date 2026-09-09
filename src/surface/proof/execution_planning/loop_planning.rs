@@ -1447,6 +1447,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         let region_simp = context_execution.presentation.region_simp;
         let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
         let invariants_close_requested = context_execution.core.region_invariants_close_requested;
+        let has_retained_invariant_body =
+            context_execution.core.checked_invariant_lowerings.is_some();
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
             if let Some(step) = context_execution.presentation.invariant_closer_step {
@@ -1503,7 +1505,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // now becomes a nested proof `if` here instead of recursive search in
         // proposition reasoning.
         let mut leaf = leaf;
-        if region_simp.is_some() {
+        if has_retained_invariant_body {
+            // A completed body is bound to this exact premise store. Validate
+            // it before skipping preplanning; a source close request alone
+            // is not evidence. Adding further `have`s would stale the body.
+            leaf.validate_loop_invariant_bundle(invariant_checks)?;
+        } else if region_simp.is_some() {
             if invariant_surfaces.len() != invariant_checks.len() {
                 return Err(leaf.step_error(
                     "surface invariants do not align with the lowered invariant bundle",
