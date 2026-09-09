@@ -407,6 +407,15 @@ impl ProofFacts {
         self.reserved_variables.contains(&variable)
     }
 
+    pub(crate) fn contradicts(&self, fact: &Proposition) -> bool {
+        let negated = Proposition::Not(Box::new(fact.clone()));
+        self.contains(fact)
+            && (self.contains(&negated)
+                || matches!(fact, Proposition::ConditionIs(condition, value)
+                    if self.contains(&Proposition::ConditionIs(condition.clone(), !value)))
+                || super::fact_reasoning::normalizes_context_free(&negated))
+    }
+
     pub(crate) fn freshen_pointer_forall_body(
         &self,
         binder: Variable,

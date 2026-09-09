@@ -121,8 +121,9 @@ expansion/rechecking, and deterministic multi-size scaling:
 ### Constructor elimination in execution proofs (blocks left rotation)
 
 An arbitrary resource model needs an explicit proof operation that splits on
-its constructors and introduces typed field names. Knowing `model != Empty`
-does not currently expose the unknown fields of `Node`. Pure `match` remains
+its constructors and introduces typed field names. An entry proof match now
+exposes the unknown fields of `Node`, with `model != Empty` discharging the
+empty arm through `contradiction(model == Empty)`. Pure `match` remains
 a symbolic expression, and theorem-level `induct` is not an execution-proof
 case split. Do not specialize the rotation to concrete payloads or subtree
 models to bypass this gap.
@@ -130,9 +131,9 @@ models to bypass this gap.
 The reduced regression is
 [resource_nonempty_model_needs_constructor_cases.md](../mdtests/resource_nonempty_model_needs_constructor_cases.md):
 reading a cell whose model is an arbitrary `Some(value)` is safe, but `unfold`
-requires an explicit constructor term. It currently records the bounded
-rejection. The intended positive proof names `value` in the `Some` case and
-discharges the impossible `None` case from the precondition.
+requires an explicit constructor term. Its positive proof names `value` in
+the `Some` case and discharges the impossible `None` case from the precondition.
+The C read is unchanged and the empty arm owns no memory.
 
 The selected syntax is `match model { Type::Variant(fields) => { tactics } }`
 in proof blocks, distinct in context from pure match expressions.
@@ -144,20 +145,22 @@ pointer payloads, capture avoidance, complete constructor families, and
 malformed or unsupported inputs. This rule alone neither chooses witnesses
 nor grants ownership. The proof-level tactic supports one or two constructors
 at unchanged function entry. Each arm starts with the same owned resources,
-introduces only its fresh typed fields, and must run to function exit. Nested
+introduces only its fresh typed fields, and must run to function exit or close
+with an exact `contradiction(...)`. Nested
 entry matches and deferred return-state folds retain their lexical bindings.
 Expansion preserves the match and rechecks its constructor arms. The positive
 [resource regression](../mdtests/proof_match_resource.md) covers two reachable
-memory-owning cases; it does not replace the nonempty-cell gap above.
+memory-owning cases, alongside the nonempty-cell exclusion regression above.
 Its current payload sorts are signed 32/64-bit integers, pointers, and ADTs.
 
-The next integration is **checked exclusion of contradictory constructor
-arms**. A constructor excluded by the precondition must close without executing
-invalid C on that impossible branch, while its checked contradiction remains
-part of the partition's coverage certificate. Do not omit the arm or simulate
-an arbitrary return state. The nonempty-cell regression above is the intended
-positive test; missing or unrelated contradiction premises must be rejected.
-Also extend joins to wider constructor families without quadratic selector
+**Checked exclusion of contradictory constructor arms** is supported when the
+arm consists of a single `contradiction(proposition)` naming an exact fact and
+its negation available from the entry premises and constructor equation.
+The kernel retains that contradiction in the partition coverage evidence;
+no C execution or return state is manufactured for the excluded constructor.
+Missing or unrelated premises and missing live-arm ownership are rejected.
+Still extend exclusion to local proof prefixes and matches whose every arm
+is contradictory (currently rejected), and extend joins to wider constructor families without quadratic selector
 construction, shared continuations, and matches after C/resource transitions
 with indexed witness freshness. These are implementation limits, not changes
 to pure match semantics. Then verify unchanged `tree_rotate_left` for arbitrary

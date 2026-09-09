@@ -1088,6 +1088,8 @@ pub(crate) struct CheckedProofCasePartition {
     identity: Arc<()>,
     root_facts: ProofFacts,
     case_facts: Vec<Proposition>,
+    /// Exact contradictions checked under root premises plus that case only.
+    excluded: Vec<Option<Proposition>>,
     /// Generative constructor witnesses are introduced only at their unchanged
     /// entry scope. Complementary propositional splits need no such scope.
     witness_scope: Option<SharedValue<CState>>,
@@ -1119,6 +1121,23 @@ pub(crate) struct CheckedProofCaseArm {
 }
 
 impl CheckedProofCasePartition {
+    pub(crate) fn excluding_constructor_case(
+        &self,
+        index: usize,
+        fact: Proposition,
+    ) -> Option<Arc<Self>> {
+        self.witness_scope.as_ref()?;
+        let case = self.case_facts.get(index)?;
+        if !self.root_facts.with_fact(case.clone()).contradicts(&fact) {
+            return None;
+        }
+        let mut successor = self.clone();
+        // Coverage from the old partition must not discharge this new one.
+        successor.identity = Arc::new(());
+        successor.excluded[index] = Some(fact);
+        Some(Arc::new(successor))
+    }
+
     pub(crate) fn case_fact(&self, index: usize) -> Option<&Proposition> {
         self.case_facts.get(index)
     }
@@ -1137,12 +1156,20 @@ impl CheckedProofCasePartition {
             identity: Arc::new(()),
             root_facts: root_facts.clone(),
             case_facts: vec![then_fact, else_fact],
+            excluded: vec![None, None],
             witness_scope: None,
         }))
     }
 }
 
 impl CheckedProofCaseArm {
+    pub(crate) fn excluded_cases(&self) -> Vec<bool> {
+        self.partition
+            .excluded
+            .iter()
+            .map(Option::is_some)
+            .collect()
+    }
     pub(crate) fn identity(&self) -> usize {
         Arc::as_ptr(&self.partition.identity) as usize
     }
@@ -4023,11 +4050,12 @@ impl ExecutionProofCore {
         if overflow {
             return None;
         }
-        let (case_facts, bindings) = equations.into_iter().unzip();
+        let (case_facts, bindings): (Vec<_>, Vec<_>) = equations.into_iter().unzip();
         Some((
             Arc::new(CheckedProofCasePartition {
                 identity: Arc::new(()),
                 root_facts: facts.clone(),
+                excluded: vec![None; case_facts.len()],
                 case_facts,
                 witness_scope: Some(self.state.clone()),
             }),
@@ -4822,6 +4850,61 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn constructor_partition_exclusion_requires_its_exact_contradiction() {
+        let (core, mut value) = constructor_partition_fixture(2);
+        value.node = crate::kernel::AlgebraicTermNode::Constructor {
+            variant: "C0".into(),
+            fields: vec![crate::kernel::AlgebraicValue::C(int32(11))],
+        };
+        let root = ProofFacts::default();
+        let (partition, _, _) = core
+            .algebraic_case_partition(
+                &root,
+                &value,
+                &crate::kernel::CExecutionEnvironment::new(),
+                4_000_000,
+                65_536,
+            )
+            .unwrap();
+        let live = partition.case_fact(0).unwrap().clone();
+        let dead = partition.case_fact(1).unwrap().clone();
+        assert!(
+            partition
+                .excluding_constructor_case(0, live.clone())
+                .is_none()
+        );
+        assert!(
+            partition
+                .excluding_constructor_case(1, live.clone())
+                .is_none()
+        );
+        assert!(
+            partition
+                .excluding_constructor_case(2, dead.clone())
+                .is_none()
+        );
+        let excluded = partition.excluding_constructor_case(1, dead).unwrap();
+        assert!(!Arc::ptr_eq(&partition.identity, &excluded.identity));
+        let mut old_arm = core.clone();
+        assert!(old_arm.record_proof_case_arm(partition, 0, root.with_fact(live.clone())));
+        assert!(!crate::kernel::api::proof_case_partitions_are_exhaustive(
+            &old_arm.execution_evidence
+        ));
+        let mut live_arm = core;
+        assert!(live_arm.record_proof_case_arm(excluded, 0, root.with_fact(live)));
+        assert!(crate::kernel::api::proof_case_partitions_are_exhaustive(
+            &live_arm.execution_evidence
+        ));
+        // New exclusion evidence cannot discharge an old partition's missing arm.
+        assert!(!crate::kernel::api::proof_case_partitions_are_exhaustive(
+            &[
+                old_arm.execution_evidence[0].clone(),
+                live_arm.execution_evidence[0].clone(),
+            ]
+        ));
     }
 
     #[test]

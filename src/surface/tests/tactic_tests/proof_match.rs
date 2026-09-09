@@ -29,6 +29,100 @@ int read(int* p) {
 "#;
 
 #[test]
+fn proof_match_closes_impossible_constructor_without_executing_c() {
+    let source = SOURCE
+        .replace(
+            "Maybe::None => { owns p[0..1]; fact p[0] == 0; },",
+            "Maybe::None => { fact p == 0; },",
+        )
+        .replace(
+            "    ensures c.model",
+            "    requires c.model != Maybe::None;\n    ensures c.model",
+        )
+        .replace(
+            "Maybe::None => { unfold(c); execute(); fold(c); simp(); },",
+            "Maybe::None => { contradiction(c.model == Maybe::None); },",
+        );
+    let sources = [("read.c", C)];
+    for good in [
+        source.clone(),
+        source.replace(
+            "enum Maybe { None, Some(int) }",
+            "enum Maybe { Some(int), None }",
+        ),
+        source.replace("        Maybe::None => { contradiction(c.model == Maybe::None); },\n", "")
+            .replace("        },\n    }\n}\n", "        },\n        Maybe::None => { contradiction(c.model == Maybe::None); },\n    }\n}\n"),
+    ] {
+        verify_c0_sources(&good, &sources)
+            .expect("excluded arm has no memory and does not execute");
+        let expanded =
+            expand_c0_claim_source(&good, &sources, "read", CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
+        assert!(expanded.contains("contradiction("));
+        // `have` is one selectable C-proof tactic, including its nested proof.
+        for offset in [good.find("execute();").unwrap(), good.find("have result").unwrap(), good.rfind("simp();").unwrap()] {
+            let position = expansion::position_at_offset(&good, offset);
+            let selected =
+                expand_c0_tactic_source_at(&good, &sources, position.line, position.column)
+                    .unwrap();
+            verify_c0_sources(&selected, &sources).expect("selected live arm expansion");
+        }
+    }
+    for bad in [
+        source.replace("    requires c.model != Maybe::None;", ""),
+        source.replace(
+            "contradiction(c.model == Maybe::None)",
+            "contradiction(p == 0)",
+        ),
+        source.replace(
+            "contradiction(c.model == Maybe::None)",
+            "contradiction(c.model == Maybe::Some(7))",
+        ),
+        source.replace(
+            "Maybe::None => { contradiction(c.model == Maybe::None); },",
+            "",
+        ),
+        source.replace("            fold(c);", ""),
+        source.replace("have result == value", "have result == value + 1"),
+    ] {
+        assert!(
+            verify_c0_sources(&bad, &sources).is_err(),
+            "invalid exclusion or live proof accepted"
+        );
+    }
+}
+
+#[test]
+fn proof_match_nested_impossible_arms_keep_their_scopes() {
+    let source = r#"
+verifying "id.c";
+spec enum Tag { A, B }
+resource tag() { field model: Tag; }
+int id(int x) {
+    owns r: tag();
+    requires r.model != Tag::A;
+    ensures result == x;
+    ensures r.model == old(r.model);
+} by {
+    match r.model {
+        Tag::A => { contradiction(r.model == Tag::A); },
+        Tag::B => {
+            match r.model {
+                Tag::B => { execute(); simp(); },
+                Tag::A => { contradiction(r.model == Tag::A); },
+            }
+        },
+    }
+}
+"#;
+    let sources = [("id.c", "int id(int x) { return x; }")];
+    verify_c0_sources(source, &sources).expect("nested excluded constructors");
+    let expanded = expand_c0_claim_source(source, &sources, "id", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).expect("nested exclusion certificate");
+}
+
+#[test]
 fn proof_match_checks_arbitrary_payload_and_rejects_invalid_arms() {
     verify_c0_sources(SOURCE, &[("read.c", C)])
         .expect("arbitrary scoped field and return-state fold");

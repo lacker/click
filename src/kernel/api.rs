@@ -2656,8 +2656,9 @@ pub(in crate::kernel) fn proof_evidence_initial_state(
 }
 
 /// Every proof-case arm in the traces must be valid, a path may pass
-/// through one partition once, and every partition must have both of its
-/// arms represented among the traces. The arms' own facts are what the
+/// through one partition once, and every constructor must be represented
+/// by a retained trace or a kernel-checked contradiction in its partition.
+/// The arms' own facts are what the
 /// proof object assumes on each path; no restatement of the cases from outside
 /// the traces is consulted.
 pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
@@ -2680,7 +2681,7 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
                     }
                     covered
                         .entry(arm.identity())
-                        .or_insert_with(|| vec![false; arm.width()])[arm.arm_index()] = true;
+                        .or_insert_with(|| arm.excluded_cases())[arm.arm_index()] = true;
                 }
                 CheckedExecutionEvent::Branch(branch) => {
                     for arm_index in 0..2 {
