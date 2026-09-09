@@ -140,14 +140,9 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
                 ));
             }
             for argument in arguments {
-                if !matches!(
-                    resource_argument_to_c_expression(argument)?,
-                    CExpression::Variable(_) | CExpression::Value(_)
-                ) {
-                    return Err(ClickError::new(
-                        "recursive child arguments currently require C bindings or literals, not loads or computed expressions",
-                    ));
-                }
+                // C expressions are read-only. The kernel checks their value,
+                // ownership requirements, and path obligations when rewriting.
+                resource_argument_to_c_expression(argument)?;
             }
             if reserved.contains(binding.name.as_str())
                 || names.contains(binding.name.as_str())

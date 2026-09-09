@@ -854,8 +854,7 @@ implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
 An explicit fold selects the arm from its proposed model, so an update can
 change constructors when the new arm's ownership and facts are established.
 The regression is `mdtests/resource_conditional_construction.md`.
-The same ownership and path-local return checks apply. Resources with recursive
-children retain the open-handle protocol until independent child selection is supported.
+The same ownership and path-local return checks apply.
 Match arms can also expose named, directly recursive child instances:
 
 <!-- verified-example: mdtests/resource_recursive_children.md -->
@@ -876,25 +875,50 @@ resource tree(p: int32*) {
 }
 ```
 
-Here `Tree` is declared in the fixture. After `unfold(root)`, the children
-are named `root.left` and `root.right`. Their folded ownership does not
-grant direct memory access: `unfold(root.left)` exposes the left child's body.
-The parent name remains an open handle, not folded ownership. Before
-`fold(root)`, every recorded child must be back in folded form with the same
-identity, arguments, and fields. Folding the parent consumes their exposed
-ownership and makes the child paths unavailable. Reopening may bind fresh child
-resource identities; this does not change model values or C pointer identities.
+Here `Tree` is declared in the fixture. Give the exposed children independent
+names, then pass their owned instances explicitly when constructing a parent:
+
+<!-- verified-example: mdtests/resource_independent_children.md -->
+```click
+unfold(root) as { left: l, right: r };
+unfold(l);
+execute();
+let l = fold(tree(left), { model: Tree::Leaf(2) });
+let root = fold(tree(p), { model: old(root.model) }, { left: l, right: r });
+```
+
+`unfold(root) as { ... }` consumes `root`, exposes its immediate memory, and
+introduces folded children. No parent handle or `root.left` path remains.
+Each selected-arm child must be named exactly once. An introduced name must
+not already own a resource. `unfold(l)` exposes the child's immediate body;
+an arm with no children needs no bindings (explicit `as {}` is also accepted).
+
+The third fold argument maps child slots to owned resource names. Folding
+consumes those children and the parent's immediate memory, checking each
+child's family, arguments, and fields against the proposed model. Replacements
+and reordered children are allowed when those checks hold. Missing, duplicate,
+unfolded, or mismatched children are rejected. A leaf omits the empty child map.
+The new parent need not have existed before; `consumes l: tree(left);` names
+an input child without promising to return it separately.
+
+The older `unfold(root); unfold(root.left); fold(root.left); fold(root);`
+form remains available for compatibility. Only that form retains a legacy
+parent handle and requires the recorded children back unchanged.
 
 Each child currently uses the parent's resource definition. Equations for all
 child fields must bind them to immediate constructor fields of the matching
 types. In particular, the matched model strictly descends to a proper submodel.
-Child arguments accept C bindings or literals, not loads/computed expressions.
+Child arguments may be read-only C expressions, including stored pointer
+fields such as `p->left`. Loads must be readable from the immediate body's
+owned memory, not from a still-folded child or unrelated ambient ownership.
+Fold checks this memory before interpreting the child arguments. Expression
+safety and path premises must be proved; argument evaluation does not split
+the proof into cases. See `mdtests/resource_tree_node_init.md`.
 Mixed resource families, witnesses, nested resource matches/guards, arbitrary
 match scrutinees, and passing child paths as contract arguments remain
 unsupported. No operation automatically unfolds an entire recursive structure.
 
-Field establishment, updates, and ordinary inline-call transport remain
-unsupported. A declaration alone grants no ownership, and binding an instance
+Ordinary inline-call transport remains incomplete. A declaration alone grants no ownership, and binding an instance
 does not implicitly expose its memory body.
 
 A composite body may instead have one top-level guard:

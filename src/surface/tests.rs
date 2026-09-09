@@ -213,6 +213,178 @@ int32 read(int32* p, int32 expected) {
 } by { unfold(c); execute(); fold(c); simp(); }
 "#;
 
+fn tree_node_init_fixture() -> (&'static str, Vec<(&'static str, &'static str)>) {
+    let fixture = include_str!("../../mdtests/resource_tree_node_init.md");
+    let source = fixture
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    let c = fixture
+        .split("```c filename=resource_tree_node_init.c\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    (source, vec![("resource_tree_node_init.c", c)])
+}
+
+#[test]
+fn tree_node_init_and_stored_child_links_expand() {
+    let (source, c) = tree_node_init_fixture();
+    verify_c0_sources(source, &c).unwrap();
+    for function in ["tree_node_init", "read_value", "empty"] {
+        let expanded = expand_c0_claim_source(source, &c, function, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &c).unwrap();
+    }
+}
+
+#[test]
+fn tree_node_init_rejects_invalid_models_and_ownership() {
+    let (source, c) = tree_node_init_fixture();
+    for (from, to) in [
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(node, 0, l.model, r.model)",
+        ),
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(left, value, l.model, r.model)",
+        ),
+        (
+            "model: HeapTree::Node(node, value, l.model, r.model)",
+            "model: HeapTree::Node(node, value, r.model, l.model)",
+        ),
+        ("{ left: l, right: r });", "{ left: r, right: l });"),
+        ("{ left: l, right: r });", "{ left: l, right: l });"),
+        ("consumes node->left;", ""),
+        ("consumes r: tree_at(right);", ""),
+        ("requires p == 0;", ""),
+        // A child address may not be read from an unowned stored link.
+        ("owns p->left;", ""),
+        ("owns p->right;", ""),
+        // Child ownership has been consumed into root, so it cannot be reused.
+        (
+            "}, { left: l, right: r });\n    simp();",
+            "}, { left: l, right: r });\n    unfold(l);\n    simp();",
+        ),
+    ] {
+        assert!(source.contains(from));
+        assert!(
+            verify_c0_sources(&source.replace(from, to), &c).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    // Retain the real stores in the positive fixture; these intentionally
+    // broken programs ensure the contract catches wrong/missing links.
+    for broken in [
+        c[0].1.replace("node->left = left;", "node->left = right;"),
+        c[0].1.replace("node->right = right;", ""),
+        c[0].1.replace("node->value = value;", "node->value = 0;"),
+    ] {
+        assert!(verify_c0_sources(source, &[(c[0].0, broken.as_str())]).is_err());
+    }
+}
+
+fn independent_children_source() -> &'static str {
+    include_str!("../../mdtests/resource_independent_children.md")
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap()
+}
+
+const INDEPENDENT_CHILDREN_C: &[(&str, &str)] = &[(
+    "resource_independent_children.c",
+    "int32 read_left(int32* p, int32* left, int32* right) { return *left; }
+     void init(int32* p, int32* left, int32* right, int32 value) { *p = value; }",
+)];
+
+#[test]
+fn independent_children_construct_and_expand() {
+    let source = independent_children_source();
+    verify_c0_sources(source, INDEPENDENT_CHILDREN_C).unwrap();
+    for name in ["read_left", "init"] {
+        let expanded =
+            expand_c0_claim_source(source, INDEPENDENT_CHILDREN_C, name, CProofClaim::Grouped)
+                .unwrap();
+        verify_c0_sources(&expanded, INDEPENDENT_CHILDREN_C).unwrap();
+        assert!(expanded.contains("as { left: l, right: r }"));
+    }
+}
+
+#[test]
+fn independent_children_may_change_roles_in_a_new_model() {
+    let source = independent_children_source()
+        .split("\nvoid init")
+        .next()
+        .unwrap()
+        .replace(
+            "ensures root.model == old(root.model);",
+            "ensures root.model == Tree::Branch(1, right, Tree::Leaf(3), left, Tree::Leaf(2));",
+        )
+        .replace(
+            "{ model: old(root.model) }, { left: l, right: r }",
+            "{ model: Tree::Branch(1, right, r.model, left, l.model) }, { left: r, right: l }",
+        );
+    verify_c0_sources(&source, INDEPENDENT_CHILDREN_C).unwrap();
+    let expanded = expand_c0_claim_source(
+        &source,
+        INDEPENDENT_CHILDREN_C,
+        "read_left",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    verify_c0_sources(&expanded, INDEPENDENT_CHILDREN_C).unwrap();
+}
+
+#[test]
+fn independent_children_reject_bad_selection_and_consumed_names() {
+    let source = independent_children_source();
+    for (from, to) in [
+        ("as { left: l, right: r }", "as { left: l }"),
+        ("as { left: l, right: r }", "as { left: l, wrong: r }"),
+        ("as { left: l, right: r }", "as { left: l, right: l }"),
+        ("as { left: l, right: r }", "as { left: root, right: r }"),
+        ("{ model: old(root.model) }", "{ model: root.model }"),
+        ("}, { left: l, right: r });", "}, { left: l });"),
+        ("}, { left: l, right: r });", "}, { left: l, right: l });"),
+        ("}, { left: l, right: r });", "}, { left: r, right: l });"),
+        ("let l = fold(tree(left), { model: Tree::Leaf(2) });", ""),
+        (
+            "let l = fold(tree(left), { model: Tree::Leaf(2) });",
+            "let l = fold(tree(right), { model: Tree::Leaf(2) });",
+        ),
+        ("unfold(l);", "unfold(root); unfold(l);"),
+        ("unfold(l);", "unfold(l); unfold(l);"),
+        ("consumes r: tree(right);", ""),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), INDEPENDENT_CHILDREN_C).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    let expanded = expand_c0_claim_source(
+        source,
+        INDEPENDENT_CHILDREN_C,
+        "read_left",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("}, { left: l, right: r });", "}, { left: r, right: l });"),
+            INDEPENDENT_CHILDREN_C
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn conditional_explicit_folds_update_models_and_expand() {
     let source = r#"verifying "cell.c";
@@ -1557,8 +1729,10 @@ fn adt_resource_parameters_report_unsupported_types_without_panicking() {
 
 #[test]
 fn modeled_binary_tree_laws_reject_wrong_mirror_and_size() {
-    let source = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click")
-        .replace("verifying \"modeled_binary_tree.c\";", "");
+    let example = include_str!("../../examples/modeled-binary-tree/modeled_binary_tree.click");
+    // This regression is about the generic laws, independent of the C heap
+    // resource and initializer contract that now precede them in the example.
+    let source = &example[example.find("spec enum Tree<T>").unwrap()..];
     verify_c0_sources(&source, &[]).expect("generic tree laws should verify");
     for (from, to) in [("right", "left"), ("left", "right")] {
         let wrong_mirror = source.replacen(

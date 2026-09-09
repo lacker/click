@@ -6571,13 +6571,32 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
 /// Memory-only bodies need no open token, including guarded/matched bodies.
-/// Recursive children retain the legacy handle protocol pending child selection.
+/// This compatibility entry point retains the legacy recursive-child handles.
+#[cfg(test)]
 pub(crate) fn rewrite_resource_instance(
     state: &CState,
     instance: &ResourceInstance,
     definition: &CCompositeResourceDefinition,
     assumptions: &PureFactContext,
     unfold: bool,
+) -> Result<(CState, Vec<Proposition>), &'static str> {
+    rewrite_resource_instance_selecting_children(
+        state,
+        instance,
+        definition,
+        assumptions,
+        unfold,
+        None,
+    )
+}
+
+pub(crate) fn rewrite_resource_instance_selecting_children(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+    unfold: bool,
+    selected_children: Option<&[(String, Variable)]>,
 ) -> Result<(CState, Vec<Proposition>), &'static str> {
     if definition.name() != instance.name()
         || definition.instance_schema.as_ref() != Some(instance.schema())
@@ -6601,7 +6620,7 @@ pub(crate) fn rewrite_resource_instance(
     {
         return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
-    let body_only = definition.has_memory_only_instance_body();
+    let body_only = selected_children.is_some() || definition.has_memory_only_instance_body();
     let mut folded_instance = instance.clone();
     folded_instance.opened_children = Default::default();
     let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
@@ -6662,7 +6681,31 @@ pub(crate) fn rewrite_resource_instance(
         &mut budget,
     )
     .ok_or("instance fold/unfold requires a proved body guard case")?;
-    let mut body = evaluate_function_resource_context(
+    let explicit_children = selected_children.map(|children| {
+        children
+            .iter()
+            .map(|(name, identity)| (name.as_str(), *identity))
+            .collect::<BTreeMap<_, _>>()
+    });
+    if let Some(children) = &explicit_children {
+        let supplied = selected_children.unwrap();
+        let expected = selected.map_or(&[][..], |arm| arm.children.as_slice());
+        let identities = supplied
+            .iter()
+            .map(|(_, identity)| *identity)
+            .collect::<BTreeSet<_>>();
+        if children.len() != supplied.len()
+            || identities.len() != supplied.len()
+            || identities.contains(&instance.identity)
+            || children.len() != expected.len()
+            || expected
+                .iter()
+                .any(|child| !children.contains_key(child.name.as_str()))
+        {
+            return Err("child selection must name every selected arm child exactly once");
+        }
+    }
+    let mut body = evaluate_function_resource_context_with_normalization(
         &evaluation,
         if active {
             selected.map_or(&definition.contains, |arm| &arm.contains)
@@ -6671,10 +6714,25 @@ pub(crate) fn rewrite_resource_instance(
         },
         assumptions,
         &mut budget,
+        false,
     )
     .map_err(|_| "instance body evaluation exceeded its budget")?
     .map_err(|_| "could not evaluate instance memory body")?;
+    // Only the immediate declared memory justifies child-argument loads, not
+    // the ambient frame or a child that has not been constructed. On fold,
+    // check and consume that memory before allowing it in this scratch view.
     let mut next = state.clone();
+    if !unfold {
+        for fact in body.facts() {
+            next.resources = next
+                .resources
+                .without_fact_incrementally(fact, assumptions)
+                .ok_or("fold requires ownership of the complete instance body")?;
+        }
+    }
+    let mut child_evaluation = evaluation.clone();
+    child_evaluation.resources = body.clone();
+    let child_assumptions = assumptions.clone().require_owned_expression_loads();
     let mut children = Vec::new();
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     for child in selected.into_iter().flat_map(|arm| &arm.children) {
@@ -6689,8 +6747,27 @@ pub(crate) fn rewrite_resource_instance(
             .iter()
             .zip(&definition.parameters)
             .map(|(argument, parameter)| {
-                match evaluate_c_expression(&evaluation, argument, assumptions, &mut budget) {
-                    Some(CExpressionOutcome::Value(value)) => {
+                let paths = evaluate_c_expression_paths(
+                    &child_evaluation,
+                    argument,
+                    &child_assumptions,
+                    &mut budget,
+                )
+                .map_err(|_| "recursive child argument evaluation exceeded its budget")?;
+                if paths.len() != 1
+                    || paths[0]
+                        .facts
+                        .iter()
+                        .any(|fact| !child_assumptions.proves(fact.proposition()))
+                    || paths[0]
+                        .obligations
+                        .iter()
+                        .any(|goal| !child_assumptions.proves(goal.proposition()))
+                {
+                    return Err("recursive child argument requires a proved, readable expression");
+                }
+                match &paths[0].outcome {
+                    CExpressionOutcome::Value(value) => {
                         coerce_c_function_argument_without_obligations(&value, parameter)
                             .map(AlgebraicValue::C)
                             .ok_or("recursive child argument type mismatch")
@@ -6709,7 +6786,16 @@ pub(crate) fn rewrite_resource_instance(
                     .ok_or("invalid child field binding")
             })
             .collect::<Result<ResourceArguments, _>>()?;
-        let identity = if unfold {
+        let identity = if let Some(explicit) = &explicit_children {
+            let identity = explicit[child.name.as_str()];
+            if unfold
+                && (state.resources.owned_instance(identity).is_some()
+                    || state.open_instances.owned_instance(identity).is_some())
+            {
+                return Err("unfold child result identity is already in use");
+            }
+            identity
+        } else if unfold {
             loop {
                 let identity = Variable(
                     u64::MAX
@@ -6732,7 +6818,7 @@ pub(crate) fn rewrite_resource_instance(
                 .ok_or("parent has no recorded child handle")?
                 .identity
         };
-        let child_instance = ResourceInstance::new(
+        let mut child_instance = ResourceInstance::new(
             identity,
             instance.name.clone(),
             arguments,
@@ -6750,9 +6836,30 @@ pub(crate) fn rewrite_resource_instance(
                         .as_c_value()
                         .is_none_or(|value| value.c_type() != parameter.c_type())
                 })
-            || (!unfold && recorded != Some(&child_instance))
+            || (!unfold && explicit_children.is_none() && recorded != Some(&child_instance))
         {
             return Err("recursive child does not match the parent's recorded body");
+        }
+        if !unfold && explicit_children.is_some() {
+            let actual = state
+                .resources
+                .owned_instance(identity)
+                .ok_or("fold requires an owned, folded child")?;
+            if actual.name != child_instance.name
+                || actual.schema != child_instance.schema
+                || actual.arguments.len() != child_instance.arguments.len()
+                || actual.fields.len() != child_instance.fields.len()
+                || !actual.opened_children.is_empty()
+                || !actual
+                    .arguments
+                    .iter()
+                    .zip(child_instance.arguments.iter())
+                    .chain(actual.fields.iter().zip(child_instance.fields.iter()))
+                    .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
+            {
+                return Err("selected child does not satisfy the proposed parent model");
+            }
+            child_instance = actual.clone();
         }
         resource_bindings.insert(child.binding, identity);
         body = body
@@ -6765,7 +6872,7 @@ pub(crate) fn rewrite_resource_instance(
             .map_err(|_| "child ownership is duplicated")?;
         children.push((child.name.clone(), child_instance));
     }
-    if !unfold && children.len() != instance.opened_children.len() {
+    if !unfold && explicit_children.is_none() && children.len() != instance.opened_children.len() {
         return Err("fold would discard a recorded child");
     }
     if unfold {
@@ -6787,10 +6894,15 @@ pub(crate) fn rewrite_resource_instance(
                 .unchecked_with_fact(CResourceFact::own(CResource::Instance(handle)));
         }
     } else {
-        for fact in body.facts() {
+        // Immediate memory was consumed before evaluating child arguments.
+        for fact in body
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_none())
+        {
             next.resources = next
                 .resources
-                .without_fact_delaying_normalization(fact, assumptions)
+                .without_fact_incrementally(fact, assumptions)
                 .ok_or("fold requires ownership of the complete instance body")?;
         }
         next.resources = next
@@ -6955,9 +7067,6 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
                 || child.binding == Variable(u64::MAX)
                 || !child_bindings.insert(child.binding)
                 || child.arguments.len() != definition.parameters.len()
-                || child.arguments.iter().any(|argument| {
-                    !matches!(argument, CExpression::Variable(_) | CExpression::Value(_))
-                })
                 || child.field_bindings.len() != instance.schema.fields().len()
             {
                 return Err("invalid recursive child schema");
@@ -8291,6 +8400,22 @@ pub(super) fn evaluate_function_resource_context(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    evaluate_function_resource_context_with_normalization(
+        state,
+        resources,
+        assumptions,
+        budget,
+        true,
+    )
+}
+
+fn evaluate_function_resource_context_with_normalization(
+    state: &CState,
+    resources: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    normalize: bool,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
     for resource in resources {
         let evaluation_state = state.clone().with_resource_context(
@@ -8308,7 +8433,14 @@ pub(super) fn evaluate_function_resource_context(
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
         };
-        context = match context.try_compose_with_fact(resource, assumptions) {
+        // Instance rewrites retain the declared memory pieces so folding does
+        // not need to normalize an ambient block just to consume those pieces.
+        let composed = if normalize {
+            context.try_compose_with_fact(resource, assumptions)
+        } else {
+            context.try_compose_into_valid_context_delaying_normalization([resource], assumptions)
+        };
+        context = match composed {
             Ok(context) => context,
             Err(error) => return Ok(Err(resource_context_runtime_error(error))),
         };

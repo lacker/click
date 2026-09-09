@@ -10,7 +10,7 @@ use crate::kernel::{
     CFunctionExecutionCandidates, CLoopEffectCheck, CMemory, CMemoryRange, CResource,
     CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
     ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
-    ResourceContext, SpecProposition, Theorem,
+    ResourceContext, SpecProposition, Theorem, Variable,
 };
 use crate::persistent::PersistentSet;
 use std::collections::{BTreeMap, HashMap};
@@ -380,6 +380,7 @@ pub(crate) struct CheckedResourceRewrite {
     pub(crate) after_facts: ProofFacts,
     definition: CCompositeResourceDefinition,
     instance: Option<crate::kernel::ResourceInstance>,
+    selected_children: Option<Arc<[(String, Variable)]>>,
     load_equalities: Vec<crate::kernel::CheckedLoadEquality>,
 }
 
@@ -388,6 +389,7 @@ impl CheckedResourceRewrite {
         &self.before_state
     }
 
+    #[cfg(test)]
     fn check(
         function: &CFunction,
         before_state: &CState,
@@ -396,6 +398,29 @@ impl CheckedResourceRewrite {
         after_state: &CState,
         after_facts: &ProofFacts,
         call_events: &CheckedCallEvents,
+    ) -> Result<Self, &'static str> {
+        Self::check_with_children(
+            function,
+            before_state,
+            before_facts,
+            selected,
+            after_state,
+            after_facts,
+            call_events,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_with_children(
+        function: &CFunction,
+        before_state: &CState,
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+        call_events: &CheckedCallEvents,
+        selected_children: Option<Arc<[(String, Variable)]>>,
     ) -> Result<Self, &'static str> {
         let load_equality_capture =
             crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
@@ -408,12 +433,13 @@ impl CheckedResourceRewrite {
                 .resources()
                 .owned_instance(instance.identity())
                 .is_some();
-            let (expected, allowed) = crate::kernel::rewrite_resource_instance(
+            let (expected, allowed) = crate::kernel::rewrite_resource_instance_selecting_children(
                 before_state,
                 instance,
                 definition,
                 assumptions,
                 unfold,
+                selected_children.as_deref(),
             )?;
             let mut unchanged = after_state.clone();
             unchanged.resources = before_state.resources.clone();
@@ -446,6 +472,7 @@ impl CheckedResourceRewrite {
                 after_facts: after_facts.clone(),
                 definition: definition.clone(),
                 instance: Some(instance.clone()),
+                selected_children,
                 load_equalities: load_equality_capture.finish(),
             });
         }
@@ -638,6 +665,7 @@ impl CheckedResourceRewrite {
             after_facts: after_facts.clone(),
             definition,
             instance: None,
+            selected_children: None,
             load_equalities,
         })
     }
@@ -2979,14 +3007,18 @@ fn trace_completion(
                                 );
                             }
                         }
-                        let (checked_state, _) = crate::kernel::rewrite_resource_instance(
-                            state,
-                            instance,
-                            &rewrite.definition,
-                            executed_under,
-                            false,
-                        )
-                        .map_err(|_| "return fold body is not justified on this execution path")?;
+                        let (checked_state, _) =
+                            crate::kernel::rewrite_resource_instance_selecting_children(
+                                state,
+                                instance,
+                                &rewrite.definition,
+                                executed_under,
+                                false,
+                                rewrite.selected_children.as_deref(),
+                            )
+                            .map_err(
+                                |_| "return fold body is not justified on this execution path",
+                            )?;
                         if !checked_state
                             .resources
                             .same_exchange_from(&rewrite.after_state.resources, &state.resources)
@@ -4017,10 +4049,32 @@ impl ExecutionProofCore {
         after_state: &CState,
         after_facts: &ProofFacts,
     ) -> Result<(), &'static str> {
+        self.record_resource_rewrite_with_children(
+            function,
+            arguments,
+            before_facts,
+            selected,
+            after_state,
+            after_facts,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_resource_rewrite_with_children(
+        &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+        selected_children: Option<Arc<[(String, Variable)]>>,
+    ) -> Result<(), &'static str> {
         if self.evidence_completed {
             return Err("a resource rewrite was recorded after the trace completed");
         }
-        let mut rewrite = CheckedResourceRewrite::check(
+        let mut rewrite = CheckedResourceRewrite::check_with_children(
             function,
             self.reached_state(),
             before_facts,
@@ -4028,6 +4082,7 @@ impl ExecutionProofCore {
             after_state,
             after_facts,
             &self.checked_call_events,
+            selected_children,
         )?;
         if self.frontier.is_at_function_entry() {
             rewrite.before_state =
@@ -4048,6 +4103,7 @@ impl ExecutionProofCore {
 
     /// A logical resource exchange after the returning C statement. This
     /// cannot execute C, change the result, or bypass the checked body rule.
+    #[cfg(test)]
     pub(crate) fn record_return_resource_rewrite(
         &mut self,
         function: &CFunction,
@@ -4055,6 +4111,25 @@ impl ExecutionProofCore {
         before_facts: &ProofFacts,
         selected: &CResourceFact,
         after_facts: &ProofFacts,
+    ) -> Result<(), &'static str> {
+        self.record_return_resource_rewrite_with_children(
+            function,
+            path_index,
+            before_facts,
+            selected,
+            after_facts,
+            None,
+        )
+    }
+
+    pub(crate) fn record_return_resource_rewrite_with_children(
+        &mut self,
+        function: &CFunction,
+        path_index: usize,
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_facts: &ProofFacts,
+        selected_children: Option<Arc<[(String, Variable)]>>,
     ) -> Result<(), &'static str> {
         if !self.evidence_completed {
             return Err("return resource rewrite requires completed execution");
@@ -4098,14 +4173,15 @@ impl ExecutionProofCore {
         };
         // Compute the exchange in the retained C-body state, not the
         // caller-side projection used by postcondition expressions.
-        let (after_state, _) = crate::kernel::rewrite_resource_instance(
+        let (after_state, _) = crate::kernel::rewrite_resource_instance_selecting_children(
             &before_state,
             instance,
             definition,
             before_facts.assumptions(),
             false,
+            selected_children.as_deref(),
         )?;
-        let rewrite = CheckedResourceRewrite::check(
+        let rewrite = CheckedResourceRewrite::check_with_children(
             function,
             &before_state,
             before_facts,
@@ -4113,6 +4189,7 @@ impl ExecutionProofCore {
             &after_state,
             after_facts,
             &self.checked_call_events,
+            selected_children,
         )?;
         let mut trace = self
             .return_resource_rewrites

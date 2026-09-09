@@ -136,6 +136,26 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 format_click_function_application(application)
             ),
         ),
+        ProofTactic::UnfoldResource(resource @ ResourceClause::Named { binding, .. })
+            if binding.child_bindings.is_some() =>
+        {
+            let children = binding
+                .child_bindings
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(slot, name, _)| format!("{slot}: {name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "unfold({}) as {{ {children} }};",
+                    format_resource_call(resource)
+                ),
+            );
+        }
         ProofTactic::UnfoldResource(resource) => line(
             output,
             &prefix,
@@ -148,7 +168,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 output,
                 &prefix,
                 &format!(
-                    "let {} = fold({}, {{ {} }});",
+                    "let {} = fold({}, {{ {} }}{});",
                     binding.name,
                     format_resource_target(resource),
                     binding
@@ -161,7 +181,20 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                             describe_contract_expression(value)
                         ))
                         .collect::<Vec<_>>()
-                        .join(", ")
+                        .join(", "),
+                    binding
+                        .child_bindings
+                        .as_ref()
+                        .filter(|children| !children.is_empty())
+                        .map(|children| format!(
+                            ", {{ {} }}",
+                            children
+                                .iter()
+                                .map(|(slot, name, _)| format!("{slot}: {name}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                        .unwrap_or_default(),
                 ),
             )
         }
