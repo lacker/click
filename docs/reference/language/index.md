@@ -1307,9 +1307,9 @@ function parameter names retain their ordinary contract meaning.
 `at(loop_label.entry, expression)` is currently supported inside invariants for
 that same labeled loop code region. It evaluates `expression` at the visit just
 before the loop region starts, then reuses that snapshot for invariant entry and
-preservation checks. Inside an explicit `preserve` proof, the same spelling is
-scoped to the fresh arbitrary loop-head visit whose body iteration is being
-proved.
+preservation checks. Inside an explicit `preserve` proof, the same spelling
+continues to denote that pre-loop snapshot; the current arbitrary loop-head
+visit is available through the ordinary unwrapped expression.
 
 The expression and proposition forms of `at(statement(N).entry, ...)` and
 `at(statement(N).exit, ...)` are currently supported in explicit proof-script
