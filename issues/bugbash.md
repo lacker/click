@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Sixteen independent root causes. Every one has a reproduction that verifies
+Fourteen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other ten are high: the trigger is
+false, with no unusual tactics. The other eight are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -779,118 +779,6 @@ inconsistent.
   for `result` other than through the real aliasing.
 - Add an inconsistency probe to the regression: a claim like `result == 7`,
   which no execution satisfies, must never verify.
-
----
-
-## 11. An aggregate copy from an uninitialized source keeps the old value
-
-**Severity: high.** A whole-struct assignment whose source was never written
-leaves the destination reading as its own previous value, so a contract can
-state that value.
-
-**Violated invariant.** Struct assignment copies the source's members
-(C11 6.5.16.1p2). A source member that was never written is indeterminate, so
-reading the destination afterwards is a read of indeterminate storage, not a
-read of what the destination held before.
-
-**Mechanism.** `copy_aggregate_fields` (`src/kernel/functions.rs:3526-3549`)
-copies a source cell only when one is present. A union-containing layout routes
-whole-struct assignment through this kernel copy
-(`C0Statement::AggregateCopy`, executed at
-`src/kernel/eval/statements.rs:568`), and with no source cell the destination's
-own cell survives untouched. The same assignment between plain structs is
-correctly reported, so the union path is what makes this reachable.
-
-**Regression** (`mdtests/aggregate_copy_uninitialized_source_rejected.md`):
-
-```c
-union payload {
-    int32 number;
-    int32* pointer;
-};
-
-struct packet {
-    int32 tag;
-    union payload payload;
-};
-
-int32 aggregate_copy_uninitialized_source_rejected() {
-    struct packet source;
-    struct packet destination;
-    destination.tag = 7;
-    destination = source;
-    return destination.tag;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 aggregate_copy_uninitialized_source_rejected() {
-    ensures result == 7;
-}
-```
-
-`source` was never written, so `destination.tag` is indeterminate after the
-copy and 7 is the value the assignment was supposed to overwrite.
-
-**Acceptance criteria.**
-- The sidecar is rejected with a read of uninitialized storage, as the same
-  assignment between plain structs already is.
-- A copy whose source leaves a field type this copy cannot carry keeps its
-  current treatment: the destination cells are dropped, so nothing stale is
-  readable. Carrying the remaining widths (`int16*`, `uint16*`, `uint32*`,
-  `int64*`, `uint64*`, `float*`, `double*`, and the float array and
-  pointer-to-pointer forms) is a completeness follow-up, not part of this.
-
----
-
-## 12. Subnormal float division is mis-rounded
-
-**Severity: high.** The integer-space IEEE evaluator mis-rounds a division
-whose result is subnormal and whose dividend is subnormal: the sticky bit
-collides with the rounding bit.
-
-**Violated invariant.** Constant folding agrees with IEEE-754 at the declared
-width, under round-to-nearest, ties-to-even, including in the subnormal range.
-
-**Mechanism.** `src/kernel/primitives/term_operations.rs`, the `DecodedFloat`
-evaluator's division path and `round_float_result`'s subnormal branch.
-
-**Regression.** The correctly rounded binary32 quotient is
-`3.2229864679470793e-44f` (bits `0x00000017`, confirmed with a C compiler on
-this profile); Click folds to `3.363116314379561e-44f` (bits `0x00000018`),
-one unit in the last place high. The sidecar below therefore states the wrong
-branch and verifies, while `ensures result == 1` is rejected.
-
-```c
-int32 subnormal_divide() {
-    float quotient = 4.203895392974451e-45f / 0.12765958905220032f;
-    if (quotient == 3.2229864679470793e-44f) {
-        return 1;
-    }
-    if (quotient == 3.363116314379561e-44f) {
-        return 2;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 subnormal_divide() {
-    ensures result == 2;
-}
-```
-
-**Acceptance criteria.**
-- The sidecar above is rejected and `ensures result == 1` verifies.
-- Add a differential test over a fixed vector of bit patterns (signed zeros,
-  subnormals, infinities, NaNs, cancellation pairs, boundary conversions)
-  comparing the evaluator against known-good expected values, so the next
-  encoding change cannot silently regress. This is the missing guard for the
-  whole evaluator, not only for this case.
 
 ---
 
