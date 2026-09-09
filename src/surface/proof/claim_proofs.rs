@@ -33,7 +33,14 @@ fn select_checked_post_execution_tactics<'a>(
                 then_tactics,
                 else_tactics,
             } => {
-                let value = proof.checked_outcome_if_value(condition)?;
+                let scoped = deferred
+                    .lexical_bindings
+                    .as_ref()
+                    .map(|bindings| proof.with_surface_local_scope(bindings));
+                let value = scoped
+                    .as_ref()
+                    .unwrap_or(proof)
+                    .checked_outcome_if_value(condition)?;
                 choices.push(SurfacePathChoice {
                     occurrence: deferred.source_index,
                     condition: condition.clone(),
@@ -1490,7 +1497,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     })
             },
         )?;
-        let _certified_outcomes = completed_execution
+        let certified_outcomes = completed_execution
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
@@ -1523,6 +1530,8 @@ pub(super) fn finish_ordered_proof<'a>(
             })
             .collect();
         let mut verified = Vec::new();
+        let mut returned_core = proof_execution.core.clone();
+        let mut any_return_instance_rewrite = false;
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
@@ -1541,6 +1550,14 @@ pub(super) fn finish_ordered_proof<'a>(
             "execution path finishing",
             || -> Result<(), ClickError> {
                 'execution_path: for (path_index, path) in execution.paths().iter().enumerate() {
+                    // Entry resource rewrites may precede the first C step.
+                    // Contract `old` still denotes the original function entry,
+                    // not the rewritten representation where execution began.
+                    let contract_pre_state = proof_execution
+                        .core
+                        .function_entry
+                        .as_ref()
+                        .map_or(pre_state, |entry| entry.caller_state());
                     let _path_preparation_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
                         &proof_label,
@@ -1776,6 +1793,15 @@ pub(super) fn finish_ordered_proof<'a>(
                         },
                     )?;
 
+                    // Interpret post-return counts using the checked exit, but
+                    // retain the body's ownership until its open resources have
+                    // been closed. Entry/body facts above were projected before
+                    // this change; the new invariant remains a proof obligation.
+                    outcome = crate::kernel::function_body_with_return_counts(
+                        &outcome,
+                        &certified_outcomes[certified_path_index],
+                    );
+
                     let (
                         mut closures,
                         mut rewritten_claim_goals,
@@ -1838,11 +1864,11 @@ pub(super) fn finish_ordered_proof<'a>(
                     // attribution, never reapplied as a candidate certificate.
                     let mut existence_proof = None;
                     let mut has_return_instance_rewrite = false;
-                    // Contract resource/population effects are applied once
-                    // at the frame that certifies them. A grouped proof sees
-                    // the effect goals directly; an isolated ensure proof
-                    // does not, but still needs the same transitioned outcome
-                    // before lowering its postcondition.
+                    // Legacy frame proofs also reconstruct the returned
+                    // resource context. Track that ownership transition
+                    // separately from the return-count interpretation above:
+                    // closing an open body must retain its owned resources
+                    // until its invariant has been proved.
                     let mut resource_transition_applied = false;
                     drop(_path_preparation_timing);
                     let _post_execution_timing = crate::instrumentation::OperationTiming::new(
@@ -1894,6 +1920,10 @@ pub(super) fn finish_ordered_proof<'a>(
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()
                     {
+                        if let Some(bindings) = &deferred.lexical_bindings {
+                            outcome_proof =
+                                outcome_proof.map(|proof| proof.with_surface_local_scope(bindings));
+                        }
                         while selected_post_choices
                             .peek()
                             .is_some_and(|choice| choice.tactic_offset == post_execution_index)
@@ -2704,7 +2734,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let kernel_goals = kernel_claim_goal_forms(
                                         function,
                                         claim,
-                                        pre_state,
+                                        contract_pre_state,
                                         arguments,
                                         &outcome,
                                         &assumptions_from_propositions(&path_requirements),
@@ -2957,7 +2987,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let kernel_goals = kernel_claim_goal_forms(
                                         function,
                                         claim,
-                                        pre_state,
+                                        contract_pre_state,
                                         arguments,
                                         &outcome,
                                         &assumptions_from_propositions(&path_requirements),
@@ -3137,7 +3167,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let kernel_goals = kernel_claim_goal_forms(
                                         function,
                                         claim,
-                                        pre_state,
+                                        contract_pre_state,
                                         arguments,
                                         &outcome,
                                         &assumptions_from_propositions(&path_requirements),
@@ -4406,8 +4436,8 @@ pub(super) fn finish_ordered_proof<'a>(
                     // Explicit instance folds are checked resource events,
                     // including after C returns. Certify their retained trace
                     // before accepting the resulting ownership representation.
-                    let rewritten_execution;
-                    let final_execution = if has_return_instance_rewrite {
+                    let rewritten_path;
+                    let certified_path = if has_return_instance_rewrite {
                         let core = &outcome_proof
                             .as_ref()
                             .and_then(Proof::execution)
@@ -4415,30 +4445,33 @@ pub(super) fn finish_ordered_proof<'a>(
                                 ClickError::new("return instance fold lost its checked execution")
                             })?
                             .core;
-                        rewritten_execution = core
-                            .checked_function_execution(
+                        rewritten_path = core
+                            .checked_return_path(
                                 execution,
                                 function,
-                                assumptions_from_propositions(&base_certification_facts),
-                                function_environment.clone(),
-                                execution_semantics,
-                                execution_mode,
+                                &assumptions_from_propositions(&base_certification_facts),
+                                path_index,
                             )
                             .map_err(|message| {
                                 ClickError::new(format!(
                                     "could not certify return instance fold: {message}"
                                 ))
                             })?;
-                        &rewritten_execution
+                        returned_core
+                            .collect_return_resource_rewrites(core, path_index)
+                            .map_err(|message| ClickError::new(message))?;
+                        any_return_instance_rewrite = true;
+                        &rewritten_path
                     } else {
-                        &completed_execution
+                        completed_execution
+                            .paths()
+                            .get(certified_path_index)
+                            .ok_or_else(|| {
+                                ClickError::new(
+                                    "return instance fold changed execution path coverage",
+                                )
+                            })?
                     };
-                    let certified_path = final_execution
-                        .paths()
-                        .get(certified_path_index)
-                        .ok_or_else(|| {
-                            ClickError::new("return instance fold changed execution path coverage")
-                        })?;
                     let Proposition::CFunctionVerifies {
                         outcome: specification_outcome,
                         ..
@@ -4503,7 +4536,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .frontier_loop_clauses
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
-                            checked_execution: final_execution.clone(),
+                            checked_execution: completed_execution.clone(),
                             checked_proposition,
                         });
                     }
@@ -4552,6 +4585,23 @@ pub(super) fn finish_ordered_proof<'a>(
                 Ok(())
             },
         )?;
+        if any_return_instance_rewrite {
+            let completed = returned_core
+                .checked_function_execution(
+                    execution,
+                    function,
+                    assumptions_from_propositions(&base_certification_facts),
+                    function_environment.clone(),
+                    execution_semantics,
+                    execution_mode,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("could not certify all return folds: {message}"))
+                })?;
+            for theorem in &mut verified {
+                theorem.checked_execution = completed.clone();
+            }
+        }
         // A context that recorded a proof-branch choice appends its
         // post-execution tactics as a flat suffix after the choice point,
         // where cross-context synthesis will place the surface `if`.

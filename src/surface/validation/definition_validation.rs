@@ -699,6 +699,28 @@ fn validate_resource_definition(
     let Some(composite_body) = definition.composite_body() else {
         return Ok(());
     };
+    if composite_body.matched.is_some() {
+        for (_, _, arm) in resource_match_arm_scopes(definition, |name| {
+            click_function_environment
+                .algebraic_type_definitions
+                .get(name)
+        })? {
+            validate_resource_definition(
+                &arm,
+                resources,
+                recursive_resources,
+                predicates,
+                contracts,
+                click_functions,
+                click_function_types,
+                predicate_definitions,
+                click_function_definitions,
+                predicate_environment,
+                click_function_environment,
+            )?;
+        }
+        return Ok(());
+    }
     let mut variables = definition
         .parameters()
         .iter()

@@ -23,6 +23,17 @@ int32 drain_to_zero(int32 n) {
     loop as drain {
         invariant n >= 0;
         invariant at(drain.entry, n) >= 0;
+        preserve by {
+            have at(drain.entry, n) >= 0 by { assumption(); }
+            have 0 <= n - 1 by {
+                apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
+            }
+            step();
+            close_invariants by {
+                both { arithmetic() using { 0 <= n; } }
+                and { intro(); assumption(); }
+            }
+        }
     }
     step();
     simp();

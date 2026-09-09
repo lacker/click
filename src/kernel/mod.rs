@@ -9,15 +9,16 @@ mod api;
 mod assumptions;
 mod eval;
 mod functions;
-pub(crate) use functions::rewrite_resource_instance;
-mod loops;
 #[cfg(test)]
-pub(crate) use loops::invariant_discovery_calls;
+pub(crate) use functions::rewrite_resource_instance;
+pub(crate) use functions::rewrite_resource_instance_selecting_children;
+mod loops;
 mod memory_provenance;
 mod primitives;
 pub(crate) mod proof;
 mod reasoning;
 mod spec;
+pub(crate) use spec::capture_spec_algebraic_value;
 mod termination;
 
 pub use api::*;

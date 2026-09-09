@@ -192,7 +192,17 @@ the proof object refuses fails the tactic that made it. At function exit
 the proof object composes the checked function execution that claim and
 contract certification consume (`ExecutionProofCore::checked_function_execution`):
 one path per trace, its completing theorem under the contract's exit rule.
-It evaluates no C, derives no fact, and walks nothing again.
+It evaluates no C; completion inspects the retained evidence and applies the
+checked contract exit rule.
+
+Named-instance folds after return are persistent, path-indexed trace extensions.
+The fold reads the selected trace's completing state, never a sibling's state
+or the caller-side postcondition projection. Guarded folds must select the case
+justified by that path's retained assumptions. Outcome finishing checks each
+modified path, collects its extension by base-trace identity, and publishes one
+complete execution after all outcomes are finished. This preserves coverage
+without re-certifying every sibling for each fold. Indexing and extending one
+path shares the unchanged traces and history.
 
 An interface `branch ensuring` may join different heap lifetimes when the
 interface includes an owned, arm-sensitive resource that represents the

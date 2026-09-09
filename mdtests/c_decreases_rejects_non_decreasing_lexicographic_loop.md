@@ -41,9 +41,13 @@ int32 stuck_phase(int32 n) {
                 step();
                 simp();
             } else {
+                have 0 <= i - 1 by {
+                    apply(int32_positive_predecessor_is_nonnegative(i)) using { i > 0; }
+                }
                 step();
                 step();
                 step();
+                have i >= 0 by { arithmetic() using { 0 <= i; } }
                 simp();
             }
         }

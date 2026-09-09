@@ -1,6 +1,9 @@
 use super::*;
 use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
 
+#[cfg(test)]
+mod tests;
+
 pub(in crate::surface) fn check_resource_field_schemas(
     file: &mut ClickFile,
 ) -> Result<(), ClickError> {
@@ -135,10 +138,22 @@ pub(in crate::surface) fn check_resource_field_schemas(
             bindings.insert(binding.identity, binding.clone());
         }
         for ensure in &mut function.ensures {
-            if let Ensure::Resource(ResourceClause::Named { binding, .. }) = &mut ensure.ensure {
-                *binding = bindings.get(&binding.identity).cloned().ok_or_else(|| {
-                    ClickError::new("returned resource instance has no entry binding")
-                })?;
+            if let Ensure::Resource(ResourceClause::Named { binding, resource }) =
+                &mut ensure.ensure
+            {
+                if let Some(entry) = bindings.get(&binding.identity) {
+                    *binding = entry.clone();
+                } else {
+                    let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+                        unreachable!()
+                    };
+                    binding.schema = Some(
+                        schemas
+                            .get(name)
+                            .ok_or_else(|| ClickError::new("returned resource has no schema"))?
+                            .clone(),
+                    );
+                }
             }
         }
     }
@@ -279,6 +294,20 @@ pub(in crate::surface) fn lower_composite_resource_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<SpecProposition>, ClickError> {
+    lower_composite_resource_facts_with_bindings(
+        definition,
+        predicate_environment,
+        click_function_environment,
+        &[],
+    )
+}
+
+pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
+    definition: &ResourceDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    bindings: &[(String, ClickType)],
+) -> Result<Vec<SpecProposition>, ClickError> {
     let body = definition
         .composite_body()
         .expect("only composite definitions have logical facts");
@@ -318,6 +347,18 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         .cloned()
         .collect::<Vec<_>>();
     let mut facts = Vec::new();
+    for (name, ty) in bindings {
+        if let ClickType::Algebraic(application) = ty {
+            lowerer.algebraic_variables.insert(
+                name.clone(),
+                SpecAlgebraicExpression {
+                    algebraic_type: algebraic_kernel_type(click_function_environment, application)
+                        .map_err(ClickError::new)?,
+                    node: SpecAlgebraicExpressionNode::Binding(name.clone()),
+                },
+            );
+        }
+    }
     for fact in body.facts() {
         let unfolded = unfold_click_predicates_in_proposition_with_active(
             predicate_environment,
@@ -1326,110 +1367,68 @@ impl AnnotationLowerer<'_> {
             .collect()
     }
 
+    // Keep recursive connective dispatch separate from large leaf/binder temporaries.
+    // Inlining the helpers would put those temporaries back on every nesting level.
+    #[inline(never)]
     fn click_proposition_to_spec_proposition(
         &mut self,
         proposition: &ClickProposition,
         environment: &SpecElaborationContext,
     ) -> Result<SpecProposition, String> {
+        #[cfg(test)]
+        tests::PROPOSITION_VISITS.with(|visits| visits.set(visits.get() + 1));
         match proposition {
-            ClickProposition::Comparison {
-                left,
-                operator,
-                right,
-            } => {
-                if *operator == ComparisonOperator::In {
-                    return Ok(SpecProposition::SequenceMembership {
-                        element: self.lower_contract_expression_to_spec(left, environment)?,
-                        sequence: self.lower_contract_sequence_to_spec(right, environment)?,
-                    });
-                }
-                let has_algebraic = contract_expression_is_algebraic(
-                    left,
-                    self.click_function_environment,
-                    environment,
-                    &mut Vec::new(),
-                ) || contract_expression_is_algebraic(
-                    right,
-                    self.click_function_environment,
-                    environment,
-                    &mut Vec::new(),
-                );
-                if has_algebraic {
-                    let equal = match operator {
-                        ComparisonOperator::Equal => true,
-                        ComparisonOperator::NotEqual => false,
-                        _ => {
-                            return Err("algebraic values support only `==` and `!=` comparisons"
-                                .to_string());
-                        }
-                    };
-                    return Ok(SpecProposition::AlgebraicComparison {
-                        left: self.lower_contract_algebraic_to_spec(left, environment)?,
-                        equal,
-                        right: self.lower_contract_algebraic_to_spec(right, environment)?,
-                    });
-                }
-                let has_sequence =
-                    contract_expression_is_sequence(left) || contract_expression_is_sequence(right);
-                if has_sequence {
-                    let equal = match operator {
-                        ComparisonOperator::Equal => true,
-                        ComparisonOperator::NotEqual => false,
-                        _ => {
-                            return Err(
-                                "sequences support only `==` and `!=` comparisons".to_string()
-                            );
-                        }
-                    };
-                    Ok(SpecProposition::SequenceComparison {
-                        left: self.lower_contract_sequence_to_spec(left, environment)?,
-                        equal,
-                        right: self.lower_contract_sequence_to_spec(right, environment)?,
-                    })
-                } else {
-                    Ok(SpecProposition::Comparison {
-                        left: self.lower_contract_expression_to_spec(left, environment)?,
-                        operator: c_comparison_operator(*operator),
-                        right: self.lower_contract_expression_to_spec(right, environment)?,
-                    })
-                }
+            ClickProposition::At { .. } => {
+                self.lower_at_proposition_to_spec(proposition, environment)
             }
-            ClickProposition::FloatClassification {
-                expression,
-                classification,
-            } => Ok(SpecProposition::FloatClassification {
-                expression: self.lower_contract_expression_to_spec(expression, environment)?,
-                classification: match classification {
-                    syntax::C0FloatClassification::Finite => CFloatClassification::Finite,
-                    syntax::C0FloatClassification::Infinite => CFloatClassification::Infinite,
-                    syntax::C0FloatClassification::Zero => CFloatClassification::Zero,
-                    syntax::C0FloatClassification::Subnormal => CFloatClassification::Subnormal,
-                    syntax::C0FloatClassification::Nan => CFloatClassification::Nan,
-                },
-            }),
-            ClickProposition::Separate { left, right } => Ok(SpecProposition::ResourceSeparate {
-                left: self.lower_resource_subject_to_spec(left, environment)?,
-                right: self.lower_resource_subject_to_spec(right, environment)?,
-            }),
-            ClickProposition::Contains { parent, child } => Ok(SpecProposition::ResourceContains {
-                parent: self.lower_resource_subject_to_spec(parent, environment)?,
-                child: self.lower_resource_subject_to_spec(child, environment)?,
-            }),
-            ClickProposition::Loadable { segment } => {
-                let segment_environment = self.spec_segment_environment(segment, environment)?;
-                Ok(SpecProposition::MemoryLoadable {
-                    memory: segment_environment.current_memory.clone(),
-                    base: self
-                        .lower_contract_segment_base_to_spec(&segment.base, &segment_environment)?,
-                    start: self.lower_c_fragment_to_spec(&segment.start, &segment_environment)?,
-                    end: self.lower_c_fragment_to_spec(&segment.end, &segment_environment)?,
-                    element_width: self
-                        .contract_segment_element_width(segment, &segment_environment),
-                })
-            }
-            ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
-                self.lower_contract_expression_to_spec(expression, environment)?,
+            ClickProposition::And(left, right) => Ok(SpecProposition::And(
+                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
+                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
             )),
+            ClickProposition::Or(left, right) => Ok(SpecProposition::Or(
+                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
+                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
+            )),
+            ClickProposition::Not(body) => Ok(SpecProposition::Not(Box::new(
+                self.click_proposition_to_spec_proposition(body, environment)?,
+            ))),
+            ClickProposition::Implies(left, right) => Ok(SpecProposition::Implies(
+                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
+                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
+            )),
+            ClickProposition::ForAll { .. } => {
+                self.lower_for_all_proposition_to_spec(proposition, environment)
+            }
+            ClickProposition::Exists { .. } => {
+                self.lower_exists_proposition_to_spec(proposition, environment)
+            }
+            ClickProposition::RangeAll { .. } => {
+                self.lower_range_all_proposition_to_spec(proposition, environment)
+            }
+            ClickProposition::RangeAny { .. } => {
+                self.lower_range_any_proposition_to_spec(proposition, environment)
+            }
+            ClickProposition::PredicateCall { .. } => {
+                self.lower_predicate_call_proposition_to_spec(proposition, environment)
+            }
+            ClickProposition::Comparison { .. }
+            | ClickProposition::FloatClassification { .. }
+            | ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. }
+            | ClickProposition::Defined { .. } => {
+                self.lower_atomic_proposition_to_spec(proposition, environment)
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn lower_at_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
             ClickProposition::At {
                 selector,
                 proposition,
@@ -1449,21 +1448,17 @@ impl AnnotationLowerer<'_> {
                     _ => Err("`at(...)` propositions are proof-script snapshots".to_string()),
                 }
             }
-            ClickProposition::And(left, right) => Ok(SpecProposition::And(
-                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
-                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
-            )),
-            ClickProposition::Or(left, right) => Ok(SpecProposition::Or(
-                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
-                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
-            )),
-            ClickProposition::Not(body) => Ok(SpecProposition::Not(Box::new(
-                self.click_proposition_to_spec_proposition(body, environment)?,
-            ))),
-            ClickProposition::Implies(left, right) => Ok(SpecProposition::Implies(
-                Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
-                Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
-            )),
+            _ => unreachable!("proposition dispatched to the wrong lowering helper"),
+        }
+    }
+
+    #[inline(never)]
+    fn lower_for_all_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
             ClickProposition::ForAll { c_type, name, body } => {
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
@@ -1508,6 +1503,17 @@ impl AnnotationLowerer<'_> {
                     })
                 }
             }
+            _ => unreachable!("proposition dispatched to the wrong lowering helper"),
+        }
+    }
+
+    #[inline(never)]
+    fn lower_exists_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
             ClickProposition::Exists { c_type, name, body } => {
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
@@ -1552,6 +1558,17 @@ impl AnnotationLowerer<'_> {
                     })
                 }
             }
+            _ => unreachable!("proposition dispatched to the wrong lowering helper"),
+        }
+    }
+
+    #[inline(never)]
+    fn lower_range_all_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
             ClickProposition::RangeAll {
                 start,
                 end,
@@ -1588,6 +1605,17 @@ impl AnnotationLowerer<'_> {
                     body: Box::new(SpecProposition::Implies(Box::new(range), Box::new(body))),
                 })
             }
+            _ => unreachable!("proposition dispatched to the wrong lowering helper"),
+        }
+    }
+
+    #[inline(never)]
+    fn lower_range_any_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
             ClickProposition::RangeAny {
                 start,
                 end,
@@ -1624,6 +1652,17 @@ impl AnnotationLowerer<'_> {
                     body: Box::new(SpecProposition::And(Box::new(range), Box::new(body))),
                 })
             }
+            _ => unreachable!("proposition dispatched to the wrong lowering helper"),
+        }
+    }
+
+    #[inline(never)]
+    fn lower_predicate_call_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
             ClickProposition::PredicateCall { name, arguments } => {
                 if let Some(signature) = self.predicate_environment.contract_signature(name) {
                     let [function] = arguments.as_slice() else {
@@ -1737,6 +1776,116 @@ impl AnnotationLowerer<'_> {
                     arguments: lowered_arguments,
                 })
             }
+            _ => unreachable!("proposition dispatched to the wrong lowering helper"),
+        }
+    }
+
+    #[inline(never)]
+    fn lower_atomic_proposition_to_spec(
+        &mut self,
+        proposition: &ClickProposition,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecProposition, String> {
+        match proposition {
+            ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } => {
+                if *operator == ComparisonOperator::In {
+                    return Ok(SpecProposition::SequenceMembership {
+                        element: self.lower_contract_expression_to_spec(left, environment)?,
+                        sequence: self.lower_contract_sequence_to_spec(right, environment)?,
+                    });
+                }
+                let has_algebraic = contract_expression_is_algebraic(
+                    left,
+                    self.click_function_environment,
+                    environment,
+                    &mut Vec::new(),
+                ) || contract_expression_is_algebraic(
+                    right,
+                    self.click_function_environment,
+                    environment,
+                    &mut Vec::new(),
+                );
+                if has_algebraic {
+                    let equal = match operator {
+                        ComparisonOperator::Equal => true,
+                        ComparisonOperator::NotEqual => false,
+                        _ => {
+                            return Err("algebraic values support only `==` and `!=` comparisons"
+                                .to_string());
+                        }
+                    };
+                    return Ok(SpecProposition::AlgebraicComparison {
+                        left: self.lower_contract_algebraic_to_spec(left, environment)?,
+                        equal,
+                        right: self.lower_contract_algebraic_to_spec(right, environment)?,
+                    });
+                }
+                let has_sequence =
+                    contract_expression_is_sequence(left) || contract_expression_is_sequence(right);
+                if has_sequence {
+                    let equal = match operator {
+                        ComparisonOperator::Equal => true,
+                        ComparisonOperator::NotEqual => false,
+                        _ => {
+                            return Err(
+                                "sequences support only `==` and `!=` comparisons".to_string()
+                            );
+                        }
+                    };
+                    Ok(SpecProposition::SequenceComparison {
+                        left: self.lower_contract_sequence_to_spec(left, environment)?,
+                        equal,
+                        right: self.lower_contract_sequence_to_spec(right, environment)?,
+                    })
+                } else {
+                    Ok(SpecProposition::Comparison {
+                        left: self.lower_contract_expression_to_spec(left, environment)?,
+                        operator: c_comparison_operator(*operator),
+                        right: self.lower_contract_expression_to_spec(right, environment)?,
+                    })
+                }
+            }
+            ClickProposition::FloatClassification {
+                expression,
+                classification,
+            } => Ok(SpecProposition::FloatClassification {
+                expression: self.lower_contract_expression_to_spec(expression, environment)?,
+                classification: match classification {
+                    syntax::C0FloatClassification::Finite => CFloatClassification::Finite,
+                    syntax::C0FloatClassification::Infinite => CFloatClassification::Infinite,
+                    syntax::C0FloatClassification::Zero => CFloatClassification::Zero,
+                    syntax::C0FloatClassification::Subnormal => CFloatClassification::Subnormal,
+                    syntax::C0FloatClassification::Nan => CFloatClassification::Nan,
+                },
+            }),
+            ClickProposition::Separate { left, right } => Ok(SpecProposition::ResourceSeparate {
+                left: self.lower_resource_subject_to_spec(left, environment)?,
+                right: self.lower_resource_subject_to_spec(right, environment)?,
+            }),
+            ClickProposition::Contains { parent, child } => Ok(SpecProposition::ResourceContains {
+                parent: self.lower_resource_subject_to_spec(parent, environment)?,
+                child: self.lower_resource_subject_to_spec(child, environment)?,
+            }),
+            ClickProposition::Loadable { segment } => {
+                let segment_environment = self.spec_segment_environment(segment, environment)?;
+                Ok(SpecProposition::MemoryLoadable {
+                    memory: segment_environment.current_memory.clone(),
+                    base: self
+                        .lower_contract_segment_base_to_spec(&segment.base, &segment_environment)?,
+                    start: self.lower_c_fragment_to_spec(&segment.start, &segment_environment)?,
+                    end: self.lower_c_fragment_to_spec(&segment.end, &segment_environment)?,
+                    element_width: self
+                        .contract_segment_element_width(segment, &segment_environment),
+                })
+            }
+            ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
+                self.lower_contract_expression_to_spec(expression, environment)?,
+            )),
+            _ => unreachable!("non-atomic proposition dispatched to leaf lowering"),
         }
     }
 
@@ -1752,7 +1901,7 @@ impl AnnotationLowerer<'_> {
         snapshot
             .map(|state| {
                 state
-                    .resource_instance_fields(access.identity)
+                    .resource_instance_at_path(access.identity, &access.children)
                     .and_then(|instance| instance.fields().get(access.field_index))
                     .cloned()
                     .ok_or_else(|| {
@@ -1784,6 +1933,7 @@ impl AnnotationLowerer<'_> {
                 Ok(SpecExpression::ResourceField {
                     projection: crate::kernel::ResourceFieldProjection {
                         identity: access.identity,
+                        children: access.children.clone(),
                         field_index: access.field_index,
                         at_entry: environment.at_function_entry,
                     },
@@ -2176,6 +2326,7 @@ impl AnnotationLowerer<'_> {
                     SpecAlgebraicExpressionNode::ResourceField(
                         crate::kernel::ResourceFieldProjection {
                             identity: access.identity,
+                            children: access.children.clone(),
                             field_index: access.field_index,
                             at_entry: environment.at_function_entry,
                         },
@@ -2212,6 +2363,13 @@ impl AnnotationLowerer<'_> {
                     .iter()
                     .find(|schema| schema.name == *variant)
                     .ok_or_else(|| format!("unknown match variant `{variant}`"))?;
+                if arguments.len() != schema.fields.len() {
+                    return Err(format!(
+                        "constructor `{variant}` expects {} argument(s), got {}",
+                        schema.fields.len(),
+                        arguments.len(),
+                    ));
+                }
                 let fields = arguments
                     .iter()
                     .zip(&schema.fields)
@@ -2560,6 +2718,10 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<Option<ClickType>, String> {
         match argument {
+            ContractExpression::Old(inner)
+            | ContractExpression::At {
+                expression: inner, ..
+            } => self.infer_unconstrained_call_argument_type(inner, environment),
             ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
             ContractExpression::AlgebraicVariable { algebraic_type, .. }
             | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
@@ -3317,6 +3479,7 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Option<CType> {
         match expression {
+            CExpression::Value(CValue::Pointer(pointer)) => pointer.c_type().pointee_type(),
             CExpression::Variable(name) => environment
                 .array_refs
                 .get(name)

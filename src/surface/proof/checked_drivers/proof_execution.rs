@@ -101,6 +101,7 @@ pub(in crate::surface::proof) fn internal_proof_first_index(
             .map(|indexed| indexed.index)
             .or_else(|| internal_proof_first_index(continuation)),
         InternalProofNode::Open { index, .. }
+        | InternalProofNode::Match { index, .. }
         | InternalProofNode::If { index, .. }
         | InternalProofNode::Branch { index, .. } => Some(*index),
     }
@@ -185,6 +186,15 @@ fn checked_execution_region_end_at(
         return None;
     }
     match node {
+        InternalProofNode::Match {
+            arms, continuation, ..
+        } => (!arms.is_empty()
+            && matches!(continuation.as_ref(), InternalProofNode::Done)
+            && arms.iter().all(|arm| {
+                checked_execution_region_end_at(arm, depth + 1, initial)
+                    == Some(CheckedExecutionRegionEnd::FunctionExit)
+            }))
+        .then_some(CheckedExecutionRegionEnd::FunctionExit),
         InternalProofNode::Done => Some(initial),
         InternalProofNode::Linear {
             tactics,
@@ -283,6 +293,22 @@ fn checked_execution_region_contains_source_at(
         return false;
     }
     match node {
+        InternalProofNode::Match {
+            source_index: own,
+            arms,
+            continuation,
+            ..
+        } => {
+            *own == source_index
+                || arms.iter().any(|arm| {
+                    checked_execution_region_contains_source_at(arm, source_index, depth + 1)
+                })
+                || checked_execution_region_contains_source_at(
+                    continuation,
+                    source_index,
+                    depth + 1,
+                )
+        }
         InternalProofNode::Done => false,
         InternalProofNode::Linear {
             tactics,
@@ -348,6 +374,12 @@ fn checked_execution_region_contains_source_at(
 
 fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
     match node {
+        InternalProofNode::Match {
+            arms, continuation, ..
+        } => {
+            arms.iter().any(internal_proof_contains_frame)
+                || internal_proof_contains_frame(continuation)
+        }
         InternalProofNode::Done => false,
         InternalProofNode::Linear {
             tactics,
@@ -496,6 +528,7 @@ fn deferred_post_execution_linear_region(
                 tactic => flat_post_execution_tactic(tactic)?,
             };
             Some(DeferredPostExecutionTactic {
+                lexical_bindings: None,
                 tactic_index: indexed.index,
                 source_index: indexed.source_index,
                 tactic,
@@ -511,6 +544,7 @@ fn deferred_post_execution_region(
     node: &InternalProofNode,
 ) -> Option<Vec<DeferredPostExecutionTactic>> {
     match node {
+        InternalProofNode::Match { .. } => None,
         InternalProofNode::Done => Some(Vec::new()),
         InternalProofNode::Linear {
             tactics,
@@ -525,6 +559,7 @@ fn deferred_post_execution_region(
             continuation,
         } => {
             let mut deferred = vec![DeferredPostExecutionTactic {
+                lexical_bindings: None,
                 tactic_index: *index,
                 source_index: *source_index,
                 tactic: PostExecutionTactic::If {
@@ -624,7 +659,9 @@ fn advance_checked_linear_continuation<'a>(
             )
         });
         let checkpoint = proof.checkpoint();
-        let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
+        let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
+            proof.apply_close_invariants_body(&[ProofTactic::Simp])?
+        } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
@@ -965,6 +1002,31 @@ fn try_check_structural_function_proof_inner<'a>(
     let mut saw_structure = false;
     loop {
         match current {
+            InternalProofNode::Match {
+                index,
+                proof_match,
+                arms,
+                continuation,
+                ..
+            } => {
+                proof = proof.with_execution_tactic_index(*index)?;
+                let Some(next) = advance_execution_match(
+                    proof,
+                    proof_match,
+                    arms,
+                    continuation,
+                    staged_expansion_capture.as_mut(),
+                    proof_site.as_ref(),
+                    owning_source_index,
+                    0,
+                )?
+                else {
+                    return decline();
+                };
+                proof = next;
+                saw_structure = true;
+                current = &InternalProofNode::Done;
+            }
             InternalProofNode::Done => break,
             InternalProofNode::Linear {
                 tactics,
@@ -1454,6 +1516,9 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
 ) -> Result<Proof<'a>, ClickError> {
     check_verification_deadline()?;
     match node {
+        InternalProofNode::Match { .. } => Err(ClickError::new(
+            "proof `match` currently requires unchanged function entry, not a loop-body frontier",
+        )),
         InternalProofNode::Done => {
             let Some((next, rest)) = pending.split_first() else {
                 if !proof.is_at_region_boundary() {
@@ -1775,7 +1840,9 @@ fn advance_focused_execution_arm<'a>(
             continue;
         }
         let checkpoint = proof.checkpoint();
-        let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
+        let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
+            proof.apply_close_invariants_body(&[ProofTactic::Simp])?
+        } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step(step)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
@@ -1946,6 +2013,107 @@ fn advance_focused_execution_region_after_leading_tactic<'a>(
 /// Nested branches recurse through the same typed split/arm/join helper; the
 /// enclosing split record remains only the checked stop boundary for linear
 /// source steps.
+fn advance_execution_match<'a>(
+    proof: Proof<'a>,
+    source: &ProofMatch,
+    arms: &[InternalProofNode],
+    continuation: &InternalProofNode,
+    expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    depth: usize,
+) -> Result<Option<Proof<'a>>, ClickError> {
+    if !matches!(continuation, InternalProofNode::Done) {
+        return Err(ClickError::new(
+            "proof `match` currently requires each arm to complete the function proof; put the continuation inside each arm",
+        ));
+    }
+    let proof = proof.begin_execution_match();
+    let marker = proof.checkpoint();
+    let plan = proof.plan_execution_match(source)?;
+    let mut certificates = Vec::with_capacity(arms.len());
+    let Some(proof) = advance_execution_match_group(
+        proof,
+        &plan,
+        arms,
+        0..arms.len(),
+        &mut certificates,
+        expansion_capture,
+        proof_site,
+        owning_source_index,
+        depth,
+    )?
+    else {
+        return decline();
+    };
+    Ok(Some(proof.finish_execution_match(
+        &marker,
+        source,
+        certificates,
+    )?))
+}
+
+fn advance_execution_match_group<'a>(
+    proof: Proof<'a>,
+    plan: &super::super::proof_object::ExecutionMatchPlan,
+    arms: &[InternalProofNode],
+    range: std::ops::Range<usize>,
+    certificates: &mut Vec<ProofCertificate>,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    depth: usize,
+) -> Result<Option<Proof<'a>>, ClickError> {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return decline();
+    }
+    if range.len() == 1 {
+        let proof = proof.enter_execution_match_arm(plan, range.start)?;
+        let marker = proof.checkpoint();
+        let Some(proof) = advance_focused_execution_region(
+            proof,
+            None,
+            &arms[range.start],
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+            depth + 1,
+        )?
+        else {
+            return decline();
+        };
+        if !proof.is_at_function_exit() {
+            return Err(ClickError::new(
+                "each proof `match` arm must reach function exit",
+            ));
+        }
+        certificates.push(proof.execution_match_arm_certificate(&marker)?);
+        return Ok(Some(proof.leave_execution_match_arm(plan)?));
+    }
+    let middle = range.start + range.len() / 2;
+    let (mut proof, record) =
+        proof.split_execution_match_group(plan.condition(range.start..middle))?;
+    for (left, child_range) in [(true, range.start..middle), (false, middle..range.end)] {
+        let focused = proof.focus_execution_if_arm(&record, left)?;
+        let Some(next) = advance_execution_match_group(
+            focused,
+            plan,
+            arms,
+            child_range,
+            certificates,
+            expansion_capture.as_deref_mut(),
+            proof_site,
+            owning_source_index,
+            depth + 1,
+        )?
+        else {
+            return decline();
+        };
+        proof = next;
+    }
+    Ok(Some(proof.join_focused_execution_if_terminal(&record)?))
+}
+
 fn advance_focused_execution_region<'a>(
     mut proof: Proof<'a>,
     enclosing_record: Option<&ExecutionSplit<'a>>,
@@ -1959,6 +2127,25 @@ fn advance_focused_execution_region<'a>(
         return decline();
     }
     match region {
+        InternalProofNode::Match {
+            index,
+            proof_match,
+            arms,
+            continuation,
+            ..
+        } => {
+            proof = proof.with_execution_tactic_index(*index)?;
+            advance_execution_match(
+                proof,
+                proof_match,
+                arms,
+                continuation,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                depth + 1,
+            )
+        }
         InternalProofNode::Done => Ok(Some(proof)),
         InternalProofNode::Linear {
             tactics,

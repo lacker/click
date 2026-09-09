@@ -30,6 +30,15 @@ int32 fill_tail_keeps_first(int32 p[], int32 n) {
     loop {
         invariant i >= 1 and i <= n;
         invariant p[0] == old(p[0]);
+        preserve by {
+            mark before_store;
+            step(); step();
+            transport(at(before_store, p[0]) == old(p[0]), p[0] == old(p[0])) using {
+                at(before_store, p[0]) == old(p[0]);
+                at(before_store, i) >= 1;
+            }
+            close_invariants by { simp(); }
+        }
     }
     step();
     simp();

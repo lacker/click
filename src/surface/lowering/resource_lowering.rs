@@ -1117,7 +1117,8 @@ fn lower_resource_segment_with_values(
     };
     let base = evaluate(&segment.base).map_err(|message| {
         ClickError::new(format!(
-            "could not lower `{resource_name}` resource: {message}"
+            "could not lower `{resource_name}` resource: {message} (segment {})",
+            super::super::diagnostics::describe_contract_segment(segment)
         ))
     })?;
     let CValue::Pointer(base) = base else {

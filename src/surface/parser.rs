@@ -9,6 +9,7 @@ pub(super) struct QualifiedCObject {
     pub expression: CExpression,
     pub struct_name: Option<String>,
     pub array_shape: Option<Vec<u32>>,
+    pub ambiguous: bool,
 }
 
 /// Click's recursive-descent proposition and contract-expression parsers use
@@ -737,7 +738,12 @@ impl Parser {
     fn parse_qualified_c_name(&mut self) -> Result<(String, CExpression), ClickError> {
         let alias = self.expect_ident("C source alias")?;
         self.expect(Token::ColonColon)?;
-        let name = self.expect_ident("C declaration name")?;
+        let mut name = self.expect_ident("C declaration name")?;
+        if self.peek() == Some(&Token::ColonColon) {
+            self.expect(Token::ColonColon)?;
+            let local = self.expect_ident("function-local static name")?;
+            name = format!("{name}::{local}");
+        }
         let qualified = format!("{alias}::{name}");
         let source = self
             .source_aliases
@@ -748,12 +754,18 @@ impl Parser {
             Some(objects) => objects
                 .get(source)
                 .and_then(|objects| objects.get(&name))
-                .map(|object| object.expression.clone())
+                .map(|object| {
+                    if object.ambiguous {
+                        Err(self.error(format!("ambiguous function-local static `{qualified}`: multiple block scopes declare this name")))
+                    } else {
+                        Ok(object.expression.clone())
+                    }
+                })
                 .ok_or_else(|| {
                     self.error(format!(
-                        "no supported file-scope C object `{qualified}` in `{source}`"
+                        "no supported C object `{qualified}` in `{source}`"
                     ))
-                })?,
+                })??,
         };
         Ok((qualified, expression))
     }
@@ -899,6 +911,9 @@ impl Parser {
             &mut self.current_algebraic_params,
             algebraic_parameter_types(&parsed_parameters.parameters),
         );
+        let previous_resource_bindings = std::mem::take(&mut self.current_resource_bindings);
+        let previous_resource_targets = std::mem::take(&mut self.current_resource_targets);
+        let previous_contract_bindings = std::mem::take(&mut self.current_contract_bindings);
         let composite_body = match self.peek() {
             Some(Token::Semicolon) if is_abstract => {
                 self.position += 1;
@@ -922,6 +937,9 @@ impl Parser {
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
         self.current_algebraic_params = previous_algebraic_params;
+        self.current_resource_bindings = previous_resource_bindings;
+        self.current_resource_targets = previous_resource_targets;
+        self.current_contract_bindings = previous_contract_bindings;
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
@@ -952,23 +970,100 @@ impl Parser {
             self.expect(Token::Semicolon)?;
             fields.push(ResourceFieldDefinition { name, click_type });
         }
-        self.current_resource_fields = fields
-            .iter()
-            .enumerate()
-            .map(|(field_index, field)| {
-                (
-                    field.name.clone(),
-                    ResourceFieldAccess {
-                        owner: "__body".into(),
-                        resource_name: resource_name.into(),
-                        identity: Variable(u64::MAX),
-                        field: field.name.clone(),
-                        field_index,
-                        click_type: Some(field.click_type.clone()),
-                    },
-                )
-            })
-            .collect();
+        let previous_resource_fields = self.current_resource_fields.clone();
+        if !fields.is_empty() {
+            self.current_resource_fields = fields
+                .iter()
+                .enumerate()
+                .map(|(field_index, field)| {
+                    (
+                        field.name.clone(),
+                        ResourceFieldAccess {
+                            owner: "__body".into(),
+                            resource_name: resource_name.into(),
+                            identity: Variable(u64::MAX),
+                            children: vec![],
+                            field: field.name.clone(),
+                            field_index,
+                            click_type: Some(field.click_type.clone()),
+                        },
+                    )
+                })
+                .collect();
+        }
+        if self.peek_ident() == Some("match") {
+            if self.match_nesting != 0 {
+                return Err(self.error("nested resource matches are not supported"));
+            }
+            self.position += 1;
+            let field = self.expect_ident("resource model field")?;
+            self.expect(Token::LBrace)?;
+            let mut arms = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                let type_name = self.expect_ident("match pattern datatype")?;
+                self.expect(Token::ColonColon)?;
+                let variant = self.expect_ident("match pattern variant")?;
+                let mut bindings = Vec::new();
+                if self.peek() == Some(&Token::LParen) {
+                    self.position += 1;
+                    while self.peek() != Some(&Token::RParen) {
+                        bindings.push(self.expect_ident("match pattern binding")?);
+                        if self.peek() != Some(&Token::Comma) {
+                            break;
+                        }
+                        self.position += 1;
+                    }
+                    self.expect(Token::RParen)?;
+                }
+                self.expect(Token::FatArrow)?;
+                let inserted = bindings
+                    .iter()
+                    .filter(|name| self.current_contract_bindings.insert((*name).clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                self.match_nesting += 1;
+                let saved_bindings = self.current_resource_bindings.clone();
+                let saved_targets = self.current_resource_targets.clone();
+                let body = self.parse_composite_resource_body(resource_name);
+                self.current_resource_bindings = saved_bindings;
+                self.current_resource_targets = saved_targets;
+                self.match_nesting -= 1;
+                let body = body?;
+                for name in inserted {
+                    self.current_contract_bindings.remove(&name);
+                }
+                if !body.fields.is_empty()
+                    || body.matched.is_some()
+                    || body.condition.is_some()
+                    || !body.witnesses.is_empty()
+                {
+                    return Err(self.error("resource match arms currently require immediate memory clauses and facts, without fields, guards, matches, or witnesses"));
+                }
+                arms.push(ResourceMatchArm {
+                    type_name,
+                    variant,
+                    bindings,
+                    body,
+                });
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                } else if self.peek() != Some(&Token::RBrace) {
+                    return Err(self.error("expected `,` or `}` after resource match arm"));
+                }
+            }
+            self.expect(Token::RBrace)?;
+            self.expect(Token::RBrace)?;
+            self.current_resource_fields = previous_resource_fields;
+            return Ok(CompositeResourceBody {
+                children: vec![],
+                fields,
+                matched: Some(ResourceMatchBody { field, arms }),
+                condition: None,
+                contains: vec![],
+                facts: vec![],
+                witnesses: vec![],
+            });
+        }
         let condition = if self.peek_ident() == Some("if") {
             self.position += 1;
             let condition = self.parse_proposition()?;
@@ -1023,7 +1118,10 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    contains.push(self.parse_resource_target(ResourceAccessMode::Own)?);
+                    if self.match_nesting == 0 && self.peek_next() == Some(&Token::Colon) {
+                        return Err(self.error("named child resources currently require a constructor match arm"));
+                    }
+                    contains.push(self.parse_owned_resource_binding()?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some("views") => {
@@ -1056,9 +1154,11 @@ impl Parser {
             .into_iter()
             .flat_map(expand_aggregate_resource_clause)
             .collect();
-        self.current_resource_fields.clear();
+        self.current_resource_fields = previous_resource_fields;
         Ok(CompositeResourceBody {
+            children: vec![],
             fields,
+            matched: None,
             condition,
             contains,
             facts,
@@ -1278,7 +1378,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -1290,7 +1390,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -1535,7 +1635,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -1547,7 +1647,7 @@ impl Parser {
                 }
                 Some("produces") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
@@ -2460,8 +2560,11 @@ impl Parser {
             binding: ResourceInstanceBinding {
                 name: name.clone(),
                 identity,
+                children: vec![],
                 schema: None,
                 fields: None,
+                fold_fields: None,
+                child_bindings: None,
             },
             resource: Box::new(resource),
         };
@@ -2470,12 +2573,22 @@ impl Parser {
     }
 
     fn parse_owned_resource_target(&mut self) -> Result<ResourceClause, ClickError> {
-        if let Some(target) = self
+        if let Some(mut target) = self
             .peek_ident()
             .and_then(|name| self.current_resource_targets.get(name))
             .cloned()
         {
             self.position += 1;
+            while self.peek() == Some(&Token::Dot) {
+                self.position += 1;
+                let child = self.expect_ident("child resource name")?;
+                let ResourceClause::Named { binding, .. } = &mut target else {
+                    return Err(self.error("child access requires a named resource"));
+                };
+                binding.name.push('.');
+                binding.name.push_str(&child);
+                binding.children.push(child);
+            }
             return Ok(target);
         }
         let start = self.position;
@@ -3055,9 +3168,149 @@ impl Parser {
         }
     }
 
+    fn parse_resource_child_bindings(
+        &mut self,
+        parent: &ResourceClause,
+        introduce: bool,
+    ) -> Result<Vec<(String, String, Variable)>, ClickError> {
+        let ResourceClause::Declared { name: family, .. } = parent else {
+            return Err(self.error("child bindings require a declared resource family"));
+        };
+        self.expect(Token::LBrace)?;
+        let mut result = Vec::new();
+        let mut slots = BTreeSet::new();
+        let mut names = BTreeSet::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let slot = self.expect_ident("child slot")?;
+            self.expect(Token::Colon)?;
+            let name = self.expect_ident("child resource name")?;
+            if !slots.insert(slot.clone()) || !names.insert(name.clone()) {
+                return Err(self.error("duplicate child slot or resource name"));
+            }
+            if self.current_contract_bindings.contains(&name) {
+                return Err(self.error("child resource name conflicts with a C or pure binding"));
+            }
+            let identity =
+                if let Some((identity, existing)) = self.current_resource_bindings.get(&name) {
+                    if existing != family {
+                        return Err(self.error("child resource has the wrong family"));
+                    }
+                    *identity
+                } else if introduce {
+                    let identity = Variable(self.next_resource_identity);
+                    self.next_resource_identity += 1;
+                    identity
+                } else {
+                    return Err(self.error(format!("unknown child resource `{name}`")));
+                };
+            if introduce {
+                self.current_resource_bindings
+                    .insert(name.clone(), (identity, family.clone()));
+                self.current_resource_targets.insert(
+                    name.clone(),
+                    ResourceClause::Named {
+                        binding: ResourceInstanceBinding {
+                            name: name.clone(),
+                            identity,
+                            children: Vec::new(),
+                            schema: None,
+                            fields: None,
+                            fold_fields: None,
+                            child_bindings: Some(Vec::new().into()),
+                        },
+                        resource: Box::new(parent.clone()),
+                    },
+                );
+            }
+            result.push((slot, name, identity));
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::RBrace)?;
+        Ok(result)
+    }
+
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let name = self.expect_ident("tactic")?;
         match name.as_str() {
+            "let" => {
+                let name = self.expect_ident("fold result name")?;
+                self.expect(Token::Equal)?;
+                self.expect_ident_spelling("fold")?;
+                self.expect(Token::LParen)?;
+                let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
+                let ResourceClause::Declared {
+                    name: resource_name,
+                    ..
+                } = &resource
+                else {
+                    return Err(self.error("fold construction requires a declared resource"));
+                };
+                if self.current_contract_bindings.contains(&name) {
+                    return Err(self.error("fold result conflicts with a C or pure binding"));
+                }
+                let identity =
+                    if let Some((identity, previous)) = self.current_resource_bindings.get(&name) {
+                        if previous != resource_name {
+                            return Err(self.error("fold result changes the named resource family"));
+                        }
+                        *identity
+                    } else {
+                        let identity = Variable(self.next_resource_identity);
+                        self.next_resource_identity += 1;
+                        identity
+                    };
+                self.expect(Token::Comma)?;
+                self.expect(Token::LBrace)?;
+                let mut fields = Vec::new();
+                while self.peek() != Some(&Token::RBrace) {
+                    let field = self.expect_ident("resource field name")?;
+                    self.expect(Token::Colon)?;
+                    let value = self.parse_contract_expression()?;
+                    fields.push((field, value));
+                    if self.peek() != Some(&Token::Comma) {
+                        break;
+                    }
+                    self.position += 1;
+                }
+                self.expect(Token::RBrace)?;
+                let child_bindings = if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                    self.parse_resource_child_bindings(&resource, false)?
+                } else {
+                    Vec::new()
+                };
+                self.expect(Token::RParen)?;
+                self.expect(Token::Semicolon)?;
+                let binding = ResourceInstanceBinding {
+                    name: name.clone(),
+                    identity,
+                    children: vec![],
+                    schema: None,
+                    fields: None,
+                    fold_fields: None,
+                    child_bindings: Some(Vec::new().into()),
+                };
+                self.current_resource_bindings
+                    .insert(name.clone(), (identity, resource_name.clone()));
+                self.current_resource_targets.insert(
+                    name,
+                    ResourceClause::Named {
+                        binding: binding.clone(),
+                        resource: Box::new(resource.clone()),
+                    },
+                );
+                Ok(ProofTactic::FoldResource(ResourceClause::Named {
+                    binding: ResourceInstanceBinding {
+                        fold_fields: Some(fields),
+                        child_bindings: Some(child_bindings.into()),
+                        ..binding
+                    },
+                    resource: Box::new(resource),
+                }))
+            }
             "both" => self.parse_both_proof_tactic(),
             "close_invariants" if self.peek_ident() == Some("by") => {
                 self.position += 1;
@@ -3168,6 +3421,57 @@ impl Parser {
                 left_tactics,
                 right_tactics,
             }));
+        }
+        if name == "match" {
+            let scrutinee = self.parse_contract_expression()?;
+            self.expect(Token::LBrace)?;
+            let mut arms = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                let type_name = self.expect_ident("match pattern datatype")?;
+                self.expect(Token::ColonColon)?;
+                let variant = self.expect_ident("match pattern variant")?;
+                let mut bindings = Vec::new();
+                let mut binding_names = BTreeSet::new();
+                if self.peek() == Some(&Token::LParen) {
+                    self.position += 1;
+                    while self.peek() != Some(&Token::RParen) {
+                        let binding = self.expect_ident("match pattern binding")?;
+                        if !binding_names.insert(binding.clone()) {
+                            return Err(self.error(format!("duplicate match binding `{binding}`")));
+                        }
+                        bindings.push(binding);
+                        if self.peek() != Some(&Token::Comma) {
+                            break;
+                        }
+                        self.position += 1;
+                    }
+                    self.expect(Token::RParen)?;
+                }
+                self.expect(Token::FatArrow)?;
+                let newly_bound = bindings
+                    .iter()
+                    .filter(|name| self.current_contract_bindings.insert((*name).clone()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let tactics = self.parse_possibly_empty_tactic_block();
+                for name in newly_bound {
+                    self.current_contract_bindings.remove(&name);
+                }
+                arms.push(ProofInductionArm {
+                    type_name,
+                    variant,
+                    bindings,
+                    tactics: tactics?,
+                });
+                if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                }
+            }
+            self.expect(Token::RBrace)?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::Match(Box::new(ProofMatch { scrutinee, arms })));
         }
         if name == "branch" {
             self.expect(Token::LBrace)?;
@@ -3358,7 +3662,7 @@ impl Parser {
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
-                let tactic = if self
+                let mut tactic = if self
                     .peek_ident()
                     .is_some_and(|name| self.current_resource_targets.contains_key(name))
                 {
@@ -3374,6 +3678,16 @@ impl Parser {
                     ProofTactic::UnfoldPredicate(predicate)
                 };
                 self.expect(Token::RParen)?;
+                if self.peek_ident() == Some("as") {
+                    self.position += 1;
+                    let ProofTactic::UnfoldResource(ResourceClause::Named { binding, resource }) =
+                        &mut tactic
+                    else {
+                        return Err(self.error("`as` requires a named resource unfold"));
+                    };
+                    binding.child_bindings =
+                        Some(self.parse_resource_child_bindings(resource, true)?.into());
+                }
                 tactic
             }
             "apply" => {
@@ -3985,6 +4299,7 @@ impl Parser {
             _ => None,
         };
         let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
+        let mut scalar_range_offset = None;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
             || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
         {
@@ -4092,7 +4407,8 @@ impl Parser {
                     }
                     let offset = flatten_array_indices(indexes, &shape);
                     base = if has_following_range {
-                        CExpression::Add(Box::new(base), Box::new(offset))
+                        scalar_range_offset = Some(offset);
+                        base
                     } else {
                         CExpression::Index(Box::new(base), Box::new(offset))
                     };
@@ -4243,13 +4559,17 @@ impl Parser {
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
-        let start = contract_expression_as_c_fragment(&start_expression)
+        let mut start = contract_expression_as_c_fragment(&start_expression)
             .ok_or_else(|| self.error("memory segment start must be a current C expression"))?;
         self.expect(Token::DotDot)?;
         let end_expression = self.parse_contract_expression()?;
-        let end = contract_expression_as_c_fragment(&end_expression)
+        let mut end = contract_expression_as_c_fragment(&end_expression)
             .ok_or_else(|| self.error("memory segment end must be a current C expression"))?;
         self.expect(Token::RBracket)?;
+        if let Some(offset) = scalar_range_offset {
+            start = CExpression::Add(Box::new(offset.clone()), Box::new(start));
+            end = CExpression::Add(Box::new(offset), Box::new(end));
+        }
         Ok(vec![ContractSegment {
             state: ContractSegmentState::Current,
             base,
@@ -5079,6 +5399,18 @@ impl Parser {
                     }
                 }
                 Some(Token::Arrow | Token::Dot) => {
+                    if let ContractExpression::ResourceField(access) = &mut expression {
+                        if self.peek() != Some(&Token::Dot) {
+                            return Err(self.error("resource children use `.`, not `->`"));
+                        }
+                        self.position += 1;
+                        let next = self.expect_ident("resource child or field name")?;
+                        access
+                            .children
+                            .push(std::mem::replace(&mut access.field, next));
+                        access.click_type = None;
+                        continue;
+                    }
                     if let ContractExpression::CFragment(CExpression::Variable(owner)) = &expression
                         && let Some((identity, resource_name)) =
                             self.current_resource_bindings.get(owner).cloned()
@@ -5093,6 +5425,7 @@ impl Parser {
                             owner,
                             resource_name,
                             identity,
+                            children: vec![],
                             field,
                             field_index: 0,
                             click_type: None,

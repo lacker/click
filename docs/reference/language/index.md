@@ -685,6 +685,13 @@ nonfinal release. Returning the new resource context is valid only when the
 population body facts hold in the post-state, so these clauses cannot mint a
 reference without the corresponding concrete counter update.
 
+Once C execution returns, the remaining proof uses the post-return population
+counts while retaining the body's ownership for closing open resources. The
+new count does not itself establish any body invariant: the proof must still
+show that the stored values agree with it. This return-count interpretation
+comes from the contract's checked exit rule and does not require `frame()` or
+an explicit memory-effect clause.
+
 `fold(object_ref(obj))` initializes a population of one from its body
 resources. `open(object_ref(obj)) { ... }` temporarily exposes the one shared
 body and requires it to be restored on exit without changing the population.
@@ -766,13 +773,152 @@ Explicit callback applications such as
 `step(Read(first))` transport ownership with fresh post-call fields constrained
 by the selected contract. `unfold(cell)` exposes an instance's immediate memory
 body and its facts; field names in the body denote that instance's fields.
-`fold(cell)` requires the complete memory body and re-establishes its facts,
-preserving the same identity and fields. The open handle permits field
-projections but does not count as folded ownership for calls or returns.
-This supports unguarded, nonrecursive, witness-free memory bodies only.
-Post-return instance folds currently require a single retained execution trace.
-Field establishment, updates, and ordinary inline-call transport remain
-unsupported. A declaration alone grants no ownership, and binding an instance
+For witness-free memory-only bodies, including guarded and matched bodies, unfolding consumes the named
+instance without retaining an open handle. Current field projections require
+owned instances; entry snapshots such as `old(cell.value)` remain available.
+The legacy `fold(cell)` form uses the instance's entry-state fields as its
+target, and checks the complete body ownership and facts. It does not require
+an earlier unfold.
+
+An explicit fold binds its result and supplies every field by name:
+
+<!-- verified-example: mdtests/resource_cell_construction.md -->
+```click
+void init(int32* p, int32 value) {
+    consumes p[0..1];
+    produces c: cell(p);
+    ensures c.value == value;
+} by {
+    execute();
+    let c = fold(cell(p), { value: value });
+    simp();
+}
+```
+
+Here `cell` is declared in the fixture. The fold consumes its body ownership
+and checks the body facts with the proposed fields. No earlier resource is
+required. Rebinding a contract's resource name also permits changed fields
+after C updates the memory; the name must not currently own another instance.
+Field order is irrelevant, but missing, duplicate, unknown, or ill-typed
+fields are rejected. Initializers accept C-valued and ADT-valued symbolic
+expressions, including constructors, `old(c.model)`, matches, and pure-function
+applications. For example:
+
+<!-- verified-example: mdtests/resource_adt_construction.md -->
+```click
+let c = fold(cell(p), { model: Mark::Set(value) });
+```
+
+The complete declaration and proof are in `mdtests/resource_adt_construction.md`.
+Pure-function applications remain symbolic;
+fold checks the resource relation against the proposed value. Initializer
+memory reads must be justified. A consumed name does not supply a current
+field value; use an entry snapshot when that is the intended model.
+Ordinary call transport of newly constructed resources remains deferred.
+
+Guarded and constructor-matched memory-only bodies support explicit construction
+and field updates with the same `let c = fold(...)` syntax. No earlier unfold
+is required. Guarded bodies support the
+existing single `if` guard with an empty false case. Fold/unfold requires proof
+of the selected guard case. The false case exposes no memory or body facts;
+unfold consumes the instance in either case. A fold checks the guard with the
+proposed fields and must justify the selected body's ownership and facts.
+Post-return folds are checked separately against each return path's memory,
+ownership, and guard assumptions. Every returning path must restore the
+ownership promised by the contract; a sibling's fold cannot supply it.
+The regression is `mdtests/resource_fields_guarded_memory_body.md`.
+
+A field-bearing body may instead match one algebraic field:
+
+<!-- verified-example: mdtests/resource_fields_match_memory_body.md -->
+```click
+resource cell(p: int32*) {
+    field model: Maybe<int32>;
+    match model {
+        Maybe::None => { fact p == 0; },
+        Maybe::Some(value) => {
+            owns p[0..1];
+            fact p[0] == value;
+        },
+    }
+}
+```
+
+Here `Maybe<T>` is declared in the linked fixture. Arms must cover every
+constructor exactly once. Bindings are scoped to their arm and have the
+constructor's instantiated types, including pointers and nested ADTs. They
+cannot shadow resource parameters or fields. Fold/unfold requires constructor
+evidence for the actual instance field (for example,
+`c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
+implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
+An explicit fold selects the arm from its proposed model, so an update can
+change constructors when the new arm's ownership and facts are established.
+The regression is `mdtests/resource_conditional_construction.md`.
+The same ownership and path-local return checks apply.
+Match arms can also expose named, directly recursive child instances:
+
+<!-- verified-example: mdtests/resource_recursive_children.md -->
+```click
+resource tree(p: int32*) {
+    field model: Tree;
+    match model {
+        Tree::Leaf(value) => { owns p[0..1]; fact p[0] == value; },
+        Tree::Branch(value, lp, lm, rp, rm) => {
+            owns p[0..1];
+            owns left: tree(lp);
+            owns right: tree(rp);
+            fact p[0] == value;
+            fact left.model == lm;
+            fact right.model == rm;
+        },
+    }
+}
+```
+
+Here `Tree` is declared in the fixture. Give the exposed children independent
+names, then pass their owned instances explicitly when constructing a parent:
+
+<!-- verified-example: mdtests/resource_independent_children.md -->
+```click
+unfold(root) as { left: l, right: r };
+unfold(l);
+execute();
+let l = fold(tree(left), { model: Tree::Leaf(2) });
+let root = fold(tree(p), { model: old(root.model) }, { left: l, right: r });
+```
+
+`unfold(root) as { ... }` consumes `root`, exposes its immediate memory, and
+introduces folded children. No parent handle or `root.left` path remains.
+Each selected-arm child must be named exactly once. An introduced name must
+not already own a resource. `unfold(l)` exposes the child's immediate body;
+an arm with no children needs no bindings (explicit `as {}` is also accepted).
+
+The third fold argument maps child slots to owned resource names. Folding
+consumes those children and the parent's immediate memory, checking each
+child's family, arguments, and fields against the proposed model. Replacements
+and reordered children are allowed when those checks hold. Missing, duplicate,
+unfolded, or mismatched children are rejected. A leaf omits the empty child map.
+The new parent need not have existed before; `consumes l: tree(left);` names
+an input child without promising to return it separately.
+
+The older `unfold(root); unfold(root.left); fold(root.left); fold(root);`
+form remains available for compatibility. Only that form retains a legacy
+parent handle and requires the recorded children back unchanged.
+
+Each child currently uses the parent's resource definition. Equations for all
+child fields must bind them to immediate constructor fields of the matching
+types. In particular, the matched model strictly descends to a proper submodel.
+Child arguments may be read-only C expressions, including stored pointer
+fields such as `p->left`. Loads must be readable from the immediate body's
+owned memory, not from a still-folded child or unrelated ambient ownership.
+Fold checks this memory before interpreting the child arguments. Expression
+safety and path premises must be proved; argument evaluation does not split
+the proof into cases. See `mdtests/resource_tree_node_init.md`.
+Mixed resource families, witnesses, nested resource matches/guards, arbitrary
+match scrutinees, and passing child paths as contract arguments remain
+unsupported. No operation automatically unfolds an entire recursive structure.
+
+Ordinary inline-call transport remains incomplete. A declaration alone grants no ownership, and binding an instance
 does not implicitly expose its memory body.
 
 A composite body may instead have one top-level guard:
@@ -1068,8 +1214,24 @@ The fixture covers repeated calls, reset, and another file's independent
 that the value is representable: signed sources need both bounds, unsigned
 sources need the upper bound. This differs from the low-bit `uint32` cast.
 
-This slice supports file-scope scalars, scalar arrays, and struct objects.
-It does not qualify functions, function-local statics, or arrays of structs.
+For a function-local static, include the function name:
+
+<!-- verified-example: mdtests/qualified_function_static_ownership.md -->
+```click
+owns &counter_file::increment::calls[0..1];
+```
+
+This names the same storage as the unqualified `calls` inside `increment`.
+Callers can transfer its ownership, and expressions such as
+`old(counter_file::increment::calls)` refer to its value. Qualification grants
+no access by itself and never initializes or replenishes the resource.
+Ordinary automatic locals and parameters cannot be named this way. If several
+block scopes in a function declare statics with the same name, the reference
+is rejected as ambiguous.
+
+This syntax supports file-scope and function-local static scalars, scalar
+arrays (including multidimensional arrays), and struct objects. It does not
+qualify functions as values or arrays of structs.
 Aliases must be unique and cannot share a name with a specification datatype.
 Existing unqualified references and `verifying "file.c";` remain unchanged.
 

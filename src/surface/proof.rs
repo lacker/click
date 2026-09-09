@@ -1019,6 +1019,16 @@ mod certificate_tests {
 
     fn linear_tactic_coordinates(node: &InternalProofNode) -> Vec<(usize, usize)> {
         match node {
+            InternalProofNode::Match {
+                arms, continuation, ..
+            } => {
+                let mut coordinates = arms
+                    .iter()
+                    .flat_map(linear_tactic_coordinates)
+                    .collect::<Vec<_>>();
+                coordinates.extend(linear_tactic_coordinates(continuation));
+                coordinates
+            }
             InternalProofNode::Done => Vec::new(),
             InternalProofNode::Linear {
                 tactics,
@@ -1583,6 +1593,13 @@ struct IndexedTactic {
 
 enum InternalProofNode {
     Done,
+    Match {
+        index: usize,
+        source_index: usize,
+        proof_match: Box<ProofMatch>,
+        arms: Vec<InternalProofNode>,
+        continuation: Box<InternalProofNode>,
+    },
     Linear {
         tactics: Vec<IndexedTactic>,
         continuation: Box<InternalProofNode>,
@@ -1657,6 +1674,18 @@ fn build_generated_certificate_proof(
 
 fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_index: usize) {
     match node {
+        InternalProofNode::Match {
+            source_index,
+            arms,
+            continuation,
+            ..
+        } => {
+            *source_index = owning_source_index;
+            for arm in arms {
+                set_generated_proof_source_index(arm, owning_source_index);
+            }
+            set_generated_proof_source_index(continuation, owning_source_index);
+        }
         InternalProofNode::Done => {}
         InternalProofNode::Linear {
             tactics,
@@ -1704,6 +1733,21 @@ fn detach_generated_suffix_from_source_indices(
     first_generated_tactic_index: usize,
 ) {
     match node {
+        InternalProofNode::Match {
+            index,
+            source_index,
+            arms,
+            continuation,
+            ..
+        } => {
+            if *index >= first_generated_tactic_index {
+                *source_index = usize::MAX;
+            }
+            for arm in arms {
+                detach_generated_suffix_from_source_indices(arm, first_generated_tactic_index);
+            }
+            detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
+        }
         InternalProofNode::Done => {}
         InternalProofNode::Linear {
             tactics,
@@ -1763,7 +1807,10 @@ fn build_internal_proof_at(
     let Some((control_index, control_tactic)) = tactics.iter().enumerate().find(|(_, tactic)| {
         matches!(
             tactic,
-            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_)
+            ProofTactic::If(_)
+                | ProofTactic::Branch(_)
+                | ProofTactic::Open(_)
+                | ProofTactic::Match(_)
         )
     }) else {
         if tactics.is_empty() {
@@ -1782,6 +1829,29 @@ fn build_internal_proof_at(
             .map(source_tactic_width)
             .sum::<usize>();
     let control = match control_tactic {
+        ProofTactic::Match(proof_match) => {
+            let mut next_source = source_index + 1;
+            let mut arms = Vec::with_capacity(proof_match.arms.len());
+            for arm in &proof_match.arms {
+                arms.push(build_internal_proof_at(
+                    &arm.tactics,
+                    index + 1,
+                    next_source,
+                )?);
+                next_source += source_tactic_count(&arm.tactics);
+            }
+            InternalProofNode::Match {
+                index,
+                source_index,
+                proof_match: proof_match.clone(),
+                arms,
+                continuation: Box::new(build_internal_proof_at(
+                    &tactics[control_index + 1..],
+                    index + 1,
+                    next_source,
+                )?),
+            }
+        }
         ProofTactic::If(proof_if) => {
             let then_width = source_tactic_count(&proof_if.then_tactics);
             InternalProofNode::If {
@@ -1888,6 +1958,13 @@ pub(super) fn source_tactic_count(tactics: &[ProofTactic]) -> usize {
 
 fn source_tactic_width(tactic: &ProofTactic) -> usize {
     match tactic {
+        ProofTactic::Match(proof_match) => {
+            1 + proof_match
+                .arms
+                .iter()
+                .map(|arm| source_tactic_count(&arm.tactics))
+                .sum::<usize>()
+        }
         ProofTactic::If(proof_if) => {
             1 + source_tactic_count(&proof_if.then_tactics)
                 + source_tactic_count(&proof_if.else_tactics)
@@ -1925,6 +2002,18 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
 
 fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize) -> bool {
     match node {
+        InternalProofNode::Match {
+            source_index,
+            arms,
+            continuation,
+            ..
+        } => {
+            *source_index == wanted
+                || arms
+                    .iter()
+                    .any(|arm| internal_proof_contains_source_index(arm, wanted))
+                || internal_proof_contains_source_index(continuation, wanted)
+        }
         InternalProofNode::Done => false,
         InternalProofNode::Linear {
             tactics,

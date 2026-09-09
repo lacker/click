@@ -55,7 +55,6 @@ void pool_checkout(struct pool* pool, int32 object) {
     owns pool->checked_out;
     consumes available(object);
     produces pool_object(pool, object);
-    mutable pool->checked_out;
 
     ensures valid_pool(pool);
 } by {
@@ -66,7 +65,6 @@ void pool_checkout(struct pool* pool, int32 object) {
         unfold(valid_pool);
         simp();
     }
-    frame();
     simp();
 }
 
@@ -76,14 +74,12 @@ void pool_return(struct pool* pool, int32 object) {
     owns pool->checked_out;
     consumes pool_object(pool, object);
     produces available(object);
-    mutable pool->checked_out;
 
     ensures valid_pool(pool);
 } by {
     unfold(valid_pool);
     unfold(pool_object(pool, object));
     execute();
-    frame();
     simp();
 }
 

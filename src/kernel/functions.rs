@@ -5786,14 +5786,19 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         register_block_alignment(&slot.block, static_local.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state
-                .memory
-                .with_block_or_read_only(
-                    slot.block.clone(),
-                    static_local.c_type().byte_width(),
-                    static_local.is_constant(),
-                )
-                .store(slot.clone(), static_local.initial_value().clone());
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                static_local.c_type().byte_width(),
+                static_local.is_constant(),
+            );
+            // A qualified resource can materialize the cell before this
+            // function's storage declaration is installed. Adding block
+            // metadata must not overwrite that existing value.
+            if state.memory.known_value(&slot).is_none() {
+                state.memory = state
+                    .memory
+                    .store(slot.clone(), static_local.initial_value().clone());
+            }
         }
         state.locals.set_global_with_all_qualifiers(
             static_local.kernel_name().to_string(),
@@ -6128,7 +6133,131 @@ fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool
     memory.access_in_bounds(&base, bytes)
 }
 
-pub(super) fn copy_aggregate_fields(
+/// Whole-struct assignment copies every member (C11 6.5.16.1p2), but
+/// `copy_aggregate_fields` skips a carried field with no source cell. Copying
+/// from never-written source storage would then leave the destination's own
+/// cell in place and readable. Every aggregate-copy path (direct assignment,
+/// return materialization, return assignment) reports that skipped read as an
+/// uninitialized read instead, matching what member-wise assignment reports
+/// through the ordinary load path.
+fn aggregate_copy_reads_uninitialized(
+    memory: &CMemory,
+    source: &Pointer,
+    layout: &CAggregateLayout,
+) -> bool {
+    // Mirror the carried-field classification in `copy_aggregate_fields`: a
+    // field type this copy cannot carry drops the destination cells instead
+    // of leaving them readable, so it cannot go stale here.
+    for field in layout.fields() {
+        let (element_type, element_count) = match field.c_type() {
+            CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64
+            | CType::Float32
+            | CType::Float64 => (field.c_type(), 1),
+            CType::Int32Array(length) => (CType::Int32, length),
+            CType::UInt8Array(length) => (CType::UInt8, length),
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer => (field.c_type(), 1),
+            _ => continue,
+        };
+        for index in 0..element_count {
+            let element_offset = field
+                .offset_bytes()
+                .checked_add(
+                    index
+                        .checked_mul(element_type.byte_width())
+                        .expect("validated aggregate field offset"),
+                )
+                .expect("validated aggregate field offset");
+            if uninitialized_aggregate_copy_source_cell(
+                memory,
+                &source.offset_by_bytes(element_offset),
+                element_type,
+            ) {
+                return true;
+            }
+        }
+    }
+    for union in layout.unions() {
+        let union_source = source.offset_by_bytes(union.offset_bytes());
+        // A union with any readable member is initialized storage: the copy
+        // carries the active member view and skips the rest, so no member
+        // read is uninitialized. Only a wholly unread union can leave the
+        // destination holding a stale cell.
+        let union_initialized = union.fields().iter().any(|field| {
+            let source_field = union_source.offset_by_bytes(field.offset_bytes());
+            // Mirror `copy_aggregate_union_member`: a value stored through
+            // any member is carried.
+            memory
+                .known_union_value(&source_field, field.c_type())
+                .is_some()
+                || memory
+                    .known_value(&source_field)
+                    .is_some_and(|value| field.c_type().accepts(&value))
+        });
+        if union_initialized {
+            continue;
+        }
+        for field in union.fields() {
+            let source_field = union_source.offset_by_bytes(field.offset_bytes());
+            if uninitialized_aggregate_copy_source_cell(memory, &source_field, field.c_type()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Mirrors the silent skip in `copy_aggregate_fields`: no source cell and not
+/// a zeroed heap address. Reading such a cell is a read of uninitialized
+/// storage when the address is a live local or an uninitialized heap cell;
+/// anything else (external or symbolic memory) reads back as an unconstrained
+/// symbolic load rather than stale storage.
+fn uninitialized_aggregate_copy_source_cell(
+    memory: &CMemory,
+    source_field: &Pointer,
+    element_type: CType,
+) -> bool {
+    if memory.known_value(source_field).is_some() {
+        return false;
+    }
+    if memory.is_zeroed_heap_address(source_field, element_type.byte_width()) {
+        return false;
+    }
+    memory.is_uninitialized_heap_address(source_field, element_type.byte_width())
+        || (source_field.block.starts_with("local:")
+            && memory.access_in_bounds(source_field, element_type.byte_width()))
+}
+
+/// Every aggregate-copy path goes through this wrapper so a copy from
+/// uninitialized source storage is reported as an uninitialized read instead
+/// of silently keeping the destination's old value. The raw
+/// `copy_aggregate_fields` is deliberately module-private; new call sites in
+/// other modules must use this checked form.
+pub(super) fn copy_aggregate_fields_checked(
+    memory: CMemory,
+    source: &Pointer,
+    destination: &Pointer,
+    layout: &CAggregateLayout,
+) -> Result<CMemory, CUndefinedBehavior> {
+    if aggregate_copy_reads_uninitialized(&memory, source, layout) {
+        return Err(CUndefinedBehavior::UninitializedRead);
+    }
+    Ok(copy_aggregate_fields(memory, source, destination, layout))
+}
+
+// Module-private on purpose: cross-module aggregate copies must go through
+// `copy_aggregate_fields_checked` so the uninitialized-source read is always
+// reported. (Aggregate argument binding below keeps the raw form for now;
+// diagnosing uninitialized reads of call arguments is a separate follow-up.)
+fn copy_aggregate_fields(
     mut memory: CMemory,
     source: &Pointer,
     destination: &Pointer,
@@ -7630,7 +7759,9 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
-/// The open handle is linear proof state, not folded ownership or ghost storage.
+/// Memory-only bodies need no open token, including guarded/matched bodies.
+/// This compatibility entry point retains the legacy recursive-child handles.
+#[cfg(test)]
 pub(crate) fn rewrite_resource_instance(
     state: &CState,
     instance: &ResourceInstance,
@@ -7638,21 +7769,50 @@ pub(crate) fn rewrite_resource_instance(
     assumptions: &PureFactContext,
     unfold: bool,
 ) -> Result<(CState, Vec<Proposition>), &'static str> {
+    rewrite_resource_instance_selecting_children(
+        state,
+        instance,
+        definition,
+        assumptions,
+        unfold,
+        None,
+    )
+}
+
+pub(crate) fn rewrite_resource_instance_selecting_children(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+    unfold: bool,
+    selected_children: Option<&[(String, Variable)]>,
+) -> Result<(CState, Vec<Proposition>), &'static str> {
     if definition.name() != instance.name()
         || definition.instance_schema.as_ref() != Some(instance.schema())
-        || definition.condition.is_some()
         || definition.recursive
         || definition.counted_population
         || !definition.witnesses.is_empty()
         || definition.parameters.len() != instance.arguments.len()
+        || instance
+            .arguments
+            .iter()
+            .zip(&definition.parameters)
+            .any(|(argument, parameter)| {
+                argument
+                    .as_c_value()
+                    .is_none_or(|value| value.c_type() != parameter.c_type())
+            })
         || definition
             .contains
             .iter()
             .any(|body| !matches!(body, CResourceSpec::OwnMemory(_)))
     {
-        return Err("instance fold/unfold requires an unguarded, witness-free memory body");
+        return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
-    let folded = CResourceFact::own(CResource::Instance(instance.clone()));
+    let body_only = selected_children.is_some() || definition.has_memory_only_instance_body();
+    let mut folded_instance = instance.clone();
+    folded_instance.opened_children = Default::default();
+    let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
     if unfold {
         if state
             .open_instances
@@ -7662,39 +7822,248 @@ pub(crate) fn rewrite_resource_instance(
         {
             return Err("instance is not exclusively owned in folded form");
         }
-    } else if state.open_instances.owned_instance(instance.identity) != Some(instance)
+    } else if (!body_only
+        && state.open_instances.owned_instance(instance.identity) != Some(instance))
         || state.resources.owned_instance(instance.identity).is_some()
+        || (body_only
+            && (state
+                .open_instances
+                .owned_instance(instance.identity)
+                .is_some()
+                || !instance.opened_children.is_empty()))
     {
-        return Err("instance has no matching open handle");
+        return Err(if body_only {
+            "fold result identity is already in use or carries open-child metadata"
+        } else {
+            "instance has no matching open handle"
+        });
     }
-    let mut evaluation = state.clone();
-    evaluation.resource_bindings = Some(std::sync::Arc::new(BTreeMap::from([(
-        Variable(u64::MAX),
-        instance.identity,
-    )])));
-    for (parameter, value) in definition.parameters.iter().zip(instance.arguments.iter()) {
-        let value = value
-            .as_c_value()
-            .ok_or("resource argument is not a C value")?;
-        if value.c_type() != parameter.c_type() {
-            return Err("resource argument type mismatch");
-        }
-        evaluation.locals.set_typed(
-            parameter.name().to_owned(),
-            value.clone(),
-            parameter.c_type(),
-        );
-    }
+    let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
-    let body = evaluate_function_resource_context(
+    let mut algebraic_bindings = BTreeMap::new();
+    let mut constructor_fields = Vec::new();
+    let selected = if definition.matched.is_some() {
+        let (arm, constructor) = selected_instance_match_arm(instance, definition, assumptions)?;
+        let AlgebraicTermNode::Constructor { fields, .. } = constructor.node else {
+            unreachable!()
+        };
+        constructor_fields = fields.clone();
+        for (name, value) in arm.bindings.iter().zip(fields) {
+            match value {
+                AlgebraicValue::C(value) => {
+                    let ty = value.c_type();
+                    evaluation.locals.set_typed(name.clone(), value, ty);
+                }
+                AlgebraicValue::Algebraic(value) => {
+                    algebraic_bindings.insert(name.clone(), value);
+                }
+            }
+        }
+        Some(arm)
+    } else {
+        None
+    };
+    let active = evaluate_composite_resource_body_condition(
+        definition,
         &evaluation,
-        &definition.contains,
         assumptions,
         &mut budget,
     )
+    .ok_or("instance fold/unfold requires a proved body guard case")?;
+    let explicit_children = selected_children.map(|children| {
+        children
+            .iter()
+            .map(|(name, identity)| (name.as_str(), *identity))
+            .collect::<BTreeMap<_, _>>()
+    });
+    if let Some(children) = &explicit_children {
+        let supplied = selected_children.unwrap();
+        let expected = selected.map_or(&[][..], |arm| arm.children.as_slice());
+        let identities = supplied
+            .iter()
+            .map(|(_, identity)| *identity)
+            .collect::<BTreeSet<_>>();
+        if children.len() != supplied.len()
+            || identities.len() != supplied.len()
+            || identities.contains(&instance.identity)
+            || children.len() != expected.len()
+            || expected
+                .iter()
+                .any(|child| !children.contains_key(child.name.as_str()))
+        {
+            return Err("child selection must name every selected arm child exactly once");
+        }
+    }
+    let mut body = evaluate_function_resource_context_with_normalization(
+        &evaluation,
+        if active {
+            selected.map_or(&definition.contains, |arm| &arm.contains)
+        } else {
+            &[]
+        },
+        assumptions,
+        &mut budget,
+        false,
+    )
     .map_err(|_| "instance body evaluation exceeded its budget")?
     .map_err(|_| "could not evaluate instance memory body")?;
+    // Only the immediate declared memory justifies child-argument loads, not
+    // the ambient frame or a child that has not been constructed. On fold,
+    // check and consume that memory before allowing it in this scratch view.
     let mut next = state.clone();
+    if !unfold {
+        for fact in body.facts() {
+            next.resources = next
+                .resources
+                .without_fact_incrementally(fact, assumptions)
+                .ok_or("fold requires ownership of the complete instance body")?;
+        }
+    }
+    let mut child_evaluation = evaluation.clone();
+    child_evaluation.resources = body.clone();
+    let child_assumptions = assumptions.clone().require_owned_expression_loads();
+    let mut children = Vec::new();
+    let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
+    for child in selected.into_iter().flat_map(|arm| &arm.children) {
+        crate::instrumentation::record_deterministic_work(1);
+        let recorded = instance
+            .opened_children
+            .binary_search_by(|(name, _)| name.cmp(&child.name))
+            .ok()
+            .map(|index| &instance.opened_children[index].1);
+        let arguments = child
+            .arguments
+            .iter()
+            .zip(&definition.parameters)
+            .map(|(argument, parameter)| {
+                let paths = evaluate_c_expression_paths(
+                    &child_evaluation,
+                    argument,
+                    &child_assumptions,
+                    &mut budget,
+                )
+                .map_err(|_| "recursive child argument evaluation exceeded its budget")?;
+                if paths.len() != 1
+                    || paths[0]
+                        .facts
+                        .iter()
+                        .any(|fact| !child_assumptions.proves(fact.proposition()))
+                    || paths[0]
+                        .obligations
+                        .iter()
+                        .any(|goal| !child_assumptions.proves(goal.proposition()))
+                {
+                    return Err("recursive child argument requires a proved, readable expression");
+                }
+                match &paths[0].outcome {
+                    CExpressionOutcome::Value(value) => {
+                        coerce_c_function_argument_without_obligations(&value, parameter)
+                            .map(AlgebraicValue::C)
+                            .ok_or("recursive child argument type mismatch")
+                    }
+                    _ => Err("could not evaluate recursive child argument"),
+                }
+            })
+            .collect::<Result<ResourceArguments, _>>()?;
+        let fields = child
+            .field_bindings
+            .iter()
+            .map(|index| {
+                constructor_fields
+                    .get(*index)
+                    .cloned()
+                    .ok_or("invalid child field binding")
+            })
+            .collect::<Result<ResourceArguments, _>>()?;
+        let identity = if let Some(explicit) = &explicit_children {
+            let identity = explicit[child.name.as_str()];
+            if unfold
+                && (state.resources.owned_instance(identity).is_some()
+                    || state.open_instances.owned_instance(identity).is_some())
+            {
+                return Err("unfold child result identity is already in use");
+            }
+            identity
+        } else if unfold {
+            loop {
+                let identity = Variable(
+                    u64::MAX
+                        .checked_sub(next.next_resource_child)
+                        .and_then(|value| value.checked_sub(1))
+                        .ok_or("child identity supply exhausted")?,
+                );
+                next.next_resource_child = next
+                    .next_resource_child
+                    .checked_add(1)
+                    .ok_or("child identity supply exhausted")?;
+                if state.resources.owned_instance(identity).is_none()
+                    && state.open_instances.owned_instance(identity).is_none()
+                {
+                    break identity;
+                }
+            }
+        } else {
+            recorded
+                .ok_or("parent has no recorded child handle")?
+                .identity
+        };
+        let mut child_instance = ResourceInstance::new(
+            identity,
+            instance.name.clone(),
+            arguments,
+            instance.schema.clone(),
+            fields,
+        )
+        .ok_or("recursive child fields or arguments have invalid types")?;
+        if child_instance.arguments.len() != definition.parameters.len()
+            || child_instance
+                .arguments
+                .iter()
+                .zip(&definition.parameters)
+                .any(|(argument, parameter)| {
+                    argument
+                        .as_c_value()
+                        .is_none_or(|value| value.c_type() != parameter.c_type())
+                })
+            || (!unfold && explicit_children.is_none() && recorded != Some(&child_instance))
+        {
+            return Err("recursive child does not match the parent's recorded body");
+        }
+        if !unfold && explicit_children.is_some() {
+            let actual = state
+                .resources
+                .owned_instance(identity)
+                .ok_or("fold requires an owned, folded child")?;
+            if actual.name != child_instance.name
+                || actual.schema != child_instance.schema
+                || actual.arguments.len() != child_instance.arguments.len()
+                || actual.fields.len() != child_instance.fields.len()
+                || !actual.opened_children.is_empty()
+                || !actual
+                    .arguments
+                    .iter()
+                    .zip(child_instance.arguments.iter())
+                    .chain(actual.fields.iter().zip(child_instance.fields.iter()))
+                    .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
+            {
+                return Err("selected child does not satisfy the proposed parent model");
+            }
+            child_instance = actual.clone();
+        }
+        resource_bindings.insert(child.binding, identity);
+        body = body
+            .try_compose_into_valid_context_delaying_normalization(
+                [CResourceFact::own(CResource::Instance(
+                    child_instance.clone(),
+                ))],
+                assumptions,
+            )
+            .map_err(|_| "child ownership is duplicated")?;
+        children.push((child.name.clone(), child_instance));
+    }
+    if !unfold && explicit_children.is_none() && children.len() != instance.opened_children.len() {
+        return Err("fold would discard a recorded child");
+    }
     if unfold {
         next.resources = next
             .resources
@@ -7705,22 +8074,38 @@ pub(crate) fn rewrite_resource_instance(
                 assumptions,
             )
             .map_err(|_| "instance body overlaps existing ownership")?;
-        next.open_instances = next.open_instances.unchecked_with_fact(folded);
+        if !body_only {
+            let mut handle = folded_instance.clone();
+            children.sort_by(|(left, _), (right, _)| left.cmp(right));
+            handle.opened_children = children.into();
+            next.open_instances = next
+                .open_instances
+                .unchecked_with_fact(CResourceFact::own(CResource::Instance(handle)));
+        }
     } else {
-        for fact in body.facts() {
+        // Immediate memory was consumed before evaluating child arguments.
+        for fact in body
+            .facts()
+            .iter()
+            .filter(|fact| fact.memory_range().is_none())
+        {
             next.resources = next
                 .resources
-                .without_fact_delaying_normalization(fact, assumptions)
+                .without_fact_incrementally(fact, assumptions)
                 .ok_or("fold requires ownership of the complete instance body")?;
         }
         next.resources = next
             .resources
             .try_compose_into_valid_context_delaying_normalization([folded.clone()], assumptions)
             .map_err(|_| "fold would duplicate instance ownership")?;
-        next.open_instances = next
-            .open_instances
-            .without_exact_representation(&folded)
-            .ok_or("open handle is missing")?;
+        if !body_only {
+            next.open_instances = next
+                .open_instances
+                .without_exact_representation(&CResourceFact::own(CResource::Instance(
+                    instance.clone(),
+                )))
+                .ok_or("open handle is missing")?;
+        }
     }
     evaluation.resources = if unfold {
         next.resources.clone()
@@ -7732,11 +8117,19 @@ pub(crate) fn rewrite_resource_instance(
     } else {
         state.open_instances.clone()
     };
+    evaluation.resource_bindings = Some(std::sync::Arc::new(resource_bindings));
+    if body_only {
+        // Local field interpretation only. This scratch view never escapes
+        // into proof state and supplies no additional memory ownership.
+        evaluation.open_instances = evaluation
+            .open_instances
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(folded_instance)));
+    }
     let mut facts = body.observable_facts_assuming_valid(assumptions);
     for fact in body.facts() {
-        let range = fact
-            .memory_range()
-            .ok_or("instance body is not memory ownership")?;
+        let Some(range) = fact.memory_range() else {
+            continue;
+        };
         let width = range.element_width();
         facts.push(Proposition::CMemoryLoadable {
             memory: state.memory.clone(),
@@ -7757,12 +8150,17 @@ pub(crate) fn rewrite_resource_instance(
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
-    for fact in &definition.facts {
-        let paths = lower_spec_proposition_at_state_with_loop_entry(
+    for fact in selected
+        .map_or(&definition.facts, |arm| &arm.facts)
+        .iter()
+        .filter(|_| active)
+    {
+        let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
             &evaluation,
             fact,
             None,
             &body_assumptions,
+            &algebraic_bindings,
             &mut budget,
         )
         .map_err(|_| "could not evaluate instance body fact")?;
@@ -7780,11 +8178,180 @@ pub(crate) fn rewrite_resource_instance(
         }
         let proposition = paths[0].proposition.clone();
         if !unfold && !assumptions.proves(&proposition) {
-            return Err("fold requires the unchanged instance body facts");
+            return Err("fold requires the instance body facts for the proposed fields");
         }
         facts.push(proposition);
     }
     Ok((next, if unfold { facts } else { vec![] }))
+}
+
+pub(in crate::kernel) fn selected_instance_match_arm<'a>(
+    instance: &ResourceInstance,
+    definition: &'a CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+) -> Result<(&'a CResourceMatchArm, AlgebraicTerm), &'static str> {
+    let body = definition
+        .matched
+        .as_ref()
+        .ok_or("missing resource match body")?;
+    if definition.condition.is_some()
+        || !definition.contains.is_empty()
+        || !definition.facts.is_empty()
+        || !body.algebraic_type.has_consistent_root_schema()
+        || body.algebraic_type.rigid
+        || instance
+            .schema()
+            .fields()
+            .get(body.field_index)
+            .map(|(_, ty)| ty)
+            != Some(&ResourceFieldType::Algebraic(body.algebraic_type.clone()))
+        || body.arms.len() != body.algebraic_type.variants.len()
+    {
+        return Err("invalid resource match schema");
+    }
+    let mut variants = BTreeSet::new();
+    let schema_variants = body
+        .algebraic_type
+        .variants
+        .iter()
+        .map(|variant| (variant.name.as_str(), &variant.fields))
+        .collect::<BTreeMap<_, _>>();
+    let reserved = definition
+        .parameters
+        .iter()
+        .map(|parameter| parameter.name())
+        .chain(
+            instance
+                .schema()
+                .fields()
+                .iter()
+                .map(|(name, _)| name.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    for arm in &body.arms {
+        let mut names = BTreeSet::new();
+        if !variants.insert(&arm.variant)
+            || schema_variants
+                .get(arm.variant.as_str())
+                .is_none_or(|fields| {
+                    **fields != arm.binding_types || fields.len() != arm.bindings.len()
+                })
+            || arm.bindings.iter().any(|name| {
+                name.is_empty() || !names.insert(name) || reserved.contains(name.as_str())
+            })
+            || arm
+                .contains
+                .iter()
+                .any(|resource| !matches!(resource, CResourceSpec::OwnMemory(_)))
+        {
+            return Err("invalid resource match arm");
+        }
+        let mut child_names = BTreeSet::new();
+        let mut child_bindings = BTreeSet::new();
+        for child in &arm.children {
+            if child.name.is_empty()
+                || reserved.contains(child.name.as_str())
+                || names.contains(&child.name)
+                || !child_names.insert(&child.name)
+                || child.binding == Variable(u64::MAX)
+                || !child_bindings.insert(child.binding)
+                || child.arguments.len() != definition.parameters.len()
+                || child.field_bindings.len() != instance.schema.fields().len()
+            {
+                return Err("invalid recursive child schema");
+            }
+            for ((_, field_type), index) in
+                instance.schema.fields().iter().zip(&child.field_bindings)
+            {
+                let expected = match field_type {
+                    ResourceFieldType::C(ty) => AlgebraicValueType::C(*ty),
+                    ResourceFieldType::Algebraic(ty) => ty.value_type(),
+                };
+                if arm.binding_types.get(*index) != Some(&expected) {
+                    return Err(
+                        "recursive child fields must be immediate constructor bindings of the declared type",
+                    );
+                }
+            }
+            // In particular, the parent's matched field is bound to a field
+            // of this constructor, never to the whole parent model.
+            if arm
+                .binding_types
+                .get(child.field_bindings[body.field_index])
+                != Some(&body.algebraic_type.value_type())
+            {
+                return Err("recursive child model must be a proper submodel");
+            }
+        }
+    }
+    let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
+        return Err("resource match field is not algebraic");
+    };
+    let constructor = assumptions
+        .known_algebraic_constructor(model)
+        .ok_or("resource match requires constructor evidence for the instance field")?;
+    let AlgebraicTermNode::Constructor { variant, .. } = &constructor.node else {
+        unreachable!()
+    };
+    let arm = body
+        .arms
+        .iter()
+        .find(|arm| &arm.variant == variant)
+        .ok_or("unknown resource match constructor")?;
+    Ok((arm, constructor))
+}
+
+fn instance_body_evaluation(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+) -> Result<CState, &'static str> {
+    let mut evaluation = state.clone();
+    if definition.has_memory_only_instance_body() {
+        // A local interpretation of proposed fields, never ownership or a
+        // persistent open handle. Guards may refer to these fields as well.
+        evaluation.open_instances = evaluation
+            .open_instances
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone())));
+    }
+    if definition.matched.is_some() {
+        // An arm's C names are lexical parameters and constructor bindings,
+        // never incidental locals of the function currently opening it.
+        evaluation.locals = CLocalEnvironment::default();
+    }
+    evaluation.resource_bindings = Some(std::sync::Arc::new(BTreeMap::from([(
+        Variable(u64::MAX),
+        instance.identity,
+    )])));
+    for (parameter, value) in definition.parameters.iter().zip(instance.arguments.iter()) {
+        let value = value
+            .as_c_value()
+            .ok_or("resource argument is not a C value")?;
+        if value.c_type() != parameter.c_type() {
+            return Err("resource argument type mismatch");
+        }
+        evaluation.locals.set_typed(
+            parameter.name().to_owned(),
+            value.clone(),
+            parameter.c_type(),
+        );
+    }
+    Ok(evaluation)
+}
+
+pub(in crate::kernel) fn instance_body_guard_case(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+) -> Option<bool> {
+    let evaluation = instance_body_evaluation(state, instance, definition).ok()?;
+    evaluate_composite_resource_body_condition(
+        definition,
+        &evaluation,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
 }
 
 pub(super) fn expand_composite_resource_fact(
@@ -7817,7 +8384,7 @@ pub(super) fn expand_composite_resource_fact_with_children(
     let definition = definitions
         .iter()
         .find(|definition| definition.name() == name)?;
-    if definition.instance_schema.is_some() {
+    if definition.instance_schema.is_some() || definition.matched.is_some() {
         return None;
     }
     if definition.parameters().len() != arguments.len() {
@@ -9022,6 +9589,22 @@ pub(super) fn evaluate_function_resource_context(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    evaluate_function_resource_context_with_normalization(
+        state,
+        resources,
+        assumptions,
+        budget,
+        true,
+    )
+}
+
+fn evaluate_function_resource_context_with_normalization(
+    state: &CState,
+    resources: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    normalize: bool,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
     for resource in resources {
         let evaluation_state = state.clone().with_resource_context(
@@ -9039,7 +9622,14 @@ pub(super) fn evaluate_function_resource_context(
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
         };
-        context = match context.try_compose_with_fact(resource, assumptions) {
+        // Instance rewrites retain the declared memory pieces so folding does
+        // not need to normalize an ambient block just to consume those pieces.
+        let composed = if normalize {
+            context.try_compose_with_fact(resource, assumptions)
+        } else {
+            context.try_compose_into_valid_context_delaying_normalization([resource], assumptions)
+        };
+        context = match composed {
             Ok(context) => context,
             Err(error) => return Ok(Err(resource_context_runtime_error(error))),
         };
@@ -9921,7 +10511,20 @@ pub(super) fn function_outcome_from_body(
                     obligations,
                 );
             };
-            let value = if function.return_aggregate_layout().is_some() {
+            let value = if let Some(layout) = function.return_aggregate_layout() {
+                // The return materializer copies the callee's aggregate into
+                // a caller-visible slot. Reading an unwritten field there is
+                // an uninitialized read, not a contract violation, so check
+                // the source before materializing.
+                if let CValue::Pointer(pointer) = &value
+                    && !pointer.is_null()
+                    && aggregate_copy_reads_uninitialized(&state.memory, pointer.pointer(), layout)
+                {
+                    return (
+                        CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+                        obligations,
+                    );
+                }
                 let Some(value) = materialize_aggregate_return(&mut state, function, value) else {
                     return (
                         CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(

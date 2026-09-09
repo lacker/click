@@ -312,6 +312,110 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    snapshots: &RecordedSnapshots,
+    predicates: &PredicateEnvironment,
+    functions: &ClickFunctionEnvironment,
+) -> Result<crate::kernel::AlgebraicTerm, String> {
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, None);
+    let spec = crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
+        expression,
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
+        None,
+        snapshots,
+        assumptions,
+        predicates,
+        functions,
+        BTreeSet::new(),
+    )?;
+    crate::kernel::capture_spec_algebraic_value(
+        &states.lowering_state,
+        &spec,
+        Some(&states.entry_state),
+        assumptions,
+    )
+}
+
+/// Fold initializers create values, not new hypotheses: discharge every
+/// evaluation obligation here, including reads in constructor arguments.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn capture_resource_field_initializer(
+    expression: &ContractExpression,
+    ty: &crate::kernel::ResourceFieldType,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    snapshots: &RecordedSnapshots,
+    predicates: &PredicateEnvironment,
+    functions: &ClickFunctionEnvironment,
+) -> Result<crate::kernel::AlgebraicValue, String> {
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, None);
+    match ty {
+        crate::kernel::ResourceFieldType::C(expected) => {
+            let spec = crate::surface::lowering::elaborate_fixed_state_expression(
+                expression,
+                states.element_types,
+                &states.entry_state,
+                states.entry_values,
+                states.current_values,
+                None,
+                snapshots,
+                assumptions,
+                predicates,
+                functions,
+                BTreeSet::new(),
+            )?;
+            let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+                &states.lowering_state,
+                &spec,
+                Some(&states.entry_state),
+                assumptions,
+            )?;
+            if obligations.iter().any(|o| !assumptions.proves(o)) {
+                return Err("fold initializer has unproved evaluation obligations".into());
+            }
+            if value.c_type() != *expected {
+                return Err("fold initializer has the wrong type".into());
+            }
+            Ok(crate::kernel::AlgebraicValue::C(value))
+        }
+        crate::kernel::ResourceFieldType::Algebraic(_) => {
+            let spec = crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
+                expression,
+                states.element_types,
+                &states.entry_state,
+                states.entry_values,
+                states.current_values,
+                None,
+                snapshots,
+                assumptions,
+                predicates,
+                functions,
+                BTreeSet::new(),
+            )?;
+            crate::kernel::capture_spec_algebraic_value(
+                &states.lowering_state,
+                &spec,
+                Some(&states.entry_state),
+                assumptions,
+            )
+            .map(crate::kernel::AlgebraicValue::Algebraic)
+        }
+    }
+}
+
 /// The one evaluation of a C fragment stated outside a proof: a resource
 /// clause's quantity, argument, or segment bound, an effect footprint, a
 /// resource definition's read. The fragment is elaborated like any contract
@@ -656,45 +760,6 @@ pub(in crate::surface::proof) fn reverse_kernel_equality(
         ),
         _ => None,
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::surface::proof) fn prove_have_in_current_state(
-    have: &ProofHave,
-    theorem_environment: &TheoremEnvironment,
-    claim_label: &str,
-    outer_tactic_index: usize,
-    outer_available: &[Proposition],
-    transition_facts: &[ExecutionPureFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    recorded_snapshots: &RecordedSnapshots,
-    surface_propositions: &SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    original_requirements: &[Requirement],
-) -> Result<Proposition, ClickError> {
-    prove_have_in_state(
-        have,
-        theorem_environment,
-        claim_label,
-        outer_tactic_index,
-        outer_available,
-        transition_facts,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        None,
-        recorded_snapshots,
-        Some(surface_propositions),
-        predicate_environment,
-        click_function_environment,
-        original_requirements,
-        None,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

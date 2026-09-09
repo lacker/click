@@ -313,7 +313,7 @@ fn prepare_pure_induction_tactics(
     ))
 }
 
-fn click_type_from_algebraic_value_type(
+pub(super) fn click_type_from_algebraic_value_type(
     value_type: &AlgebraicValueType,
 ) -> Result<ClickType, ClickError> {
     Ok(match value_type {
