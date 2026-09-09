@@ -134,8 +134,20 @@ requires an explicit constructor term. It currently records the bounded
 rejection. The intended positive proof names `value` in the `Some` case and
 discharges the impossible `None` case from the precondition.
 
-Choose explicit proof-level constructor-case syntax, distinct in context from
-pure match expressions. Acceptance requires exhaustive checked cases, fresh
+The selected syntax is `match model { Type::Variant(fields) => { tactics } }`
+in proof blocks, distinct in context from pure match expressions.
+The kernel now provides constructor exhaustion as a disjunction of constructor
+equations with existentially bound, typed fields. It validates the datatype
+schema and reserves the scrutinee's variable identities, including variables
+inside symbolic matches and calls. Tests cover generic and recursive fields,
+pointer payloads, capture avoidance, complete constructor families, and
+malformed or unsupported inputs. This rule alone neither chooses witnesses
+nor grants ownership; **the proof-level tactic is not yet implemented**.
+Its current payload sorts are signed 32/64-bit integers, pointers, and ADTs.
+
+The remaining integration needs scoped witness introduction, execution-frontier
+case splits and joins, and source/certificate support. Acceptance requires
+exhaustive checked cases, fresh
 typed bindings with correct scope, retained C execution/ownership on each
 branch, expansion/rechecking, and rejection of omitted reachable cases or
 escaping fields. Then verify unchanged `tree_rotate_left` for arbitrary

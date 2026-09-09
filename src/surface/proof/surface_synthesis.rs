@@ -1528,9 +1528,78 @@ fn synthesize_surface_bitvector(
                 })
                 .collect::<Option<Vec<_>>>()?,
         }),
-        Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => None,
+        Bitvector32Term::ClickFunctionApplication {
+            name,
+            arguments: values,
+        } => synthesize_surface_call(name, values, parameters, arguments, state, bound_variables),
+        Bitvector32Term::AlgebraicMatch { .. } => None,
     }
+}
+
+/// Restore explicit calls in invariant-body goals so their defining equations
+/// can be opened by ordinary `unfold`. Array snapshots are named only when
+/// they are exactly the current or function-entry snapshot; no frame search
+/// or memory-content comparison is used to choose the spelling.
+#[inline(never)]
+fn synthesize_surface_call(
+    name: &str,
+    values: &[crate::kernel::PureFunctionArgument],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ContractExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("function-call")?;
+    let mut result = Vec::with_capacity(values.len());
+    for value in values {
+        if !consume_surface_synthesis_work("function-argument") {
+            return None;
+        }
+        let expression = match value {
+            crate::kernel::PureFunctionArgument::Value(CValue::Int32(value)) => {
+                synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?
+            }
+            crate::kernel::PureFunctionArgument::ArrayRef {
+                memory,
+                pointer: CValue::Pointer(pointer),
+                ..
+            } => {
+                let snapshot = crate::kernel::intern_c_memory_ref(memory);
+                if snapshot == crate::kernel::intern_c_memory_ref(state.memory()) {
+                    synthesize_surface_pointer_expression(
+                        pointer,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
+                    )?
+                } else {
+                    SYNTHESIS_ENTRY_STATE.with(|slot| {
+                        let entry = slot.borrow();
+                        let entry = entry.as_ref()?;
+                        if snapshot != crate::kernel::intern_c_memory_ref(entry.memory()) {
+                            return None;
+                        }
+                        Some(ContractExpression::Old(Box::new(
+                            synthesize_surface_pointer_expression(
+                                pointer,
+                                parameters,
+                                arguments,
+                                entry,
+                                bound_variables,
+                            )?,
+                        )))
+                    })?
+                }
+            }
+            _ => return None,
+        };
+        result.push(expression);
+    }
+    Some(ContractExpression::Call {
+        name: name.into(),
+        arguments: result,
+    })
 }
 
 fn synthesize_parameter_field_indexed_int32_load(

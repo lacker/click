@@ -280,9 +280,32 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 let surface_propositions = initialization_surface_propositions.borrow();
                 // Check structured initialization through the same checked
                 // proof object that emitted it, including both/and children.
-                let fact = surface_propositions
-                    .unique_kernel(&have.proposition)
-                    .cloned()
+                let exact_entry_goal = invariant_index
+                    .and_then(|index| {
+                        let obligation_context =
+                            format!("loop {loop_index} invariant {index} entry");
+                        entry_obligations
+                            .iter()
+                            .find(|obligation| obligation.context() == Some(&obligation_context))
+                            .map(|obligation| obligation.proposition().clone())
+                    })
+                    .map(|mut goal| {
+                        let facts =
+                            crate::kernel::proof::ProofFacts::from_ordered(&certificate_available);
+                        while let Proposition::Implies(antecedent, body) = &goal {
+                            if !facts.contains(antecedent) {
+                                break;
+                            }
+                            goal = body.as_ref().clone();
+                        }
+                        goal
+                    });
+                let fact = exact_entry_goal
+                    .or_else(|| {
+                        surface_propositions
+                            .unique_kernel(&have.proposition)
+                            .cloned()
+                    })
                     .map(Ok)
                     .unwrap_or_else(|| {
                         lower_fixed_state_proposition(
@@ -1545,12 +1568,6 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 ));
             }
             for (index, invariant) in invariant_surfaces.iter().enumerate() {
-                if leaf.legacy_loop_invariant_prefix_holds(
-                    preservation.loop_entry_state(),
-                    &invariant_checks[..=index],
-                )? {
-                    continue;
-                }
                 let scope = leaf.begin_have(invariant.clone())?;
                 let Some(proved) =
                     scope.try_simp_closure_with_surfaces(&invariant_premise_surfaces[..=index])?

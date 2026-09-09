@@ -30,10 +30,10 @@ use crate::kernel::{
     c_function_contract_refinement_context, c_function_entry_state,
     c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
     c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
-    c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
-    c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
-    c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
-    c_typed_pointer_value, c_unverified_function_contract_claims_with_checked_propositions,
+    c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_entry,
+    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
+    c_resources_directly_match, c_seq, c_typed_pointer_value,
+    c_unverified_function_contract_claims_with_checked_propositions,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
     certify_int32_above_one_predecessor_is_at_least_one,
@@ -2410,6 +2410,7 @@ pub enum SimpleTactic {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartTacticKind {
+    CloseInvariants,
     Auto,
     ApplyTheorem,
     FactTransport,
@@ -2658,7 +2659,7 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "close-invariants",
         syntax: "close_invariants()",
-        class: "simple",
+        class: "smart",
     },
     PublicTacticForm {
         id: "close-invariants-by",
@@ -3480,7 +3481,7 @@ impl ProofTactic {
             Self::Right => TacticClass::Simple(SimpleTactic::Right),
             Self::Enumerate => TacticClass::Simple(SimpleTactic::Enumerate),
             Self::Contradiction(_) => TacticClass::Simple(SimpleTactic::Contradiction),
-            Self::CloseInvariants => TacticClass::Simple(SimpleTactic::CloseInvariants),
+            Self::CloseInvariants => TacticClass::Smart(SmartTacticKind::CloseInvariants),
             Self::CloseInvariantsBy(_) => TacticClass::Control(ControlTactic::CloseInvariants),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),

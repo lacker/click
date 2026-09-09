@@ -23,6 +23,15 @@ Kernel files:
 - `assumptions.rs`: `PureFactContext`, proof obligations, execution-derived pure
   facts (`ExecutionPureFact`), and symbolic execution accessors.
 - `api.rs`: public constructors and theorem-producing entry points.
+- `api/algebraic_cases.rs`: checked constructor exhaustion. For each variant
+  of a validated ADT schema it produces an equation to the unchanged
+  scrutinee, existentially quantifying that variant's fields. All variants
+  occur in the disjunction, and the binders avoid every variable in the
+  scrutinee. The justification is the datatype's constructor-generated domain;
+  this is a trusted kernel rule, not a smart search result. Its tests check
+  typed payloads, malformed schemas, complete coverage, and capture avoidance.
+  It does not select a case, introduce free witnesses, or grant resources.
+  Execution-proof case elimination and its surface syntax remain separate work.
 - `reasoning.rs`: deterministic proof helpers, finite forall/range reasoning,
   substitutions, execution-derived pure facts, and obligation plumbing.
 - `spec.rs`: `SpecExpression`/`SpecProposition` lowering and evaluation.

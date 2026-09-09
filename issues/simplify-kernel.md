@@ -144,14 +144,14 @@ unbounded search.
 
 ## Current inventory
 
-Loop migration follow-up (2026-09-09): completed-body prepass ordering and
-named loop-entry snapshots are fixed. Automatic/bare closure still uses the
-legacy path. Pointer-increment equality now emits an explicit arithmetic
-proof from the selected relation and overflow bounds. The unchanged pointer
-loop verifies, expands, and rechecks with explicit closure and zero legacy
-discovery. Finish the remaining explicit fixture proofs before deleting
-legacy invariant discovery. See
-[the loop migration issue](quantified-invariant-body-planning.md) for the census.
+Loop back-edge migration is complete (2026-09-09). Bare `close_invariants()`
+and automatic preservation now plan retained `close_invariants by { ... }`
+proof bodies. Explicit bodies prove the exact lowered value and safety goals;
+closure validates their context-bound evidence without rediscovery. The legacy
+path builder, prefix probe, and alternate lowering-record producer are deleted.
+The remaining fixtures use existing explicit tactics without changing their C
+or invariant statements. Initialization rechecking preserves the original
+lowered goal and its binders.
 
 Older counts retain their stated measurement dates. The reentrancy census was
 rerun on 2026-09-07 at `2e14f553` over the then-complete corpus: 25 example
@@ -279,12 +279,10 @@ while still violating the search/checking boundary.
 
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
-| Loop preparation: `loops.rs::verify_lowered_invariant_path`, also reached through `api.rs::c_loop_invariants_hold_at_back_edge_using` | Tries general derivation then simp for missing path obligations and goals. Closure separately validates retained trees; the prefix probe still discards them. Removing the probe and generating ordinary haves failed two fixture regressions. | Introduce exact lowered-goal scopes with loop-entry context, or supply checked snapshot-aware binder-renaming evidence; then remove preparation/prefix discovery. Start here. |
 | Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `check_interface`, `interface_spec_is_established`, `validates_exhaustive_join`, `checked_evidence_premises_hold` | Validates introduced facts, interface facts on both arms, branch obligations, and theorem premises by contextual proof. In particular, an already checked theorem's unavailable premise can still be rediscovered at application time. | Retain selected fact/obligation derivations in the corresponding event; check exact premises instead of reproving them. |
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
-| Effect equality: `memory_provenance.rs::c_pointer_offsets_proven_equal_for_effect` | After exact-load normalization and restricted equality fail, calls `proves(PointerOffsetEqual)`. Reached by resource equality and by `api/contract_certification/contract_claims.rs::memories_equal_by_execution_provenance`. | Census the final fallback, then delete it if unused or retain an explicit offset-equality witness. The contract module has no direct general-prover call but still reaches this one. |
 | Calls, refinement, and resources: `functions.rs`, `primitives/resource_algebra.rs`, `primitives/contracts.rs::applicable_verified_loop_rule` | Proves guarded requirements, footprint guards, refinement obligations/conclusions, quantity relations, population transitions, resource facts, and loop-rule prerequisites. Results affect accepted calls, resources, or selected rules. | Split by consumer; retain guard, quantity, and refinement evidence. Do not replace every call with an exact lookup in one large completeness-breaking change. |
 | Lowering/execution: `spec.rs`, `reasoning/path_facts.rs`, and remaining `loops.rs` helpers | Decides spec branches, overflow obligations, invariant paths, segment containment, and whether an obligation or fact can be omitted. Some paths have explicit no-search modes, but they are not universal. | Propagate unresolved obligations and retain branch/containment evidence. Separate proof-relevant discharge from redundant-fact suppression. |
 | Termination: `termination.rs::assume_structural_path`, `ranking_proves`, `ranking_proves_lexicographic_decrease` | Discharges structural-path obligations and ranking conditions before `c_verified_function_termination_rules` issues authority. `ranking_proves` also collects ambient condition facts for an arithmetic fallback; lexicographic checking tries pivots. | Keep the named ranking expression/tuple as input, but move proof and pivot selection to planning and retain their evidence. |
@@ -319,75 +317,31 @@ Additional distinctions that matter for the migration:
   discovery, not a missing user proof: retain authority from the checked proof
   instead of asking another solver to establish the same claim.
 
-Recommended migration sequence after this audit:
+Completed loop migration:
 
-The attempted first migration exposed a prerequisite: the surface planner does
-not yet retain a complete explicit quantified loop proof for the bubble-pass
-fixtures. See [loop-closure-quantified-evidence.md](loop-closure-quantified-evidence.md)
-for the exact failures, safety-obligation/binder distinction, and acceptance
-criteria. The legacy closer is still present; the audit did not establish that
-the existing surface planner could replace all of its successful proofs.
-Checked-lowering records now retain the legacy planner's actual paths, safety
-proofs, and goal proofs on the proof object with a shared execution snapshot.
-The explicit-invariant bypass is now removed: unfolded predicate `have` scopes
-at loop frontiers retain their checked bodies, and all lowering obligations
-(including provisional read safety) receive proofs. Preparation and consumption
-are now separate: kernel proof-object closure validates the complete saved
-bundle against its snapshot, premise store, execution facts, and selected
-checks, without re-lowering or building derivations. The source closer flag is
-explicitly only a request. The attempted prefix-probe removal and surface
-safety-proof planner were reverted: ordinary haves lost loop-entry context,
-regressed copy3, and added excessive search. Legacy discovery therefore remains
-in preparation and the prefix probe. Connecting explicit proofs to the exact
-lowered goals needs a loop-specific scope interface. A proof body on
-`close_invariants` is approved. Its first prototype passed scalar verification
-and expansion, but the quantified census still failed: conjunction planning
-uses ordinary `have` scopes, re-lowering the child goals. Exact child-goal
-scopes are therefore required, not just an outer proof body. The new
-`both { ... } and { ... }` construct now supplies exact isolated conjunct
-scopes, including retained proof bodies for expansion. Structural conjunction
-planning now uses those scopes directly. `close_invariants by { ... }` now
-checks and retains a proof of the exact collected value/safety goals; scalar
-and quantified bubble proofs expand and recheck. The kernel now creates the
-exact body scope and retains its completed checked result as context-bound
-bundle evidence. Preparation validates this evidence without legacy discovery;
-missing or stale evidence still rejects. Bare closers and automatic preservation
-planning still use legacy preparation and the prefix probe, so their migration
-is the next step. The earlier outer-scope-only prototype was reverted. A rejected key
-prototype also confused bound occurrences inside snapshots with free ones;
-the linked issue records the failures, a defensive regression, and safe options.
+- Kernel-owned closure scopes collect exact value and read-safety goals;
+  `both { ... } and { ... }` preserves exact child identities.
+- Surface planning emits completed bodies for bare closers and automatic
+  preservation. Existing bodies are validated before any named-invariant
+  preplanning; stale evidence is rejected, never regenerated.
+- Completion binds the exact root, snapshot, premises, execution effects, and
+  invariant bundle. A request flag, incomplete body, or substituted proof
+  cannot authorize closure. Provisional safety goals cannot prove themselves.
+- Quantified function-call presentation names only exact current or entry
+  array snapshots. Original and expanded branch, old-count, permutation,
+  sorting, copy3, and pointer proofs are regression-covered.
+- No-continuing-edge do-while exits retain their exit classification. Negative
+  termination fixtures still reach their intended decrease failures.
+- Multi-size deterministic regressions cover scope creation, retention,
+  validation against unrelated facts, and explicit function arguments.
 
-The automatic-body migration is tracked in:
-[quantified-invariant-body-planning.md](quantified-invariant-body-planning.md).
-Explicit copy3 bodies now verify, expand, and recheck with snapshot-aware goal
-presentation and smaller Surface implication-planner frames. Two-pass sorting
-now has explicit branch arguments and saved expanded invariant bodies in its
-mdtest: verification, expansion, and rechecking take under a second in the
-isolated regression, with zero legacy discovery. The C and invariants are
-unchanged; stronger `simp` is not required. The previous expected planning
-miss was replaced by this positive regression. Automatic migration remains
-open: bare closers and automatic preservation still use legacy preparation.
+Recommended remaining migration sequence:
 
-1. Replace the legacy loop closer using the existing
-   `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits
-   checked proofs for the named paths; closure checks that each required fact
-   is present for that exact state/path. Regression: a multi-path invariant
-   with a non-assumable lowering obligation; removing the obligation evidence
-   must reject, even if unrelated ambient facts could prove it. Expanded and
-   unexpanded proofs must agree without editing C. Include the actual
-   proof-object boundary: `validate_checked_invariant_lowerings` now rejects
-   missing or stale evidence independently of the source closer request.
-   The remaining migration must remove discovery from preparation, not merely
-   move the old solver call above the record consumer.
-2. Census the residual pointer-offset effect fallback, recording attempts and
-   first successful decisions. Delete or replace it with a named witness;
-   reject a witness for another offset pair or memory state. Keep the existing
-   retained load-equality evidence intact.
-3. Migrate proof-object boundary consumers in separate chunks: theorem-premise
+1. Migrate proof-object boundary consumers in separate chunks: theorem-premise
    application, resource deltas, then branch interfaces. Reject omitted,
    unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
    fact histories so exact validation does not become an ambient scan.
-4. Separate quantified conversion and context-free normalization from implicit
+2. Separate quantified conversion and context-free normalization from implicit
    proof construction, then migrate pure-theorem authority, call/refinement
    guards and quantities, and termination by their own evidence types.
 
@@ -395,6 +349,50 @@ Completion requires checking these consumers transitively, not just obtaining
 a zero grep count in `contract_certification.rs`. A retained exact rule must
 have named inputs and input/output-sized work; a retained planner must be
 non-authoritative and its selected result checked without rediscovery.
+
+### Pointer-offset effect-equality census (2026-09-09)
+
+Measured at `6f0fdf7a`, after the loop back-edge migration, across all 26 example
+projects and 1,073 markdown fixtures (including expected failures). Temporary
+caller-tagged counters in `c_pointer_offsets_proven_equal_for_effect` distinguished
+entry, interruption, exact normalized equality, restricted equality, and the
+final `assumptions.proves(PointerOffsetEqual)` attempt/result. Each fixture
+reported its counters after its serial verification completed. The probes were
+removed; this census changes no runtime behavior.
+
+| Corpus / immediate consumer | Helper calls | Exact successes | Restricted successes | General fallback attempts | General fallback successes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Examples: Surface effect checking | 147 | 0 | 1 | 146 | 0 |
+| Examples: kernel resource-pointer matching | 7 | 0 | 0 | 7 | 0 |
+| Mdtests: Surface effect checking | 185 | 0 | 0 | 185 | 0 |
+| Mdtests: kernel resource-pointer matching | 4 | 0 | 0 | 4 | 0 |
+| Both corpora: contract store-chain comparison | 0 | 0 | 0 | 0 | 0 |
+| **Total** | **343** | **0** | **1** | **342** | **0** |
+
+All 342 general fallback attempts returned false. No instrumented interruption
+exit occurred. The one restricted success was in `examples/perpetual-service`;
+its other seven calls missed. Resource-pointer fallback attempts came from
+`binary-tree` (2), `owned-segmented-buffer` (2), `ring-buffer` (3), and one each
+from `c_chained_field_access`, `composite_resource_owned_buffer_get`,
+`composite_resource_owned_buffer_set`, and
+`return_population_rejects_unupdated_sibling` mdtests. The direct
+`memories_equal_by_execution_provenance` store-chain caller was not reached.
+Counts describe immediate consumers, not all transitive callers or unique
+logical queries. The instrumented full gate passed, including 2,043 unit/CLI
+tests; those isolated unit processes are not included in the table.
+
+**Deletion complete:** only the final `assumptions.proves` disjunct is removed.
+Exact-load normalization, restricted equality, all three deadline checks, and
+retained load-equality evidence are unchanged. Focused regressions cover exact
+stored-load normalization, explicit offset-equality facts, unequal constants,
+missing and unrelated offset facts, and expiry even on identical offsets.
+A distinguishing negative test supplies an inconsistent context: the general
+prover can establish the queried equality, but this helper now rejects it
+without a direct/restricted justification. No new witness type is introduced.
+The earlier census was observational; deletion and these regressions are the
+subsequent implementation. This does not classify the internals of the
+restricted checker as fully migrated, nor remove other effect/resource proof
+discovery.
 
 ## Pointer-distinctness disposition
 
@@ -439,9 +437,10 @@ comparison now use only that narrower predicate for distinctness.
    propagation audited above. `inside_condition_decision` is memo-scope policy, not an
    answer-suppressing tier.
 8. **Audit complete; implementation open:** migrate the general-prover authority
-   consumers in the inventory above, starting with loop closure. The
-   resource-invariant theorem constructors are complete, but the remaining
-   boundaries extend beyond loop and effect certification. Preserve the stated
+   consumers in the inventory above. Loop back-edge closure and
+   resource-invariant theorem constructors are complete. The remaining
+   boundaries include event/fact availability, normalization, pure theorems,
+   call/refinement conditions, and termination. Preserve the stated
    invariant; do not relabel internal proof construction as checking.
 
 Each numbered step should be a coherent green change. A later step must not be

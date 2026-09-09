@@ -2299,19 +2299,14 @@ pub(crate) struct CheckedLoopInvariantLowerings {
     pub(super) body: Option<super::object::CheckedInvariantBody>,
     pub(super) snapshot: SharedValue<CState>,
     pub(super) checks: Vec<crate::kernel::CLoopInvariantCheck>,
-    pub(super) paths: Vec<Arc<crate::kernel::loops::CheckedInvariantLowering>>,
     pub(super) facts: super::ProofFacts,
     pub(super) effects: SharedVec<ExecutionPureFact>,
-    pub(super) path_count: usize,
 }
 
 #[cfg(test)]
 impl CheckedLoopInvariantLowerings {
     pub(crate) fn checks(&self) -> &[crate::kernel::CLoopInvariantCheck] {
         &self.checks
-    }
-    pub(crate) fn paths(&self) -> &[Arc<crate::kernel::loops::CheckedInvariantLowering>] {
-        &self.paths
     }
     pub(crate) fn snapshot(&self) -> &SharedValue<CState> {
         &self.snapshot

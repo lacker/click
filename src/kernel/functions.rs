@@ -5068,7 +5068,131 @@ fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool
     memory.access_in_bounds(&base, bytes)
 }
 
-pub(super) fn copy_aggregate_fields(
+/// Whole-struct assignment copies every member (C11 6.5.16.1p2), but
+/// `copy_aggregate_fields` skips a carried field with no source cell. Copying
+/// from never-written source storage would then leave the destination's own
+/// cell in place and readable. Every aggregate-copy path (direct assignment,
+/// return materialization, return assignment) reports that skipped read as an
+/// uninitialized read instead, matching what member-wise assignment reports
+/// through the ordinary load path.
+fn aggregate_copy_reads_uninitialized(
+    memory: &CMemory,
+    source: &Pointer,
+    layout: &CAggregateLayout,
+) -> bool {
+    // Mirror the carried-field classification in `copy_aggregate_fields`: a
+    // field type this copy cannot carry drops the destination cells instead
+    // of leaving them readable, so it cannot go stale here.
+    for field in layout.fields() {
+        let (element_type, element_count) = match field.c_type() {
+            CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Int64
+            | CType::UInt64
+            | CType::Float32
+            | CType::Float64 => (field.c_type(), 1),
+            CType::Int32Array(length) => (CType::Int32, length),
+            CType::UInt8Array(length) => (CType::UInt8, length),
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer => (field.c_type(), 1),
+            _ => continue,
+        };
+        for index in 0..element_count {
+            let element_offset = field
+                .offset_bytes()
+                .checked_add(
+                    index
+                        .checked_mul(element_type.byte_width())
+                        .expect("validated aggregate field offset"),
+                )
+                .expect("validated aggregate field offset");
+            if uninitialized_aggregate_copy_source_cell(
+                memory,
+                &source.offset_by_bytes(element_offset),
+                element_type,
+            ) {
+                return true;
+            }
+        }
+    }
+    for union in layout.unions() {
+        let union_source = source.offset_by_bytes(union.offset_bytes());
+        // A union with any readable member is initialized storage: the copy
+        // carries the active member view and skips the rest, so no member
+        // read is uninitialized. Only a wholly unread union can leave the
+        // destination holding a stale cell.
+        let union_initialized = union.fields().iter().any(|field| {
+            let source_field = union_source.offset_by_bytes(field.offset_bytes());
+            // Mirror `copy_aggregate_union_member`: a value stored through
+            // any member is carried.
+            memory
+                .known_union_value(&source_field, field.c_type())
+                .is_some()
+                || memory
+                    .known_value(&source_field)
+                    .is_some_and(|value| field.c_type().accepts(&value))
+        });
+        if union_initialized {
+            continue;
+        }
+        for field in union.fields() {
+            let source_field = union_source.offset_by_bytes(field.offset_bytes());
+            if uninitialized_aggregate_copy_source_cell(memory, &source_field, field.c_type()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Mirrors the silent skip in `copy_aggregate_fields`: no source cell and not
+/// a zeroed heap address. Reading such a cell is a read of uninitialized
+/// storage when the address is a live local or an uninitialized heap cell;
+/// anything else (external or symbolic memory) reads back as an unconstrained
+/// symbolic load rather than stale storage.
+fn uninitialized_aggregate_copy_source_cell(
+    memory: &CMemory,
+    source_field: &Pointer,
+    element_type: CType,
+) -> bool {
+    if memory.known_value(source_field).is_some() {
+        return false;
+    }
+    if memory.is_zeroed_heap_address(source_field, element_type.byte_width()) {
+        return false;
+    }
+    memory.is_uninitialized_heap_address(source_field, element_type.byte_width())
+        || (source_field.block.starts_with("local:")
+            && memory.access_in_bounds(source_field, element_type.byte_width()))
+}
+
+/// Every aggregate-copy path goes through this wrapper so a copy from
+/// uninitialized source storage is reported as an uninitialized read instead
+/// of silently keeping the destination's old value. The raw
+/// `copy_aggregate_fields` is deliberately module-private; new call sites in
+/// other modules must use this checked form.
+pub(super) fn copy_aggregate_fields_checked(
+    memory: CMemory,
+    source: &Pointer,
+    destination: &Pointer,
+    layout: &CAggregateLayout,
+) -> Result<CMemory, CUndefinedBehavior> {
+    if aggregate_copy_reads_uninitialized(&memory, source, layout) {
+        return Err(CUndefinedBehavior::UninitializedRead);
+    }
+    Ok(copy_aggregate_fields(memory, source, destination, layout))
+}
+
+// Module-private on purpose: cross-module aggregate copies must go through
+// `copy_aggregate_fields_checked` so the uninitialized-source read is always
+// reported. (Aggregate argument binding below keeps the raw form for now;
+// diagnosing uninitialized reads of call arguments is a separate follow-up.)
+fn copy_aggregate_fields(
     mut memory: CMemory,
     source: &Pointer,
     destination: &Pointer,
@@ -9299,7 +9423,20 @@ pub(super) fn function_outcome_from_body(
                     obligations,
                 );
             };
-            let value = if function.return_aggregate_layout().is_some() {
+            let value = if let Some(layout) = function.return_aggregate_layout() {
+                // The return materializer copies the callee's aggregate into
+                // a caller-visible slot. Reading an unwritten field there is
+                // an uninitialized read, not a contract violation, so check
+                // the source before materializing.
+                if let CValue::Pointer(pointer) = &value
+                    && !pointer.is_null()
+                    && aggregate_copy_reads_uninitialized(&state.memory, pointer.pointer(), layout)
+                {
+                    return (
+                        CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+                        obligations,
+                    );
+                }
                 let Some(value) = materialize_aggregate_return(&mut state, function, value) else {
                     return (
                         CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
