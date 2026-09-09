@@ -2054,6 +2054,7 @@ pub(super) fn plan_explicit_named_signed_rule(
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
     plan_explicit_implies_refuted_antecedent(goal, premise_pairs)
+        .or_else(|| plan_explicit_signed_antisymmetry(goal, premise_pairs))
         .or_else(|| plan_explicit_discharged_implication_consequent(goal, premise_pairs))
         .or_else(|| plan_explicit_one_plus_strictly_increases(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strictly_increases(goal, premise_pairs))
@@ -2089,6 +2090,32 @@ pub(super) fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_le_and_neq_implies_lt(goal, premise_pairs))
         .or_else(|| plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs))
         .or_else(|| plan_explicit_ge_and_not_gt_implies_eq(goal, premise_pairs))
+}
+
+fn plan_explicit_signed_antisymmetry(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = goal else {
+        return None;
+    };
+    let forward = premise_pairs.iter().find(|(kernel, _)| {
+        signed_nonstrict_parts(kernel)
+            .is_some_and(|(a, b)| a == left.as_ref() && b == right.as_ref())
+    })?;
+    let reverse = premise_pairs.iter().find(|(kernel, _)| {
+        signed_nonstrict_parts(kernel)
+            .is_some_and(|(a, b)| a == right.as_ref() && b == left.as_ref())
+    })?;
+    crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
+        goal,
+        &[forward.0.clone(), reverse.0.clone()],
+    )
+    .ok()?;
+    Some(vec![ProofTactic::ArithmeticUsing(vec![
+        forward.1.clone(),
+        reverse.1.clone(),
+    ])])
 }
 
 fn plan_explicit_le_and_neq_implies_lt(

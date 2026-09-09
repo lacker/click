@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn signed_antisymmetry_simp_expands_to_checked_arithmetic() {
+    let source = "theorem bounded_equal(i: int32) { requires 0 <= i; requires i <= 0; ensures i == 0 by { simp(); } }";
+    verify_c0_sources(source, &[]).unwrap();
+    let position = expansion::position_at_offset(source, source.find("simp();").unwrap());
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column).unwrap();
+    assert!(expanded.contains("arithmetic() using"), "{expanded}");
+    verify_c0_sources(&expanded, &[]).unwrap();
+    let tampered = expanded.replace("requires i <= 0;", "requires i <= 1;");
+    assert!(verify_c0_sources(&tampered, &[]).is_err());
+}
+
+#[test]
 fn program_entry_signed_resource_shadowing_expands() {
     let sources = [(
         "main.c",
