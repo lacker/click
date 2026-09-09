@@ -10551,6 +10551,15 @@ pub(super) fn function_outcome_from_body(
 
             let mut caller_state = caller_state.clone();
             caller_state.memory = state.memory;
+            if function.has_inline_body() {
+                // Inline bodies execute with a parameter-only local
+                // environment, so pointer stores into caller locals cannot
+                // synchronize their named bindings during body execution.
+                // Reconcile those bindings from the shared caller memory
+                // before the caller resumes evaluating its next statement.
+                let memory = caller_state.memory.clone();
+                caller_state.sync_scalar_locals_from_memory(&memory);
+            }
             if return_resources.is_none() {
                 caller_state.open_instances = state.open_instances;
             }

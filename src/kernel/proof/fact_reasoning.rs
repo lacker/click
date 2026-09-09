@@ -153,11 +153,31 @@ fn signed_term_interval(
             signed_term_interval(operand, bounds, depth - 1)?;
             Some((0, i64::from(mask as i32)))
         }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            // Unsigned comparisons are represented by signed comparisons
+            // after flipping the sign bit. On either side of zero this is
+            // an exact translation; an interval crossing zero wraps and
+            // must conservatively retain the entire signed range.
+            let operand = if right.as_const() == Some(0x8000_0000) {
+                left
+            } else if left.as_const() == Some(0x8000_0000) {
+                right
+            } else {
+                return None;
+            };
+            let (lower, upper) = signed_term_interval(operand, bounds, depth - 1)?;
+            if lower >= 0 {
+                Some((lower + SIGNED_MIN, upper + SIGNED_MIN))
+            } else if upper < 0 {
+                Some((lower - SIGNED_MIN, upper - SIGNED_MIN))
+            } else {
+                Some((SIGNED_MIN, SIGNED_MAX))
+            }
+        }
         Bitvector32Term::Divide(_, _)
         | Bitvector32Term::UnsignedDivide(_, _)
         | Bitvector32Term::UnsignedRemainder(_, _)
         | Bitvector32Term::BitwiseOr(_, _)
-        | Bitvector32Term::BitwiseXor(_, _)
         | Bitvector32Term::BitwiseNot(_)
         | Bitvector32Term::If { .. }
         | Bitvector32Term::RangeFold { .. }
@@ -908,6 +928,57 @@ mod arithmetic_tests {
             check_signed_affine_arithmetic(&goal, &[nonnegative(x)]),
             Err(ArithmeticCheckError::UnsupportedGoal)
         ));
+    }
+
+    #[test]
+    fn sign_bit_interval_translation_checks_boundaries_and_rejects_missing_bounds() {
+        let x = Bitvector32Term::Variable(Variable(94_006));
+        for (lower, upper) in [
+            (i32::MIN, -1),
+            (-1, -1),
+            (0, 0),
+            (0, 1_073_741_823),
+            (0, i32::MAX),
+            (-1, 0),
+            (i32::MIN, i32::MAX),
+        ] {
+            let bounds = BTreeMap::from([(x.clone(), (i64::from(lower), i64::from(upper)))]);
+            for term in [
+                Bitvector32Term::BitwiseXor(
+                    Box::new(x.clone()),
+                    Box::new(Bitvector32Term::Constant(0x8000_0000)),
+                ),
+                Bitvector32Term::BitwiseXor(
+                    Box::new(Bitvector32Term::Constant(0x8000_0000)),
+                    Box::new(x.clone()),
+                ),
+            ] {
+                let (actual_lower, actual_upper) =
+                    signed_term_interval(&term, &bounds, ARITHMETIC_INTERVAL_DEPTH).unwrap();
+                for value in [
+                    lower,
+                    upper,
+                    lower + ((i64::from(upper) - i64::from(lower)) / 2) as i32,
+                ] {
+                    let transformed = i64::from(((value as u32) ^ 0x8000_0000) as i32);
+                    assert!(actual_lower <= transformed && transformed <= actual_upper);
+                }
+                if lower < 0 && upper >= 0 {
+                    assert_eq!((actual_lower, actual_upper), (SIGNED_MIN, SIGNED_MAX));
+                }
+            }
+        }
+        let upper = proposition(ConditionTerm::signed_less_equal(
+            x.clone(),
+            Bitvector32Term::Constant(1_073_741_823),
+        ));
+        let goal = proposition(ConditionTerm::unsigned_less_equal(
+            x.clone(),
+            Bitvector32Term::Constant(1_073_741_823),
+        ));
+        check_signed_affine_arithmetic(&goal, &[nonnegative(x.clone()), upper.clone()]).unwrap();
+        assert!(check_signed_affine_arithmetic(&goal, &[upper]).is_err());
+        assert!(check_signed_affine_arithmetic(&goal, &[nonnegative(x)]).is_err());
     }
 }
 

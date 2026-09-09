@@ -250,6 +250,54 @@ pub(in crate::surface) fn substitute_click_proposition(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ClickProposition, String> {
     match proposition {
+        proposition @ (ClickProposition::At { .. }
+        | ClickProposition::And(..)
+        | ClickProposition::Or(..)
+        | ClickProposition::Not(..)
+        | ClickProposition::Implies(..)) => {
+            substitute_click_proposition_logical(proposition, substitutions)
+        }
+        proposition => substitute_click_proposition_nonlogical(proposition, substitutions),
+    }
+}
+
+#[inline(never)]
+fn substitute_click_proposition_logical(
+    proposition: &ClickProposition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ClickProposition, String> {
+    match proposition {
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Ok(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(substitute_click_proposition(proposition, substitutions)?),
+        }),
+        ClickProposition::And(left, right) => Ok(ClickProposition::And(
+            Box::new(substitute_click_proposition(left, substitutions)?),
+            Box::new(substitute_click_proposition(right, substitutions)?),
+        )),
+        ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
+            Box::new(substitute_click_proposition(left, substitutions)?),
+            Box::new(substitute_click_proposition(right, substitutions)?),
+        )),
+        ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
+            substitute_click_proposition(body, substitutions)?,
+        ))),
+        ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
+            Box::new(substitute_click_proposition(left, substitutions)?),
+            Box::new(substitute_click_proposition(right, substitutions)?),
+        )),
+        _ => unreachable!("non-logical proposition dispatched to logical substitution"),
+    }
+}
+
+fn substitute_click_proposition_nonlogical(
+    proposition: &ClickProposition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ClickProposition, String> {
+    match proposition {
         ClickProposition::Comparison {
             left,
             operator,
@@ -280,28 +328,6 @@ pub(in crate::surface) fn substitute_click_proposition(
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: substitute_contract_expression(expression, substitutions)?,
         }),
-        ClickProposition::At {
-            selector,
-            proposition,
-        } => Ok(ClickProposition::At {
-            selector: selector.clone(),
-            proposition: Box::new(substitute_click_proposition(proposition, substitutions)?),
-        }),
-        ClickProposition::And(left, right) => Ok(ClickProposition::And(
-            Box::new(substitute_click_proposition(left, substitutions)?),
-            Box::new(substitute_click_proposition(right, substitutions)?),
-        )),
-        ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
-            Box::new(substitute_click_proposition(left, substitutions)?),
-            Box::new(substitute_click_proposition(right, substitutions)?),
-        )),
-        ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
-            substitute_click_proposition(body, substitutions)?,
-        ))),
-        ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
-            Box::new(substitute_click_proposition(left, substitutions)?),
-            Box::new(substitute_click_proposition(right, substitutions)?),
-        )),
         ClickProposition::ForAll { c_type, name, body } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
@@ -363,6 +389,7 @@ pub(in crate::surface) fn substitute_click_proposition(
                     .collect::<Result<Vec<_>, _>>()?,
             })
         }
+        _ => unreachable!("logical proposition dispatched to nonlogical substitution"),
     }
 }
 

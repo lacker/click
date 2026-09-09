@@ -2679,6 +2679,77 @@ impl CState {
         })
     }
 
+    /// Refresh caller scalar bindings after call-site code has modified their
+    /// address-backed cells. Ordinary function frames keep their own local
+    /// environment, but inline bodies execute with a separate parameter
+    /// environment while retaining the caller's memory.
+    pub(in crate::kernel) fn sync_scalar_locals_from_memory(&mut self, memory: &CMemory) {
+        let updates = self
+            .locals
+            .bindings
+            .iter()
+            .filter_map(|(name, binding)| {
+                let (c_type, slot, volatile, pointee_volatile, constant, pointee_constant) =
+                    match binding {
+                        CLocalBinding::Object {
+                            c_type,
+                            slot,
+                            volatile,
+                            pointee_volatile,
+                            constant,
+                            pointee_constant,
+                            ..
+                        }
+                        | CLocalBinding::UninitializedObject {
+                            c_type,
+                            slot,
+                            volatile,
+                            pointee_volatile,
+                            constant,
+                            pointee_constant,
+                            ..
+                        } => (
+                            *c_type,
+                            slot.clone(),
+                            *volatile,
+                            *pointee_volatile,
+                            *constant,
+                            *pointee_constant,
+                        ),
+                        CLocalBinding::GlobalObject { .. }
+                        | CLocalBinding::ArrayObject { .. }
+                        | CLocalBinding::AggregateObject { .. } => return None,
+                    };
+                memory.known_value(&slot).map(|value| {
+                    (
+                        name.clone(),
+                        value,
+                        c_type,
+                        slot,
+                        volatile,
+                        pointee_volatile,
+                        constant,
+                        pointee_constant,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        for (name, value, c_type, slot, volatile, pointee_volatile, constant, pointee_constant) in
+            updates
+        {
+            self.locals.set_typed_qualified_with_all_qualifiers(
+                name,
+                value,
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+            );
+        }
+    }
+
     pub fn resources(&self) -> &ResourceContext {
         &self.resources
     }
