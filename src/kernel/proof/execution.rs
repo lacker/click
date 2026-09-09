@@ -2474,10 +2474,40 @@ fn collect_retained_call_events(
     }
 }
 
+/// Check only a literal int32 comparison, without folding expressions or
+/// consulting a context. Signed order interprets the stored bits as int32.
+fn ground_comparison_premise_holds(premise: &Proposition) -> bool {
+    use crate::kernel::ConditionTerm;
+    let Proposition::ConditionIs(condition, expected) = premise else {
+        return false;
+    };
+    let (left, right) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right) => (left, right),
+        _ => return false,
+    };
+    let (Some(left), Some(right)) = (left.as_const(), right.as_const()) else {
+        return false;
+    };
+    let (left, right) = (left as i32, right as i32);
+    let actual = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(..) => left < right,
+        ConditionTerm::Bitvector32SignedLessEqual(..) => left <= right,
+        ConditionTerm::Bitvector32SignedGreaterThan(..) => left > right,
+        ConditionTerm::Bitvector32SignedGreaterEqual(..) => left >= right,
+        ConditionTerm::Bitvector32Equal(..) => left == right,
+        _ => unreachable!("comparison shape was checked above"),
+    };
+    actual == *expected
+}
+
 fn checked_evidence_premises_hold(theorem: &Theorem, facts: &ProofFacts) -> bool {
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
-        if !facts.assumptions().proves_exact(premise) && !facts.assumptions().proves(premise) {
+        if !facts.assumptions().proves_exact(premise) && !ground_comparison_premise_holds(premise) {
             return false;
         }
         proposition = body;
@@ -6177,6 +6207,127 @@ mod tests {
             [&facts, &facts],
             &conditional_heap_frees([std::slice::from_ref(&free_effect), &[],]),
         ));
+    }
+
+    #[test]
+    fn ground_comparison_premises_check_signed_literals_and_both_polarities() {
+        use crate::kernel::ConditionTerm;
+        for left in [i32::MIN, -1, 0, 1, i32::MAX] {
+            for right in [i32::MIN, -1, 0, 1, i32::MAX] {
+                let l = Box::new(Bitvector32Term::Constant(left as u32));
+                let r = Box::new(Bitvector32Term::Constant(right as u32));
+                for (condition, actual) in [
+                    (
+                        ConditionTerm::Bitvector32SignedLessThan(l.clone(), r.clone()),
+                        left < right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32SignedLessEqual(l.clone(), r.clone()),
+                        left <= right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32SignedGreaterThan(l.clone(), r.clone()),
+                        left > right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32SignedGreaterEqual(l.clone(), r.clone()),
+                        left >= right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32Equal(l.clone(), r.clone()),
+                        left == right,
+                    ),
+                ] {
+                    assert!(ground_comparison_premise_holds(&Proposition::ConditionIs(
+                        condition.clone(),
+                        actual
+                    )));
+                    assert!(!ground_comparison_premise_holds(&Proposition::ConditionIs(
+                        condition, !actual
+                    )));
+                }
+            }
+        }
+        // Literal sums canonicalize when constructed; a symbolic operand
+        // keeps this an actual compound term at the checking boundary.
+        let symbolic_expression = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Add(
+                    Box::new(Bitvector32Term::Variable(crate::kernel::Variable(990))),
+                    Box::new(Bitvector32Term::Constant(1)),
+                )),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+        assert!(!ground_comparison_premise_holds(&symbolic_expression));
+    }
+
+    #[test]
+    fn checked_event_premises_require_exact_facts_or_ground_comparisons() {
+        use crate::kernel::{ConditionTerm, Variable};
+        let theorem = |premise| {
+            Theorem::new(Proposition::Implies(
+                Box::new(premise),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Constant(true),
+                    true,
+                )),
+            ))
+        };
+        let required = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(Bitvector32Term::Variable(Variable(991))),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let stronger = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterThan(
+                Box::new(Bitvector32Term::Variable(Variable(991))),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let empty = ProofFacts::default();
+        assert!(!checked_evidence_premises_hold(
+            &theorem(required.clone()),
+            &empty
+        ));
+        assert!(checked_evidence_premises_hold(
+            &theorem(required.clone()),
+            &empty.with_fact(required.clone())
+        ));
+        let derived = empty.with_fact(stronger);
+        assert!(
+            derived.assumptions().proves(&required),
+            "the retired fallback would find this proof"
+        );
+        assert!(!checked_evidence_premises_hold(
+            &theorem(required.clone()),
+            &derived
+        ));
+        let unrelated = empty.with_fact(Proposition::ConditionIs(
+            ConditionTerm::Variable(Variable(992)),
+            true,
+        ));
+        assert!(!checked_evidence_premises_hold(
+            &theorem(required),
+            &unrelated
+        ));
+        for (left, right, accepted) in [(1, 1, true), (0, 1, false)] {
+            let premise = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(
+                    Box::new(Bitvector32Term::Constant(left)),
+                    Box::new(Bitvector32Term::Constant(right)),
+                ),
+                true,
+            );
+            assert_eq!(
+                checked_evidence_premises_hold(&theorem(premise), &empty),
+                accepted
+            );
+        }
     }
 
     #[test]
