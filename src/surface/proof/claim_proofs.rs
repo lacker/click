@@ -1490,7 +1490,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     })
             },
         )?;
-        let _certified_outcomes = completed_execution
+        let certified_outcomes = completed_execution
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
@@ -1778,6 +1778,15 @@ pub(super) fn finish_ordered_proof<'a>(
                         },
                     )?;
 
+                    // Interpret post-return counts using the checked exit, but
+                    // retain the body's ownership until its open resources have
+                    // been closed. Entry/body facts above were projected before
+                    // this change; the new invariant remains a proof obligation.
+                    outcome = crate::kernel::function_body_with_return_counts(
+                        &outcome,
+                        &certified_outcomes[certified_path_index],
+                    );
+
                     let (
                         mut closures,
                         mut rewritten_claim_goals,
@@ -1840,11 +1849,11 @@ pub(super) fn finish_ordered_proof<'a>(
                     // attribution, never reapplied as a candidate certificate.
                     let mut existence_proof = None;
                     let mut has_return_instance_rewrite = false;
-                    // Contract resource/population effects are applied once
-                    // at the frame that certifies them. A grouped proof sees
-                    // the effect goals directly; an isolated ensure proof
-                    // does not, but still needs the same transitioned outcome
-                    // before lowering its postcondition.
+                    // Legacy frame proofs also reconstruct the returned
+                    // resource context. Track that ownership transition
+                    // separately from the return-count interpretation above:
+                    // closing an open body must retain its owned resources
+                    // until its invariant has been proved.
                     let mut resource_transition_applied = false;
                     drop(_path_preparation_timing);
                     let _post_execution_timing = crate::instrumentation::OperationTiming::new(

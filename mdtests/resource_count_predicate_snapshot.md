@@ -31,7 +31,6 @@ struct object* object_retain(struct object* obj) {
     requires valid_refcount(obj);
     owns object_ref(obj);
     produces object_ref(obj);
-    mutable obj->refs;
 
     ensures valid_refcount(obj);
     ensures result == obj;
@@ -39,7 +38,6 @@ struct object* object_retain(struct object* obj) {
     open(object_ref(obj)) {
         unfold(valid_refcount);
         execute();
-        frame();
         have valid_refcount(obj) by {
             unfold(valid_refcount);
             simp();

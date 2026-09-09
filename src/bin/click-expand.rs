@@ -370,9 +370,15 @@ mod tests {
             .click_source
             .as_deref()
             .expect("fixture should have Click");
-        let click_line = mdtest.click_line(70).expect("fixture line should map");
+        let (line_index, line) = click_source
+            .lines()
+            .enumerate()
+            .find(|(_, line)| *line == "    simp();")
+            .expect("fixture should contain an exit simp");
+        let click_line = line_index + 1;
+        let column = line.find("simp()").unwrap() + 1;
         let sources = source_refs(&mdtest.c_sources);
-        let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, 5)
+        let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, column)
             .expect("exit simp should generate a certificate");
         click::surface::verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
             panic!(

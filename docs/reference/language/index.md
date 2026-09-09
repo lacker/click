@@ -685,6 +685,13 @@ nonfinal release. Returning the new resource context is valid only when the
 population body facts hold in the post-state, so these clauses cannot mint a
 reference without the corresponding concrete counter update.
 
+Once C execution returns, the remaining proof uses the post-return population
+counts while retaining the body's ownership for closing open resources. The
+new count does not itself establish any body invariant: the proof must still
+show that the stored values agree with it. This return-count interpretation
+comes from the contract's checked exit rule and does not require `frame()` or
+an explicit memory-effect clause.
+
 `fold(object_ref(obj))` initializes a population of one from its body
 resources. `open(object_ref(obj)) { ... }` temporarily exposes the one shared
 body and requires it to be restored on exit without changing the population.
