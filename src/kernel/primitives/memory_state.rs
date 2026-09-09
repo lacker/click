@@ -1438,6 +1438,20 @@ impl CMemory {
         self
     }
 
+    /// Ends the lifetime of one automatic-storage object at a function exit.
+    pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
+        if !self.blocks.contains_key(block) {
+            return self.clone();
+        }
+
+        let mut memory = self.clone();
+        std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
+        std::sync::Arc::make_mut(&mut memory.union_cells)
+            .retain(|(pointer, _), _| &pointer.block != block);
+        memory
+    }
+
     pub(in crate::kernel) fn free_heap_block(
         mut self,
         pointer: &Pointer,

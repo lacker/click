@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Fourteen independent root causes. Every one has a reproduction that verifies
+Thirteen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other eight are high: the trigger is
+false, with no unusual tactics. The other seven are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -996,42 +996,6 @@ int32 identical_string_literals_undecided() {
 - A literal compared against itself through one pointer still decides equal.
 
 ---
-
-## 17. A postcondition may read the storage of a returned local
-
-**Severity: high.** A contract states a value in storage whose lifetime ended
-when the function returned, and the caller may rely on it.
-
-**Violated invariant.** An automatic object's lifetime ends when its block is
-left (C11 6.2.4p6); a pointer to it becomes indeterminate, so a postcondition
-may not read through it.
-
-**Mechanism.** Not localized. The returned pointer keeps its `local:` block,
-and the postcondition is lowered against the exit state where that block's
-cells are still present.
-
-**Regression** (`mdtests/returned_local_postcondition_rejected.md`):
-
-```c
-int32* returned_local_postcondition_rejected() {
-    int32 value = 5;
-    return &value;
-}
-```
-
-```click
-verifying "t.c";
-
-int32* returned_local_postcondition_rejected() {
-    ensures result[0] == 5;
-}
-```
-
-**Acceptance criteria.**
-- The postcondition is rejected: the frame's storage is gone at the exit
-  state, so the load has nothing to read.
-- A postcondition over storage that outlives the call, a heap allocation the
-  function returns or a caller object it was given, still verifies.
 
 ---
 

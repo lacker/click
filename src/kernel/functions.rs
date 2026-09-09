@@ -8377,6 +8377,29 @@ fn unreturned_allocation_obligation(
         .cloned())
 }
 
+/// Returns the caller-visible memory after a function returns.
+pub(in crate::kernel) fn function_exit_memory(
+    caller_state: &CState,
+    callee_state: &CState,
+    value: &CValue,
+    function: &CFunction,
+) -> CMemory {
+    if function.return_aggregate_layout().is_some() {
+        return callee_state.memory.clone();
+    }
+    match value {
+        CValue::Pointer(pointer)
+            if pointer.pointer().block.starts_with("local:")
+                && !caller_state.memory.has_block(&pointer.pointer().block) =>
+        {
+            callee_state
+                .memory
+                .without_local_block(&pointer.pointer().block)
+        }
+        _ => callee_state.memory.clone(),
+    }
+}
+
 pub(crate) fn unreturned_allocation_at_function_exit(
     state: &CState,
     value: &CValue,
