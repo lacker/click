@@ -1136,8 +1136,24 @@ The fixture covers repeated calls, reset, and another file's independent
 that the value is representable: signed sources need both bounds, unsigned
 sources need the upper bound. This differs from the low-bit `uint32` cast.
 
-This slice supports file-scope scalars, scalar arrays, and struct objects.
-It does not qualify functions, function-local statics, or arrays of structs.
+For a function-local static, include the function name:
+
+<!-- verified-example: mdtests/qualified_function_static_ownership.md -->
+```click
+owns &counter_file::increment::calls[0..1];
+```
+
+This names the same storage as the unqualified `calls` inside `increment`.
+Callers can transfer its ownership, and expressions such as
+`old(counter_file::increment::calls)` refer to its value. Qualification grants
+no access by itself and never initializes or replenishes the resource.
+Ordinary automatic locals and parameters cannot be named this way. If several
+block scopes in a function declare statics with the same name, the reference
+is rejected as ambiguous.
+
+This syntax supports file-scope and function-local static scalars, scalar
+arrays (including multidimensional arrays), and struct objects. It does not
+qualify functions as values or arrays of structs.
 Aliases must be unique and cannot share a name with a specification datatype.
 Existing unqualified references and `verifying "file.c";` remain unchanged.
 

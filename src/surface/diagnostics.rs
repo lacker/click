@@ -1214,6 +1214,18 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         ContractExpression::BitwiseNot(expression) => {
             format!("~{}", describe_contract_expression(expression))
         }
+        // Qualified C array indices have already been flattened by the
+        // parser. Offset the decayed pointer explicitly so reparsing does
+        // not interpret this as an incomplete multidimensional subscript.
+        ContractExpression::Index(base, index)
+            if matches!(base.as_ref(), ContractExpression::QualifiedC { .. }) =>
+        {
+            format!(
+                "({} + {})[0]",
+                describe_contract_expression(base),
+                describe_contract_expression(index)
+            )
+        }
         ContractExpression::Index(base, index) => format!(
             "{}[{}]",
             describe_contract_expression(base),

@@ -4721,14 +4721,19 @@ fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) 
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         register_block_alignment(&slot.block, static_local.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state
-                .memory
-                .with_block_or_read_only(
-                    slot.block.clone(),
-                    static_local.c_type().byte_width(),
-                    static_local.is_constant(),
-                )
-                .store(slot.clone(), static_local.initial_value().clone());
+            state.memory = state.memory.with_block_or_read_only(
+                slot.block.clone(),
+                static_local.c_type().byte_width(),
+                static_local.is_constant(),
+            );
+            // A qualified resource can materialize the cell before this
+            // function's storage declaration is installed. Adding block
+            // metadata must not overwrite that existing value.
+            if state.memory.known_value(&slot).is_none() {
+                state.memory = state
+                    .memory
+                    .store(slot.clone(), static_local.initial_value().clone());
+            }
         }
         state.locals.set_global_with_all_qualifiers(
             static_local.kernel_name().to_string(),

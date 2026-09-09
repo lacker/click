@@ -3447,6 +3447,7 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Option<CType> {
         match expression {
+            CExpression::Value(CValue::Pointer(pointer)) => pointer.c_type().pointee_type(),
             CExpression::Variable(name) => environment
                 .array_refs
                 .get(name)

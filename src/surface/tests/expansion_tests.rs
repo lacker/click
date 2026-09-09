@@ -12607,6 +12607,92 @@ fn qualified_static_ownership_verifies_and_expands() {
 }
 
 #[test]
+fn qualified_function_statics_verify_and_expand() {
+    for (fixture_name, functions) in [
+        (
+            "qualified_function_static_ownership.md",
+            vec!["increment", "other", "twice", "main"],
+        ),
+        ("qualified_function_static_shapes.md", vec!["clear", "main"]),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(fixture_name);
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(source, &sources).unwrap();
+        for function in functions {
+            let expanded =
+                expand_c0_claim_source(source, &sources, function, CProofClaim::Grouped).unwrap();
+            verify_c0_sources(&expanded, &sources)
+                .unwrap_or_else(|error| panic!("{fixture_name}: {}\n{expanded}", error.message()));
+        }
+    }
+}
+
+#[test]
+fn qualified_function_statics_reject_invalid_declarations() {
+    let c_source =
+        "void f(int parameter) { static int stored; int automatic = 0; stored = automatic; }";
+    for name in [
+        "f::parameter",
+        "f::automatic",
+        "f::missing",
+        "missing::stored",
+        "f",
+        "f::stored::extra",
+    ] {
+        let source = format!(
+            "verifying \"storage.c\" as storage; void f(int parameter) {{ owns &storage::{name}[0..1]; }}"
+        );
+        assert!(
+            verify_c0_sources(&source, &[("storage.c", c_source)]).is_err(),
+            "accepted {name}"
+        );
+    }
+}
+
+#[test]
+fn qualified_function_statics_do_not_grant_ownership() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/qualified_function_static_ownership.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let original = "uint32 twice() {\n    owns &counter_file::increment::calls[0..1];";
+    assert!(source.contains(original));
+    for replacement in [
+        "uint32 twice() {",
+        "uint32 twice() { views &counter_file::increment::calls[0..1];",
+        "uint32 twice() { owns &counter_file::other::calls[0..1];",
+        "uint32 twice() { owns &counter_file::calls[0..1];",
+    ] {
+        let invalid = source.replace(original, replacement);
+        let error = verify_c0_sources(&invalid, &sources)
+            .expect_err("caller must transfer the exact owned object");
+        assert!(
+            error.message().contains("missing resource"),
+            "{}",
+            error.message()
+        );
+    }
+    let invalid = source.replace("increment::calls == 7u32", "increment::calls == 6u32");
+    assert!(
+        verify_c0_sources(&invalid, &sources).is_err(),
+        "a repeated call must not reset the static initializer"
+    );
+}
+
+#[test]
 fn qualified_static_ownership_rejects_missing_and_wrong_resources() {
     let sources = [
         (
