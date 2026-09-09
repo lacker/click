@@ -1,6 +1,6 @@
 # Add abstract summaries for recursive memory structures
 
-Found by the 2026-09-04 MVR audit. A directly recursive composite resource can
+P1: required for MVR. A directly recursive composite resource can
 own an arbitrary finite binary tree, but ownership alone does not state the
 tree's abstract contents or in-order sequence. Linear ownership can prevent
 resource duplication or loss, but a contract that merely consumes one
@@ -9,18 +9,25 @@ the exact node sequence is unchanged. Linux rbtree does not store keys itself,
 so its generic correctness property is preservation of node identity and
 in-order order while links and colors change.
 
-The logical list algebra and its algebraic-data-type foundation are tracked in
-[algebraic-data-types.md](algebraic-data-types.md). This issue begins once
-those immutable values can be used as resource fields. Recursive `HeapTree`
+The core ADT and list foundation is implemented. Recursive `HeapTree`
 fields now connect parent models to child models across ownership and mutation;
-the remaining work includes the derived in-order list and broader algorithms.
+the derived in-order list also has a checked left-rotation preservation theorem.
+The remaining work is extending these guarantees to required rbtree algorithms.
+General ADT completeness is P2 under
+[algebraic-data-types.md](algebraic-data-types.md), not a prerequisite to closing
+this issue. This issue owns model-related MVR obligations and the narrow
+integration slices their proofs actually require, such as model transport
+through a required call or constructor cases during traversal.
 
 The fixed synthetic C scaffold for this work lives in
 [`examples/modeled-binary-tree`](../examples/modeled-binary-tree/README.md).
 Its sidecar verifies the unchanged initializer and left rotation against an
 exact `HeapTree` model carrying node addresses, payloads, and both subtrees.
 Left rotation preserves both affected nodes and all three arbitrary subtrees.
-The in-order list theorem, right rotation, and insert/erase regressions remain.
+Its C contract also preserves the exact derived in-order node-identity list.
+Right rotation and insert/erase regressions remain. Synthetic examples are
+development regressions, not a requirement to verify an extra tree library
+before launch; the target is the pinned unchanged Linux implementation.
 
 ## Violated invariant
 
@@ -45,16 +52,23 @@ folded as some binary tree.
 
 ## Acceptance criteria
 
-- List values from [algebraic-data-types.md](algebraic-data-types.md) can index a
-  composite resource.
-- A guarded recursive composite can bind child-model witnesses and expose a
-  parent model determined compositionally from its node and direct children.
+- Preserve the implemented ownership-backed resource fields and compositional
+  parent/child models; no generalized witness syntax is required by itself.
 - Models retain pointer identity without turning pointers into arithmetic
   integers or granting pointee ownership.
 - Function contracts can relate entry and exit models across a changed root.
 - Reasoning and certificates are output-sensitive in the explicitly exposed
   model terms; no tactic unfolds an unknown whole tree automatically.
-- The rotation regressions, an insert/erase model-preservation regression, and
+- Required rbtree contracts establish exact rotation order preservation,
+  insertion of the designated node, erasure of the designated node, and the
+  specified identity substitution on replacement. Insertion and erasure must
+  describe the correct sequence change, not equality with the input sequence.
+- Models express parent/child consistency, acyclicity, red-black color and
+  black-height invariants, and correct traversal results. Required algorithms
+  establish their respective guarantees. Loop termination is coordinated with
+  [structural-loop-termination.md](structural-loop-termination.md).
+- Small positive and negative rotation and insert/erase regressions (synthetic
+  or on the pinned source), required MVR model proofs, and
   `scripts/check.sh` pass.
 
 Related: [algebraic-data-types.md](algebraic-data-types.md),

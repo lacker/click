@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn callback_branch_ground_premises_verify_expand_and_recheck() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/c_step_contract_frontier_branch.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(source, &sources, "invoke", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+}
+
+#[test]
 fn return_population_proofs_expand_without_effect_clauses() {
     for (fixture_name, functions) in [
         (

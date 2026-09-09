@@ -1203,6 +1203,9 @@ pub(crate) struct CheckedExecutionBranch {
     interface_execution_facts: Vec<ExecutionPureFact>,
     interface_effect_facts: Vec<ExecutionPureFact>,
     interface_resource_definitions: Option<Vec<crate::kernel::CCompositeResourceDefinition>>,
+    // Keep the actual selected lowering results, not just their boolean verdicts.
+    // Contextual checking remains below until these judgments have proof bodies.
+    interface_lowerings: Arc<Vec<[CheckedInterfaceLowering; 3]>>,
 }
 
 #[derive(Clone)]
@@ -1341,6 +1344,7 @@ impl CheckedExecutionBranch {
             interface_execution_facts: Vec::new(),
             interface_effect_facts,
             interface_resource_definitions: None,
+            interface_lowerings: Arc::new(Vec::new()),
         })
     }
 
@@ -1500,28 +1504,40 @@ impl CheckedExecutionBranch {
             .execution_start_state
             .as_ref()
             .unwrap_or(&split.state);
+        let mut interface_lowerings = Vec::with_capacity(interface_specs.len());
         for spec in interface_specs {
-            for (arm, facts) in arms.iter().zip(arm_facts) {
-                if !interface_spec_is_established(spec, arm.reached_state(), reference_state, facts)
-                {
-                    return Err("an interface fact is not established by both concrete arms");
-                }
-            }
-            if !interface_spec_is_established(spec, joined_state, reference_state, successor_facts)
-            {
-                return Err("an interface fact is not retained at the abstract successor");
-            }
+            let concrete = |index: usize| {
+                CheckedInterfaceLowering::check(
+                    spec,
+                    arms[index].reached_state(),
+                    reference_state,
+                    arm_facts[index],
+                )
+                .ok_or("an interface fact is not established by both concrete arms")
+            };
+            let then_lowering = concrete(0)?;
+            let else_lowering = concrete(1)?;
+            let successor = CheckedInterfaceLowering::check(
+                spec,
+                joined_state,
+                reference_state,
+                successor_facts,
+            )
+            .ok_or("an interface fact is not retained at the abstract successor")?;
+            interface_lowerings.push([then_lowering, else_lowering, successor]);
         }
+        let interface_propositions = interface_lowerings
+            .iter()
+            .map(|lowerings| &lowerings[2].path.proposition)
+            .collect::<std::collections::BTreeSet<_>>();
         let introduced = successor_facts
             .introduced_since(root_facts)
             .ok_or("the interface successor facts do not descend from the branch root")?;
         for fact in &introduced {
             let common_arm_fact = arm_facts
                 .iter()
-                .all(|facts| facts.contains(fact) || facts.assumptions().proves(fact));
-            let interface_fact = interface_specs
-                .iter()
-                .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, fact));
+                .all(|facts| checked_branch_fact_is_available(facts, fact));
+            let interface_fact = interface_propositions.contains(fact);
             let interface_resource_fact = ResourceContext::new()
                 .unchecked_with_facts(successor_interface_resources.clone())
                 .observable_facts_assuming_valid(successor_facts.assumptions())
@@ -1608,6 +1624,7 @@ impl CheckedExecutionBranch {
             interface_resource_definitions: Some(
                 function.composite_resource_definitions().to_vec(),
             ),
+            interface_lowerings: Arc::new(interface_lowerings),
         })
     }
 
@@ -1662,6 +1679,19 @@ impl CheckedExecutionBranch {
         self.interface_resource_definitions
             .as_ref()
             .is_none_or(|definitions| definitions == function.composite_resource_definitions())
+            && self.interface_lowerings.iter().all(|lowerings| {
+                lowerings[0].spec == lowerings[1].spec
+                    && lowerings[0].spec == lowerings[2].spec
+                    && lowerings[0].reference == lowerings[1].reference
+                    && lowerings[0].reference == lowerings[2].reference
+                    && lowerings[2].snapshot == self.joined_state
+                    && lowerings[0].facts.shares_premises_with(&self.arms[0].facts)
+                    && lowerings[1].facts.shares_premises_with(&self.arms[1].facts)
+                    && self
+                        .interface_successor_facts
+                        .as_ref()
+                        .is_some_and(|facts| lowerings[2].facts.shares_premises_with(facts))
+            })
     }
 }
 
@@ -2055,14 +2085,29 @@ fn interface_resource_intrinsic_fact(
     })
 }
 
-fn interface_spec_is_established(
-    spec: &SpecProposition,
-    state: &CState,
-    reference_state: &CState,
-    facts: &ProofFacts,
-) -> bool {
-    interface_spec_paths(spec, state, reference_state).is_some_and(|paths| {
-        paths.into_iter().any(|path| {
+/// The selected kernel lowering and the precise context in which it passed
+/// the existing checks. This is retained lowering evidence, NOT a replacement
+/// for a completed proposition proof. In particular, generated load-variable
+/// equations remain distinct from safety obligations and the asserted value.
+#[derive(Clone)]
+struct CheckedInterfaceLowering {
+    spec: Arc<SpecProposition>,
+    snapshot: CState,
+    reference: CState,
+    facts: ProofFacts,
+    path: Arc<crate::kernel::spec::SpecPropositionPath>,
+}
+
+impl CheckedInterfaceLowering {
+    fn check(
+        spec: &SpecProposition,
+        state: &CState,
+        reference_state: &CState,
+        facts: &ProofFacts,
+    ) -> Option<Self> {
+        let paths = interface_spec_paths(spec, state, reference_state)?;
+        let path = paths.into_iter().find(|path| {
+            crate::instrumentation::record_deterministic_work(1);
             facts.assumptions().proves(&path.proposition)
                 && path
                     .facts
@@ -2072,18 +2117,15 @@ fn interface_spec_is_established(
                     .obligations
                     .iter()
                     .all(|obligation| facts.assumptions().proves(obligation.proposition()))
+        })?;
+        Some(Self {
+            spec: Arc::new(spec.clone()),
+            snapshot: state.clone(),
+            reference: reference_state.clone(),
+            facts: facts.clone(),
+            path: Arc::new(path),
         })
-    })
-}
-
-fn interface_spec_lowers_to(
-    spec: &SpecProposition,
-    state: &CState,
-    reference_state: &CState,
-    expected: &Proposition,
-) -> bool {
-    interface_spec_paths(spec, state, reference_state)
-        .is_some_and(|paths| paths.iter().any(|path| &path.proposition == expected))
+    }
 }
 
 /// One path retained from a complete kernel C-condition evaluation.
@@ -2240,10 +2282,9 @@ impl CheckedBranchSplit {
                     .facts
                     .iter()
                     .any(|fact| !arm_facts.contains(fact.proposition()))
-                || path
-                    .obligations
-                    .iter()
-                    .any(|obligation| !arm_facts.assumptions().proves(obligation.proposition()))
+                || path.obligations.iter().any(|obligation| {
+                    !checked_branch_fact_is_available(arm_facts, obligation.proposition())
+                })
             {
                 return false;
             }
@@ -2474,10 +2515,53 @@ fn collect_retained_call_events(
     }
 }
 
+/// Check only a literal int32 comparison, without folding expressions or
+/// consulting a context. Signed order interprets the stored bits as int32.
+fn ground_comparison_premise_holds(premise: &Proposition) -> bool {
+    use crate::kernel::ConditionTerm;
+    let Proposition::ConditionIs(condition, expected) = premise else {
+        return false;
+    };
+    let (left, right) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right) => (left, right),
+        _ => return false,
+    };
+    let (Some(left), Some(right)) = (left.as_const(), right.as_const()) else {
+        return false;
+    };
+    let (left, right) = (left as i32, right as i32);
+    let actual = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(..) => left < right,
+        ConditionTerm::Bitvector32SignedLessEqual(..) => left <= right,
+        ConditionTerm::Bitvector32SignedGreaterThan(..) => left > right,
+        ConditionTerm::Bitvector32SignedGreaterEqual(..) => left >= right,
+        ConditionTerm::Bitvector32Equal(..) => left == right,
+        _ => unreachable!("comparison shape was checked above"),
+    };
+    actual == *expected
+}
+
+/// Branch evidence names its exact arm context. Do not derive a missing
+/// prerequisite from other facts at the join. Literal comparisons and
+/// integer reflexivity are context-free rules, not premise search.
+fn checked_branch_fact_is_available(facts: &ProofFacts, fact: &Proposition) -> bool {
+    crate::instrumentation::record_deterministic_work(1);
+    facts.contains(fact)
+        || facts.assumptions().proves_exact(fact)
+        || ground_comparison_premise_holds(fact)
+        || matches!(fact,
+            Proposition::ConditionIs(crate::kernel::ConditionTerm::Bitvector32Equal(left, right), true)
+                if left == right)
+}
+
 fn checked_evidence_premises_hold(theorem: &Theorem, facts: &ProofFacts) -> bool {
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
-        if !facts.assumptions().proves_exact(premise) && !facts.assumptions().proves(premise) {
+        if !facts.assumptions().proves_exact(premise) && !ground_comparison_premise_holds(premise) {
             return false;
         }
         proposition = body;
@@ -6180,6 +6264,127 @@ mod tests {
     }
 
     #[test]
+    fn ground_comparison_premises_check_signed_literals_and_both_polarities() {
+        use crate::kernel::ConditionTerm;
+        for left in [i32::MIN, -1, 0, 1, i32::MAX] {
+            for right in [i32::MIN, -1, 0, 1, i32::MAX] {
+                let l = Box::new(Bitvector32Term::Constant(left as u32));
+                let r = Box::new(Bitvector32Term::Constant(right as u32));
+                for (condition, actual) in [
+                    (
+                        ConditionTerm::Bitvector32SignedLessThan(l.clone(), r.clone()),
+                        left < right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32SignedLessEqual(l.clone(), r.clone()),
+                        left <= right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32SignedGreaterThan(l.clone(), r.clone()),
+                        left > right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32SignedGreaterEqual(l.clone(), r.clone()),
+                        left >= right,
+                    ),
+                    (
+                        ConditionTerm::Bitvector32Equal(l.clone(), r.clone()),
+                        left == right,
+                    ),
+                ] {
+                    assert!(ground_comparison_premise_holds(&Proposition::ConditionIs(
+                        condition.clone(),
+                        actual
+                    )));
+                    assert!(!ground_comparison_premise_holds(&Proposition::ConditionIs(
+                        condition, !actual
+                    )));
+                }
+            }
+        }
+        // Literal sums canonicalize when constructed; a symbolic operand
+        // keeps this an actual compound term at the checking boundary.
+        let symbolic_expression = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Add(
+                    Box::new(Bitvector32Term::Variable(crate::kernel::Variable(990))),
+                    Box::new(Bitvector32Term::Constant(1)),
+                )),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+        assert!(!ground_comparison_premise_holds(&symbolic_expression));
+    }
+
+    #[test]
+    fn checked_event_premises_require_exact_facts_or_ground_comparisons() {
+        use crate::kernel::{ConditionTerm, Variable};
+        let theorem = |premise| {
+            Theorem::new(Proposition::Implies(
+                Box::new(premise),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Constant(true),
+                    true,
+                )),
+            ))
+        };
+        let required = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(Bitvector32Term::Variable(Variable(991))),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let stronger = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedGreaterThan(
+                Box::new(Bitvector32Term::Variable(Variable(991))),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let empty = ProofFacts::default();
+        assert!(!checked_evidence_premises_hold(
+            &theorem(required.clone()),
+            &empty
+        ));
+        assert!(checked_evidence_premises_hold(
+            &theorem(required.clone()),
+            &empty.with_fact(required.clone())
+        ));
+        let derived = empty.with_fact(stronger);
+        assert!(
+            derived.assumptions().proves(&required),
+            "the retired fallback would find this proof"
+        );
+        assert!(!checked_evidence_premises_hold(
+            &theorem(required.clone()),
+            &derived
+        ));
+        let unrelated = empty.with_fact(Proposition::ConditionIs(
+            ConditionTerm::Variable(Variable(992)),
+            true,
+        ));
+        assert!(!checked_evidence_premises_hold(
+            &theorem(required),
+            &unrelated
+        ));
+        for (left, right, accepted) in [(1, 1, true), (0, 1, false)] {
+            let premise = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(
+                    Box::new(Bitvector32Term::Constant(left)),
+                    Box::new(Bitvector32Term::Constant(right)),
+                ),
+                true,
+            );
+            assert_eq!(
+                checked_evidence_premises_hold(&theorem(premise), &empty),
+                accepted
+            );
+        }
+    }
+
+    #[test]
     fn checked_condition_evidence_preserves_the_tail_for_empty_if_arms() {
         let state = CState::new();
         let condition = CExpression::Variable("x".to_string());
@@ -6344,6 +6549,221 @@ mod tests {
     }
 
     #[test]
+    fn branch_fact_availability_is_exact_and_independent_of_ambient_history() {
+        use crate::kernel::ConditionTerm;
+        let x = Bitvector32Term::Variable(Variable(910_000));
+        let strong = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let weak = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let reflexive = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(x.clone()), Box::new(x)),
+            true,
+        );
+        let mut samples = Vec::new();
+        for size in [16, 32, 64, 128] {
+            let mut facts = ProofFacts::default().with_fact(strong.clone());
+            for index in 0..size {
+                facts = facts.with_fact(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(920_000 + index)),
+                        Bitvector32Term::Constant(100),
+                    ),
+                    true,
+                ));
+            }
+            assert!(
+                facts.assumptions().proves(&weak),
+                "the old general route could derive this missing fact"
+            );
+            let exact = facts.with_fact(weak.clone());
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(!checked_branch_fact_is_available(&facts, &weak));
+                assert!(checked_branch_fact_is_available(&exact, &weak));
+                assert!(checked_branch_fact_is_available(&facts, &reflexive));
+                assert!(!checked_branch_fact_is_available(
+                    &facts,
+                    &Proposition::Not(Box::new(reflexive.clone()))
+                ));
+            });
+            samples.push(work);
+        }
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] * 2),
+            "branch availability scanned unrelated history: {samples:?}"
+        );
+    }
+
+    #[test]
+    fn branch_split_obligations_require_evidence_on_each_named_arm() {
+        use crate::kernel::{ConditionTerm, ProofObligation};
+        let state = CState::new();
+        let condition = CExpression::Value(int32(1));
+        let x = Bitvector32Term::Variable(Variable(930_000));
+        let strong = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_than(x.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+        let required = Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(x, Bitvector32Term::Constant(0)),
+            true,
+        );
+        let root = ProofFacts::default().with_fact(strong);
+        let theorems =
+            [true, false].map(|value| match condition_event(&state, &condition, value) {
+                CheckedExecutionEvent::Condition(theorem) => theorem,
+                _ => unreachable!(),
+            });
+        let split = CheckedBranchSplit {
+            state: state.clone(),
+            branch_statement: CStatement::If {
+                condition: condition.clone(),
+                then_branch: Box::new(CStatement::Skip),
+                else_branch: Box::new(CStatement::Skip),
+            },
+            continuation: None,
+            condition: condition.clone(),
+            root_facts: root.clone(),
+            paths: [true, false]
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| CheckedBranchPath {
+                    outcome: CConditionOutcome::Value(value),
+                    facts: Vec::new(),
+                    obligations: vec![ProofObligation::new(required.clone())],
+                    theorem: theorems[index].clone(),
+                })
+                .collect(),
+        };
+        let exact = root.with_fact(required);
+        let validate = |arms| {
+            split.validates_exhaustive_join(
+                &state,
+                &condition,
+                &root,
+                [Some(&theorems[0]), Some(&theorems[1])],
+                arms,
+            )
+        };
+        assert!(
+            !validate([Some(&root), Some(&root)]),
+            "general derivability is not retained evidence"
+        );
+        assert!(
+            !validate([Some(&exact), Some(&root)]),
+            "then evidence cannot discharge the else obligation"
+        );
+        assert!(
+            !validate([Some(&root), Some(&exact)]),
+            "else evidence cannot discharge the then obligation"
+        );
+        assert!(validate([Some(&exact), Some(&exact)]));
+        assert!(
+            !validate([Some(&exact), None]),
+            "an omitted arm is not exhaustive"
+        );
+        let unrelated = ProofFacts::default().with_fact(Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true,
+        ));
+        assert!(
+            !validate([Some(&exact), Some(&unrelated)]),
+            "evidence must descend from this split root"
+        );
+    }
+
+    #[test]
+    fn interface_lowering_retains_generated_facts_and_read_obligations() {
+        use crate::kernel::{CPointerValue, SpecMemory};
+        let state = CState::new();
+        let pointer = crate::kernel::Pointer {
+            block: "interface_cell".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load = SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(CPointerValue::new(
+                pointer,
+                CType::Int32Pointer,
+            )))),
+            value_type: CType::Int32,
+        };
+        let spec = SpecProposition::Comparison {
+            left: load.clone(),
+            operator: CComparisonOperator::Equal,
+            right: load,
+        };
+        let path = interface_spec_paths(&spec, &state, &state)
+            .unwrap()
+            .remove(0);
+        assert!(
+            !path.facts.is_empty(),
+            "retain the load-variable definition, not just the asserted equality"
+        );
+        assert!(
+            !path.obligations.is_empty(),
+            "reflexivity does not establish read safety"
+        );
+        let mut facts = ProofFacts::default().with_fact(path.proposition.clone());
+        for fact in &path.facts {
+            facts = facts.with_fact(fact.proposition().clone());
+        }
+        assert!(CheckedInterfaceLowering::check(&spec, &state, &state, &facts).is_none());
+        for obligation in &path.obligations {
+            facts = facts.with_fact(obligation.proposition().clone());
+        }
+        let checked = CheckedInterfaceLowering::check(&spec, &state, &state, &facts).unwrap();
+        assert_eq!(checked.path.as_ref(), &path);
+        assert!(checked.facts.shares_premises_with(&facts));
+        assert_eq!(checked.snapshot, state);
+        assert_eq!(checked.reference, state);
+        assert_eq!(checked.spec.as_ref(), &spec);
+        let copy = checked.clone();
+        assert!(Arc::ptr_eq(&copy.path, &checked.path));
+        assert!(Arc::ptr_eq(&copy.spec, &checked.spec));
+    }
+
+    #[test]
+    fn interface_lowering_retention_shares_unrelated_history() {
+        let spec = SpecProposition::Comparison {
+            left: SpecExpression::Value(int32(1)),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(1)),
+        };
+        let samples = [16, 32, 64, 128].map(|size| {
+            let mut facts = ProofFacts::default();
+            let mut state = CState::new();
+            for index in 0..size {
+                facts = facts.with_fact(Proposition::Predicate {
+                    name: format!("unrelated_{index}"),
+                    arguments: Vec::new(),
+                });
+                state = state.with_local(format!("unrelated_{index}"), int32(index));
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let checked =
+                    CheckedInterfaceLowering::check(&spec, &state, &state, &facts).unwrap();
+                let copy = checked.clone();
+                assert!(copy.facts.shares_premises_with(&facts));
+                assert_eq!(copy.snapshot, state);
+                assert_eq!(copy.reference, state);
+                assert!(Arc::ptr_eq(&copy.path, &checked.path));
+            });
+            work
+        });
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] * 2),
+            "retention scanned unrelated history: {samples:?}"
+        );
+    }
+
+    #[test]
     fn checked_interface_branch_rejects_unproved_facts_and_unowned_resources() {
         let function = c_function(
             CType::Void,
@@ -6459,6 +6879,23 @@ mod tests {
             &successor_facts,
         )
         .expect("the exact fact-only abstraction should check");
+        assert_eq!(checked.interface_lowerings.len(), 1);
+        let retained = &checked.interface_lowerings[0];
+        assert!(retained[0].facts.shares_premises_with(&root_facts));
+        assert!(retained[1].facts.shares_premises_with(&root_facts));
+        assert!(retained[2].facts.shares_premises_with(&successor_facts));
+        assert!(
+            retained
+                .iter()
+                .all(|lowering| lowering.path.proposition == checked_fact)
+        );
+        assert!(checked.matches_interface_resource_definitions(&function));
+        let mut stale = checked.clone();
+        stale.interface_successor_facts = Some(successor_facts.with_fact(Proposition::Predicate {
+            name: "stale".into(),
+            arguments: Vec::new(),
+        }));
+        assert!(!stale.matches_interface_resource_definitions(&function));
         assert_eq!(
             checked
                 .interface_execution_facts()

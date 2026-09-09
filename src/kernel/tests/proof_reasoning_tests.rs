@@ -217,6 +217,85 @@ fn checked_algebraic_constructor_rules_are_sound() {
 }
 
 #[test]
+fn algebraic_symbolic_reflexivity_checks_well_formed_terms() {
+    let ty = maybe_int32_type();
+    let variable = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_010)),
+    };
+    let call = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::PureFunctionApplication {
+            name: "opaque".to_string(),
+            arguments: vec![PureFunctionArgument::Algebraic(variable.clone())],
+        },
+    };
+    let matched = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Match {
+            scrutinee: Box::new(variable),
+            arms: vec![
+                AlgebraicResultMatchArm {
+                    variant: "None".to_string(),
+                    bindings: vec![],
+                    body: call.clone(),
+                },
+                AlgebraicResultMatchArm {
+                    variant: "Some".to_string(),
+                    bindings: vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(
+                        Variable(89_011),
+                    )))],
+                    body: call.clone(),
+                },
+            ],
+        },
+    };
+    let equality = |a: &AlgebraicTerm, b: &AlgebraicTerm| {
+        Proposition::Equal(Term::Algebraic(a.clone()), Term::Algebraic(b.clone()))
+    };
+    let context = PureFactContext::new();
+    for term in [&call, &matched] {
+        let goal = equality(term, term);
+        assert!(crate::kernel::proof::fact_reasoning::normalizes_context_free(&goal));
+        assert!(
+            context
+                .derive_simp_proposition(&goal)
+                .unwrap()
+                .check(&context)
+        );
+    }
+    let mut other = call.clone();
+    if let AlgebraicTermNode::PureFunctionApplication { name, .. } = &mut other.node {
+        *name = "different".to_string();
+    }
+    assert!(
+        !crate::kernel::proof::fact_reasoning::normalizes_context_free(&equality(&call, &other))
+    );
+    assert!(
+        !crate::kernel::proof::fact_reasoning::normalizes_context_free(&Proposition::Not(
+            Box::new(equality(&call, &other))
+        ))
+    );
+    let mut malformed_call = call;
+    if let AlgebraicTermNode::PureFunctionApplication { arguments, .. } = &mut malformed_call.node {
+        *arguments = vec![PureFunctionArgument::Algebraic(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::UInt32(Bitvector32Term::Constant(0))],
+        ))];
+    }
+    let mut malformed_match = matched;
+    if let AlgebraicTermNode::Match { arms, .. } = &mut malformed_match.node {
+        arms.pop();
+    }
+    for term in [malformed_call, malformed_match] {
+        let goal = equality(&term, &term);
+        assert!(!crate::kernel::proof::fact_reasoning::normalizes_context_free(&goal));
+        assert!(context.derive_simp_proposition(&goal).is_none());
+    }
+}
+
+#[test]
 fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
     let ty = maybe_int32_type();
     let left = AlgebraicTerm {
