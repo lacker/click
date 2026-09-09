@@ -2771,6 +2771,13 @@ impl Pointer {
         self.block != other.block
             && (matches!(self.block, PointerBlock::Heap(_))
                 || matches!(other.block, PointerBlock::Heap(_))
+                || match (&self.block, &other.block) {
+                    (
+                        PointerBlock::StringLiteral { bytes: left, .. },
+                        PointerBlock::StringLiteral { bytes: right, .. },
+                    ) => left != right,
+                    _ => false,
+                }
                 || matches!(
                     (&self.block, &other.block),
                     (PointerBlock::Concrete(left), PointerBlock::Concrete(right)) if left != right

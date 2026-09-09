@@ -10,6 +10,7 @@ use super::reasoning::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 use std::sync::{Arc, OnceLock};
 
 mod contracts;
@@ -363,9 +364,18 @@ impl std::ops::Deref for CPointerValue {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum PointerBlock {
     Concrete(String),
+    /// A string literal occurrence. Distinct occurrences with identical
+    /// bytes are intentionally not proven distinct: C permits an
+    /// implementation to merge them. The occurrence identity still keeps
+    /// one literal's pointer stable, and differing bytes prove that two
+    /// occurrences cannot be the same object.
+    StringLiteral {
+        identity: String,
+        bytes: Vec<u8>,
+    },
     Function(String),
     FunctionSymbolic(Variable),
     ExternalArgument,
@@ -375,19 +385,60 @@ pub enum PointerBlock {
     Heap(u64),
 }
 
+impl std::hash::Hash for PointerBlock {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Keep the hash domain of the pre-string-literal variants stable.
+        // Pointer hashes feed deterministic load-variable identities, so
+        // inserting a new enum variant must not renumber existing blocks.
+        match self {
+            Self::Concrete(name) => {
+                0u64.hash(state);
+                name.hash(state);
+            }
+            Self::Function(name) => {
+                1u64.hash(state);
+                name.hash(state);
+            }
+            Self::FunctionSymbolic(variable) => {
+                2u64.hash(state);
+                variable.hash(state);
+            }
+            Self::ExternalArgument => 3u64.hash(state),
+            Self::Symbolic(variable) => {
+                4u64.hash(state);
+                variable.hash(state);
+            }
+            Self::Heap(identity) => {
+                5u64.hash(state);
+                identity.hash(state);
+            }
+            Self::StringLiteral { identity, bytes } => {
+                6u64.hash(state);
+                identity.hash(state);
+                bytes.hash(state);
+            }
+        }
+    }
+}
+
 impl PointerBlock {
     pub(crate) fn is_function(&self) -> bool {
         matches!(self, Self::Function(_) | Self::FunctionSymbolic(_))
     }
 
     pub(crate) fn starts_with(&self, prefix: &str) -> bool {
-        matches!(self, Self::Concrete(name) if name.starts_with(prefix))
+        match self {
+            Self::Concrete(name) => name.starts_with(prefix),
+            Self::StringLiteral { .. } => prefix == "string:",
+            _ => false,
+        }
     }
 
     pub(crate) fn strip_prefix<'a>(&'a self, prefix: &str) -> Option<&'a str> {
         match self {
             Self::Concrete(name) => name.strip_prefix(prefix),
-            Self::Function(_)
+            Self::StringLiteral { .. }
+            | Self::Function(_)
             | Self::FunctionSymbolic(_)
             | Self::ExternalArgument
             | Self::Symbolic(_)
@@ -412,6 +463,7 @@ impl std::fmt::Display for PointerBlock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Concrete(name) => formatter.write_str(name),
+            Self::StringLiteral { identity, .. } => write!(formatter, "string:{identity}"),
             Self::Function(name) => write!(formatter, "function:{name}"),
             Self::FunctionSymbolic(variable) => {
                 write!(formatter, "symbolic-function-pointer:{}", variable.0)

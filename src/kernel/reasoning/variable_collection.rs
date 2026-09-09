@@ -1241,6 +1241,7 @@ pub(in crate::kernel) fn collect_pointer_bitvector_variables(
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
+        | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
         | PointerBlock::Heap(_) => {}
@@ -1258,6 +1259,7 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
                 variables.insert(*variable);
             }
             PointerBlock::Concrete(_)
+            | PointerBlock::StringLiteral { .. }
             | PointerBlock::Function(_)
             | PointerBlock::ExternalArgument
             | PointerBlock::Heap(_) => {}

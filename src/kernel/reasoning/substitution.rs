@@ -1098,6 +1098,7 @@ fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<V
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
+        | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
         | PointerBlock::Heap(_) => {}
@@ -4067,6 +4068,7 @@ fn pointer_capture_avoiding_quantifier_body(
             Some(variable)
         }
         PointerBlock::Concrete(_)
+        | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
         | PointerBlock::Heap(_) => None,

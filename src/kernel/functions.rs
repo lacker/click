@@ -4256,7 +4256,8 @@ fn append_string_literal_loadable_facts(
         return;
     };
     for literal in function.string_literals() {
-        let base = CMemory::string_literal_pointer(function.name(), literal.name());
+        let base =
+            CMemory::string_literal_pointer(function.name(), literal.name(), literal.bytes());
         let proposition = Proposition::CMemoryLoadable {
             memory: state.memory.clone(),
             base,
@@ -4519,7 +4520,8 @@ mod program_entry_tests;
 
 fn initialize_c_function_globals_owned(mut state: CState, function: &CFunction) -> CState {
     for literal in function.string_literals() {
-        let slot = CMemory::string_literal_pointer(function.name(), literal.name());
+        let slot =
+            CMemory::string_literal_pointer(function.name(), literal.name(), literal.bytes());
         if !state.memory.has_block(&slot.block) {
             state.memory = state
                 .memory

@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## P1: before launch (23)
+## P1: before launch (24)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -110,3 +110,4 @@ Proof language and tooling:
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Add modules and imports for Click specifications](specification-imports.md)
+- [Keep deep snapshot annotation below the native stack limit](snapshot-annotation-stack-overflow.md)
