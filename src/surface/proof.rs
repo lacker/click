@@ -2294,7 +2294,7 @@ pub(super) fn initial_claim_context(
             click_function_environment,
             &assumptions_from_propositions(&requirement_pure_facts),
         )?;
-        if let [kernel] = lowered.as_slice() {
+        if let Some(kernel) = lowered.first() {
             surface_propositions.record_lowering(&surface, kernel)?;
         }
     }

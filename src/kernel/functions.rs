@@ -9029,7 +9029,11 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     .clone()
                     .allow_symbolic_contract_loads()
                     .prefer_symbolic_external_loads();
-                let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+                // Resource-definition loadability facts are symbolic summaries;
+                // their owning range supplies the concrete validity check when
+                // the resource is used. Do not turn an unconstrained summary
+                // endpoint into a failed definition during population setup.
+                let Ok(paths) = lower_spec_proposition_at_state_without_range_guards(
                     &population_state,
                     population_fact,
                     None,
@@ -9313,7 +9317,11 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
                 .clone()
                 .allow_symbolic_contract_loads()
                 .prefer_symbolic_external_loads();
-            let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+            // Resource-definition loadability facts are symbolic summaries;
+            // their owning range supplies the concrete validity check when
+            // the resource is used. Do not turn an unconstrained summary
+            // endpoint into a failed definition during population setup.
+            let Ok(paths) = lower_spec_proposition_at_state_without_range_guards(
                 &state,
                 fact,
                 None,
