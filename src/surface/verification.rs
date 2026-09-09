@@ -2228,6 +2228,7 @@ pub(in crate::surface) fn parse_c_layouts(
                         },
                         struct_name: global.struct_name().map(str::to_owned),
                         array_shape: None,
+                        ambiguous: false,
                     },
                 );
             }
@@ -2246,6 +2247,7 @@ pub(in crate::surface) fn parse_c_layouts(
                         ),
                         struct_name: None,
                         array_shape: array.index_shape(),
+                        ambiguous: false,
                     },
                 );
             }
@@ -2261,8 +2263,99 @@ pub(in crate::surface) fn parse_c_layouts(
                     )),
                     struct_name: Some(aggregate.struct_name().to_owned()),
                     array_shape: None,
+                    ambiguous: false,
                 },
             );
+        }
+        for function in &unit.functions {
+            let mut names = BTreeMap::<&str, usize>::new();
+            for name in function
+                .static_locals()
+                .values()
+                .map(|object| object.name())
+                .chain(
+                    function
+                        .static_arrays()
+                        .values()
+                        .map(|object| object.name()),
+                )
+                .chain(
+                    function
+                        .static_aggregates()
+                        .values()
+                        .map(|object| object.name()),
+                )
+                .chain(
+                    function
+                        .static_aggregate_arrays()
+                        .values()
+                        .map(|object| object.name()),
+                )
+            {
+                *names.entry(name).or_default() += 1;
+            }
+            for local in function.static_locals().values() {
+                if let Some(pointer_type) = local.c_type().pointer_type() {
+                    objects.insert(
+                        format!("{}::{}", function.name(), local.name()),
+                        parser::QualifiedCObject {
+                            expression: CExpression::TypedLoad {
+                                pointer: Box::new(CExpression::Value(
+                                    CValue::typed_pointer_with_pointee_constant(
+                                        CMemory::static_pointer(
+                                            function.name(),
+                                            local.kernel_name(),
+                                        ),
+                                        pointer_type.to_kernel_type(),
+                                        local.is_constant(),
+                                    )
+                                    .with_pointer_pointee_volatile(local.is_volatile()),
+                                )),
+                                value_type: local.c_type().to_kernel_type(),
+                            },
+                            struct_name: None,
+                            array_shape: None,
+                            ambiguous: names[local.name()] > 1,
+                        },
+                    );
+                }
+            }
+            for array in function.static_arrays().values() {
+                if let Some(pointer_type) = array.element_type().pointer_type() {
+                    objects.insert(
+                        format!("{}::{}", function.name(), array.name()),
+                        parser::QualifiedCObject {
+                            expression: CExpression::Value(
+                                CValue::typed_pointer_with_pointee_constant(
+                                    CMemory::static_pointer(function.name(), array.kernel_name()),
+                                    pointer_type.to_kernel_type(),
+                                    array.is_constant(),
+                                ),
+                            ),
+                            struct_name: None,
+                            array_shape: Some(array.shape().to_vec()),
+                            ambiguous: names[array.name()] > 1,
+                        },
+                    );
+                }
+            }
+            for aggregate in function.static_aggregates().values() {
+                objects.insert(
+                    format!("{}::{}", function.name(), aggregate.name()),
+                    parser::QualifiedCObject {
+                        expression: CExpression::Value(
+                            CValue::typed_pointer_with_pointee_constant(
+                                CMemory::static_pointer(function.name(), aggregate.kernel_name()),
+                                CType::Int32Pointer,
+                                aggregate.is_constant(),
+                            ),
+                        ),
+                        struct_name: Some(aggregate.struct_name().to_owned()),
+                        array_shape: None,
+                        ambiguous: names[aggregate.name()] > 1,
+                    },
+                );
+            }
         }
         qualified_objects.insert(source_path.clone(), objects);
         for (name, layout) in &unit.structs {

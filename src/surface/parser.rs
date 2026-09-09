@@ -9,6 +9,7 @@ pub(super) struct QualifiedCObject {
     pub expression: CExpression,
     pub struct_name: Option<String>,
     pub array_shape: Option<Vec<u32>>,
+    pub ambiguous: bool,
 }
 
 /// Click's recursive-descent proposition and contract-expression parsers use
@@ -737,7 +738,12 @@ impl Parser {
     fn parse_qualified_c_name(&mut self) -> Result<(String, CExpression), ClickError> {
         let alias = self.expect_ident("C source alias")?;
         self.expect(Token::ColonColon)?;
-        let name = self.expect_ident("C declaration name")?;
+        let mut name = self.expect_ident("C declaration name")?;
+        if self.peek() == Some(&Token::ColonColon) {
+            self.expect(Token::ColonColon)?;
+            let local = self.expect_ident("function-local static name")?;
+            name = format!("{name}::{local}");
+        }
         let qualified = format!("{alias}::{name}");
         let source = self
             .source_aliases
@@ -748,12 +754,18 @@ impl Parser {
             Some(objects) => objects
                 .get(source)
                 .and_then(|objects| objects.get(&name))
-                .map(|object| object.expression.clone())
+                .map(|object| {
+                    if object.ambiguous {
+                        Err(self.error(format!("ambiguous function-local static `{qualified}`: multiple block scopes declare this name")))
+                    } else {
+                        Ok(object.expression.clone())
+                    }
+                })
                 .ok_or_else(|| {
                     self.error(format!(
-                        "no supported file-scope C object `{qualified}` in `{source}`"
+                        "no supported C object `{qualified}` in `{source}`"
                     ))
-                })?,
+                })??,
         };
         Ok((qualified, expression))
     }
@@ -4057,6 +4069,7 @@ impl Parser {
             _ => None,
         };
         let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
+        let mut scalar_range_offset = None;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
             || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
         {
@@ -4164,7 +4177,8 @@ impl Parser {
                     }
                     let offset = flatten_array_indices(indexes, &shape);
                     base = if has_following_range {
-                        CExpression::Add(Box::new(base), Box::new(offset))
+                        scalar_range_offset = Some(offset);
+                        base
                     } else {
                         CExpression::Index(Box::new(base), Box::new(offset))
                     };
@@ -4315,13 +4329,17 @@ impl Parser {
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
-        let start = contract_expression_as_c_fragment(&start_expression)
+        let mut start = contract_expression_as_c_fragment(&start_expression)
             .ok_or_else(|| self.error("memory segment start must be a current C expression"))?;
         self.expect(Token::DotDot)?;
         let end_expression = self.parse_contract_expression()?;
-        let end = contract_expression_as_c_fragment(&end_expression)
+        let mut end = contract_expression_as_c_fragment(&end_expression)
             .ok_or_else(|| self.error("memory segment end must be a current C expression"))?;
         self.expect(Token::RBracket)?;
+        if let Some(offset) = scalar_range_offset {
+            start = CExpression::Add(Box::new(offset.clone()), Box::new(start));
+            end = CExpression::Add(Box::new(offset), Box::new(end));
+        }
         Ok(vec![ContractSegment {
             state: ContractSegmentState::Current,
             base,
