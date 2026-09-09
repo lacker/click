@@ -385,7 +385,56 @@ fn expand_declared_resource_proof(
     }
 }
 
+// Keep the recursive tactic dispatcher small. Each helper owns only one
+// family of large syntax temporaries, so nested proof scripts do not retain
+// every tactic variant's frame at once.
+#[inline(never)]
 fn expand_declared_resource_tactic(
+    tactic: ProofTactic,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ProofTactic, ClickError> {
+    match tactic {
+        tactic @ (ProofTactic::ApplyTheorem(_)
+        | ProofTactic::Witness(_)
+        | ProofTactic::ApplyInduction { .. }
+        | ProofTactic::ApplyInductionUsing { .. }
+        | ProofTactic::ApplyTheoremUsing { .. }
+        | ProofTactic::UnfoldFunction(_)
+        | ProofTactic::InstantiateUsing { .. }) => {
+            expand_declared_resource_tactic_with_expressions(tactic, resource_definitions)
+        }
+        tactic @ (ProofTactic::ArithmeticUsing(_)
+        | ProofTactic::FrameUsing { .. }
+        | ProofTactic::Contradiction(_)
+        | ProofTactic::Extract(_)
+        | ProofTactic::Rewrite(_)
+        | ProofTactic::Transport { .. }
+        | ProofTactic::TransportUsing { .. }
+        | ProofTactic::SimpUsing(_)
+        | ProofTactic::NormalizeUsing(_)) => {
+            expand_declared_resource_tactic_with_propositions(tactic, resource_definitions)
+        }
+        tactic @ (ProofTactic::UnfoldResource(_)
+        | ProofTactic::ObserveResource(_)
+        | ProofTactic::FoldResource(_)
+        | ProofTactic::ConstructResource(_)) => {
+            expand_declared_resource_tactic_with_resources(tactic, resource_definitions)
+        }
+        tactic @ (ProofTactic::Have(_)
+        | ProofTactic::Open(_)
+        | ProofTactic::If(_)
+        | ProofTactic::Cases(_)
+        | ProofTactic::StructuralInduct { .. }
+        | ProofTactic::Branch(_)
+        | ProofTactic::Loop(_)) => {
+            expand_declared_resource_tactic_with_nested_proofs(tactic, resource_definitions)
+        }
+        tactic => Ok(tactic),
+    }
+}
+
+#[inline(never)]
+fn expand_declared_resource_tactic_with_expressions(
     tactic: ProofTactic,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ProofTactic, ClickError> {
@@ -422,19 +471,6 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<_, _>>()?,
         }),
-        ProofTactic::ArithmeticUsing(premises) => Ok(ProofTactic::ArithmeticUsing(
-            premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<_, _>>()?,
-        )),
-        ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
-            region,
-            premises: premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
         ProofTactic::ApplyTheoremUsing {
             application,
             premises,
@@ -454,9 +490,6 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        ProofTactic::UnfoldResource(resource) => Ok(ProofTactic::UnfoldResource(
-            expand_declared_resource_clause(resource, resource_definitions)?,
-        )),
         ProofTactic::UnfoldFunction(application)
             if resource_definitions.contains_key(&application.name) =>
         {
@@ -481,15 +514,41 @@ fn expand_declared_resource_tactic(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ProofTactic::UnfoldFunction(application))
         }
-        ProofTactic::ObserveResource(resource) => Ok(ProofTactic::ObserveResource(
-            expand_declared_resource_clause(resource, resource_definitions)?,
+        ProofTactic::InstantiateUsing {
+            quantified,
+            argument,
+            premises,
+        } => Ok(ProofTactic::InstantiateUsing {
+            quantified: expand_declared_resource_proposition(quantified, resource_definitions)?,
+            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
+    }
+}
+
+#[inline(never)]
+fn expand_declared_resource_tactic_with_propositions(
+    tactic: ProofTactic,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ProofTactic, ClickError> {
+    match tactic {
+        ProofTactic::ArithmeticUsing(premises) => Ok(ProofTactic::ArithmeticUsing(
+            premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<_, _>>()?,
         )),
-        ProofTactic::FoldResource(resource) => Ok(ProofTactic::FoldResource(
-            expand_declared_resource_clause(resource, resource_definitions)?,
-        )),
-        ProofTactic::ConstructResource(resource) => Ok(ProofTactic::ConstructResource(
-            expand_declared_resource_clause(resource, resource_definitions)?,
-        )),
+        ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
+            region,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
         ProofTactic::Contradiction(proposition) => Ok(ProofTactic::Contradiction(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),
@@ -515,18 +574,6 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        ProofTactic::InstantiateUsing {
-            quantified,
-            argument,
-            premises,
-        } => Ok(ProofTactic::InstantiateUsing {
-            quantified: expand_declared_resource_proposition(quantified, resource_definitions)?,
-            argument: expand_declared_resource_expression(argument, resource_definitions)?,
-            premises: premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
         ProofTactic::SimpUsing(simp) => Ok(ProofTactic::SimpUsing(ProofSimpUsing {
             premises: simp
                 .premises
@@ -538,8 +585,40 @@ fn expand_declared_resource_tactic(
             premises
                 .into_iter()
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<_, _>>()?,
         )),
+        _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
+    }
+}
+
+#[inline(never)]
+fn expand_declared_resource_tactic_with_resources(
+    tactic: ProofTactic,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ProofTactic, ClickError> {
+    match tactic {
+        ProofTactic::UnfoldResource(resource) => Ok(ProofTactic::UnfoldResource(
+            expand_declared_resource_clause(resource, resource_definitions)?,
+        )),
+        ProofTactic::ObserveResource(resource) => Ok(ProofTactic::ObserveResource(
+            expand_declared_resource_clause(resource, resource_definitions)?,
+        )),
+        ProofTactic::FoldResource(resource) => Ok(ProofTactic::FoldResource(
+            expand_declared_resource_clause(resource, resource_definitions)?,
+        )),
+        ProofTactic::ConstructResource(resource) => Ok(ProofTactic::ConstructResource(
+            expand_declared_resource_clause(resource, resource_definitions)?,
+        )),
+        _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
+    }
+}
+
+#[inline(never)]
+fn expand_declared_resource_tactic_with_nested_proofs(
+    tactic: ProofTactic,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ProofTactic, ClickError> {
+    match tactic {
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: expand_declared_resource_proposition(
                 have.proposition,
@@ -643,7 +722,7 @@ fn expand_declared_resource_tactic(
         ProofTactic::Loop(clause) => Ok(ProofTactic::Loop(
             expand_declared_resource_structural_clause(clause, resource_definitions)?,
         )),
-        _ => Ok(tactic),
+        _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
     }
 }
 
@@ -905,9 +984,7 @@ fn expand_declared_resource_expression(
     expression: ContractExpression,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ContractExpression, ClickError> {
-    let recurse =
-        |expression| expand_declared_resource_expression(expression, resource_definitions);
-    Ok(match expression {
+    match expression {
         ContractExpression::ResourceField(mut access) => {
             let info = resource_definitions
                 .get(&access.resource_name)
@@ -922,64 +999,47 @@ fn expand_declared_resource_expression(
             })?;
             access.field_index = *index;
             access.click_type = Some(field.clone());
-            ContractExpression::ResourceField(access)
+            Ok(ContractExpression::ResourceField(access))
         }
-        ContractExpression::AlgebraicConstructor {
-            algebraic_type,
-            variant,
-            arguments,
-        } => ContractExpression::AlgebraicConstructor {
-            algebraic_type,
-            variant,
-            arguments: arguments
-                .into_iter()
-                .map(recurse)
-                .collect::<Result<_, _>>()?,
-        },
-        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
-            ContractExpression::AlgebraicMatch {
-                scrutinee: Box::new(recurse(*scrutinee)?),
-                arms: arms
-                    .into_iter()
-                    .map(|mut arm| {
-                        arm.body = recurse(arm.body)?;
-                        Ok(arm)
-                    })
-                    .collect::<Result<_, ClickError>>()?,
-            }
+        ContractExpression::ResourceCount(resource) => {
+            reject_counted_field_resource(&resource, resource_definitions)?;
+            let resource = expand_declared_resource_clause(*resource, resource_definitions)?;
+            Ok(ContractExpression::ResourceCount(Box::new(resource)))
         }
-        ContractExpression::SequenceLiteral(elements) => ContractExpression::SequenceLiteral(
-            elements
-                .into_iter()
-                .map(recurse)
-                .collect::<Result<_, _>>()?,
-        ),
+        expression @ (ContractExpression::SequenceConcat(..)
+        | ContractExpression::Add(..)
+        | ContractExpression::Subtract(..)
+        | ContractExpression::Multiply(..)
+        | ContractExpression::Divide(..)
+        | ContractExpression::Remainder(..)
+        | ContractExpression::ShiftLeft(..)
+        | ContractExpression::ShiftRight(..)
+        | ContractExpression::BitwiseAnd(..)
+        | ContractExpression::BitwiseOr(..)
+        | ContractExpression::BitwiseXor(..)
+        | ContractExpression::Index(..)) => {
+            expand_declared_resource_binary_expression(expression, resource_definitions)
+        }
+        expression => {
+            expand_declared_resource_expression_children(expression, resource_definitions)
+        }
+    }
+}
+
+// Keep the recursive expression walk's large child-rewriting match out of the
+// frame retained by each nested expression.
+#[inline(never)]
+fn expand_declared_resource_binary_expression(
+    expression: ContractExpression,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ContractExpression, ClickError> {
+    let recurse =
+        |expression| expand_declared_resource_expression(expression, resource_definitions);
+    Ok(match expression {
         ContractExpression::SequenceConcat(left, right) => ContractExpression::SequenceConcat(
             Box::new(recurse(*left)?),
             Box::new(recurse(*right)?),
         ),
-        ContractExpression::ResourceCount(resource) => {
-            reject_counted_field_resource(&resource, resource_definitions)?;
-            let resource = expand_declared_resource_clause(*resource, resource_definitions)?;
-            ContractExpression::ResourceCount(Box::new(resource))
-        }
-        ContractExpression::Field {
-            base,
-            field,
-            lowered,
-        } => ContractExpression::Field {
-            base: Box::new(recurse(*base)?),
-            field,
-            lowered,
-        },
-        ContractExpression::Old(body) => ContractExpression::Old(Box::new(recurse(*body)?)),
-        ContractExpression::At {
-            selector,
-            expression,
-        } => ContractExpression::At {
-            selector,
-            expression: Box::new(recurse(*expression)?),
-        },
         ContractExpression::Add(left, right) => {
             ContractExpression::Add(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
         }
@@ -1010,11 +1070,72 @@ fn expand_declared_resource_expression(
         ContractExpression::BitwiseXor(left, right) => {
             ContractExpression::BitwiseXor(Box::new(recurse(*left)?), Box::new(recurse(*right)?))
         }
-        ContractExpression::BitwiseNot(body) => {
-            ContractExpression::BitwiseNot(Box::new(recurse(*body)?))
-        }
         ContractExpression::Index(base, index) => {
             ContractExpression::Index(Box::new(recurse(*base)?), Box::new(recurse(*index)?))
+        }
+        _ => unreachable!("non-binary contract expression"),
+    })
+}
+
+// Keep the remaining recursive expression cases out of the frame retained by
+// each nested expression.
+#[inline(never)]
+fn expand_declared_resource_expression_children(
+    expression: ContractExpression,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ContractExpression, ClickError> {
+    let recurse =
+        |expression| expand_declared_resource_expression(expression, resource_definitions);
+    Ok(match expression {
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments: arguments
+                .into_iter()
+                .map(recurse)
+                .collect::<Result<_, _>>()?,
+        },
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            ContractExpression::AlgebraicMatch {
+                scrutinee: Box::new(recurse(*scrutinee)?),
+                arms: arms
+                    .into_iter()
+                    .map(|mut arm| {
+                        arm.body = recurse(arm.body)?;
+                        Ok(arm)
+                    })
+                    .collect::<Result<_, ClickError>>()?,
+            }
+        }
+        ContractExpression::SequenceLiteral(elements) => ContractExpression::SequenceLiteral(
+            elements
+                .into_iter()
+                .map(recurse)
+                .collect::<Result<_, _>>()?,
+        ),
+        ContractExpression::Field {
+            base,
+            field,
+            lowered,
+        } => ContractExpression::Field {
+            base: Box::new(recurse(*base)?),
+            field,
+            lowered,
+        },
+        ContractExpression::Old(body) => ContractExpression::Old(Box::new(recurse(*body)?)),
+        ContractExpression::At {
+            selector,
+            expression,
+        } => ContractExpression::At {
+            selector,
+            expression: Box::new(recurse(*expression)?),
+        },
+        ContractExpression::BitwiseNot(body) => {
+            ContractExpression::BitwiseNot(Box::new(recurse(*body)?))
         }
         ContractExpression::If {
             condition,

@@ -5174,7 +5174,18 @@ impl Parser {
     }
 
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_primary()?;
+        let expression = self.parse_contract_primary()?;
+        self.parse_contract_postfix_suffix(expression)
+    }
+
+    // Keep postfix metadata and field-lowering temporaries out of the
+    // recursive expression parser frame. Nested `match` expressions only
+    // retain this small dispatcher while their primary is parsed.
+    #[inline(never)]
+    fn parse_contract_postfix_suffix(
+        &mut self,
+        mut expression: ContractExpression,
+    ) -> Result<ContractExpression, ClickError> {
         let mut struct_name = match &expression {
             ContractExpression::QualifiedC { name, .. } => self
                 .qualified_object(name)
@@ -5544,6 +5555,11 @@ impl Parser {
             return result;
         }
 
+        self.parse_contract_non_match_primary()
+    }
+
+    #[inline(never)]
+    fn parse_contract_non_match_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.looks_like_algebraic_constructor() {
             let algebraic_type = self.parse_algebraic_type_application()?;
             self.expect(Token::ColonColon)?;
