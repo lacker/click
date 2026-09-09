@@ -144,6 +144,14 @@ unbounded search.
 
 ## Current inventory
 
+Loop migration follow-up (2026-09-09): completed-body prepass ordering and
+named loop-entry snapshots are fixed. Automatic/bare closure still uses the
+legacy path. A staged migration exposed a
+[pointer-equality proof emission gap](pointer-increment-equality-proof.md);
+resolve that tooling blocker before finishing explicit fixture proofs and
+deleting legacy invariant discovery. See
+[the loop migration issue](quantified-invariant-body-planning.md) for the census.
+
 Older counts retain their stated measurement dates. The reentrancy census was
 rerun on 2026-09-07 at `2e14f553` over the then-complete corpus: 25 example
 projects, 817 mdtests, and 1,631 unit tests.

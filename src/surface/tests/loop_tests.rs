@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn loop_preservation_have_resolves_entry_label_and_expands() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/loop_entry_snapshot.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.unwrap().replace(
+        "invariant at(drain.entry, n) >= 0;",
+        r#"invariant at(drain.entry, n) >= 0;
+        preserve by {
+            have at(drain.entry, n) >= 0 by { assumption(); }
+            have 0 <= n - 1 by {
+                apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
+            }
+            step();
+            close_invariants by {
+                both { arithmetic() using { 0 <= n; } }
+                and { intro(); assumption(); }
+            }
+        }"#,
+    );
+    let before = crate::kernel::invariant_discovery_calls();
+    verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(&click, &sources, "drain_to_zero", CProofClaim::Grouped)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    assert_eq!(before, crate::kernel::invariant_discovery_calls());
+}
+
+#[test]
+fn pointer_loop_increment_reports_missing_simple_equality_proof() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/c_pointer_local_loop_invariant.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.unwrap().replace(
+        "invariant p == arr + i;",
+        r#"invariant p == arr + i;
+        preserve by {
+            step(); step();
+            have p == arr + i by simp;
+            close_invariants();
+        }"#,
+    );
+    // Track the tooling gap without accepting a success lacking a proof or
+    // attempting to expand an incomplete run. See the dedicated issue.
+    let error = verify_c0_sources(&click, &sources).expect_err("pointer proof gap remains open");
+    assert!(
+        error
+            .message()
+            .contains("no explicit simple certificate for pointer equality"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn completed_recursive_loop_bodies_skip_legacy_preplanning_and_recheck() {
     for (filename, function) in [
         ("c_decreases_recursive_in_loop.md", "recursive_loop"),

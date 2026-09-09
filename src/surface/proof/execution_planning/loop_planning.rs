@@ -1283,11 +1283,11 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    recorded_snapshots.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Loop(loop_index),
-            kind: ProgramPointKind::Entry,
-        },
+    record_code_region_program_snapshot_state(
+        &mut recorded_snapshots,
+        environment.function_block,
+        CodeRegion::Loop(loop_index),
+        ProgramPointKind::Entry,
         preservation.loop_entry_state().clone(),
     );
     // The invariants are available at the body entry as kernel facts. A

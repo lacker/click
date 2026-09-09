@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## P1: before launch (23)
+## P1: before launch (24)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -54,6 +54,7 @@ Soundness and kernel shape:
 - [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Finish explicit invariant-body planning](quantified-invariant-body-planning.md)
+- [Construct checked pointer-increment equality proofs](pointer-increment-equality-proof.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:

@@ -17,6 +17,36 @@ Copy3 now also stores its expanded explicit closure proof in
 
 ## Producer migration attempt (2026-09-09)
 
+### Latest checkpoint and remaining blocker
+
+Loop-preservation snapshot registration now records the loop's label aliases
+as well as its numeric region. The regression
+`loop_preservation_have_resolves_entry_label_and_expands` uses
+`at(drain.entry, n)` inside a `have`, supplies an explicit closure body, and
+verifies, expands, and rechecks without legacy discovery. The label-scope
+failure listed in the historical census below is resolved.
+
+A renewed staged migration reduced the nine remaining fixture failures to
+four using existing tactics, with no C or invariant changes. Countdown,
+lexicographic/nested countdown, loop-entry snapshot, and unchanged first-cell
+preservation worked. The remaining cases were pointer/index equality,
+branch-increment integer definedness, old-count closure, and quantified
+permutation closure. The latter two roots require explicit implication and
+quantifier handling; a root without a surface rendering is not evidence that
+the kernel goal is absent.
+
+The pointer attempt exposed a tooling failure rather than an ordinary bounded
+miss: smart reasoning finds an equality but cannot emit its simple proof.
+See [pointer-increment-equality-proof.md](pointer-increment-equality-proof.md)
+for an executable reproduction independent of migration. Tooling-first policy
+stops the migration here. The producer changes, temporary diagnostics, and
+experimental fixture proofs were reverted; only the independently tested
+label fix and focused regressions are retained. Bare/automatic closure and
+the legacy builders/prefix probe remain. Fix the pointer proof gap before
+resuming the remaining explicit fixture proofs and legacy deletion.
+
+### Earlier prototype (historical)
+
 The staged prototype migrated bare closers and automatic preparation to
 completed bodies and removed the prefix probe. All 2,006 unit/CLI tests
 passed after updating boundary-specific tests and supplying the existing
