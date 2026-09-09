@@ -142,15 +142,25 @@ schema and reserves the scrutinee's variable identities, including variables
 inside symbolic matches and calls. Tests cover generic and recursive fields,
 pointer payloads, capture avoidance, complete constructor families, and
 malformed or unsupported inputs. This rule alone neither chooses witnesses
-nor grants ownership; **the proof-level tactic is not yet implemented**.
+nor grants ownership. The proof-level tactic supports one or two constructors
+at unchanged function entry. Each arm starts with the same owned resources,
+introduces only its fresh typed fields, and must run to function exit. Nested
+entry matches and deferred return-state folds retain their lexical bindings.
+Expansion preserves the match and rechecks its constructor arms. The positive
+[resource regression](../mdtests/proof_match_resource.md) covers two reachable
+memory-owning cases; it does not replace the nonempty-cell gap above.
 Its current payload sorts are signed 32/64-bit integers, pointers, and ADTs.
 
-The remaining integration needs scoped witness introduction, execution-frontier
-case splits and joins, and source/certificate support. Acceptance requires
-exhaustive checked cases, fresh
-typed bindings with correct scope, retained C execution/ownership on each
-branch, expansion/rechecking, and rejection of omitted reachable cases or
-escaping fields. Then verify unchanged `tree_rotate_left` for arbitrary
+The next integration is **checked exclusion of contradictory constructor
+arms**. A constructor excluded by the precondition must close without executing
+invalid C on that impossible branch, while its checked contradiction remains
+part of the partition's coverage certificate. Do not omit the arm or simulate
+an arbitrary return state. The nonempty-cell regression above is the intended
+positive test; missing or unrelated contradiction premises must be rejected.
+Also extend joins to wider constructor families without quadratic selector
+construction, shared continuations, and matches after C/resource transitions
+with indexed witness freshness. These are implementation limits, not changes
+to pure match semantics. Then verify unchanged `tree_rotate_left` for arbitrary
 nonempty root/right-child models, preserving both node identities/payloads and
 all three arbitrary subtrees. Its sidecar still has no rotation contract.
 

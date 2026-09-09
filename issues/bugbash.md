@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Fifteen independent root causes. Every one has a reproduction that verifies
+Twelve independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
-Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other nine are high: the trigger is
+Five are critical: an ordinary contract over ordinary C is certified while
+false, with no unusual tactics. The other seven are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -236,70 +236,6 @@ path rather than a synthesized surface clause.
 
 ---
 
-## 3. Globals assigned inside a loop are not havoced at the loop head
-
-**Severity: critical.** The pre-loop value of a global survives the abstract
-iteration, so a loop that increments a global is certified to leave it alone.
-
-**Violated invariant.** The abstract loop head must forget every object the
-body can modify. A by-name assignment to an object with static storage
-duration is such a modification.
-
-**Mechanism.** `havoc_loop_modified_locals` (`src/kernel/loops.rs:2340`)
-refreshes only bindings that match `CLocalBinding::Object`; a global binding
-falls through the `let ... else { continue }`. The memory havoc that would
-otherwise cover the cell is gated on `statement_may_write_memory`
-(`src/kernel/loops.rs:2441`), which does not count a by-name global assignment
-as a memory write.
-
-**Regression** (`mdtests/loop_global_not_havoced_rejected.md`):
-
-```c
-int32 g = 0;
-
-int32 bump(int32 n) {
-    int32 i = 0;
-    g = 0;
-    while (i < n) {
-        g = g + 1;
-        i = i + 1;
-    }
-    return g;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 bump(int32 n) {
-    requires n >= 0 and n <= 100;
-    mutable &g[0..1];
-    ensures result == 0;
-} by {
-    step();
-    step();
-    step();
-    loop {
-        invariant i >= 0 and i <= n;
-    }
-    step();
-    frame();
-    simp();
-}
-```
-
-`bump(5)` returns 5. The same hole applies to a function-local `static`.
-
-**Acceptance criteria.**
-- The sidecar is rejected; the invariant is too weak to conclude anything
-  about `g` at the exit.
-- Adding `invariant g == i;` lets the true postcondition `result == n` verify.
-- Fix both halves: include global and static bindings in the modified-name
-  havoc, and count by-name assignment to a static-storage object as a memory
-  write for the havoc gate. A regression for each half.
-
----
-
 ## 4. Memory cells carry no width; retyping casts are accepted
 
 **Severity: critical.** Eight findings share this root cause. Overlapping
@@ -404,95 +340,6 @@ changes; both claims verify today.
   range's element width.
 
 ---
-
-## 5. By-value struct postconditions land on the caller's object
-
-**Severity: critical.** The callee is certified against its own copy, and the
-resulting fact is applied to the caller's object, producing a contradictory
-state in which anything verifies.
-
-**Violated invariant.** A by-value parameter is a callee-local object. Its
-post-state is not observable by the caller, so no `ensures` about it may be
-instantiated on the caller's argument.
-
-**Mechanism.** Aggregate parameter binding copies the argument into a fresh
-block for the callee, but ensures instantiation maps the parameter back to the
-caller's object (`src/kernel/functions.rs`, aggregate binding and the ensures
-substitution that follows).
-
-**Regression** (`mdtests/by_value_struct_param_ensures_rejected.md`):
-
-```c
-struct pair {
-    int32 first;
-    int32 second;
-};
-
-int32 bump(struct pair value) {
-    value.first = 5;
-    return value.first;
-}
-
-int32 call_bump() {
-    struct pair original;
-    int32 r;
-    original.first = 4;
-    original.second = 0;
-    r = bump(original);
-    return original.first;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 bump(struct pair value) {
-    ensures value.first == 5;
-}
-
-int32 call_bump() {
-    ensures result == 999;
-}
-```
-
-`call_bump` returns 4. The absurd `result == 999` verifies because the caller's
-state has both `original.first == 4` and `original.first == 5`.
-
-**Acceptance criteria.**
-- `call_bump`'s claim is rejected, and so is any other value: after the call
-  the only provable fact about `original.first` is that it is still 4.
-- `mdtests/struct_by_value_scalar_copy.md` and the rest of the by-value family
-  still pass.
-
-**Do not bind the parameter to a fresh, empty post-state block.** Binding it to
-a fresh, empty block in the call's post-contract state
-(`with_contract_argument_views` keeps the caller's object; the two ensures
-lowerings at `src/kernel/functions.rs:1193` and `:1245` would rebind) fixes
-the regression below and leaves the caller's state consistent, but is too
-destructive as it stands:
-
-- `mdtests/struct_conditional_value.md` fails. `choose_packet` states
-  `ensures result.tag == right.tag` over by-value parameters it never
-  modifies, and the caller needs that to chain into `sum_packet`'s
-  precondition. With an unconstrained post-state parameter the chain is lost.
-- `old(value.field)` breaks with it, so the migration those contracts would
-  need is not available: `old` resolves the parameter's address in the *post*
-  state and then reads it in entry memory, so an empty fresh block reads as
-  nothing. A fresh block would have to carry the argument's entry image for
-  `old` to keep working, while staying unconstrained in the post state.
-
-**Suggested direction.** The existing reading of a
-by-value parameter in `ensures` is sound exactly when the callee does not
-modify its copy, which is the case for every by-value contract in the tree
-today (`choose_packet`, `sum_packet`, `struct_by_value_pointer_copy.md`).
-Only a callee that writes to its copy, as `bump` does here, can state
-something the caller must not believe. So certification can keep the current
-call-site behaviour and instead reject an `ensures` that mentions a by-value
-aggregate parameter outside `old(...)` when the body writes to that
-parameter's storage. That preserves every contract in the tree and rejects
-this regression, and it needs no surface migration. The check belongs where
-the callee's body is certified, comparing the parameter's copy block between
-entry and exit, or by walking `source_body` for stores into it.
 
 ---
 
@@ -653,6 +500,68 @@ the comparison is false: the function returns 0.
   reported as overflow; `-2147483648 / -1` reported as undefined behaviour when
   in C it is well-defined `long` division.
 
+---
+
+
+## 9. A store through `&local` in an inline header helper is dropped
+
+**Severity: high.** The caller keeps the old value of a local the inlined body
+wrote through a pointer.
+
+**Violated invariant.** An inline helper executes on the caller's memory; a
+store through a pointer to a caller local is visible to later reads of that
+local by name.
+
+**Mechanism.** Inline bodies from headers are checked at the call site on the
+caller's memory (`src/languages/c/source.rs` expansion plus ordinary
+execution), but the store does not go through the address-escape path that
+syncs an address-taken local's named binding.
+
+**Regression** (`mdtests/inline_helper_store_dropped_rejected.md`), a header
+plus a source:
+
+```c
+/* include/hset.h */
+#ifndef HSET_H
+#define HSET_H
+static inline int32 set0(int32* p) {
+    p[0] = 9;
+    return 0;
+}
+#endif
+```
+
+```c
+/* t.c */
+#include "include/hset.h"
+
+int32 run_set0_local() {
+    int32 n;
+    int32 ignored;
+    n = 100;
+    ignored = set0(&n);
+    return n;
+}
+```
+
+```click
+verifying "t.c";
+
+int32 run_set0_local() {
+    ensures result == 100;
+}
+```
+
+The function returns 9.
+
+**Acceptance criteria.**
+- The sidecar is rejected and `ensures result == 9` verifies instead.
+- The same test with the helper written as an ordinary function in the same
+  translation unit continues to behave (it already does), so the regression
+  pins the inline path specifically.
+
+---
+
 ## 10. A reloaded pointer to a local is treated as a distinct block
 
 **Severity: high.** After a call, a pointer loaded back out of caller-visible
@@ -717,118 +626,6 @@ inconsistent.
   for `result` other than through the real aliasing.
 - Add an inconsistency probe to the regression: a claim like `result == 7`,
   which no execution satisfies, must never verify.
-
----
-
-## 11. An aggregate copy from an uninitialized source keeps the old value
-
-**Severity: high.** A whole-struct assignment whose source was never written
-leaves the destination reading as its own previous value, so a contract can
-state that value.
-
-**Violated invariant.** Struct assignment copies the source's members
-(C11 6.5.16.1p2). A source member that was never written is indeterminate, so
-reading the destination afterwards is a read of indeterminate storage, not a
-read of what the destination held before.
-
-**Mechanism.** `copy_aggregate_fields` (`src/kernel/functions.rs:3526-3549`)
-copies a source cell only when one is present. A union-containing layout routes
-whole-struct assignment through this kernel copy
-(`C0Statement::AggregateCopy`, executed at
-`src/kernel/eval/statements.rs:568`), and with no source cell the destination's
-own cell survives untouched. The same assignment between plain structs is
-correctly reported, so the union path is what makes this reachable.
-
-**Regression** (`mdtests/aggregate_copy_uninitialized_source_rejected.md`):
-
-```c
-union payload {
-    int32 number;
-    int32* pointer;
-};
-
-struct packet {
-    int32 tag;
-    union payload payload;
-};
-
-int32 aggregate_copy_uninitialized_source_rejected() {
-    struct packet source;
-    struct packet destination;
-    destination.tag = 7;
-    destination = source;
-    return destination.tag;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 aggregate_copy_uninitialized_source_rejected() {
-    ensures result == 7;
-}
-```
-
-`source` was never written, so `destination.tag` is indeterminate after the
-copy and 7 is the value the assignment was supposed to overwrite.
-
-**Acceptance criteria.**
-- The sidecar is rejected with a read of uninitialized storage, as the same
-  assignment between plain structs already is.
-- A copy whose source leaves a field type this copy cannot carry keeps its
-  current treatment: the destination cells are dropped, so nothing stale is
-  readable. Carrying the remaining widths (`int16*`, `uint16*`, `uint32*`,
-  `int64*`, `uint64*`, `float*`, `double*`, and the float array and
-  pointer-to-pointer forms) is a completeness follow-up, not part of this.
-
----
-
-## 12. Subnormal float division is mis-rounded
-
-**Severity: high.** The integer-space IEEE evaluator mis-rounds a division
-whose result is subnormal and whose dividend is subnormal: the sticky bit
-collides with the rounding bit.
-
-**Violated invariant.** Constant folding agrees with IEEE-754 at the declared
-width, under round-to-nearest, ties-to-even, including in the subnormal range.
-
-**Mechanism.** `src/kernel/primitives/term_operations.rs`, the `DecodedFloat`
-evaluator's division path and `round_float_result`'s subnormal branch.
-
-**Regression.** The correctly rounded binary32 quotient is
-`3.2229864679470793e-44f` (bits `0x00000017`, confirmed with a C compiler on
-this profile); Click folds to `3.363116314379561e-44f` (bits `0x00000018`),
-one unit in the last place high. The sidecar below therefore states the wrong
-branch and verifies, while `ensures result == 1` is rejected.
-
-```c
-int32 subnormal_divide() {
-    float quotient = 4.203895392974451e-45f / 0.12765958905220032f;
-    if (quotient == 3.2229864679470793e-44f) {
-        return 1;
-    }
-    if (quotient == 3.363116314379561e-44f) {
-        return 2;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 subnormal_divide() {
-    ensures result == 2;
-}
-```
-
-**Acceptance criteria.**
-- The sidecar above is rejected and `ensures result == 1` verifies.
-- Add a differential test over a fixed vector of bit patterns (signed zeros,
-  subnormals, infinities, NaNs, cancellation pairs, boundary conversions)
-  comparing the evaluator against known-good expected values, so the next
-  encoding change cannot silently regress. This is the missing guard for the
-  whole evaluator, not only for this case.
 
 ---
 
@@ -1046,42 +843,6 @@ int32 identical_string_literals_undecided() {
 - A literal compared against itself through one pointer still decides equal.
 
 ---
-
-## 17. A postcondition may read the storage of a returned local
-
-**Severity: high.** A contract states a value in storage whose lifetime ended
-when the function returned, and the caller may rely on it.
-
-**Violated invariant.** An automatic object's lifetime ends when its block is
-left (C11 6.2.4p6); a pointer to it becomes indeterminate, so a postcondition
-may not read through it.
-
-**Mechanism.** Not localized. The returned pointer keeps its `local:` block,
-and the postcondition is lowered against the exit state where that block's
-cells are still present.
-
-**Regression** (`mdtests/returned_local_postcondition_rejected.md`):
-
-```c
-int32* returned_local_postcondition_rejected() {
-    int32 value = 5;
-    return &value;
-}
-```
-
-```click
-verifying "t.c";
-
-int32* returned_local_postcondition_rejected() {
-    ensures result[0] == 5;
-}
-```
-
-**Acceptance criteria.**
-- The postcondition is rejected: the frame's storage is gone at the exit
-  state, so the load has nothing to read.
-- A postcondition over storage that outlives the call, a heap allocation the
-  function returns or a caller object it was given, still verifies.
 
 ---
 

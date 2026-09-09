@@ -2337,6 +2337,7 @@ pub enum ProofTactic {
     Have(ProofHave),
     Open(ProofOpen),
     If(ProofIf),
+    Match(Box<ProofMatch>),
     Cases(ProofCases),
     Both(ProofBoth),
     Branch(ProofBranch),
@@ -2422,6 +2423,7 @@ pub enum SmartTacticKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlTactic {
+    Match,
     CloseInvariants,
     Both,
     Have,
@@ -2524,6 +2526,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "structural-induct",
         syntax: "induct(xs) as ih { Type::Variant(fields)",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "proof-match",
+        syntax: "match value { Type::Variant(fields)",
         class: "control",
     },
     PublicTacticForm {
@@ -2717,6 +2724,10 @@ pub struct ProofCertificate {
 /// recovered later from [`ProofTactic::class`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
+    Match {
+        scrutinee: ContractExpression,
+        arms: Vec<CertificateInductionArm>,
+    },
     CloseInvariantsBy(Box<ProofCertificate>),
     Both {
         left_proof: Box<ProofCertificate>,
@@ -2825,6 +2836,7 @@ struct CertificateStructuralItem {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificatePathSegment {
+    MatchArm(usize),
     InvariantBody,
     LeftConjunct,
     RightConjunct,
@@ -2923,6 +2935,24 @@ impl ProofStep {
             } => Self::Induct {
                 parameter: parameter.clone(),
                 hypothesis: hypothesis.clone(),
+            },
+            ProofTactic::Match(proof_match) => Self::Match {
+                scrutinee: proof_match.scrutinee.clone(),
+                arms: proof_match
+                    .arms
+                    .iter()
+                    .map(|arm| CertificateInductionArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        proof: Box::new(ProofCertificate::from_steps(
+                            arm.tactics
+                                .iter()
+                                .map(Self::from_validated_tactic)
+                                .collect(),
+                        )),
+                    })
+                    .collect(),
             },
             ProofTactic::StructuralInduct {
                 parameter,
@@ -3124,6 +3154,18 @@ impl ProofStep {
                 parameter: parameter.clone(),
                 hypothesis: hypothesis.clone(),
             },
+            Self::Match { scrutinee, arms } => ProofTactic::Match(Box::new(ProofMatch {
+                scrutinee: scrutinee.clone(),
+                arms: arms
+                    .iter()
+                    .map(|arm| ProofInductionArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        tactics: arm.proof.to_proof_tactics(),
+                    })
+                    .collect(),
+            })),
             Self::StructuralInduct {
                 parameter,
                 hypothesis,
@@ -3354,6 +3396,21 @@ fn validate_certificate_tactics(
                     right_result
                 }
             }
+            TacticClass::Control(ControlTactic::Match) => {
+                let ProofTactic::Match(proof_match) = tactic else {
+                    unreachable!()
+                };
+                let mut result = Ok(());
+                for (index, arm) in proof_match.arms.iter().enumerate() {
+                    path.push(CertificatePathSegment::MatchArm(index));
+                    result = validate_certificate_tactics(&arm.tactics, path);
+                    path.pop();
+                    if result.is_err() {
+                        break;
+                    }
+                }
+                result
+            }
             TacticClass::Control(ControlTactic::StructuralInduct) => {
                 let ProofTactic::StructuralInduct { arms, .. } = tactic else {
                     unreachable!("tactic class and variant must agree")
@@ -3500,6 +3557,7 @@ impl ProofTactic {
             Self::Have(_) => TacticClass::Control(ControlTactic::Have),
             Self::Open(_) => TacticClass::Control(ControlTactic::Open),
             Self::If(_) => TacticClass::Control(ControlTactic::If),
+            Self::Match(_) => TacticClass::Control(ControlTactic::Match),
             Self::Cases(_) => TacticClass::Control(ControlTactic::Cases),
             Self::Both(_) => TacticClass::Control(ControlTactic::Both),
             Self::Branch(_) => TacticClass::Control(ControlTactic::Branch),
@@ -3568,6 +3626,13 @@ pub struct ProofCases {
     disjunction: ClickProposition,
     left_tactics: Vec<ProofTactic>,
     right_tactics: Vec<ProofTactic>,
+}
+
+/// Explicit proof-by-constructor-cases, not evaluation of a pure expression.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofMatch {
+    scrutinee: ContractExpression,
+    arms: Vec<ProofInductionArm>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4458,6 +4523,14 @@ impl ProofTactic {
                     }
                 }
             }
+            Self::Match(proof_match) => {
+                let arms = &proof_match.arms;
+                for arm in arms {
+                    for tactic in &arm.tactics {
+                        tactic.collect_termination_loop_clauses(clauses);
+                    }
+                }
+            }
             Self::Branch(branch) => {
                 for tactic in branch.then_tactics.iter().chain(&branch.else_tactics) {
                     tactic.collect_termination_loop_clauses(clauses);
@@ -4495,6 +4568,12 @@ fn collect_unfold_tactic_names(tactics: &[ProofTactic], names: &mut Vec<String>)
                 collect_unfold_tactic_names(&proof_if.else_tactics, names);
             }
             ProofTactic::StructuralInduct { arms, .. } => {
+                for arm in arms {
+                    collect_unfold_tactic_names(&arm.tactics, names);
+                }
+            }
+            ProofTactic::Match(proof_match) => {
+                let arms = &proof_match.arms;
                 for arm in arms {
                     collect_unfold_tactic_names(&arm.tactics, names);
                 }

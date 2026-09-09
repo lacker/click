@@ -31,7 +31,14 @@ Kernel files:
   this is a trusted kernel rule, not a smart search result. Its tests check
   typed payloads, malformed schemas, complete coverage, and capture avoidance.
   It does not select a case, introduce free witnesses, or grant resources.
-  Execution-proof case elimination and its surface syntax remain separate work.
+  Entry execution-case elimination shares this schema checker. Its private
+  partition reserves the entry function/state, current premises, scrutinee,
+  and execution environment before introducing fresh fields. Recording an
+  arm checks its exact premise delta and unchanged entry scope. Final path
+  certification checks complete coverage of each partition, not merely that
+  every retained arm is individually valid. Surface currently joins one or
+  two constructors and preserves lexical bindings across deferred folds;
+  wider joins and checked contradictory-arm exclusion remain unsupported.
 - `reasoning.rs`: deterministic proof helpers, finite forall/range reasoning,
   substitutions, execution-derived pure facts, and obligation plumbing.
 - `spec.rs`: `SpecExpression`/`SpecProposition` lowering and evaluation.

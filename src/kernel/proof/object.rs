@@ -316,6 +316,20 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
             self.focused_branch,
         )
     }
+
+    /// Replace the language's lexical environment without changing any
+    /// semantic goal, premise, branch, or evidence.
+    pub(crate) fn with_locals(&self, locals: L) -> Self {
+        Self::new(
+            ProofState {
+                locals,
+                open_branches: self.state.open_branches.clone(),
+                added_facts: self.state.added_facts.clone(),
+                checked_facts: self.state.checked_facts.clone(),
+            },
+            self.focused_branch,
+        )
+    }
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
@@ -1844,6 +1858,88 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             branches,
             introduced_facts,
         })
+    }
+
+    /// Duplicate the same obligation without introducing assumptions. Used
+    /// to organize a checked constructor partition; only its leaves may
+    /// introduce the kernel-issued constructor equations.
+    pub(crate) fn split_frontier_match_group(
+        &self,
+    ) -> Result<ProofSplit<L, ProofObligation<P, O>, ProofExecutionState<S>>, FrontierSplitError>
+    {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(FrontierSplitError::Completed)?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err(FrontierSplitError::NotFrontier);
+        }
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [branch.clone(), branch.clone()]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(vec![]),
+                    checked_facts: Arc::new(vec![]),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+            introduced_facts: [vec![], vec![]],
+        })
+    }
+
+    pub(crate) fn introduce_frontier_match_case(
+        &self,
+        partition: Arc<CheckedProofCasePartition>,
+        index: usize,
+    ) -> Result<Self, &'static str> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or("match requires an open branch")?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err("match requires an execution frontier");
+        }
+        let case = partition
+            .case_fact(index)
+            .ok_or("match case index is outside its partition")?
+            .clone();
+        let mut execution = branch
+            .state
+            .execution
+            .as_deref()
+            .cloned()
+            .ok_or("match requires execution state")?;
+        let facts = branch.state.facts.with_fact(case.clone());
+        if !execution
+            .core
+            .record_proof_case_arm(partition, index, facts.clone())
+        {
+            return Err("match witness scope or case premise is invalid");
+        }
+        let mut successor = branch.clone();
+        successor.state.facts = facts;
+        successor.state.execution = Some(Arc::new(execution));
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .replace_at(self.focused_branch, successor),
+                added_facts: Arc::new(vec![case.clone()]),
+                checked_facts: Arc::new(vec![case]),
+            },
+            self.focused_branch,
+        ))
     }
 }
 

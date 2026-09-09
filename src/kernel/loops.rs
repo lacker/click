@@ -2041,7 +2041,7 @@ pub(super) fn prepare_loop_top_state(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<(CState, Vec<Proposition>)> {
-    let include_mutable_summaries = statement_may_write_memory(body);
+    let include_mutable_summaries = statement_may_write_memory(entry_state, body);
     let (effect_ranges, all_ranges_evaluable) = evaluate_whole_loop_effect_ranges(
         entry_state,
         effect_checks,
@@ -2606,7 +2606,7 @@ pub(super) fn havoc_loop_modified_locals(
     let mut state = state.clone();
     let mut names = BTreeSet::new();
     collect_loop_modified_locals(body, &mut names);
-    let may_write_memory = statement_may_write_memory(body);
+    let may_write_memory = statement_may_write_memory(&state, body);
     if may_write_memory {
         // A local whose address escapes can be written by the loop body
         // through a pointer without ever being assigned by name, so treat it
@@ -2617,10 +2617,19 @@ pub(super) fn havoc_loop_modified_locals(
         let Some(binding) = state.locals.binding(&name) else {
             continue;
         };
-        let CLocalBinding::Object { c_type, .. } = binding else {
-            continue;
+        let c_type = match binding {
+            CLocalBinding::Object { c_type, .. } => *c_type,
+            CLocalBinding::GlobalObject { .. } => {
+                // File-scope globals and function-local statics are
+                // represented only by memory. The memory havoc below
+                // refreshes their modified slots; there is no local value to
+                // resynchronize here.
+                continue;
+            }
+            CLocalBinding::UninitializedObject { .. }
+            | CLocalBinding::ArrayObject { .. }
+            | CLocalBinding::AggregateObject { .. } => continue,
         };
-        let c_type = *c_type;
         let value = match c_type {
             CType::Void => continue,
             CType::VoidPointer => {
@@ -2698,16 +2707,16 @@ pub(super) fn havoc_loop_modified_locals(
     state
 }
 
-pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
+pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement) -> bool {
     match statement {
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
-        | CStatement::Assign { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_) => false,
+        CStatement::Assign { name, .. } => state.locals.is_global_object(name),
         CStatement::CallAssign { .. }
         | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
@@ -2717,18 +2726,21 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::CopyAggregate { .. }
         | CStatement::Update { .. } => true,
         CStatement::Seq(first, second) => {
-            statement_may_write_memory(first) || statement_may_write_memory(second)
+            statement_may_write_memory(state, first) || statement_may_write_memory(state, second)
         }
         CStatement::If {
             then_branch,
             else_branch,
             ..
-        } => statement_may_write_memory(then_branch) || statement_may_write_memory(else_branch),
-        CStatement::ContinueWithStep { step } => statement_may_write_memory(step),
-        CStatement::While { body, .. } => statement_may_write_memory(body),
+        } => {
+            statement_may_write_memory(state, then_branch)
+                || statement_may_write_memory(state, else_branch)
+        }
+        CStatement::ContinueWithStep { step } => statement_may_write_memory(state, step),
+        CStatement::While { body, .. } => statement_may_write_memory(state, body),
         CStatement::Switch { cases, .. } => cases
             .iter()
-            .any(|case| statement_may_write_memory(&case.body)),
+            .any(|case| statement_may_write_memory(state, &case.body)),
     }
 }
 

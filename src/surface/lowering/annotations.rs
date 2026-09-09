@@ -533,6 +533,15 @@ pub(in crate::surface) fn annotated_function(
             contract_claims,
             opaque_contract_supported,
         );
+    if let Some(parameter) =
+        crate::kernel::modified_by_value_aggregate_parameter_with_current_ensure_in_source(
+            &function,
+        )
+    {
+        return Err(ClickError::new(format!(
+            "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
+        )));
+    }
     Ok(if function_block.effects().is_empty() {
         function.with_resource_derived_mutable_frame()
     } else {
@@ -3597,7 +3606,14 @@ impl AnnotationLowerer<'_> {
         loop_index: usize,
         body: &syntax::C0Statement,
     ) -> Result<Vec<CLoopEffectCheck>, ClickError> {
-        let modified_locals = c0_loop_modified_locals(body);
+        // Static-storage objects are stable across loop iterations, even
+        // though their values are loop-modified. A whole-loop effect may
+        // therefore name one; only automatic locals make a whole-loop range
+        // iteration-dependent.
+        let modified_locals = c0_loop_modified_locals(body)
+            .into_iter()
+            .filter(|name| self.entry_state.global_object_type(name).is_none())
+            .collect();
         let mut checks = self
             .structural_clauses
             .iter()

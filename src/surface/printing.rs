@@ -223,6 +223,33 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("induct({parameter}) as {hypothesis};"),
         ),
+        ProofTactic::Match(proof_match) => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "match {} {{",
+                    describe_contract_expression(&proof_match.scrutinee)
+                ),
+            );
+            for arm in &proof_match.arms {
+                let arguments = if arm.bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", arm.bindings.join(", "))
+                };
+                line(
+                    output,
+                    &format!("{prefix}    "),
+                    &format!("{}::{}{arguments} => {{", arm.type_name, arm.variant),
+                );
+                for tactic in &arm.tactics {
+                    write_tactic(output, tactic, indent + 2);
+                }
+                line(output, &format!("{prefix}    "), "}");
+            }
+            line(output, &prefix, "}");
+        }
         ProofTactic::StructuralInduct {
             parameter,
             hypothesis,

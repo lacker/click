@@ -930,10 +930,14 @@ fn prepare_function_claim_path(
     else {
         return Err(format!("the certified path is not safe: {outcome:?}"));
     };
+    let exit_memory =
+        crate::kernel::functions::function_exit_memory(caller_state, return_state, value, function);
+    let mut claim_return_state = return_state.clone();
+    claim_return_state.memory = exit_memory.clone();
     let Some(post_resources) = expand_all_composite_resource_facts(
-        return_state.resources(),
+        claim_return_state.resources(),
         function.composite_resource_definitions(),
-        return_state.memory(),
+        claim_return_state.memory(),
         &assumptions,
     ) else {
         return Err("the returned resource context cannot be expanded".to_string());
@@ -942,9 +946,7 @@ fn prepare_function_claim_path(
         return Err("the returned resource context is not observable".to_string());
     };
     let mut assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
-    let mut post_state = entry_state
-        .clone()
-        .with_memory(return_state.memory().clone());
+    let mut post_state = entry_state.clone().with_memory(exit_memory);
     post_state.resources = post_resources.clone();
     post_state.counted_populations = return_state.counted_populations.clone();
     if function.return_type() != CType::Void {
@@ -1015,7 +1017,7 @@ fn prepare_function_claim_path(
         caller_state: caller_state.clone(),
         arguments: arguments.to_vec(),
         outcome: outcome.clone(),
-        return_state: Some(return_state.clone()),
+        return_state: Some(claim_return_state),
         entry_state,
         required_resources,
         entry_resources,
@@ -1634,15 +1636,16 @@ pub fn c_function_ensure_goals(
         entry_state.memory(),
         assumptions,
     )?;
+    let exit_memory =
+        crate::kernel::functions::function_exit_memory(caller_state, return_state, value, function);
+    let claim_return_state = return_state.clone().with_memory(exit_memory.clone());
     let post_resources = expand_all_composite_resource_facts(
-        return_state.resources(),
+        claim_return_state.resources(),
         function.composite_resource_definitions(),
-        return_state.memory(),
+        claim_return_state.memory(),
         assumptions,
     )?;
-    let mut post_state = entry_state
-        .clone()
-        .with_memory(return_state.memory().clone());
+    let mut post_state = entry_state.clone().with_memory(exit_memory);
     post_state.resources = post_resources;
     post_state.counted_populations = return_state.counted_populations.clone();
     if function.return_type() != CType::Void {

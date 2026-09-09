@@ -1280,6 +1280,10 @@ id = "tactic.if"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
+id = "tactic.match"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
 id = "tactic.cases"
 path = "reference/tactics/index.md#proposition-reasoning"
 
@@ -1411,6 +1415,9 @@ id = "tactic-form.induct"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.structural-induct"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.proof-match"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.apply-induction"

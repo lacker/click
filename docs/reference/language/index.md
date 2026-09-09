@@ -1255,6 +1255,11 @@ string variable and cannot be reinterpreted as contract `result`. Expansion
 uses this spelling when an explicit proof must name an overlapping C
 binding.
 
+Returning a pointer does not extend an automatic object's lifetime. A returned
+pointer must refer to storage that outlives the call, such as caller-provided,
+static, or live heap storage; a postcondition that dereferences a returned
+pointer to a callee local is rejected.
+
 ## `at(...)`
 
 `at(selector, expression)` evaluates a contract expression at a selected visit

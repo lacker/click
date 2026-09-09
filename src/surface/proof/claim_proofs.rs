@@ -33,7 +33,14 @@ fn select_checked_post_execution_tactics<'a>(
                 then_tactics,
                 else_tactics,
             } => {
-                let value = proof.checked_outcome_if_value(condition)?;
+                let scoped = deferred
+                    .lexical_bindings
+                    .as_ref()
+                    .map(|bindings| proof.with_surface_local_scope(bindings));
+                let value = scoped
+                    .as_ref()
+                    .unwrap_or(proof)
+                    .checked_outcome_if_value(condition)?;
                 choices.push(SurfacePathChoice {
                     occurrence: deferred.source_index,
                     condition: condition.clone(),
@@ -1913,6 +1920,10 @@ pub(super) fn finish_ordered_proof<'a>(
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()
                     {
+                        if let Some(bindings) = &deferred.lexical_bindings {
+                            outcome_proof =
+                                outcome_proof.map(|proof| proof.with_surface_local_scope(bindings));
+                        }
                         while selected_post_choices
                             .peek()
                             .is_some_and(|choice| choice.tactic_offset == post_execution_index)

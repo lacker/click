@@ -28,6 +28,7 @@ pub(crate) fn take_checked_function_body_execution_count() -> usize {
 pub(in crate::kernel) mod contract_certification;
 pub use contract_certification::*;
 mod algebraic_cases;
+pub(in crate::kernel) use algebraic_cases::algebraic_constructor_case_equations;
 pub use algebraic_cases::algebraic_constructor_cases;
 use contract_certification::{
     c_function_contract_certification_assumptions,
@@ -2668,19 +2669,18 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
 
     fn collect(
         events: &[CheckedExecutionEvent],
-        covered: &mut std::collections::BTreeMap<usize, [bool; 2]>,
+        covered: &mut std::collections::BTreeMap<usize, Vec<bool>>,
         path_partitions: &mut std::collections::BTreeSet<usize>,
     ) -> bool {
         for event in events {
             match event {
                 CheckedExecutionEvent::ProofCase(arm) => {
-                    if !arm.is_valid()
-                        || arm.arm_index() >= 2
-                        || !path_partitions.insert(arm.identity())
-                    {
+                    if !arm.is_valid() || !path_partitions.insert(arm.identity()) {
                         return false;
                     }
-                    covered.entry(arm.identity()).or_default()[arm.arm_index()] = true;
+                    covered
+                        .entry(arm.identity())
+                        .or_insert_with(|| vec![false; arm.width()])[arm.arm_index()] = true;
                 }
                 CheckedExecutionEvent::Branch(branch) => {
                     for arm_index in 0..2 {
@@ -2712,7 +2712,9 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
             return false;
         }
     }
-    covered.values().all(|arms| *arms == [true, true])
+    covered
+        .values()
+        .all(|arms| !arms.is_empty() && arms.iter().all(|covered| *covered))
 }
 
 #[cfg(test)]
