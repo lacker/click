@@ -858,17 +858,29 @@ impl<'a> Proof<'a> {
         } else {
             &[]
         };
-        let rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
+        let mut rewritten = rewrite_proposition_by_exact_equality(&goal, &equality, available)
             .map_err(|message| self.step_error(message))?;
+        let mut facts = self.facts().clone();
         let surface_goal = self.surface_goal().and_then(|surface_goal| {
             let candidate =
                 rewrite_click_proposition_by_surface_equality(surface_goal, surface_equality)?;
             self.lower_surface_proposition_direct(&candidate, "rewritten Surface goal")
                 .ok()
-                .filter(|lowered| lowered == &rewritten)
+                .filter(|lowered| {
+                    if lowered == &rewritten {
+                        return true;
+                    }
+                    if let Some(checked) = facts.with_checked_rewritten_loads(&rewritten, lowered) {
+                        facts = checked;
+                        rewritten = lowered.clone();
+                        true
+                    } else {
+                        false
+                    }
+                })
                 .map(|_| candidate)
         });
-        let context = self.refined_branch_state(self.facts().clone());
+        let context = self.refined_branch_state(facts);
         Ok(CheckedFocusedTransition::replacing(
             self.state().locals().clone(),
             Some(self.refined_proposition(context, rewritten, surface_goal)),

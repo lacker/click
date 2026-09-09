@@ -1204,10 +1204,12 @@ impl PureFactContext {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
                 crate::kernel::api::atomic_memory_load_equality_evidence(left, right, self)
                     .filter(AtomicMemoryLoadEqualityEvidence::is_fully_typed)
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::MemoryDag)
             }
             Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
                 crate::kernel::api::pointer_offset_equality_evidence(left, right, self)
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag)
             }
             _ => None,
@@ -1215,6 +1217,7 @@ impl PureFactContext {
         let load_address_congruence_evidence = match proposition {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => self
                 .load_address_congruence_evidence(left, right)
+                .map(Box::new)
                 .map(AtomicPropositionDerivationEvidence::LoadAddressCongruence),
             _ => None,
         };
@@ -1323,6 +1326,7 @@ impl PureFactContext {
                             _ => None,
                         })
                 })
+                .map(Box::new)
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementUpperBound),
             _ => None,
         };
@@ -1349,6 +1353,7 @@ impl PureFactContext {
                         },
                     )
                 })
+                .map(Box::new)
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementConstantUpperBound),
             _ => None,
         };
@@ -1368,6 +1373,7 @@ impl PureFactContext {
                 }) =>
             {
                 self.exact_direct_strict_upper_bound_step(base)
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases)
             }
             _ => None,
@@ -1383,6 +1389,7 @@ impl PureFactContext {
                 {
                     let int_max = Bitvector32Term::Constant(i32::MAX as u32);
                     self.exact_direct_order_step(value, &int_max, true)
+                        .map(Box::new)
                         .map(AtomicPropositionDerivationEvidence::Int32OnePlusStrictlyIncreases)
                 }
                 _ => None,
@@ -1402,6 +1409,7 @@ impl PureFactContext {
                         }
                         _ => None,
                     })
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::Int32IncrementBelowMaxIsDefined)
             }
             _ => None,
@@ -1413,6 +1421,7 @@ impl PureFactContext {
             ) if one.as_ref() == &Bitvector32Term::Constant(1) => {
                 let int_max = Bitvector32Term::Constant(i32::MAX as u32);
                 self.exact_direct_order_step(value, &int_max, true)
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::Int32OnePlusBelowMaxIsDefined)
             }
             _ => None,
@@ -1521,6 +1530,7 @@ impl PureFactContext {
                 true,
             ) if lower.as_ref() == &Bitvector32Term::Constant(0) => self
                 .exact_direct_order_step(&Bitvector32Term::Constant(1), value, false)
+                .map(Box::new)
                 .map(AtomicPropositionDerivationEvidence::Int32PositiveIsNonnegative),
             _ => None,
         };
@@ -1530,6 +1540,7 @@ impl PureFactContext {
                 true,
             ) if lower.as_ref() == &Bitvector32Term::Constant(0) => self
                 .exact_direct_order_step(&Bitvector32Term::Constant(0), value, true)
+                .map(Box::new)
                 .map(AtomicPropositionDerivationEvidence::Int32StrictlyPositiveIsNonnegative),
             _ => None,
         };
@@ -1547,6 +1558,7 @@ impl PureFactContext {
                             false,
                         )
                     })
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::Int32SuccessorLeImpliesLt),
                 _ => None,
             },
@@ -1569,6 +1581,7 @@ impl PureFactContext {
                             })
                             .flatten()
                     })
+                    .map(Box::new)
                     .map(AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening),
                 _ => None,
             },
@@ -1588,12 +1601,12 @@ impl PureFactContext {
                         );
                         self.contains_assumed_exact(&premise).then(|| {
                             AtomicPropositionDerivationEvidence::Int32NegatedStrictSuccessorBound(
-                                SignedOrderDerivationStep {
+                                Box::new(SignedOrderDerivationStep {
                                     lower: upper,
                                     upper: value.as_ref().clone(),
                                     strict: false,
                                     premise,
-                                },
+                                }),
                             )
                         })
                     })
@@ -1608,14 +1621,9 @@ impl PureFactContext {
                 true,
             ) if lower.as_ref() == &Bitvector32Term::Constant(0) => {
                 exact_predecessor_base(predecessor).and_then(|value| {
-                    self.exact_direct_order_step(
-                        &Bitvector32Term::Constant(0),
-                        &value,
-                        true,
-                    )
-                    .map(
-                        AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative,
-                    )
+                    self.exact_direct_order_step(&Bitvector32Term::Constant(0), &value, true)
+                    .map(Box::new)
+                    .map(AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative)
                 })
             }
             _ => None,
@@ -1632,9 +1640,7 @@ impl PureFactContext {
                         &base,
                         true,
                     )
-                    .map(
-                        AtomicPropositionDerivationEvidence::Int32PositivePredecessorStrictlyDecreases,
-                    )
+                    .map(Box::new).map(AtomicPropositionDerivationEvidence::Int32PositivePredecessorStrictlyDecreases)
                 }),
             _ => None,
         };
@@ -2605,6 +2611,7 @@ impl PureFactContext {
             .map(Int32OneLeEvidence::EqualOne)
             .or_else(|| {
                 self.exact_direct_order_step(&Bitvector32Term::Constant(1), value, false)
+                    .map(Box::new)
                     .map(Int32OneLeEvidence::Direct)
             })
     }

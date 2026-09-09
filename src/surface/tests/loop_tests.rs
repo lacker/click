@@ -1,9 +1,9 @@
 use super::*;
 
-/// Keep the original C while isolating the post-rewrite proof-body failure.
-/// Never expand this failing proof; see rewritten-invariant-proof-body.md.
+/// The rewritten have must construct and expand a checked proof. The separate
+/// explicit closure migration still has a bounded planning miss.
 #[test]
-fn explicit_sorting_rewritten_invariant_reports_body_failure() {
+fn sorting_rewritten_invariant_body_checks_and_expands() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/bubble_sort3_two_pass_sorted.md");
     let source = std::fs::read_to_string(&path).unwrap();
@@ -69,13 +69,22 @@ fn explicit_sorting_rewritten_invariant_reports_body_failure() {
         }
     "#,
     );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let checked_expansion = expand_c0_claim_source(
+        &expanded,
+        &sources,
+        "bubble_sort3_two_pass",
+        CProofClaim::Grouped,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message()));
+    verify_c0_sources(&checked_expansion, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
     let discovery_before = crate::kernel::invariant_discovery_calls();
     let error = verify_c0_sources(&explicit, &sources).unwrap_err();
     assert!(
         error
             .message()
-            .contains("`have` body is not surface-expressible"),
+            .contains("closure body did not prove every invariant obligation"),
         "{}",
         error.message()
     );

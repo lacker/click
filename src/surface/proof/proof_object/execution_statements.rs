@@ -1036,10 +1036,7 @@ impl<'a> Proof<'a> {
         if capture_this_tactic {
             // The tactic's expansion is the law's own surface certificate.
             let expansion = ProofCertificateBuilder {
-                steps: smart_certificate
-                    .as_ref()
-                    .map(|certificate| certificate.steps().to_vec())
-                    .unwrap_or_default(),
+                steps: smart_certificate.steps().to_vec(),
                 ..ProofCertificateBuilder::default()
             };
             finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &expansion, false);
@@ -1052,32 +1049,13 @@ impl<'a> Proof<'a> {
         // Retain the checked `have` as provenance: a smart body keeps the
         // law's selected surface operations; an explicit body keeps its own
         // script. Expansion serializes this node, never the aftermath.
-        let have_step = match (smart_certificate, &have.proof) {
+        let have_step = match smart_certificate.steps() {
             // The law's surface certificate is already the complete checked
             // form, including the `have` wrapper when it selected one.
-            (Some(certificate), _) => match certificate.steps() {
-                [step @ ProofStep::Have { .. }] => step.clone(),
-                _ => ProofStep::Have {
-                    proposition: have.proposition.clone(),
-                    proof: Box::new(certificate),
-                },
-            },
-            (None, SourceProof::Script(tactics)) => ProofStep::Have {
+            [step @ ProofStep::Have { .. }] => step.clone(),
+            _ => ProofStep::Have {
                 proposition: have.proposition.clone(),
-                proof: Box::new(ProofCertificate::from_proof_tactics(tactics).map_err(
-                    |error| {
-                        self.step_error(format!(
-                            "`have` body is not surface-expressible: {error:?}"
-                        ))
-                    },
-                )?),
-            },
-            (None, _) => ProofStep::Have {
-                proposition: have.proposition.clone(),
-                proof: Box::new(
-                    ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
-                        .expect("assumption is a simple proof"),
-                ),
+                proof: Box::new(smart_certificate),
             },
         };
         let state = self

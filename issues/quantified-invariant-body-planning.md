@@ -116,15 +116,26 @@ leaf/binder work is now outlined without changing proof rules, traversal
 order, synthesis depth/work limits, or the ordinary stack size. Four-size
 1 MiB-stack regressions check linear visits/work in both directions.
 
-The initial full reproduction returned a local smart-work-budget failure
-from `close_invariants`, not a stack overflow. Further explicit steps now
-enumerate the fixed-range invariant and carry the branch ordering through the
-swap. The growing invariant's `unfold; rewrite(j == 1); simp` body exposes a
-more specific proof-body conversion failure. The regression is now named
-`explicit_sorting_rewritten_invariant_reports_body_failure`; see
-[the focused tooling issue](rewritten-invariant-proof-body.md). Fix that
-boundary before resuming automatic migration. The failing proof is not
-expanded, and the reduced C is not substituted for the original fixture.
+The full reproduction now explicitly enumerates the fixed-range invariant and
+carries the branch ordering through the swap. Its growing invariant's
+`unfold; rewrite(j == 1); simp` body constructs a checked proof, expands, and
+independently rechecks. The regression is
+`sorting_rewritten_invariant_body_checks_and_expands`; it retains the original
+C and invariants and leaves the original legacy closers in place for this
+positive proof-body check.
+
+The rewrite retains typed load-equality witnesses, including an exact stored
+source value, the selected destination-address equality, and intervening
+memory edges. This connects the rewritten source goal to its kernel value
+representation. The mid-execution `have` success-without-a-proof fallback is
+deleted: success now requires a retained body. Atomic derivation payloads are
+boxed to keep unrelated evidence off recursive frames; the small-stack
+scaling regression and a compact representation-size assertion cover this.
+
+The same test separately replaces all bare closers with explicit `simp`
+bodies and requires a bounded closure-planning miss with zero legacy discovery.
+That failing variant is not expanded. Exact closure value/safety planning,
+automatic body emission, and legacy closer removal remain open.
 
 ## Acceptance criteria
 

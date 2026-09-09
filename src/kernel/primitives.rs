@@ -3687,7 +3687,7 @@ pub(super) struct Int32PredecessorUpperBoundEvidence {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Int32OneLeEvidence {
-    Direct(SignedOrderDerivationStep),
+    Direct(Box<SignedOrderDerivationStep>),
     EqualOne(Vec<BitvectorEqualityDerivationStep>),
 }
 
@@ -3730,18 +3730,18 @@ pub(super) struct ForallInt32InstantiationEvidence {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
-    MemoryDag(AtomicMemoryLoadEqualityEvidence),
-    LoadAddressCongruence(LoadAddressCongruenceEvidence),
-    PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
+    MemoryDag(Box<AtomicMemoryLoadEqualityEvidence>),
+    LoadAddressCongruence(Box<LoadAddressCongruenceEvidence>),
+    PointerOffsetMemoryDag(Box<PointerOffsetEqualityEvidence>),
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
     ForallInt32Instantiation(Box<ForallInt32InstantiationEvidence>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
-    Int32IncrementUpperBound(SignedOrderDerivationStep),
-    Int32IncrementConstantUpperBound(SignedOrderDerivationStep),
-    Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
-    Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
-    Int32OnePlusBelowMaxIsDefined(SignedOrderDerivationStep),
-    Int32OnePlusStrictlyIncreases(SignedOrderDerivationStep),
+    Int32IncrementUpperBound(Box<SignedOrderDerivationStep>),
+    Int32IncrementConstantUpperBound(Box<SignedOrderDerivationStep>),
+    Int32IncrementStrictlyIncreases(Box<SignedOrderDerivationStep>),
+    Int32IncrementBelowMaxIsDefined(Box<SignedOrderDerivationStep>),
+    Int32OnePlusBelowMaxIsDefined(Box<SignedOrderDerivationStep>),
+    Int32OnePlusStrictlyIncreases(Box<SignedOrderDerivationStep>),
     Int32NonnegativeAddWithinMaxIsDefined(Box<Int32NonnegativeAddWithinMaxEvidence>),
     Int32NonnegativeSubtractWithinValueIsDefined(Box<Int32NonnegativeSubtractWithinValueEvidence>),
     Int32IncrementLowerBound(Box<Int32IncrementBoundsEvidence>),
@@ -3749,13 +3749,13 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementStrictGreaterLowerBound(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementStrictGreaterFromStrictLower(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementPreservesOrder(Box<Int32IncrementBoundsEvidence>),
-    Int32PositiveIsNonnegative(SignedOrderDerivationStep),
-    Int32StrictlyPositiveIsNonnegative(SignedOrderDerivationStep),
-    Int32SuccessorLeImpliesLt(SignedOrderDerivationStep),
-    Int32ConstantLowerBoundWeakening(SignedOrderDerivationStep),
-    Int32NegatedStrictSuccessorBound(SignedOrderDerivationStep),
-    Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
-    Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),
+    Int32PositiveIsNonnegative(Box<SignedOrderDerivationStep>),
+    Int32StrictlyPositiveIsNonnegative(Box<SignedOrderDerivationStep>),
+    Int32SuccessorLeImpliesLt(Box<SignedOrderDerivationStep>),
+    Int32ConstantLowerBoundWeakening(Box<SignedOrderDerivationStep>),
+    Int32NegatedStrictSuccessorBound(Box<SignedOrderDerivationStep>),
+    Int32PositivePredecessorIsNonnegative(Box<SignedOrderDerivationStep>),
+    Int32PositivePredecessorStrictlyDecreases(Box<SignedOrderDerivationStep>),
     Int32NonnegativePredecessorUpperBound(Box<Int32PredecessorUpperBoundEvidence>),
     Int32OneLePredecessorIsNonnegative(Int32OneLeEvidence),
     Int32OneLePredecessorStrictlyDecreases(Int32OneLeEvidence),
