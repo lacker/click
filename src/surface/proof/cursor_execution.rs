@@ -1242,18 +1242,18 @@ fn annotate_surface_at_snapshot(
             expression: Box::new(expression.clone()),
         },
     };
-    fn annotate(
+    // Construct one node outside the traversal frame. In debug builds these
+    // by-value syntax temporaries are large; retaining them on every recursive
+    // visit used tens of KiB per level inside an already nested proof planner.
+    #[inline(never)]
+    fn rebuild(
         proposition: &ClickProposition,
         expression_at_snapshot: &impl Fn(&ContractExpression) -> ContractExpression,
         selector: &SnapshotSelector,
-        depth: usize,
-    ) -> Result<ClickProposition, ClickError> {
-        if depth >= SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
-            return Err(ClickError::new(
-                "Surface Click snapshot annotation exceeded its structural depth bound",
-            ));
-        }
-        Ok(match proposition {
+        completed: &mut Vec<ClickProposition>,
+    ) -> ClickProposition {
+        let mut child = || Box::new(completed.pop().expect("visited snapshot child"));
+        match proposition {
             ClickProposition::Comparison {
                 left,
                 operator,
@@ -1275,70 +1275,44 @@ fn annotate_surface_at_snapshot(
                 proposition: Box::new(proposition.clone()),
             },
             ClickProposition::At { .. } => proposition.clone(),
-            ClickProposition::And(left, right) => ClickProposition::And(
-                Box::new(annotate(left, expression_at_snapshot, selector, depth + 1)?),
-                Box::new(annotate(
-                    right,
-                    expression_at_snapshot,
-                    selector,
-                    depth + 1,
-                )?),
-            ),
-            ClickProposition::Or(left, right) => ClickProposition::Or(
-                Box::new(annotate(left, expression_at_snapshot, selector, depth + 1)?),
-                Box::new(annotate(
-                    right,
-                    expression_at_snapshot,
-                    selector,
-                    depth + 1,
-                )?),
-            ),
-            ClickProposition::Not(body) => ClickProposition::Not(Box::new(annotate(
-                body,
-                expression_at_snapshot,
-                selector,
-                depth + 1,
-            )?)),
-            ClickProposition::Implies(left, right) => ClickProposition::Implies(
-                Box::new(annotate(left, expression_at_snapshot, selector, depth + 1)?),
-                Box::new(annotate(
-                    right,
-                    expression_at_snapshot,
-                    selector,
-                    depth + 1,
-                )?),
-            ),
-            ClickProposition::ForAll { c_type, name, body } => ClickProposition::ForAll {
+            ClickProposition::And(_, _) => {
+                let right = child();
+                ClickProposition::And(child(), right)
+            }
+            ClickProposition::Or(_, _) => {
+                let right = child();
+                ClickProposition::Or(child(), right)
+            }
+            ClickProposition::Not(_) => ClickProposition::Not(child()),
+            ClickProposition::Implies(_, _) => {
+                let right = child();
+                ClickProposition::Implies(child(), right)
+            }
+            ClickProposition::ForAll { c_type, name, .. } => ClickProposition::ForAll {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
+                body: child(),
             },
-            ClickProposition::Exists { c_type, name, body } => ClickProposition::Exists {
+            ClickProposition::Exists { c_type, name, .. } => ClickProposition::Exists {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
+                body: child(),
             },
             ClickProposition::RangeAll {
-                start,
-                end,
-                item,
-                body,
+                start, end, item, ..
             } => ClickProposition::RangeAll {
                 start: expression_at_snapshot(start),
                 end: expression_at_snapshot(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
+                body: child(),
             },
             ClickProposition::RangeAny {
-                start,
-                end,
-                item,
-                body,
+                start, end, item, ..
             } => ClickProposition::RangeAny {
                 start: expression_at_snapshot(start),
                 end: expression_at_snapshot(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
+                body: child(),
             },
             ClickProposition::PredicateCall { name, arguments } => {
                 ClickProposition::PredicateCall {
@@ -1349,9 +1323,50 @@ fn annotate_surface_at_snapshot(
             ClickProposition::Separate { .. }
             | ClickProposition::Contains { .. }
             | ClickProposition::Loadable { .. } => proposition.clone(),
-        })
+        }
     }
-    annotate(surface, &expression_at_snapshot, selector, 0)
+    // Postorder traversal stores references and completed output on the heap,
+    // not large syntax values in one Rust call frame per logical connective.
+    // Preserve left-to-right traversal, opaque `at` nodes, and the same bound.
+    let mut pending = vec![(surface, 0, false)];
+    let mut completed = Vec::new();
+    while let Some((proposition, depth, visited)) = pending.pop() {
+        if visited {
+            let rebuilt = rebuild(
+                proposition,
+                &expression_at_snapshot,
+                selector,
+                &mut completed,
+            );
+            completed.push(rebuilt);
+            continue;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        if depth >= SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
+            return Err(ClickError::new(
+                "Surface Click snapshot annotation exceeded its structural depth bound",
+            ));
+        }
+        pending.push((proposition, depth, true));
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push((right, depth + 1, false));
+                pending.push((left, depth + 1, false));
+            }
+            ClickProposition::Not(body)
+            | ClickProposition::ForAll { body, .. }
+            | ClickProposition::Exists { body, .. }
+            | ClickProposition::RangeAll { body, .. }
+            | ClickProposition::RangeAny { body, .. } => {
+                pending.push((body, depth + 1, false));
+            }
+            _ => {}
+        }
+    }
+    debug_assert_eq!(completed.len(), 1);
+    Ok(completed.pop().expect("visited snapshot root"))
 }
 
 pub(super) fn predicate_call_snapshot_selector(
@@ -2979,6 +2994,119 @@ fn set_function_exit_execution(
 #[cfg(test)]
 mod cursor_sequence_tests {
     use super::*;
+
+    fn snapshot_test_leaf(name: String) -> ClickProposition {
+        ClickProposition::Comparison {
+            left: ContractExpression::CBinding(name),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::Old(Box::new(ContractExpression::CBinding("entry".into()))),
+        }
+    }
+
+    fn annotate_on_small_stack(
+        surface: ClickProposition,
+    ) -> (Result<ClickProposition, ClickError>, usize) {
+        std::thread::Builder::new()
+            .name("snapshot-annotation-small-stack".into())
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                crate::instrumentation::measure_deterministic_work(|| {
+                    annotate_surface_at_snapshot(
+                        &surface,
+                        &SnapshotSelector::Mark("chosen".into()),
+                        SnapshotAnnotation::Reread,
+                    )
+                })
+            })
+            .unwrap()
+            .join()
+            .expect("snapshot annotation must not retain large recursive frames")
+    }
+
+    #[test]
+    fn snapshot_annotation_depth_is_stack_safe_and_bounded() {
+        for depth in [7, 15, 23, SNAPSHOT_ANNOTATION_DEPTH_LIMIT - 1] {
+            let mut surface = snapshot_test_leaf("current".into());
+            for _ in 0..depth {
+                surface = ClickProposition::Not(Box::new(surface));
+            }
+            let (result, work) = annotate_on_small_stack(surface);
+            let result = result.unwrap();
+            assert_eq!(work, depth + 1);
+            let mut leaf = &result;
+            for _ in 0..depth {
+                let ClickProposition::Not(body) = leaf else {
+                    panic!("annotation must preserve every connective");
+                };
+                leaf = body;
+            }
+            let ClickProposition::Comparison { left, right, .. } = leaf else {
+                panic!("annotation must preserve the leaf");
+            };
+            assert!(matches!(
+                left,
+                ContractExpression::At {
+                    selector: SnapshotSelector::Mark(_),
+                    ..
+                }
+            ));
+            assert!(matches!(right, ContractExpression::Old(_)));
+        }
+        let mut too_deep = snapshot_test_leaf("current".into());
+        for _ in 0..SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
+            too_deep = ClickProposition::Not(Box::new(too_deep));
+        }
+        let (result, work) = annotate_on_small_stack(too_deep);
+        assert!(
+            result
+                .unwrap_err()
+                .message()
+                .contains("structural depth bound")
+        );
+        assert_eq!(work, SNAPSHOT_ANNOTATION_DEPTH_LIMIT + 1);
+    }
+
+    #[test]
+    fn snapshot_annotation_work_is_linear_and_preserves_operand_order() {
+        for leaves in [8, 16, 32, 64] {
+            let mut level = (0..leaves)
+                .map(|index| snapshot_test_leaf(index.to_string()))
+                .collect::<Vec<_>>();
+            while level.len() > 1 {
+                let mut children = level.into_iter();
+                level = Vec::new();
+                while let Some(left) = children.next() {
+                    let right = children.next().unwrap();
+                    level.push(ClickProposition::Implies(Box::new(left), Box::new(right)));
+                }
+            }
+            let (result, work) = annotate_on_small_stack(level.pop().unwrap());
+            let result = result.unwrap();
+            assert_eq!(work, 2 * leaves - 1);
+            let mut pending = vec![&result];
+            let mut index = 0;
+            while let Some(node) = pending.pop() {
+                match node {
+                    ClickProposition::Implies(left, right) => {
+                        pending.push(right);
+                        pending.push(left);
+                    }
+                    ClickProposition::Comparison { left, .. } => {
+                        let ContractExpression::At { expression, .. } = left else {
+                            panic!("the comparison must read the selected snapshot");
+                        };
+                        assert_eq!(
+                            expression.as_ref(),
+                            &ContractExpression::CBinding(index.to_string())
+                        );
+                        index += 1;
+                    }
+                    _ => panic!("annotation changed a connective"),
+                }
+            }
+            assert_eq!(index, leaves);
+        }
+    }
 
     #[test]
     fn large_straight_line_cursor_advances_on_a_small_stack() {

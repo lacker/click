@@ -2,22 +2,6 @@
 
 ## Violated invariant
 
-### Integration regression: sorting proof stack overflow
-
-Integrating the recursive-child resource checkpoint `2acf588d` with
-`d25256e6` produced merge commit `6f97dbfa`. Its full `scripts/check.sh`
-gate aborted in
-`surface::tests::loop_tests::sorting_rewritten_invariant_body_checks_and_expands`
-with a stack overflow after about 20 seconds. The recursive-child checkpoint
-passed the full gate before this merge; the failure's cause has not yet been
-isolated. The integration was not moved into the primary checkout.
-
-Reproduce that named test on the merge commit with normal stack and tactic
-limits, reduce the overflowing proof path, and require bounded verification,
-expansion, and independent rechecking. The full gate must pass before the
-combined changes are integrated. Do not weaken the unchanged sorting C or
-raise stack limits to accept the proof.
-
 Automatic loop preservation must emit a complete checked proof of its exact
 back-edge value and safety obligations. Expanded simple proofs must not
 invoke the legacy invariant discovery ladder.
@@ -34,9 +18,12 @@ The regression is `explicit_invariant_body_copy3_checks_and_expands`.
 It preserves the original C and converts only the already-expanded closer to
 `close_invariants by { simp(); }`.
 
-The recursive Surface structural planner's implication case is outlined into
-a non-inlined helper. This keeps its large local temporaries off every nested
-conjunction/quantifier frame without changing search order or stack limits.
+The recursive Surface structural planner's connective cases are outlined into
+non-inlined helpers. This keeps branch-local temporaries out of the shared
+dispatcher without changing search order or stack limits. Snapshot annotation
+uses an explicit postorder work stack, with one nonrecursive node-construction
+helper. Small-stack regressions cover its supported depth, depth rejection,
+operand order, and linear work over multiple input sizes.
 The existing four-size, small-stack kernel reasoning regression remains enabled.
 
 Bare closers and automatic preservation still use the legacy preparation
