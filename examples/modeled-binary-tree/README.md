@@ -76,16 +76,22 @@ Two entry proof matches name the root and pivot fields and close the empty
 cases from the preconditions. Unfolding exposes independent child resources;
 after the original C loads and stores, explicit folds reconstruct the lower
 node and returned pivot. No named open handles are used. The proof checks
-memory ownership as well as the model transformation. A separate in-order
-sequence preservation theorem remains future work.
+memory ownership as well as the model transformation.
+
+`heap_inorder` derives a `List<struct tree_node*>` from the owned model, visiting
+left subtree, node, then right subtree. The pure theorem
+`heap_rotate_left_preserves_inorder` proves that rotation preserves this exact
+list, using the standard library's append-associativity theorem. The C contract
+also guarantees `heap_inorder(rotated.model) == heap_inorder(old(t.model))`:
+node identities, their order, and their multiplicities are unchanged.
 
 ## Remaining C proofs
 
 The generic `Tree<T>` theorems above remain pure model exercises; mirroring
-is not a C operation. Traversal termination, membership, right rotation, and
-the heap-derived in-order sequence are not yet verified.
+is not a C operation. Traversal termination, membership, and right rotation
+are not yet verified.
 
-The missing heap-derived sequence model is tracked by
+Further recursive-model algorithms are tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),
 and structural termination of the iterative walks is tracked by
 [`structural-loop-termination.md`](../../issues/structural-loop-termination.md).

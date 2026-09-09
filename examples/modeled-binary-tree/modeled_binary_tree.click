@@ -61,12 +61,73 @@ function heap_rotate_left(tree: HeapTree) -> HeapTree {
     }
 }
 
+function heap_inorder(tree: HeapTree) -> List<struct tree_node*>
+    decreases tree
+{
+    match tree {
+        HeapTree::Empty => List<struct tree_node*>::Nil,
+        HeapTree::Node(node, value, left, right) =>
+            list_append(heap_inorder(left), List<struct tree_node*>::Cons(node, heap_inorder(right))),
+    }
+}
+
+theorem heap_rotate_left_node_preserves_inorder(node: struct tree_node*, value: int,
+                                               left: HeapTree, right: HeapTree) {
+    ensures heap_inorder(heap_rotate_left(HeapTree::Node(node, value, left, right)))
+        == heap_inorder(HeapTree::Node(node, value, left, right)) by {
+        induct(right) as ih {
+            HeapTree::Empty => {
+                unfold(heap_rotate_left(HeapTree::Node(node, value, left, HeapTree::Empty)));
+                normalize();
+            }
+            HeapTree::Node(pivot, pivot_value, middle, far_right) => {
+                unfold(heap_rotate_left(HeapTree::Node(node, value, left,
+                    HeapTree::Node(pivot, pivot_value, middle, far_right))));
+                unfold(heap_inorder(HeapTree::Node(pivot, pivot_value,
+                    HeapTree::Node(node, value, left, middle), far_right)));
+                unfold(heap_inorder(HeapTree::Node(node, value, left,
+                    HeapTree::Node(pivot, pivot_value, middle, far_right))));
+                unfold(heap_inorder(HeapTree::Node(node, value, left, middle)));
+                unfold(heap_inorder(HeapTree::Node(pivot, pivot_value, middle, far_right)));
+                apply(list_append_associative(heap_inorder(left),
+                    List<struct tree_node*>::Cons(node, heap_inorder(middle)),
+                    List<struct tree_node*>::Cons(pivot, heap_inorder(far_right))));
+                rewrite(list_append(list_append(heap_inorder(left),
+                    List<struct tree_node*>::Cons(node, heap_inorder(middle))),
+                    List<struct tree_node*>::Cons(pivot, heap_inorder(far_right)))
+                    == list_append(heap_inorder(left),
+                        list_append(List<struct tree_node*>::Cons(node, heap_inorder(middle)),
+                            List<struct tree_node*>::Cons(pivot, heap_inorder(far_right)))));
+                unfold(list_append(List<struct tree_node*>::Cons(node, heap_inorder(middle)),
+                    List<struct tree_node*>::Cons(pivot, heap_inorder(far_right))));
+                normalize();
+            }
+        }
+    }
+}
+
+theorem heap_rotate_left_preserves_inorder(tree: HeapTree) {
+    ensures heap_inorder(heap_rotate_left(tree)) == heap_inorder(tree) by {
+        induct(tree) as ih {
+            HeapTree::Empty => {
+                unfold(heap_rotate_left(HeapTree::Empty));
+                normalize();
+            }
+            HeapTree::Node(node, value, left, right) => {
+                apply(heap_rotate_left_node_preserves_inorder(node, value, left, right));
+                assumption();
+            }
+        }
+    }
+}
+
 struct tree_node* tree_rotate_left(struct tree_node* root) {
     consumes t: tree_at(root);
     requires t.model != HeapTree::Empty;
     requires heap_right(t.model) != HeapTree::Empty;
     produces rotated: tree_at(result);
     ensures rotated.model == heap_rotate_left(old(t.model));
+    ensures heap_inorder(rotated.model) == heap_inorder(old(t.model));
 } by {
     match t.model {
         HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
@@ -99,6 +160,11 @@ struct tree_node* tree_rotate_left(struct tree_node* root) {
                         unfold(heap_rotate_left(HeapTree::Node(node, value, left_model,
                             HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model))));
                         normalize();
+                    }
+                    have heap_inorder(rotated.model) == heap_inorder(old(t.model)) by {
+                        rewrite(rotated.model == heap_rotate_left(old(t.model)));
+                        apply(heap_rotate_left_preserves_inorder(old(t.model)));
+                        assumption();
                     }
                     simp();
                 },
