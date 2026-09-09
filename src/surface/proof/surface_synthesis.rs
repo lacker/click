@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 const SURFACE_SYNTHESIS_WORK_LIMIT: usize = 16_384;
 pub(super) const SURFACE_SYNTHESIS_DEPTH_LIMIT: usize = 128;
 
@@ -310,6 +313,7 @@ pub(in crate::surface) fn synthesize_surface_proposition_with_bound_variable_nam
     )
 }
 
+#[inline(never)]
 fn synthesize_surface_proposition_with_bound_variables(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],
@@ -318,48 +322,18 @@ fn synthesize_surface_proposition_with_bound_variables(
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
     let _frame = SurfaceSynthesisFrame::enter("proposition")?;
-    if let Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) = proposition {
-        fn sequence(
-            value: &crate::kernel::SequenceTerm,
-            parameters: &[syntax::C0Parameter],
-            arguments: &[CExpression],
-            state: &CState,
-            bound: &BTreeMap<Variable, String>,
-        ) -> Option<ContractExpression> {
-            let _frame = SurfaceSynthesisFrame::enter("sequence")?;
-            Some(match value.node.as_ref() {
-                crate::kernel::SequenceTermNode::Literal(values) => {
-                    ContractExpression::SequenceLiteral(
-                        values
-                            .iter()
-                            .map(|value| {
-                                let CValue::Int32(value) = value else {
-                                    return None;
-                                };
-                                synthesize_surface_bitvector(
-                                    value, parameters, arguments, state, bound,
-                                )
-                            })
-                            .collect::<Option<Vec<_>>>()?,
-                    )
-                }
-                crate::kernel::SequenceTermNode::Concat(left, right) => {
-                    ContractExpression::SequenceConcat(
-                        Box::new(sequence(left, parameters, arguments, state, bound)?),
-                        Box::new(sequence(right, parameters, arguments, state, bound)?),
-                    )
-                }
-            })
-        }
-        return Some(ClickProposition::Comparison {
-            left: sequence(left, parameters, arguments, state, bound_variables)?,
-            operator: ComparisonOperator::Equal,
-            right: sequence(right, parameters, arguments, state, bound_variables)?,
-        });
-    }
     match proposition {
-        Proposition::And(left, right) => {
-            return Some(ClickProposition::And(
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            let construct: fn(Box<ClickProposition>, Box<ClickProposition>) -> ClickProposition =
+                match proposition {
+                    Proposition::And(..) => ClickProposition::And,
+                    Proposition::Or(..) => ClickProposition::Or,
+                    Proposition::Implies(..) => ClickProposition::Implies,
+                    _ => unreachable!(),
+                };
+            Some(construct(
                 Box::new(synthesize_surface_proposition_with_bound_variables(
                     left,
                     parameters,
@@ -374,44 +348,36 @@ fn synthesize_surface_proposition_with_bound_variables(
                     state,
                     bound_variables,
                 )?),
-            ));
+            ))
         }
-        Proposition::Or(left, right) => {
-            return Some(ClickProposition::Or(
-                Box::new(synthesize_surface_proposition_with_bound_variables(
-                    left,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?),
-                Box::new(synthesize_surface_proposition_with_bound_variables(
-                    right,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?),
-            ));
+        Proposition::ForAll { .. } | Proposition::Exists { .. } => {
+            synthesize_surface_quantified_proposition(
+                proposition,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )
         }
-        Proposition::Implies(left, right) => {
-            return Some(ClickProposition::Implies(
-                Box::new(synthesize_surface_proposition_with_bound_variables(
-                    left,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?),
-                Box::new(synthesize_surface_proposition_with_bound_variables(
-                    right,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?),
-            ));
-        }
+        _ => synthesize_surface_atomic_proposition(
+            proposition,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        ),
+    }
+}
+
+#[inline(never)]
+fn synthesize_surface_quantified_proposition(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    match proposition {
         Proposition::ForAll { var, sort, body }
         | Proposition::Exists {
             var, sort, body, ..
@@ -458,7 +424,57 @@ fn synthesize_surface_proposition_with_bound_variables(
                 _ => unreachable!(),
             });
         }
-        _ => {}
+        _ => unreachable!("non-quantified proposition dispatched to binder synthesis"),
+    }
+}
+
+// Large leaf temporaries must not occupy every recursive connective frame.
+#[inline(never)]
+fn synthesize_surface_atomic_proposition(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    if let Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) = proposition {
+        fn sequence(
+            value: &crate::kernel::SequenceTerm,
+            parameters: &[syntax::C0Parameter],
+            arguments: &[CExpression],
+            state: &CState,
+            bound: &BTreeMap<Variable, String>,
+        ) -> Option<ContractExpression> {
+            let _frame = SurfaceSynthesisFrame::enter("sequence")?;
+            Some(match value.node.as_ref() {
+                crate::kernel::SequenceTermNode::Literal(values) => {
+                    ContractExpression::SequenceLiteral(
+                        values
+                            .iter()
+                            .map(|value| {
+                                let CValue::Int32(value) = value else {
+                                    return None;
+                                };
+                                synthesize_surface_bitvector(
+                                    value, parameters, arguments, state, bound,
+                                )
+                            })
+                            .collect::<Option<Vec<_>>>()?,
+                    )
+                }
+                crate::kernel::SequenceTermNode::Concat(left, right) => {
+                    ContractExpression::SequenceConcat(
+                        Box::new(sequence(left, parameters, arguments, state, bound)?),
+                        Box::new(sequence(right, parameters, arguments, state, bound)?),
+                    )
+                }
+            })
+        }
+        return Some(ClickProposition::Comparison {
+            left: sequence(left, parameters, arguments, state, bound_variables)?,
+            operator: ComparisonOperator::Equal,
+            right: sequence(right, parameters, arguments, state, bound_variables)?,
+        });
     }
     // A declared predicate call starts with its hidden logical resource-state
     // snapshot. Its source call does not write that argument. Each array-ref

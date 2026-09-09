@@ -73,15 +73,12 @@ reverted. No C, contract, or fixture expectations were weakened.
 
 ## Next implementation
 
-1. Fix [recursive premise-lowering stack usage](invariant-premise-lowering-stack.md)
-   before resuming the full sorting migration. Its issue retains the exact
-   unchanged-C reproduction and debugger findings.
-2. Generalize the existing-step composition demonstrated below to the full
+1. Generalize the existing-step composition demonstrated below to the full
    quantified invariant context. Do not start by adding a value-flow witness:
    the reduced loop already verifies and expands with existing transport.
-3. Replace the expected miss with positive verification, expansion, and
+2. Replace the expected miss with positive verification, expansion, and
    rewritten verification. Preserve the copy3 and bubble-pass regressions.
-4. Re-enable automatic bodies only when the full gate passes; then delete
+3. Re-enable automatic bodies only when the full gate passes; then delete
    `verify_lowered_invariant_path`, the legacy prefix probe, and legacy
    lowering-record builders. Preserve do-while paths with no continuing edge.
 
@@ -113,11 +110,18 @@ proofs to rediscover the separate cell equalities was less successful; that
 is not evidence that a new equality primitive is required.
 
 The full unchanged two-pass fixture was then tested with analogous explicit
-index proof, two finite entry instances, and transports. It overflowed the
-ordinary test stack while `simp` lowered a candidate premise. That attempt
-was not expanded. The crash is recorded separately and blocks a conclusion
-that the complete sorting proof needs only the reduced sequence. The
-successful reduced C is not substituted for the original fixture.
+index proof, two finite entry instances, and transports. This exposed oversized
+recursive frames in both proposition lowering and source synthesis. Their
+leaf/binder work is now outlined without changing proof rules, traversal
+order, synthesis depth/work limits, or the ordinary stack size. Four-size
+1 MiB-stack regressions check linear visits/work in both directions.
+
+`explicit_sorting_transport_has_a_bounded_lowering_result` retains that full
+unchanged-C reproduction. It now returns the existing local smart-work-budget
+failure from `close_invariants` (2,000,001 units against the 2,000,000 limit),
+not a stack overflow. The failing proof is not expanded. The full quantified
+planner task remains open; the successful reduced C is not substituted for
+the original fixture.
 
 ## Acceptance criteria
 
