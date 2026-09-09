@@ -635,6 +635,32 @@ fn add_inequality(sum: &mut SignedAffineInequality, addend: &SignedAffineInequal
 /// those same premises. Checking is one structural pass over the selected
 /// propositions; no ambient facts are searched and no closure is retained
 /// after the current goal closes.
+fn affine_equality_follows_from_bounds(
+    form: &SignedAffineForm,
+    inequalities: &[SignedAffineInequality],
+) -> Option<bool> {
+    let forward = SignedAffineInequality {
+        terms: form.terms.clone(),
+        bound: form.constant.checked_neg()?,
+    };
+    let reverse = SignedAffineInequality {
+        terms: form
+            .terms
+            .iter()
+            .map(|(term, coefficient)| Some((term.clone(), coefficient.checked_neg()?)))
+            .collect::<Option<_>>()?,
+        bound: form.constant,
+    };
+    Some(
+        inequalities
+            .iter()
+            .any(|premise| inequality_implies(premise, &forward))
+            && inequalities
+                .iter()
+                .any(|premise| inequality_implies(premise, &reverse)),
+    )
+}
+
 pub(crate) fn check_signed_affine_arithmetic(
     goal: &Proposition,
     premises: &[Proposition],
@@ -668,6 +694,7 @@ pub(crate) fn check_signed_affine_arithmetic(
             SignedAffineClaim::Constant(value) => value,
             SignedAffineClaim::Equality(form) => {
                 (form.terms.is_empty() && form.constant == 0)
+                    || affine_equality_follows_from_bounds(&form, &inequalities) == Some(true)
                     || equalities.iter().any(|available| {
                         available == &form
                             || (available.constant
@@ -735,6 +762,63 @@ mod arithmetic_tests {
             ),
             true,
         )
+    }
+
+    #[test]
+    fn arithmetic_equality_requires_both_matching_bounds() {
+        let goal = proposition(ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(0)),
+            Bitvector32Term::Variable(Variable(1)),
+        ));
+        assert!(
+            check_signed_affine_arithmetic(&goal, &[less_equal(0, 1), less_equal(1, 0)]).is_ok()
+        );
+        for premises in [
+            vec![],
+            vec![less_equal(0, 1)],
+            vec![less_equal(1, 0)],
+            vec![less_equal(0, 1), less_equal(2, 0)],
+        ] {
+            assert!(check_signed_affine_arithmetic(&goal, &premises).is_err());
+        }
+        let x = Bitvector32Term::Variable(Variable(0));
+        let zero = Bitvector32Term::Constant(0);
+        let one = Bitvector32Term::Constant(1);
+        let zero_goal = proposition(ConditionTerm::equal(x.clone(), zero.clone()));
+        assert!(
+            check_signed_affine_arithmetic(
+                &zero_goal,
+                &[
+                    proposition(ConditionTerm::signed_less_equal(zero, x.clone())),
+                    proposition(ConditionTerm::signed_less_equal(x, one)),
+                ]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn arithmetic_equality_bounds_scale_with_explicit_premises() {
+        let goal = proposition(ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(0)),
+            Bitvector32Term::Variable(Variable(1)),
+        ));
+        let mut previous = None;
+        for size in [16, 32, 64, 128] {
+            let mut premises = (2..size)
+                .map(|index| less_equal(index, index + 1))
+                .collect::<Vec<_>>();
+            premises.extend([less_equal(0, 1), less_equal(1, 0)]);
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                check_signed_affine_arithmetic(&goal, &premises)
+            });
+            result.unwrap();
+            assert!(work > 0);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 3);
+            }
+            previous = Some(work);
+        }
     }
 
     #[test]

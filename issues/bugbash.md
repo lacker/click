@@ -1,13 +1,13 @@
 # Bug bash: open soundness holes and C mis-models
 
-Seventeen independent root causes. Every one has a reproduction that verifies
+Sixteen independent root causes. Every one has a reproduction that verifies
 today while stating something the C does not guarantee: a false postcondition,
 a definite answer where C leaves the behaviour undefined or unspecified, or a
 program C rejects that Click accepts. All are against C11/C17 on the LP64
 profile Click documents.
 
 Six are critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other eleven are high: the trigger is
+false, with no unusual tactics. The other ten are high: the trigger is
 narrower, an unusual construct or an out-of-range value, but the accepted
 claim is just as wrong. Nothing here is speculative; anything that could not
 be made to reproduce has been removed rather than left as a lead.
@@ -655,115 +655,6 @@ the comparison is false: the function returns 0.
 
 ---
 
-## 8. Uninitialized reads missed via symbolic index, callee, block re-entry
-
-**Severity: high.** Three findings. Reading indeterminate automatic storage is
-undefined behaviour that Click claims to check, and these paths do not.
-
-**Violated invariant.** A load from automatic storage that was never written is
-undefined behaviour, whatever the index expression looks like and whoever
-performs the load.
-
-**Mechanism.** The stack-local check in
-`src/kernel/eval/memory_loads.rs:515-524` fires only when no possibly-aliasing
-cell matched, which needs a concrete offset; heap blocks have an explicit
-`uninitialized_allocations` table and are handled correctly. Nothing carries
-initialization state across a `views`/`owns` transfer at a call, and
-block-scoped objects reuse one block for the whole function.
-
-**Regression A**, symbolic index
-(`mdtests/uninit_local_symbolic_index_rejected.md`):
-
-```c
-int32 local_sym(int32 i) {
-    int32 a[3];
-    a[0] = 1;
-    a[1] = 2;
-    return a[i];
-}
-```
-
-```click
-verifying "t.c";
-
-int32 local_sym(int32 i) {
-    requires i == 2;
-    ensures result == result;
-}
-```
-
-`a[2]` was never written. With the index spelled as the constant `2` the same
-read is correctly rejected.
-
-**Regression B**, through a callee
-(`mdtests/uninit_through_callee_views_rejected.md`):
-
-```c
-int32 same_twice(int32* p) {
-    return p[0] == p[0];
-}
-
-int32 uninit_eq_callee() {
-    int32 x;
-    return same_twice(&x);
-}
-```
-
-```click
-verifying "t.c";
-
-int32 same_twice(int32* p) {
-    views p[0..1];
-    immutable;
-    ensures result == 1 by auto;
-}
-
-int32 uninit_eq_callee() {
-    ensures result == 1 by auto;
-}
-```
-
-**Regression C**, block-scoped storage
-(`mdtests/block_local_stale_across_iterations_rejected.md`):
-
-```c
-int32 f() {
-    int32 i;
-    for (i = 0; i < 2; i++) {
-        int32 a[2];
-        if (i == 1) {
-            return a[0];
-        }
-        a[0] = 5;
-    }
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 f() {
-    ensures result == 5;
-}
-```
-
-`a` is a fresh object each iteration, so the second iteration reads
-indeterminate storage.
-
-**Acceptance criteria.**
-- Each regression is rejected with a "read of uninitialized storage"
-  diagnostic.
-- Track initialization for stack blocks the way heap blocks are tracked, so a
-  symbolic index into a partly initialized array is checked against what was
-  actually written. A whole-object test is not enough: an index the proof
-  bounds to the written prefix, which is what an ordinary copy loop does, must
-  still be accepted, and local array stores do not appear in the cell map
-  under constant offsets, so the writes have to be found another way.
-- Carry initialization state across a `views`/`owns` transfer at a call.
-- Give block-scoped objects a fresh block per entry to the block.
-
----
 
 ## 9. A store through `&local` in an inline header helper is dropped
 

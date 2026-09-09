@@ -510,11 +510,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
 
     // Automatic storage is allocated by a declaration, but allocation alone
     // does not initialize it. Once all possibly-aliasing stored cells have
-    // been considered above, an in-bounds local load with no matching cell is
-    // an uninitialized read rather than an unconstrained value.
-    if pointer.block.starts_with("local:")
-        && memory.access_in_bounds(&pointer, value_type.byte_width())
-    {
+    // been considered above, a local load with no matching cell is an
+    // uninitialized read rather than an unconstrained value. A symbolic
+    // offset must not bypass this check: allocation bounds are independent
+    // of whether the addressed element has ever been written.
+    if pointer.block.starts_with("local:") && memory.has_block(&pointer.block) {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
             facts,
