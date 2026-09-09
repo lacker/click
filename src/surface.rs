@@ -797,6 +797,9 @@ pub struct ResourceInstanceBinding {
     fields: Option<crate::kernel::ResourceArguments>,
     /// Present only on an explicit proof-side resource construction.
     fold_fields: Option<Vec<(String, ContractExpression)>>,
+    /// Explicit child slot, surface name, and instance identity. Shared to
+    /// keep recursive tactic syntax small.
+    child_bindings: Option<std::sync::Arc<[(String, String, Variable)]>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

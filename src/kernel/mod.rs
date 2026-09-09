@@ -9,7 +9,9 @@ mod api;
 mod assumptions;
 mod eval;
 mod functions;
+#[cfg(test)]
 pub(crate) use functions::rewrite_resource_instance;
+pub(crate) use functions::rewrite_resource_instance_selecting_children;
 mod loops;
 #[cfg(test)]
 pub(crate) use loops::invariant_discovery_calls;

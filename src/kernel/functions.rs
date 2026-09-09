@@ -6571,13 +6571,32 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 
 /// Exchange one exclusive instance for its immediate memory body, or back.
 /// Memory-only bodies need no open token, including guarded/matched bodies.
-/// Recursive children retain the legacy handle protocol pending child selection.
+/// This compatibility entry point retains the legacy recursive-child handles.
+#[cfg(test)]
 pub(crate) fn rewrite_resource_instance(
     state: &CState,
     instance: &ResourceInstance,
     definition: &CCompositeResourceDefinition,
     assumptions: &PureFactContext,
     unfold: bool,
+) -> Result<(CState, Vec<Proposition>), &'static str> {
+    rewrite_resource_instance_selecting_children(
+        state,
+        instance,
+        definition,
+        assumptions,
+        unfold,
+        None,
+    )
+}
+
+pub(crate) fn rewrite_resource_instance_selecting_children(
+    state: &CState,
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    assumptions: &PureFactContext,
+    unfold: bool,
+    selected_children: Option<&[(String, Variable)]>,
 ) -> Result<(CState, Vec<Proposition>), &'static str> {
     if definition.name() != instance.name()
         || definition.instance_schema.as_ref() != Some(instance.schema())
@@ -6601,7 +6620,7 @@ pub(crate) fn rewrite_resource_instance(
     {
         return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
-    let body_only = definition.has_memory_only_instance_body();
+    let body_only = selected_children.is_some() || definition.has_memory_only_instance_body();
     let mut folded_instance = instance.clone();
     folded_instance.opened_children = Default::default();
     let folded = CResourceFact::own(CResource::Instance(folded_instance.clone()));
@@ -6662,6 +6681,30 @@ pub(crate) fn rewrite_resource_instance(
         &mut budget,
     )
     .ok_or("instance fold/unfold requires a proved body guard case")?;
+    let explicit_children = selected_children.map(|children| {
+        children
+            .iter()
+            .map(|(name, identity)| (name.as_str(), *identity))
+            .collect::<BTreeMap<_, _>>()
+    });
+    if let Some(children) = &explicit_children {
+        let supplied = selected_children.unwrap();
+        let expected = selected.map_or(&[][..], |arm| arm.children.as_slice());
+        let identities = supplied
+            .iter()
+            .map(|(_, identity)| *identity)
+            .collect::<BTreeSet<_>>();
+        if children.len() != supplied.len()
+            || identities.len() != supplied.len()
+            || identities.contains(&instance.identity)
+            || children.len() != expected.len()
+            || expected
+                .iter()
+                .any(|child| !children.contains_key(child.name.as_str()))
+        {
+            return Err("child selection must name every selected arm child exactly once");
+        }
+    }
     let mut body = evaluate_function_resource_context(
         &evaluation,
         if active {
@@ -6709,7 +6752,16 @@ pub(crate) fn rewrite_resource_instance(
                     .ok_or("invalid child field binding")
             })
             .collect::<Result<ResourceArguments, _>>()?;
-        let identity = if unfold {
+        let identity = if let Some(explicit) = &explicit_children {
+            let identity = explicit[child.name.as_str()];
+            if unfold
+                && (state.resources.owned_instance(identity).is_some()
+                    || state.open_instances.owned_instance(identity).is_some())
+            {
+                return Err("unfold child result identity is already in use");
+            }
+            identity
+        } else if unfold {
             loop {
                 let identity = Variable(
                     u64::MAX
@@ -6732,7 +6784,7 @@ pub(crate) fn rewrite_resource_instance(
                 .ok_or("parent has no recorded child handle")?
                 .identity
         };
-        let child_instance = ResourceInstance::new(
+        let mut child_instance = ResourceInstance::new(
             identity,
             instance.name.clone(),
             arguments,
@@ -6750,9 +6802,30 @@ pub(crate) fn rewrite_resource_instance(
                         .as_c_value()
                         .is_none_or(|value| value.c_type() != parameter.c_type())
                 })
-            || (!unfold && recorded != Some(&child_instance))
+            || (!unfold && explicit_children.is_none() && recorded != Some(&child_instance))
         {
             return Err("recursive child does not match the parent's recorded body");
+        }
+        if !unfold && explicit_children.is_some() {
+            let actual = state
+                .resources
+                .owned_instance(identity)
+                .ok_or("fold requires an owned, folded child")?;
+            if actual.name != child_instance.name
+                || actual.schema != child_instance.schema
+                || actual.arguments.len() != child_instance.arguments.len()
+                || actual.fields.len() != child_instance.fields.len()
+                || !actual.opened_children.is_empty()
+                || !actual
+                    .arguments
+                    .iter()
+                    .zip(child_instance.arguments.iter())
+                    .chain(actual.fields.iter().zip(child_instance.fields.iter()))
+                    .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
+            {
+                return Err("selected child does not satisfy the proposed parent model");
+            }
+            child_instance = actual.clone();
         }
         resource_bindings.insert(child.binding, identity);
         body = body
@@ -6765,7 +6838,7 @@ pub(crate) fn rewrite_resource_instance(
             .map_err(|_| "child ownership is duplicated")?;
         children.push((child.name.clone(), child_instance));
     }
-    if !unfold && children.len() != instance.opened_children.len() {
+    if !unfold && explicit_children.is_none() && children.len() != instance.opened_children.len() {
         return Err("fold would discard a recorded child");
     }
     if unfold {

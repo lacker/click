@@ -213,6 +213,102 @@ int32 read(int32* p, int32 expected) {
 } by { unfold(c); execute(); fold(c); simp(); }
 "#;
 
+fn independent_children_source() -> &'static str {
+    include_str!("../../mdtests/resource_independent_children.md")
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap()
+}
+
+const INDEPENDENT_CHILDREN_C: &[(&str, &str)] = &[(
+    "resource_independent_children.c",
+    "int32 read_left(int32* p, int32* left, int32* right) { return *left; }
+     void init(int32* p, int32* left, int32* right, int32 value) { *p = value; }",
+)];
+
+#[test]
+fn independent_children_construct_and_expand() {
+    let source = independent_children_source();
+    verify_c0_sources(source, INDEPENDENT_CHILDREN_C).unwrap();
+    for name in ["read_left", "init"] {
+        let expanded =
+            expand_c0_claim_source(source, INDEPENDENT_CHILDREN_C, name, CProofClaim::Grouped)
+                .unwrap();
+        verify_c0_sources(&expanded, INDEPENDENT_CHILDREN_C).unwrap();
+        assert!(expanded.contains("as { left: l, right: r }"));
+    }
+}
+
+#[test]
+fn independent_children_may_change_roles_in_a_new_model() {
+    let source = independent_children_source()
+        .split("\nvoid init")
+        .next()
+        .unwrap()
+        .replace(
+            "ensures root.model == old(root.model);",
+            "ensures root.model == Tree::Branch(1, right, Tree::Leaf(3), left, Tree::Leaf(2));",
+        )
+        .replace(
+            "{ model: old(root.model) }, { left: l, right: r }",
+            "{ model: Tree::Branch(1, right, r.model, left, l.model) }, { left: r, right: l }",
+        );
+    verify_c0_sources(&source, INDEPENDENT_CHILDREN_C).unwrap();
+    let expanded = expand_c0_claim_source(
+        &source,
+        INDEPENDENT_CHILDREN_C,
+        "read_left",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    verify_c0_sources(&expanded, INDEPENDENT_CHILDREN_C).unwrap();
+}
+
+#[test]
+fn independent_children_reject_bad_selection_and_consumed_names() {
+    let source = independent_children_source();
+    for (from, to) in [
+        ("as { left: l, right: r }", "as { left: l }"),
+        ("as { left: l, right: r }", "as { left: l, wrong: r }"),
+        ("as { left: l, right: r }", "as { left: l, right: l }"),
+        ("as { left: l, right: r }", "as { left: root, right: r }"),
+        ("{ model: old(root.model) }", "{ model: root.model }"),
+        ("}, { left: l, right: r });", "}, { left: l });"),
+        ("}, { left: l, right: r });", "}, { left: l, right: l });"),
+        ("}, { left: l, right: r });", "}, { left: r, right: l });"),
+        ("let l = fold(tree(left), { model: Tree::Leaf(2) });", ""),
+        (
+            "let l = fold(tree(left), { model: Tree::Leaf(2) });",
+            "let l = fold(tree(right), { model: Tree::Leaf(2) });",
+        ),
+        ("unfold(l);", "unfold(root); unfold(l);"),
+        ("unfold(l);", "unfold(l); unfold(l);"),
+        ("consumes r: tree(right);", ""),
+    ] {
+        assert!(
+            verify_c0_sources(&source.replace(from, to), INDEPENDENT_CHILDREN_C).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+    let expanded = expand_c0_claim_source(
+        source,
+        INDEPENDENT_CHILDREN_C,
+        "read_left",
+        CProofClaim::Grouped,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &expanded.replace("}, { left: l, right: r });", "}, { left: r, right: l });"),
+            INDEPENDENT_CHILDREN_C
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn conditional_explicit_folds_update_models_and_expand() {
     let source = r#"verifying "cell.c";

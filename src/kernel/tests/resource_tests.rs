@@ -159,6 +159,110 @@ fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
 }
 
 #[test]
+fn independent_children_kernel_consumes_names_and_accepts_replacements() {
+    let (instance, definition, state) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    let children = vec![
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let rewrite =
+        |state: &CState, instance: &ResourceInstance, unfold, children: &[(String, Variable)]| {
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                state,
+                instance,
+                &definition,
+                &assumptions,
+                unfold,
+                Some(children),
+            )
+        };
+    let (open, _) = rewrite(&state, &instance, true, &children).unwrap();
+    assert!(open.open_instances.is_empty());
+    assert!(open.resource_instance_fields(instance.identity()).is_none());
+    assert!(
+        open.resource_instance_at_path(instance.identity(), &["left".into()])
+            .is_none()
+    );
+    let left = open.owned_resource_instance(Variable(501)).unwrap().clone();
+    let (raw, _) = rewrite(&open, &left, true, &[]).unwrap();
+    assert!(raw.owned_resource_instance(left.identity()).is_none());
+    assert!(rewrite(&raw, &instance, false, &children).is_err());
+    let mut replacement = left.clone();
+    replacement.identity = Variable(503);
+    let (replaced, _) = rewrite(&raw, &replacement, false, &[]).unwrap();
+    let selected = vec![
+        ("left".into(), Variable(503)),
+        ("right".into(), Variable(502)),
+    ];
+    let (closed, _) = rewrite(&replaced, &instance, false, &selected).unwrap();
+    assert_eq!(closed.resources(), state.resources());
+    assert!(closed.open_instances.is_empty());
+    for bad in [
+        vec![],
+        vec![("left".into(), Variable(501))],
+        vec![
+            ("left".into(), Variable(501)),
+            ("right".into(), Variable(501)),
+        ],
+        vec![
+            ("left".into(), instance.identity()),
+            ("right".into(), Variable(502)),
+        ],
+    ] {
+        assert!(rewrite(&state, &instance, true, &bad).is_err());
+    }
+    assert!(rewrite(&open, &instance, false, &selected).is_err());
+}
+
+#[test]
+fn independent_children_kernel_work_ignores_unrelated_instances() {
+    let (instance, definition, initial) = recursive_child_fixture();
+    let assumptions = PureFactContext::new();
+    let children = vec![
+        ("left".into(), Variable(501)),
+        ("right".into(), Variable(502)),
+    ];
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut state = initial.clone();
+        for identity in 2..=size {
+            let mut unrelated = instance.clone();
+            unrelated.identity = Variable(identity);
+            state.resources = state
+                .resources
+                .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let (open, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+                &state,
+                &instance,
+                &definition,
+                &assumptions,
+                true,
+                Some(&children),
+            )
+            .unwrap();
+            assert!(open.open_instances.is_empty());
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                &open,
+                &instance,
+                &definition,
+                &assumptions,
+                false,
+                Some(&children),
+            )
+            .unwrap()
+        });
+        assert!(work > 0);
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 128, "{samples:?}");
+    }
+}
+
+#[test]
 fn recursive_child_kernel_requires_exact_folded_children() {
     let (instance, definition, state) = recursive_child_fixture();
     let assumptions = PureFactContext::new();

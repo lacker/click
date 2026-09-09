@@ -51,10 +51,6 @@ impl<'a> Proof<'a> {
                 .function
                 .composite_resource_definition(&name)
                 .ok_or_else(|| self.step_error("fold resource has no checked definition"))?;
-            if !definition.has_memory_only_instance_body() {
-                return Err(self
-                    .step_error("explicit fold fields do not yet support recursive child bodies"));
-            }
             let schema = definition
                 .instance_field_schema()
                 .ok_or_else(|| self.step_error("fold resource has no fields"))?;
@@ -128,12 +124,37 @@ impl<'a> Proof<'a> {
             .composite_resource_definition(instance.name())
             .ok_or_else(|| self.step_error("resource instance has no registered body"))?;
         let selected = CResourceFact::own(CResource::Instance(instance.clone()));
-        let (after, added) = crate::kernel::rewrite_resource_instance(
+        let selected_children = binding
+            .child_bindings
+            .as_ref()
+            .map(|children| {
+                children
+                    .iter()
+                    .map(|(slot, name, identity)| {
+                        let identity = if unfold {
+                            *identity
+                        } else {
+                            before
+                                .owned_resource_instance(*identity)
+                                .ok_or_else(|| {
+                                    self.step_error(format!(
+                                        "child `{name}` is not owned in folded form"
+                                    ))
+                                })?
+                                .identity()
+                        };
+                        Ok((slot.clone(), identity))
+                    })
+                    .collect::<Result<Arc<[(String, Variable)]>, ClickError>>()
+            })
+            .transpose()?;
+        let (after, added) = crate::kernel::rewrite_resource_instance_selecting_children(
             before,
             instance,
             definition,
             self.facts().assumptions(),
             unfold,
+            selected_children.as_deref(),
         )
         .map_err(|message| self.step_error(message))?;
         let mut facts = self.facts().clone();
@@ -143,12 +164,13 @@ impl<'a> Proof<'a> {
         let updated_branch = if let Some(goal) = outcome {
             execution
                 .core
-                .record_return_resource_rewrite(
+                .record_return_resource_rewrite_with_children(
                     context.function,
                     goal.path_index,
                     self.facts(),
                     &selected,
                     &facts,
+                    selected_children.clone(),
                 )
                 .map_err(|message| self.step_error(message))?;
             execution.core.state = after.clone().into();
@@ -167,13 +189,14 @@ impl<'a> Proof<'a> {
         } else {
             execution
                 .core
-                .record_resource_rewrite(
+                .record_resource_rewrite_with_children(
                     context.function,
                     context.arguments,
                     self.facts(),
                     &selected,
                     &after,
                     &facts,
+                    selected_children,
                 )
                 .map_err(|message| self.step_error(message))?;
             execution.core.state = after.into();

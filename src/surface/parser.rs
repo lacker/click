@@ -1378,7 +1378,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -1635,7 +1635,7 @@ impl Parser {
                 }
                 Some("consumes") => {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_owned_resource_binding()?;
                     self.expect(Token::Semicolon)?;
                     requires.push(
                         apply_contract_lets_to_requirement(
@@ -2564,6 +2564,7 @@ impl Parser {
                 schema: None,
                 fields: None,
                 fold_fields: None,
+                child_bindings: None,
             },
             resource: Box::new(resource),
         };
@@ -3167,6 +3168,70 @@ impl Parser {
         }
     }
 
+    fn parse_resource_child_bindings(
+        &mut self,
+        parent: &ResourceClause,
+        introduce: bool,
+    ) -> Result<Vec<(String, String, Variable)>, ClickError> {
+        let ResourceClause::Declared { name: family, .. } = parent else {
+            return Err(self.error("child bindings require a declared resource family"));
+        };
+        self.expect(Token::LBrace)?;
+        let mut result = Vec::new();
+        let mut slots = BTreeSet::new();
+        let mut names = BTreeSet::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let slot = self.expect_ident("child slot")?;
+            self.expect(Token::Colon)?;
+            let name = self.expect_ident("child resource name")?;
+            if !slots.insert(slot.clone()) || !names.insert(name.clone()) {
+                return Err(self.error("duplicate child slot or resource name"));
+            }
+            if self.current_contract_bindings.contains(&name) {
+                return Err(self.error("child resource name conflicts with a C or pure binding"));
+            }
+            let identity =
+                if let Some((identity, existing)) = self.current_resource_bindings.get(&name) {
+                    if existing != family {
+                        return Err(self.error("child resource has the wrong family"));
+                    }
+                    *identity
+                } else if introduce {
+                    let identity = Variable(self.next_resource_identity);
+                    self.next_resource_identity += 1;
+                    identity
+                } else {
+                    return Err(self.error(format!("unknown child resource `{name}`")));
+                };
+            if introduce {
+                self.current_resource_bindings
+                    .insert(name.clone(), (identity, family.clone()));
+                self.current_resource_targets.insert(
+                    name.clone(),
+                    ResourceClause::Named {
+                        binding: ResourceInstanceBinding {
+                            name: name.clone(),
+                            identity,
+                            children: Vec::new(),
+                            schema: None,
+                            fields: None,
+                            fold_fields: None,
+                            child_bindings: Some(Vec::new().into()),
+                        },
+                        resource: Box::new(parent.clone()),
+                    },
+                );
+            }
+            result.push((slot, name, identity));
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::RBrace)?;
+        Ok(result)
+    }
+
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let name = self.expect_ident("tactic")?;
         match name.as_str() {
@@ -3211,6 +3276,12 @@ impl Parser {
                     self.position += 1;
                 }
                 self.expect(Token::RBrace)?;
+                let child_bindings = if self.peek() == Some(&Token::Comma) {
+                    self.position += 1;
+                    self.parse_resource_child_bindings(&resource, false)?
+                } else {
+                    Vec::new()
+                };
                 self.expect(Token::RParen)?;
                 self.expect(Token::Semicolon)?;
                 let binding = ResourceInstanceBinding {
@@ -3220,6 +3291,7 @@ impl Parser {
                     schema: None,
                     fields: None,
                     fold_fields: None,
+                    child_bindings: Some(Vec::new().into()),
                 };
                 self.current_resource_bindings
                     .insert(name.clone(), (identity, resource_name.clone()));
@@ -3233,6 +3305,7 @@ impl Parser {
                 Ok(ProofTactic::FoldResource(ResourceClause::Named {
                     binding: ResourceInstanceBinding {
                         fold_fields: Some(fields),
+                        child_bindings: Some(child_bindings.into()),
                         ..binding
                     },
                     resource: Box::new(resource),
@@ -3538,7 +3611,7 @@ impl Parser {
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
-                let tactic = if self
+                let mut tactic = if self
                     .peek_ident()
                     .is_some_and(|name| self.current_resource_targets.contains_key(name))
                 {
@@ -3554,6 +3627,16 @@ impl Parser {
                     ProofTactic::UnfoldPredicate(predicate)
                 };
                 self.expect(Token::RParen)?;
+                if self.peek_ident() == Some("as") {
+                    self.position += 1;
+                    let ProofTactic::UnfoldResource(ResourceClause::Named { binding, resource }) =
+                        &mut tactic
+                    else {
+                        return Err(self.error("`as` requires a named resource unfold"));
+                    };
+                    binding.child_bindings =
+                        Some(self.parse_resource_child_bindings(resource, true)?.into());
+                }
                 tactic
             }
             "apply" => {

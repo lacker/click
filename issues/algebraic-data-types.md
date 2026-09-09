@@ -50,8 +50,8 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   The false case exposes no body ownership or facts. Bare field names in the
   body denote the instance's fields.
   Memory-only bodies, including guarded and matched bodies, leave no open
-  handle. Bodies with recursive children still retain one; it grants no
-  folded ownership for calls or returns.
+  handle. Recursive children can be independently named with `as { ... }`;
+  only the older parent-qualified compatibility syntax retains a handle.
 - A resource body may instead `match` one ADT field with exhaustive
   `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
   arm without implicit proof-by-cases. Bindings have the constructor's
@@ -64,14 +64,15 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   resource definition; every child field must equal an immediate constructor
   binding of its declared type. The matched model field therefore strictly
   descends through a proper submodel, without extra recursion syntax.
-- `unfold(root)` exposes `root.left`; deeper paths such as
-  `root.left.left` require each intervening parent to be open. Children remain
-  folded until explicitly unfolded. The parent handle records distinct child
-  identities and their unchanged arguments/fields. Folding requires those
-  exact children back in folded form and consumes their exposed ownership.
-  Child names are unavailable after the parent folds; a later reopening may
-  introduce fresh child resource identities. Model values and C pointer
-  identities are not changed by this logical exchange.
+- `unfold(root) as { left: l, right: r };` consumes the parent and exposes
+  independently owned, folded children without retaining a parent handle.
+  `let root = fold(tree(p), { model: value }, { left: l, right: r });`
+  consumes the selected children plus immediate memory. Each selected-arm slot
+  must occur exactly once with a distinct owned identity. Child arguments and
+  fields must match the proposed model; replacement identities and reordered
+  children are allowed. Named `consumes` inputs support constructing parents
+  from separately owned children. The older parent-qualified syntax remains
+  compatible and requires its recorded children unchanged.
 - Plain memory bodies support explicit construction from raw ownership:
   `let c = fold(cell(p), { model: Mark::Set(value) });` supplies every field and
   checks the complete body ownership and facts. Initializers accept typed
@@ -81,8 +82,7 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   selects entry-state fields without requiring an open handle. Guarded and
   matched memory-only bodies also support explicit fields: fold selects the
   proved guard or constructor case from the proposed instance and checks its
-  complete body. Recursive-child bodies still require a matching open handle
-  and unchanged fields.
+  complete body. Recursive-child bodies accept explicit child selections.
   A declaration or field value alone grants no memory authority.
 - Checked folds may follow C returns on multiple retained execution paths.
   Each fold is tied to its exact path's ownership, memory, and guard case;
@@ -107,6 +107,7 @@ expansion/rechecking, and deterministic multi-size scaling:
 - [resource_cell_construction.md](../mdtests/resource_cell_construction.md)
 - [resource_adt_construction.md](../mdtests/resource_adt_construction.md)
 - [resource_conditional_construction.md](../mdtests/resource_conditional_construction.md)
+- [resource_independent_children.md](../mdtests/resource_independent_children.md)
 - [resource_fields_guarded_memory_body.md](../mdtests/resource_fields_guarded_memory_body.md)
 - [resource_fields_match_memory_body.md](../mdtests/resource_fields_match_memory_body.md)
 - [resource_recursive_children.md](../mdtests/resource_recursive_children.md)
@@ -124,17 +125,13 @@ expansion/rechecking, and deterministic multi-size scaling:
    witnesses, nested resource guards/matches, arbitrary scrutinees, and general
    resource `if/else` remain unsupported. Keep recursion finite and avoid
    eagerly traversing an unknown model when extending these cases.
-2. **Field establishment and updates.** Memory-only bodies, including guards and matches,
-   support `let c = fold(cell(p), { model: Mark::Set(value) });`, with every field
-   supplied explicitly. `produces c: cell(p);` can introduce a result resource
-   from raw ownership. Folding checks the body with the proposed fields;
-   unfolding consumes the instance without an open handle. Existing
-   `fold(c)` proofs use entry-state fields as a compatibility template.
-   Migrate recursive-child bodies away from their open-handle protocol. Fields are symbolic values,
+2. **Field snapshots.** Explicit field establishment and updates work for
+   memory bodies and selected recursive children. Fields are symbolic values,
    not freely assignable ghost storage; every change must re-establish the
-   relation to concrete memory. Support arbitrary symbolic terms in post-state
-   snapshots, not just entry variables or concrete constructors. Independently
-   named children and explicit child selection at fold remain to be designed.
+   relation to concrete memory. Extend fixed post-state snapshots to arbitrary
+   symbolic terms, not just entry-bound variables. A regression should capture
+   a newly constructed model at a named proof point, unfold its owner, and
+   reuse that captured model in a later explicit fold without a live handle.
 3. **Contract and witness transport.** Complete ordinary inline-call transport
    and concrete-function formation/refinement for resource-parameterized
    contracts, and transport parent-qualified child handles through explicit
