@@ -62,6 +62,16 @@ cargo test --test examples
 
 ## Time-Bounded runs
 
+Ordinary development and test builds use `debug = "line-tables-only"` to
+reduce per-worktree build storage while retaining filename/line-number
+backtraces. This does not change optimization, assertions, overflow checks,
+or incremental compilation. Full variable/type inspection in a debugger needs
+an explicit override, for example `CARGO_PROFILE_TEST_DEBUG=2 cargo nextest run`
+or `CARGO_PROFILE_DEV_DEBUG=2 cargo build`. The dedicated `profiling` profile
+continues to retain full debug information. Existing build artifacts do not
+shrink automatically; clean an old target directory only when no task is using
+it.
+
 Prover regressions usually manifest as hangs rather than failures, so the
 suite has a hard per-test time budget enforced by cargo-nextest. Install it
 once with `cargo install cargo-nextest --locked` (or `brew install

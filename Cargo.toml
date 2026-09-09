@@ -7,6 +7,11 @@ license = "Apache-2.0"
 [dependencies]
 libc = "0.2"
 
+# Keep filename/line backtraces without duplicating full type and variable
+# debug information in every worktree. The test profile inherits this setting.
+[profile.dev]
+debug = "line-tables-only"
+
 # An optimized build that keeps symbols and debug info, for sampling
 # profilers (`scripts/profile-samply.sh`). Verification timing is judged in
 # `click profile`; this profile is for finding where the wall-clock time goes
