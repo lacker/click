@@ -1,5 +1,44 @@
 use super::*;
 
+#[test]
+fn completed_recursive_loop_bodies_skip_legacy_preplanning_and_recheck() {
+    for (filename, function) in [
+        ("c_decreases_recursive_in_loop.md", "recursive_loop"),
+        (
+            "c_decreases_resource_recursive_in_loop.md",
+            "zero_walk_loop",
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(filename);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let explicit = fixture
+            .click_source
+            .unwrap()
+            .replace("close_invariants();", "close_invariants by { simp(); }");
+        let before = crate::kernel::invariant_discovery_calls();
+        verify_c0_sources(&explicit, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        let expanded = expand_c0_claim_source(&explicit, &sources, function, CProofClaim::Grouped)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        assert!(!expanded.contains("close_invariants();"));
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        assert_eq!(
+            before,
+            crate::kernel::invariant_discovery_calls(),
+            "{filename}"
+        );
+    }
+}
+
 /// The saved expansion checks all invariant bodies without repeating smart
 /// search or invoking legacy invariant discovery.
 #[test]
@@ -217,7 +256,7 @@ fn explicit_invariant_body_copy3_checks_and_expands() {
     let click = fixture.click_source.as_deref().unwrap();
     verify_c0_sources(click, &sources).unwrap();
     let expanded = expand_c0_claim_source(click, &sources, "copy3", CProofClaim::Grouped).unwrap();
-    assert!(expanded.contains("close_invariants();"));
+    assert!(expanded.contains("close_invariants by {"));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
     let discovery_before = crate::kernel::invariant_discovery_calls();
     verify_c0_sources(&explicit, &sources).unwrap_or_else(|error| panic!("{}", error.message()));

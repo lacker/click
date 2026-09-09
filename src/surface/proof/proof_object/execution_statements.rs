@@ -447,13 +447,21 @@ impl<'a> Proof<'a> {
     }
 
     /// Consume the complete prepared bundle without lowering or proof search.
+    pub(in crate::surface::proof) fn validate_loop_invariant_bundle(
+        &self,
+        invariant_checks: &[CLoopInvariantCheck],
+    ) -> Result<(), ClickError> {
+        self.state
+            .validate_checked_invariant_lowerings(invariant_checks)
+            .map_err(|message| self.step_error(message))
+    }
+
+    /// Record closure only after validating the exact retained evidence.
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
     ) -> Result<Self, ClickError> {
-        self.state
-            .validate_checked_invariant_lowerings(invariant_checks)
-            .map_err(|message| self.step_error(message))?;
+        self.validate_loop_invariant_bundle(invariant_checks)?;
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;

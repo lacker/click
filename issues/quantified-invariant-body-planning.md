@@ -12,6 +12,68 @@ constructing those proofs, not accepting a new kind of success token.
 
 ## Current green checkpoint
 
+Copy3 now also stores its expanded explicit closure proof in
+`mdtests/copy3_array_demo.md`. The C and invariants are unchanged.
+
+## Producer migration attempt (2026-09-09)
+
+The staged prototype migrated bare closers and automatic preparation to
+completed bodies and removed the prefix probe. All 2,006 unit/CLI tests
+passed after updating boundary-specific tests and supplying the existing
+predecessor theorem plus `arithmetic() using { 0 <= n; }` in two countdown
+proofs. The full fixture gate still rejected eleven fixtures:
+
+- Bounded closure misses: `c_decreases_lexicographic_loop`, `c_decreases_loop`,
+  `c_decreases_nested_loop`, `c_pointer_local_loop_invariant`,
+  `fill_tail_keeps_first`, `loop_old_count_invariant`, `loop_preserve_branch`,
+  and `loop_stdlib_permutation_invariant`.
+- Stale evidence: `c_decreases_recursive_in_loop` and
+  `c_decreases_resource_recursive_in_loop`. Investigate the remaining
+  named-invariant prepass adding facts after an explicit body has closed;
+  it must not invalidate or regenerate that exact body.
+- `loop_entry_snapshot`: body planning reports unknown code region label
+  `drain`; investigate label presentation in the nested body scope.
+
+The proposed prepass guard was blocked by execution safety review. The
+production prototype and temporary diagnostics were restored to the prior
+checkpoint; only the independently checked saved copy3 proof is retained.
+The migration is not complete. Resolve stale evidence and label scope first,
+then supply explicit existing steps for bounded misses. Preserve negative
+and stale-context coverage and do-while exits; never expand a failing proof.
+No C, invariants, or limits were changed.
+
+### Confirmed stale-context cause
+
+The ordering fix is now implemented: the prepass checks for retained invariant
+evidence, validates it against the exact bundle and execution context, and
+does not add further named-invariant facts after that validation. A bare
+close-request flag still does not authorize skipping proof construction.
+Finalization retains its independent evidence validation. The regression
+`completed_recursive_loop_bodies_skip_legacy_preplanning_and_recheck` verifies,
+expands, and rechecks both recursive fixtures with explicit bodies and zero
+legacy discovery; the combined isolated runtime is 0.54 seconds. Existing
+wrong-root, incomplete-body, stale-snapshot, changed-premise, and changed-effect
+rejection tests remain in force. Automatic/bare-closer migration and the
+remaining fixture gaps are not included in this ordering fix.
+
+A non-mutating probe reproduced the prepass on a cloned, already-closed
+proof in both recursive-loop fixtures, replacing only the source bare closer
+with an explicit `simp` body. Before the probe, exact bundle validation
+succeeds. Joining the first named-invariant `have` adds one premise and
+immediately produces `invariant closure has stale lowering evidence`.
+Snapshot and effect-store identity both remain unchanged. The same happens
+on both feasible branches and for the resource-recursive fixture. The
+ordinary explicit runs pass (combined focused test: 0.237 seconds); probe
+descendants are discarded and all diagnostic code was removed.
+
+This confirms an ordering problem, not an invalid closure proof: the old
+prepass mutates the premise store after the body has bound its exact context.
+The migration should validate an existing completed body and bypass further
+preplanning for it, or perform all preplanning before opening the body.
+Do not treat a bare close-request flag as proof and do not relax stale-context
+validation. The old legacy-prefix check happened to skip these redundant
+`have`s; removing that check exposed the ordering mistake.
+
 The unchanged two-pass sorting C now has a saved expanded proof in
 `mdtests/bubble_sort3_two_pass_sorted.md`. All four invariant closers have
 explicit bodies, with no remaining `simp` calls. The regression
