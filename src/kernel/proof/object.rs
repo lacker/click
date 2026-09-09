@@ -822,20 +822,10 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .open_branches
             .get(self.focused_branch)
             .ok_or(PropositionCloseError::Unavailable)?;
-        let negated = Proposition::Not(Box::new(fact.clone()));
-        let opposite_condition = match fact {
-            Proposition::ConditionIs(condition, value) => {
-                Some(Proposition::ConditionIs(condition.clone(), !value))
-            }
-            _ => None,
-        };
-        let contradictory = branch.state.facts.contains(fact)
-            && (branch.state.facts.contains(&negated)
-                || opposite_condition
-                    .as_ref()
-                    .is_some_and(|opposite| branch.state.facts.contains(opposite))
-                || super::fact_reasoning::normalizes_context_free(&negated));
-        contradictory
+        branch
+            .state
+            .facts
+            .contradicts(fact)
             .then(|| self.closed_focused())
             .ok_or_else(|| PropositionCloseError::ContradictionUnavailable(fact.clone()))
     }

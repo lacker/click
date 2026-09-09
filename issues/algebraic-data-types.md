@@ -50,8 +50,8 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   The false case exposes no body ownership or facts. Bare field names in the
   body denote the instance's fields.
   Memory-only bodies, including guarded and matched bodies, leave no open
-  handle. Recursive children can be independently named with `as { ... }`;
-  only the older parent-qualified compatibility syntax retains a handle.
+  handle. Recursive children must be independently named with `as { ... }`;
+  parent-qualified handles such as `root.left` are rejected.
 - A resource body may instead `match` one ADT field with exhaustive
   `Type::Variant(bindings) => { ... }` arms. Constructor evidence selects an
   arm without implicit proof-by-cases. Bindings have the constructor's
@@ -71,14 +71,14 @@ goal is connecting symbolic tree models to ownership of the unchanged C tree.
   must occur exactly once with a distinct owned identity. Child arguments and
   fields must match the proposed model; replacement identities and reordered
   children are allowed. Named `consumes` inputs support constructing parents
-  from separately owned children. The older parent-qualified syntax remains
-  compatible and requires its recorded children unchanged.
+  from separately owned children. No open-parent ledger or recorded-child
+  identity requirement remains.
 - Plain memory bodies support explicit construction from raw ownership:
   `let c = fold(cell(p), { model: Mark::Set(value) });` supplies every field and
   checks the complete body ownership and facts. Initializers accept typed
   symbolic expressions, including ADT constructors, entry-model values,
   matches, and pure-function applications; they do not execute pure functions
-  or split arbitrary models into cases. The legacy `fold(c)` shorthand
+  or split arbitrary models into cases. The `fold(c)` shorthand
   selects entry-state fields without requiring an open handle. Guarded and
   matched memory-only bodies also support explicit fields: fold selects the
   proved guard or constructor case from the proposed instance and checks its
@@ -118,21 +118,22 @@ expansion/rechecking, and deterministic multi-size scaling:
 
 ## Remaining work toward the C tree
 
-### Constructor elimination in execution proofs (blocks left rotation)
+### Constructor elimination in execution proofs
 
 An arbitrary resource model needs an explicit proof operation that splits on
-its constructors and introduces typed field names. Knowing `model != Empty`
-does not currently expose the unknown fields of `Node`. Pure `match` remains
+its constructors and introduces typed field names. An entry proof match now
+exposes the unknown fields of `Node`, with `model != Empty` discharging the
+empty arm through `contradiction(model == Empty)`. Pure `match` remains
 a symbolic expression, and theorem-level `induct` is not an execution-proof
 case split. Do not specialize the rotation to concrete payloads or subtree
-models to bypass this gap.
+models to bypass unsupported proof shapes.
 
 The reduced regression is
 [resource_nonempty_model_needs_constructor_cases.md](../mdtests/resource_nonempty_model_needs_constructor_cases.md):
 reading a cell whose model is an arbitrary `Some(value)` is safe, but `unfold`
-requires an explicit constructor term. It currently records the bounded
-rejection. The intended positive proof names `value` in the `Some` case and
-discharges the impossible `None` case from the precondition.
+requires an explicit constructor term. Its positive proof names `value` in
+the `Some` case and discharges the impossible `None` case from the precondition.
+The C read is unchanged and the empty arm owns no memory.
 
 The selected syntax is `match model { Type::Variant(fields) => { tactics } }`
 in proof blocks, distinct in context from pure match expressions.
@@ -144,25 +145,28 @@ pointer payloads, capture avoidance, complete constructor families, and
 malformed or unsupported inputs. This rule alone neither chooses witnesses
 nor grants ownership. The proof-level tactic supports one or two constructors
 at unchanged function entry. Each arm starts with the same owned resources,
-introduces only its fresh typed fields, and must run to function exit. Nested
+introduces only its fresh typed fields, and must run to function exit or close
+with an exact `contradiction(...)`. Nested
 entry matches and deferred return-state folds retain their lexical bindings.
 Expansion preserves the match and rechecks its constructor arms. The positive
 [resource regression](../mdtests/proof_match_resource.md) covers two reachable
-memory-owning cases; it does not replace the nonempty-cell gap above.
+memory-owning cases, alongside the nonempty-cell exclusion regression above.
 Its current payload sorts are signed 32/64-bit integers, pointers, and ADTs.
 
-The next integration is **checked exclusion of contradictory constructor
-arms**. A constructor excluded by the precondition must close without executing
-invalid C on that impossible branch, while its checked contradiction remains
-part of the partition's coverage certificate. Do not omit the arm or simulate
-an arbitrary return state. The nonempty-cell regression above is the intended
-positive test; missing or unrelated contradiction premises must be rejected.
-Also extend joins to wider constructor families without quadratic selector
+**Checked exclusion of contradictory constructor arms** is supported when the
+arm consists of a single `contradiction(proposition)` naming an exact fact and
+its negation available from the entry premises and constructor equation.
+The kernel retains that contradiction in the partition coverage evidence;
+no C execution or return state is manufactured for the excluded constructor.
+Missing or unrelated premises and missing live-arm ownership are rejected.
+Still extend exclusion to local proof prefixes and matches whose every arm
+is contradictory (currently rejected), and extend joins to wider constructor families without quadratic selector
 construction, shared continuations, and matches after C/resource transitions
 with indexed witness freshness. These are implementation limits, not changes
-to pure match semantics. Then verify unchanged `tree_rotate_left` for arbitrary
-nonempty root/right-child models, preserving both node identities/payloads and
-all three arbitrary subtrees. Its sidecar still has no rotation contract.
+to pure match semantics. The unchanged `tree_rotate_left` now verifies for
+arbitrary nonempty root/right-child models, preserving both node identities
+and payloads and all three arbitrary subtrees. Its proof uses scoped function
+unfolding, ADT equality rewrites, and explicit return-state folds at `result`.
 
 ### Other remaining work
 
@@ -186,7 +190,7 @@ all three arbitrary subtrees. Its sidecar still has no rotation contract.
    reuse that captured model in a later explicit fold without a live handle.
 3. **Contract and witness transport.** Complete ordinary inline-call transport
    and concrete-function formation/refinement for resource-parameterized
-   contracts, and transport parent-qualified child handles through explicit
+   contracts, and transport independently owned children through explicit
    contract arguments. Resource-body witnesses currently admit only C pointers, not
    existential child models. Contract `let ... where` witnesses are separate
    per clause; they must not silently become shared instance bindings.
@@ -202,7 +206,10 @@ through the stored links. The initializer consumes separate parent memory and
 two arbitrary modeled children to construct the modeled parent. The focused
 fixture and kernel/surface tests cover expansion, invalid models and links,
 missing/duplicated ownership, overlap, and unrelated-resource scaling.
-No C traversal or rotation is verified yet.
+The unchanged left rotation also verifies its exact `heap_rotate_left` model
+transformation. Source and expanded-proof regressions reject missing nonempty
+premises, incorrect fields or links, and duplicated or incorrect children.
+Traversals, right rotation, and a separate in-order sequence theorem remain.
 
 ## Other ADT gaps
 

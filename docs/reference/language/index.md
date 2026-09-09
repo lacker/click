@@ -901,9 +901,10 @@ unfolded, or mismatched children are rejected. A leaf omits the empty child map.
 The new parent need not have existed before; `consumes l: tree(left);` names
 an input child without promising to return it separately.
 
-The older `unfold(root); unfold(root.left); fold(root.left); fold(root);`
-form remains available for compatibility. Only that form retains a legacy
-parent handle and requires the recorded children back unchanged.
+Parent-qualified resource handles such as `root.left` are not supported.
+Unfolding a recursive body requires `as { ... }` to name its selected children;
+refolding requires the explicit child map. Unfold consumes the parent, so it
+cannot be projected or unfolded again unless a new owned parent is constructed.
 
 Each child currently uses the parent's resource definition. Equations for all
 child fields must bind them to immediate constructor fields of the matching

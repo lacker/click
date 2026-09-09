@@ -11,14 +11,16 @@ in-order order while links and colors change.
 
 The logical list algebra and its algebraic-data-type foundation are tracked in
 [algebraic-data-types.md](algebraic-data-types.md). This issue begins once
-those immutable values can be used as resource arguments; its remaining
-problem is deriving a parent model from existential child models across
-recursive ownership and mutation.
+those immutable values can be used as resource fields. Recursive `HeapTree`
+fields now connect parent models to child models across ownership and mutation;
+the remaining work includes the derived in-order list and broader algorithms.
 
 The fixed synthetic C scaffold for this work lives in
 [`examples/modeled-binary-tree`](../examples/modeled-binary-tree/README.md).
-Its sidecar currently imports the unchanged implementation without claiming
-the missing model-based proofs.
+Its sidecar verifies the unchanged initializer and left rotation against an
+exact `HeapTree` model carrying node addresses, payloads, and both subtrees.
+Left rotation preserves both affected nodes and all three arbitrary subtrees.
+The in-order list theorem, right rotation, and insert/erase regressions remain.
 
 ## Violated invariant
 
