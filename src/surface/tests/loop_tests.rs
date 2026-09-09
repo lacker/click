@@ -1,7 +1,7 @@
 use super::*;
 
-/// The rewritten have must construct and expand a checked proof. The separate
-/// explicit closure migration still has a bounded planning miss.
+/// The saved expansion checks all invariant bodies without repeating smart
+/// search or invoking legacy invariant discovery.
 #[test]
 fn sorting_rewritten_invariant_body_checks_and_expands() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -14,80 +14,20 @@ fn sorting_rewritten_invariant_body_checks_and_expands() {
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
     let click = fixture.click_source.as_deref().unwrap();
-    verify_c0_sources(click, &sources).unwrap();
-    let mut expanded = expand_c0_claim_source(
+    assert!(!click.contains("simp("));
+    assert!(!click.contains("by simp"));
+    assert!(!click.contains("close_invariants();"));
+    assert_eq!(click.matches("close_invariants by {").count(), 4);
+    let discovery_before = crate::kernel::invariant_discovery_calls();
+    verify_c0_sources(click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(
         click,
         &sources,
         "bubble_sort3_two_pass",
         CProofClaim::Grouped,
     )
-    .unwrap();
-    let preserve = expanded.rfind("preserve by {").unwrap();
-    let branch = preserve + expanded[preserve..].find("if ").unwrap();
-    expanded.insert_str(branch, r#"
-        unfold(all_le_range);
-        have j == 0 by {
-            apply(int32_lt_successor_implies_le(j, 0)) using { j < 1; }
-            apply(int32_le_and_not_lt_implies_eq(j, 0)) using { j <= 0; j >= 0; }
-            assumption();
-        }
-        have p[0] <= p[2] by {
-            instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 0) using {}
-            assumption();
-        }
-        have p[1] <= p[2] by {
-            instantiate(forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] }, 1) using {}
-            assumption();
-        }
-        mark before_swap;
-    "#);
-    let swap_close = preserve + expanded[preserve..].find("close_invariants();").unwrap();
-    expanded.insert_str(
-        swap_close,
-        r#"
-        transport(at(before_swap, p[1] <= p[2]), p[0] <= p[2]) using {
-            at(before_swap, p[1] <= p[2]); at(before_swap, j) == 0;
-        }
-        transport(at(before_swap, p[0] <= p[2]), p[1] <= p[2]) using {
-            at(before_swap, p[0] <= p[2]); at(before_swap, j) == 0;
-        }
-        have forall (k: int32) { 0 <= k and 0 <= k and k < 2 implies p[k] <= p[2] } by {
-            enumerate();
-        }
-        have j == 1 by simp;
-        transport(at(before_swap, p[j + 1] < p[j]), p[0] < p[1]) using {
-            at(before_swap, j) == 0; at(before_swap, p[j + 1] < p[j]);
-        }
-        have p[0] <= p[1] by {
-            apply(int32_lt_implies_le(p[0], p[1])) using { p[0] < p[1]; }
-            assumption();
-        }
-        have all_le_range(p, 0, j, p[j]) by {
-            unfold(all_le_range);
-            rewrite(j == 1);
-            simp();
-        }
-    "#,
-    );
-    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
-    let checked_expansion = expand_c0_claim_source(
-        &expanded,
-        &sources,
-        "bubble_sort3_two_pass",
-        CProofClaim::Grouped,
-    )
     .unwrap_or_else(|e| panic!("{}", e.message()));
-    verify_c0_sources(&checked_expansion, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
-    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
-    let discovery_before = crate::kernel::invariant_discovery_calls();
-    let error = verify_c0_sources(&explicit, &sources).unwrap_err();
-    assert!(
-        error
-            .message()
-            .contains("closure body did not prove every invariant obligation"),
-        "{}",
-        error.message()
-    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
     assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
@@ -285,40 +225,6 @@ fn explicit_invariant_body_copy3_checks_and_expands() {
         expand_c0_claim_source(&explicit, &sources, "copy3", CProofClaim::Grouped).unwrap();
     assert!(!expanded.contains("close_invariants();"));
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
-    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
-}
-
-/// The remaining composed-store planner gap is local, not an implicit fallback.
-#[test]
-fn explicit_invariant_body_two_pass_sort_has_a_bounded_planning_miss() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("mdtests/bubble_sort3_two_pass_sorted.md");
-    let source = std::fs::read_to_string(&path).unwrap();
-    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
-    let sources = fixture
-        .c_sources
-        .iter()
-        .map(|(name, source)| (name.as_str(), source.as_str()))
-        .collect::<Vec<_>>();
-    let click = fixture.click_source.as_deref().unwrap();
-    verify_c0_sources(click, &sources).unwrap();
-    let expanded = expand_c0_claim_source(
-        click,
-        &sources,
-        "bubble_sort3_two_pass",
-        CProofClaim::Grouped,
-    )
-    .unwrap();
-    assert!(expanded.contains("close_invariants();"));
-    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
-    let discovery_before = crate::kernel::invariant_discovery_calls();
-    let error = verify_c0_sources(&explicit, &sources).unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("closure body did not prove every invariant obligation"),
-        "{error:?}"
-    );
     assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 

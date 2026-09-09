@@ -348,15 +348,16 @@ is the next step. The earlier outer-scope-only prototype was reverted. A rejecte
 prototype also confused bound occurrences inside snapshots with free ones;
 the linked issue records the failures, a defensive regression, and safe options.
 
-The automatic-body census now has a concrete blocker:
+The automatic-body migration is tracked in:
 [quantified-invariant-body-planning.md](quantified-invariant-body-planning.md).
 Explicit copy3 bodies now verify, expand, and recheck with snapshot-aware goal
-presentation and smaller Surface implication-planner frames. The automatic
-prototype passed copy3 and bubble-pass but failed the full gate on two-pass
-sorting: its fixed-range maximum needs cell facts composed through the swap.
-An enabled regression records that remaining local planning miss. Speculative
-composition and automatic migration were reverted; bare closers and automatic
-preservation still use legacy preparation. No limits or C fixtures changed.
+presentation and smaller Surface implication-planner frames. Two-pass sorting
+now has explicit branch arguments and saved expanded invariant bodies in its
+mdtest: verification, expansion, and rechecking take under a second in the
+isolated regression, with zero legacy discovery. The C and invariants are
+unchanged; stronger `simp` is not required. The previous expected planning
+miss was replaced by this positive regression. Automatic migration remains
+open: bare closers and automatic preservation still use legacy preparation.
 
 1. Replace the legacy loop closer using the existing
    `c_loop_invariant_obligations_at_back_edge` no-search API. Surface emits
