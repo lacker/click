@@ -73,17 +73,51 @@ reverted. No C, contract, or fixture expectations were weakened.
 
 ## Next implementation
 
-1. Reduce the second-loop post-swap cell relation to a small proof test with
-   its exact retained store equations, load origins, and snapshot bindings.
-2. Identify a checkable, bounded composition from source instance through the
-   stores to the destination cell. Prefer existing equality/transport steps;
-   if execution must retain an additional value-flow witness, specify its
-   exact inputs and rejection cases before changing the authority boundary.
+1. Fix [recursive premise-lowering stack usage](invariant-premise-lowering-stack.md)
+   before resuming the full sorting migration. Its issue retains the exact
+   unchanged-C reproduction and debugger findings.
+2. Generalize the existing-step composition demonstrated below to the full
+   quantified invariant context. Do not start by adding a value-flow witness:
+   the reduced loop already verifies and expands with existing transport.
 3. Replace the expected miss with positive verification, expansion, and
    rewritten verification. Preserve the copy3 and bubble-pass regressions.
 4. Re-enable automatic bodies only when the full gate passes; then delete
    `verify_lowered_invariant_path`, the legacy prefix probe, and legacy
    lowering-record builders. Preserve do-while paths with no continuing edge.
+
+## Swap reduction follow-up (2026-09-08)
+
+The new `explicit_straight_line_swap_transports_an_entry_bound` test confirms
+that existing explicit transport moves an old source cell's inequality to
+its new destination, for both a literal index and a symbolic index with an
+exact equality premise.
+
+`explicit_swap_loop_transports_both_entry_bounds_and_expands` isolates the
+second sorting loop, with the two ordinary invariants `p[0] <= p[2]` and
+`p[1] <= p[2]`. Its unchanged symbolic-index swap verifies, expands, and
+independently rechecks with zero legacy invariant discovery:
+
+1. Before execution, prove `j == 0` using
+   `int32_lt_successor_implies_le` and `int32_le_and_not_lt_implies_eq`.
+2. Mark that entry snapshot.
+3. Execute the swap and index increment with ordinary `step()`.
+4. Explicitly transport the old `p[1] <= p[2]` fact to current
+   `p[0] <= p[2]`, and the old `p[0] <= p[2]` fact to current
+   `p[1] <= p[2]`, listing the source and entry index equality.
+5. Finish with `close_invariants by { simp(); }`.
+
+Removing the two transports returns the original bounded closure miss.
+Thus the first failure does not require quantifiers, and existing simple
+steps are sufficient for the reduced value movement. Asking smart `have`
+proofs to rediscover the separate cell equalities was less successful; that
+is not evidence that a new equality primitive is required.
+
+The full unchanged two-pass fixture was then tested with analogous explicit
+index proof, two finite entry instances, and transports. It overflowed the
+ordinary test stack while `simp` lowered a candidate premise. That attempt
+was not expanded. The crash is recorded separately and blocks a conclusion
+that the complete sorting proof needs only the reduced sequence. The
+successful reduced C is not substituted for the original fixture.
 
 ## Acceptance criteria
 
