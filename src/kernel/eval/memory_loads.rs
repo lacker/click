@@ -137,6 +137,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     alias_cache: &mut MemoryLoadAliasCache,
     next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
+    let use_symbolic_pointer_identity =
+        should_use_symbolic_pointer_identity(memory, &pointer, value_type);
     let mut facts = facts;
     let mut load_assumptions = assumptions.clone();
     let candidates = assumptions
@@ -190,13 +192,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // `known_value` first would collapse `at(mark, field == 11)` to `true` and
     // erase the address needed for later frame transport.
     if has_external_read_resource && assumptions.should_force_symbolic_external_loads() {
-        let Some(value) = canonicalized_symbolic_load_value(
+        let Some(value) = canonicalized_symbolic_load_value_with_identity(
             memory,
             &pointer,
             value_type,
             next_kernel_variable,
             &mut facts,
             assumptions,
+            use_symbolic_pointer_identity,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -327,13 +330,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if has_external_read_resource && assumptions.should_prefer_symbolic_external_loads() {
-        let Some(value) = canonicalized_symbolic_load_value(
+        let Some(value) = canonicalized_symbolic_load_value_with_identity(
             memory,
             &pointer,
             value_type,
             next_kernel_variable,
             &mut facts,
             assumptions,
+            use_symbolic_pointer_identity,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -366,13 +370,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if pointer.has_symbolic_block() && has_external_read_resource {
-        let Some(value) = canonicalized_symbolic_load_value(
+        let Some(value) = canonicalized_symbolic_load_value_with_identity(
             &memory,
             &pointer,
             value_type,
             next_kernel_variable,
             &mut facts,
             assumptions,
+            use_symbolic_pointer_identity,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -487,13 +492,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     if memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
-        let Some(value) = canonicalized_symbolic_load_value(
+        let Some(value) = canonicalized_symbolic_load_value_with_identity(
             &memory,
             &pointer,
             value_type,
             next_kernel_variable,
             &mut facts,
             assumptions,
+            use_symbolic_pointer_identity,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -549,13 +555,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }
     }
 
-    let Some(value) = canonicalized_symbolic_load_value(
+    let Some(value) = canonicalized_symbolic_load_value_with_identity(
         &memory,
         &pointer,
         value_type,
         next_kernel_variable,
         &mut facts,
         assumptions,
+        use_symbolic_pointer_identity,
     ) else {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -634,6 +641,48 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
+    canonicalized_symbolic_load_value_with_identity(
+        memory,
+        pointer,
+        value_type,
+        next_kernel_variable,
+        facts,
+        assumptions,
+        should_use_symbolic_pointer_identity(memory, pointer, value_type),
+    )
+}
+
+fn should_use_symbolic_pointer_identity(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+) -> bool {
+    // After a call-havoc edge, an unknown pointer-sized cell may contain the
+    // address of any live object, including an automatic local. Give that
+    // value an opaque identity instead of deriving a fresh offset in the
+    // cell's storage block; equality facts can then resolve a dereference to
+    // the object it actually aliases.
+    let pointer_sized_load = matches!(
+        &pointer.offset,
+        PointerOffsetTerm::Int32Scaled { byte_width: 8, .. }
+            | PointerOffsetTerm::Int64Scaled { byte_width: 8, .. }
+    );
+    memory.has_call_memory_havoc()
+        && value_type.is_pointer()
+        && pointer_sized_load
+        && memory.known_union_value(pointer, value_type).is_none()
+        && memory.known_value(pointer).is_none()
+}
+
+fn canonicalized_symbolic_load_value_with_identity(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+    next_kernel_variable: &mut u64,
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+    use_symbolic_identity: bool,
+) -> Option<CValue> {
     let value = symbolic_load_value(memory, pointer, value_type)?;
     // Terms are canonical at creation: an int or byte load evaluates to its
     // load variable, with the defining fact beside it, so every fact,
@@ -675,13 +724,15 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
         return Some(value);
     }
     let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
-    Some(CValue::typed_pointer(
+    let pointer = if use_symbolic_identity {
+        Pointer::symbolic(fresh)
+    } else {
         Pointer {
             block: block.clone(),
             offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(fresh), *byte_width),
-        },
-        pointer_value.c_type(),
-    ))
+        }
+    };
+    Some(CValue::typed_pointer(pointer, pointer_value.c_type()))
 }
 
 const LOAD_VARIABLE_BASE: u64 = 1 << 40;

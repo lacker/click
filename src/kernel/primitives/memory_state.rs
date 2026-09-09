@@ -1258,6 +1258,10 @@ impl CLocalEnvironment {
         self.binding(name).map(CLocalBinding::slot)
     }
 
+    pub(in crate::kernel) fn slots(&self) -> impl Iterator<Item = &Pointer> {
+        self.slots.keys()
+    }
+
     pub(in crate::kernel) fn name_for_slot(&self, pointer: &Pointer) -> Option<&str> {
         self.slots.get(pointer).map(String::as_str)
     }
@@ -2349,6 +2353,15 @@ impl CMemory {
 
     pub(crate) fn has_block(&self, block: &PointerBlock) -> bool {
         self.blocks.contains_key(block)
+    }
+
+    pub(in crate::kernel) fn has_call_memory_havoc(&self) -> bool {
+        // Call-havoc markers are concrete blocks with this prefix. Bound the
+        // B-tree query to that lexical interval so a load does not scan
+        // unrelated memory blocks on the evaluator hot path.
+        let first = PointerBlock::Concrete("call-havoc:".to_string());
+        let end = PointerBlock::Concrete("call-havoc;".to_string());
+        self.blocks.range(first..end).next().is_some()
     }
 
     pub(in crate::kernel) fn is_read_only_block(&self, block: &PointerBlock) -> bool {

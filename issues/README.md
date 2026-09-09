@@ -50,6 +50,7 @@ them. A gap that only a different program would hit is P2.
 Soundness and kernel shape:
 
 - [Bug bash: open soundness holes and C mis-models](bugbash.md)
+- [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
 - [Preserve initialization requirements across resource transfers](uninitialized-callee-resource-transfer.md)
 - [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
