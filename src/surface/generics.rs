@@ -582,6 +582,29 @@ fn instantiate_proof_tactic(
         )
     };
     Ok(match tactic {
+        ProofTactic::Match(proof_match) => ProofTactic::Match(Box::new(ProofMatch {
+            scrutinee: expression(&proof_match.scrutinee)?,
+            arms: proof_match
+                .arms
+                .iter()
+                .map(|arm| {
+                    let mut scoped_parameters = algebraic_parameters.clone();
+                    for binding in &arm.bindings {
+                        scoped_parameters.remove(binding);
+                    }
+                    Ok(ProofInductionArm {
+                        type_name: arm.type_name.clone(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        tactics: instantiate_proof_tactics(
+                            &arm.tactics,
+                            substitution,
+                            &scoped_parameters,
+                        )?,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+        })),
         ProofTactic::UnfoldFunction(application) => ProofTactic::UnfoldFunction(
             instantiate_function_application(application, substitution, algebraic_parameters)?,
         ),

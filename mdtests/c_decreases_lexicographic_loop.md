@@ -37,13 +37,21 @@ int32 phase_count(int32 n) {
         initialize by simp;
         preserve by {
             if j > 0 {
+                have 0 <= j - 1 by {
+                    apply(int32_positive_predecessor_is_nonnegative(j)) using { j > 0; }
+                }
                 step();
                 step();
+                have j >= 0 by { arithmetic() using { 0 <= j; } }
                 simp();
             } else {
+                have 0 <= i - 1 by {
+                    apply(int32_positive_predecessor_is_nonnegative(i)) using { i > 0; }
+                }
                 step();
                 step();
                 step();
+                have i >= 0 by { arithmetic() using { 0 <= i; } }
                 simp();
             }
         }

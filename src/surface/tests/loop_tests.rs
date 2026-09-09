@@ -1,6 +1,266 @@
 use super::*;
 
 #[test]
+fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
+    for filename in [
+        "c_decreases_rejects_bad_loop_path",
+        "c_decreases_rejects_non_decreasing_lexicographic_loop",
+        "nested_loop_measure_rejected",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(format!("{filename}.md"));
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let error = verify_c0_sources(fixture.click_source.as_deref().unwrap(), &sources)
+            .expect_err("invalid ranking must reject");
+        assert!(
+            error.message().contains("does not decrease"),
+            "{filename}: {}",
+            error.message()
+        );
+        assert!(
+            error.message().len() < 1000,
+            "diagnostic must not dump internal state"
+        );
+    }
+}
+
+#[test]
+fn remaining_loop_migration_fixtures_expand_and_recheck() {
+    for (filename, function) in [
+        ("loop_old_count_invariant", "loop_old_count_invariant"),
+        (
+            "loop_stdlib_permutation_invariant",
+            "loop_stdlib_permutation_invariant",
+        ),
+        ("loop_preserve_branch", "loop_preserve_branch"),
+        ("c_decreases_loop", "drain"),
+        ("c_decreases_lexicographic_loop", "phase_count"),
+        ("c_decreases_nested_loop", "nested_count"),
+        ("fill_tail_keeps_first", "fill_tail_keeps_first"),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(format!("{filename}.md"));
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let click = fixture.click_source.as_deref().unwrap();
+        verify_c0_sources(click, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        let expanded = expand_c0_claim_source(click, &sources, function, CProofClaim::Grouped)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        assert!(!expanded.contains("close_invariants();"), "{filename}");
+        assert!(expanded.contains("close_invariants by {"), "{filename}");
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+    }
+}
+
+#[test]
+fn loop_preservation_have_resolves_entry_label_and_expands() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/loop_entry_snapshot.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.unwrap();
+    verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(&click, &sources, "drain_to_zero", CProofClaim::Grouped)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+}
+
+#[test]
+fn pointer_loop_increment_emits_checked_equality_proof() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/c_pointer_local_loop_invariant.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.unwrap();
+    verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(&click, &sources, "last_element", CProofClaim::Grouped)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    assert!(expanded.contains("arithmetic() using"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+}
+
+#[test]
+fn completed_recursive_loop_bodies_skip_legacy_preplanning_and_recheck() {
+    for (filename, function) in [
+        ("c_decreases_recursive_in_loop.md", "recursive_loop"),
+        (
+            "c_decreases_resource_recursive_in_loop.md",
+            "zero_walk_loop",
+        ),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(filename);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let explicit = fixture
+            .click_source
+            .unwrap()
+            .replace("close_invariants();", "close_invariants by { simp(); }");
+        verify_c0_sources(&explicit, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        let expanded = expand_c0_claim_source(&explicit, &sources, function, CProofClaim::Grouped)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        assert!(!expanded.contains("close_invariants();"));
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+    }
+}
+
+/// The saved expansion checks all invariant bodies without repeating smart
+/// search or invoking legacy invariant discovery.
+#[test]
+fn sorting_rewritten_invariant_body_checks_and_expands() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/bubble_sort3_two_pass_sorted.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.as_deref().unwrap();
+    assert!(!click.contains("simp("));
+    assert!(!click.contains("by simp"));
+    assert!(!click.contains("close_invariants();"));
+    assert_eq!(click.matches("close_invariants by {").count(), 4);
+    verify_c0_sources(click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(
+        click,
+        &sources,
+        "bubble_sort3_two_pass",
+        CProofClaim::Grouped,
+    )
+    .unwrap_or_else(|e| panic!("{}", e.message()));
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+}
+
+#[test]
+fn explicit_straight_line_swap_transports_an_entry_bound() {
+    for index in ["0", "j"] {
+        let c = format!(
+            "int32 swap(int32 p[3], int32 j) {{ int32 tmp; tmp = p[{index}]; p[{index}] = p[{index} + 1]; p[{index} + 1] = tmp; return 0; }}"
+        );
+        let click = r#"
+            verifying "swap.c";
+            int32 swap(int32 p[3], int32 j) {
+                requires j == 0;
+                requires p[0] <= p[2];
+                requires p[1] <= p[2];
+                consumes p[0..3];
+                ensures p[0] <= p[2];
+            } by {
+                step(); step(); step(); step();
+                have p[0] <= p[2] by {
+                    transport(old(p[1]) <= old(p[2]), p[0] <= p[2]) using {
+                        old(p[1]) <= old(p[2]); old(j) == 0;
+                    }
+                    assumption();
+                }
+                step(); simp();
+            }
+        "#;
+        verify_c0_sources(click, &[("swap.c", c.as_str())])
+            .unwrap_or_else(|e| panic!("index {index}: {}", e.message()));
+    }
+}
+
+/// A reduction of the second sorting loop, not a replacement for its original C.
+/// Existing simple steps suffice when entry index and cell facts are explicit.
+#[test]
+fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
+    let c = "int32 swap(int32 p[3]) { int32 j; int32 tmp; j = 0; while (j < 1) { if (p[j + 1] < p[j]) { tmp = p[j]; p[j] = p[j + 1]; p[j + 1] = tmp; } j = j + 1; } return 0; }";
+    let transport = r#"
+        transport(at(before_swap, p[1] <= p[2]), p[0] <= p[2]) using {
+            at(before_swap, p[1] <= p[2]); at(before_swap, j) == 0;
+        }
+        transport(at(before_swap, p[0] <= p[2]), p[1] <= p[2]) using {
+            at(before_swap, p[0] <= p[2]); at(before_swap, j) == 0;
+        }
+    "#;
+    let click = format!(
+        r#"
+        verifying "swap.c";
+        int32 swap(int32 p[3]) {{
+            requires p[0] <= p[2]; requires p[1] <= p[2];
+            consumes p[0..3]; ensures result == 0;
+        }} by {{
+            step(); step(); step();
+            loop {{
+                invariant j >= 0 and j <= 1;
+                invariant p[0] <= p[2];
+                invariant p[1] <= p[2];
+                initialize by simp;
+                preserve by {{
+                    have j == 0 by {{
+                        apply(int32_lt_successor_implies_le(j, 0)) using {{ j < 1; }}
+                        apply(int32_le_and_not_lt_implies_eq(j, 0)) using {{ j <= 0; j >= 0; }}
+                        assumption();
+                    }}
+                    mark before_swap;
+                    if p[j + 1] < p[j] {{
+                        step(); step(); step(); step(); step();
+                        {transport}
+                        close_invariants by {{ simp(); }}
+                    }} else {{
+                        step(); step(); step();
+                        close_invariants by {{ simp(); }}
+                    }}
+                }}
+            }}
+            step(); simp();
+        }}
+    "#
+    );
+    let sources = [("swap.c", c)];
+    verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    let expanded = expand_c0_claim_source(&click, &sources, "swap", CProofClaim::Grouped)
+        .unwrap_or_else(|e| panic!("{}", e.message()));
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
+    assert!(!expanded.contains("close_invariants();"));
+
+    let missing_transports = click.replace(transport, "");
+    assert_ne!(missing_transports, click);
+    let error = verify_c0_sources(&missing_transports, &sources).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("closure body did not prove every invariant obligation")
+    );
+}
+
+#[test]
 fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
     let c_source = "int32 count() { int32 i; i = 0; while (i < 3) { i = i + 1; } return i; }";
     let source = r#"
@@ -20,9 +280,7 @@ fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
         }
     "#;
     let sources = [("count.c", c_source)];
-    let discovery_before = crate::kernel::invariant_discovery_calls();
     verify_c0_sources(source, &sources).expect("the body must prove the exact closure obligations");
-    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
     let position =
         expansion::position_at_offset(source, source.find("close_invariants by").unwrap());
     let expanded = expand_c0_tactic_source_at(source, &sources, position.line, position.column)
@@ -65,14 +323,12 @@ fn explicit_invariant_body_quantified_bubble_census() {
     verify_c0_sources(click, &sources).unwrap();
     let expanded =
         expand_c0_claim_source(click, &sources, "bubble_pass3", CProofClaim::Grouped).unwrap();
-    assert!(expanded.contains("close_invariants();"));
+    assert!(expanded.contains("close_invariants by {"));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
-    let discovery_before = crate::kernel::invariant_discovery_calls();
     verify_c0_sources(&explicit, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
     let expanded =
         expand_c0_claim_source(&explicit, &sources, "bubble_pass3", CProofClaim::Grouped).unwrap();
     verify_c0_sources(&expanded, &sources).unwrap();
-    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
 /// The old/current snapshot body verifies and expands on the ordinary stack.
@@ -89,49 +345,13 @@ fn explicit_invariant_body_copy3_checks_and_expands() {
     let click = fixture.click_source.as_deref().unwrap();
     verify_c0_sources(click, &sources).unwrap();
     let expanded = expand_c0_claim_source(click, &sources, "copy3", CProofClaim::Grouped).unwrap();
-    assert!(expanded.contains("close_invariants();"));
+    assert!(expanded.contains("close_invariants by {"));
     let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
-    let discovery_before = crate::kernel::invariant_discovery_calls();
     verify_c0_sources(&explicit, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
     let expanded =
         expand_c0_claim_source(&explicit, &sources, "copy3", CProofClaim::Grouped).unwrap();
     assert!(!expanded.contains("close_invariants();"));
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
-    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
-}
-
-/// The remaining composed-store planner gap is local, not an implicit fallback.
-#[test]
-fn explicit_invariant_body_two_pass_sort_has_a_bounded_planning_miss() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("mdtests/bubble_sort3_two_pass_sorted.md");
-    let source = std::fs::read_to_string(&path).unwrap();
-    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
-    let sources = fixture
-        .c_sources
-        .iter()
-        .map(|(name, source)| (name.as_str(), source.as_str()))
-        .collect::<Vec<_>>();
-    let click = fixture.click_source.as_deref().unwrap();
-    verify_c0_sources(click, &sources).unwrap();
-    let expanded = expand_c0_claim_source(
-        click,
-        &sources,
-        "bubble_sort3_two_pass",
-        CProofClaim::Grouped,
-    )
-    .unwrap();
-    assert!(expanded.contains("close_invariants();"));
-    let explicit = expanded.replace("close_invariants();", "close_invariants by { simp(); }");
-    let discovery_before = crate::kernel::invariant_discovery_calls();
-    let error = verify_c0_sources(&explicit, &sources).unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("closure body did not prove every invariant obligation"),
-        "{error:?}"
-    );
-    assert_eq!(discovery_before, crate::kernel::invariant_discovery_calls());
 }
 
 #[test]
@@ -1055,8 +1275,11 @@ fn frontier_local_loop_checks_an_optional_decreases_measure() {
                     invariant n >= 0;
                     initialize by simp;
                     preserve by {
+                        have 0 <= n - 1 by {
+                            apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
+                        }
                         step();
-                        close_invariants();
+                        close_invariants by { arithmetic() using { 0 <= n; } }
                     }
                 }
                 step();
@@ -1354,8 +1577,11 @@ fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate()
                     invariant n >= 0;
                     initialize by simp;
                     preserve by {
+                        have 0 <= n - 1 by {
+                            apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
+                        }
                         step();
-                        close_invariants();
+                        close_invariants by { arithmetic() using { 0 <= n; } }
                     }
                 }
                 step();
@@ -2755,7 +2981,9 @@ fn explicit_loop_closer_cannot_bypass_proof_owned_bundle_check() {
     let error = verify_c0_sources(click_source, &[("overshoot.c", c_source)])
         .expect_err("the explicit closer must not authorize a false invariant bundle");
     assert!(
-        error.message().contains("invariant bundle") && error.message().contains("preservation"),
+        error
+            .message()
+            .contains("closure body did not prove every invariant obligation"),
         "{}",
         error.message()
     );

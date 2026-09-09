@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## P1: before launch (23)
+## P1: before launch (22)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -50,11 +50,11 @@ them. A gap that only a different program would hit is P2.
 Soundness and kernel shape:
 
 - [Bug bash: open soundness holes and C mis-models](bugbash.md)
+- [Keep modified by-value struct copies out of caller postconditions](by-value-struct-postconditions.md)
 - [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
 - [Preserve initialization requirements across resource transfers](uninitialized-callee-resource-transfer.md)
 - [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
-- [Finish explicit invariant-body planning](quantified-invariant-body-planning.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
@@ -80,7 +80,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (16)
+## P2: after launch (15)
 
 - [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
 
@@ -103,7 +103,6 @@ C language coverage:
 Semantics and reasoning:
 
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
-- [Retain explicit quantified evidence for loop closure](loop-closure-quantified-evidence.md)
 - [Recursion](recursion.md)
 
 Proof language and tooling:

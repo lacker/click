@@ -240,6 +240,14 @@ fn infer_spec_value_type(
     context: &str,
 ) -> Result<SpecValueType, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access)
+            if matches!(access.click_type, Some(ClickType::Algebraic(_))) =>
+        {
+            let Some(ClickType::Algebraic(application)) = &access.click_type else {
+                unreachable!()
+            };
+            Ok(SpecValueType::Algebraic(application.clone()))
+        }
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             Ok(SpecValueType::Algebraic(algebraic_type.clone()))
         }
@@ -501,6 +509,11 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
+            ProofTactic::Match(proof_match) => {
+                for arm in &proof_match.arms {
+                    validate_pure_theorem_tactics(theorem_name, &arm.tactics)?;
+                }
+            }
             ProofTactic::StructuralInduct { arms, .. } => {
                 for arm in arms {
                     validate_pure_theorem_tactics(theorem_name, &arm.tactics)?;
@@ -573,6 +586,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ConstructResource(_) => "construct",
         ProofTactic::Induct { .. } => "induct",
         ProofTactic::StructuralInduct { .. } => "induct",
+        ProofTactic::Match(_) => "match",
         ProofTactic::ApplyInduction { .. } => "apply",
         ProofTactic::ApplyInductionUsing { .. } => "apply",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",

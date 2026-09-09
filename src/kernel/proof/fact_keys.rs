@@ -565,6 +565,7 @@ enum AlphaPointerOffsetKey {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum AlphaPointerBlockKey {
     Concrete(String),
+    StringLiteral { identity: String, bytes: Vec<u8> },
     Function(String),
     FunctionSymbolic(AlphaVariableKey),
     ExternalArgument,
@@ -651,6 +652,10 @@ fn alpha_pointer_key(
 ) -> Option<AlphaPointerKey> {
     let block = match &pointer.block {
         PointerBlock::Concrete(name) => AlphaPointerBlockKey::Concrete(name.clone()),
+        PointerBlock::StringLiteral { identity, bytes } => AlphaPointerBlockKey::StringLiteral {
+            identity: identity.clone(),
+            bytes: bytes.clone(),
+        },
         PointerBlock::Function(name) => AlphaPointerBlockKey::Function(name.clone()),
         PointerBlock::FunctionSymbolic(variable) => {
             AlphaPointerBlockKey::FunctionSymbolic(alpha_variable_key(*variable, bindings))

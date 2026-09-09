@@ -10,9 +10,11 @@ use super::reasoning::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 use std::sync::{Arc, OnceLock};
 
 mod contracts;
+pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
 mod derivations;
 mod memory_state;
 pub(crate) use memory_state::{
@@ -363,9 +365,18 @@ impl std::ops::Deref for CPointerValue {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum PointerBlock {
     Concrete(String),
+    /// A string literal occurrence. Distinct occurrences with identical
+    /// bytes are intentionally not proven distinct: C permits an
+    /// implementation to merge them. The occurrence identity still keeps
+    /// one literal's pointer stable, and differing bytes prove that two
+    /// occurrences cannot be the same object.
+    StringLiteral {
+        identity: String,
+        bytes: Vec<u8>,
+    },
     Function(String),
     FunctionSymbolic(Variable),
     ExternalArgument,
@@ -375,19 +386,60 @@ pub enum PointerBlock {
     Heap(u64),
 }
 
+impl std::hash::Hash for PointerBlock {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Keep the hash domain of the pre-string-literal variants stable.
+        // Pointer hashes feed deterministic load-variable identities, so
+        // inserting a new enum variant must not renumber existing blocks.
+        match self {
+            Self::Concrete(name) => {
+                0u64.hash(state);
+                name.hash(state);
+            }
+            Self::Function(name) => {
+                1u64.hash(state);
+                name.hash(state);
+            }
+            Self::FunctionSymbolic(variable) => {
+                2u64.hash(state);
+                variable.hash(state);
+            }
+            Self::ExternalArgument => 3u64.hash(state),
+            Self::Symbolic(variable) => {
+                4u64.hash(state);
+                variable.hash(state);
+            }
+            Self::Heap(identity) => {
+                5u64.hash(state);
+                identity.hash(state);
+            }
+            Self::StringLiteral { identity, bytes } => {
+                6u64.hash(state);
+                identity.hash(state);
+                bytes.hash(state);
+            }
+        }
+    }
+}
+
 impl PointerBlock {
     pub(crate) fn is_function(&self) -> bool {
         matches!(self, Self::Function(_) | Self::FunctionSymbolic(_))
     }
 
     pub(crate) fn starts_with(&self, prefix: &str) -> bool {
-        matches!(self, Self::Concrete(name) if name.starts_with(prefix))
+        match self {
+            Self::Concrete(name) => name.starts_with(prefix),
+            Self::StringLiteral { .. } => prefix == "string:",
+            _ => false,
+        }
     }
 
     pub(crate) fn strip_prefix<'a>(&'a self, prefix: &str) -> Option<&'a str> {
         match self {
             Self::Concrete(name) => name.strip_prefix(prefix),
-            Self::Function(_)
+            Self::StringLiteral { .. }
+            | Self::Function(_)
             | Self::FunctionSymbolic(_)
             | Self::ExternalArgument
             | Self::Symbolic(_)
@@ -412,6 +464,7 @@ impl std::fmt::Display for PointerBlock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Concrete(name) => formatter.write_str(name),
+            Self::StringLiteral { identity, .. } => write!(formatter, "string:{identity}"),
             Self::Function(name) => write!(formatter, "function:{name}"),
             Self::FunctionSymbolic(variable) => {
                 write!(formatter, "symbolic-function-pointer:{}", variable.0)
@@ -799,6 +852,7 @@ pub enum SpecAlgebraicExpressionNode {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ResourceFieldProjection {
     pub identity: Variable,
+    pub children: Vec<String>,
     pub field_index: usize,
     /// Select the explicit entry state supplied to spec evaluation. There is
     /// no fallback to the current state when that snapshot is unavailable.
@@ -1213,7 +1267,7 @@ impl AlgebraicType {
         })
     }
 
-    fn has_consistent_root_schema(&self) -> bool {
+    pub(in crate::kernel) fn has_consistent_root_schema(&self) -> bool {
         if self.rigid {
             return self.arguments.is_empty() && self.variants.is_empty();
         }
@@ -1944,6 +1998,7 @@ pub struct CPredicateUnfolding {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCompositeResourceDefinition {
     pub(super) instance_schema: Option<ResourceFieldSchema>,
+    pub(super) matched: Option<CResourceMatchBody>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     /// Existential witnesses bound inside the body (`let next: T where P`).
@@ -1956,6 +2011,33 @@ pub struct CCompositeResourceDefinition {
     pub(super) counted_population: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceMatchBody {
+    pub field_index: usize,
+    pub algebraic_type: AlgebraicType,
+    pub arms: Vec<CResourceMatchArm>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceMatchArm {
+    pub variant: String,
+    pub bindings: Vec<String>,
+    pub binding_types: Vec<AlgebraicValueType>,
+    pub contains: Vec<CResourceSpec>,
+    pub facts: Vec<SpecProposition>,
+    pub children: Vec<CResourceChildSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceChildSpec {
+    pub name: String,
+    pub binding: Variable,
+    pub arguments: Vec<CExpression>,
+    /// Each field is an immediate constructor binding. The matched model
+    /// field must be a proper submodel of the same algebraic type.
+    pub field_bindings: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2922,6 +3004,7 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
+    pub(super) next_resource_child: u64,
     /// Exclusive handles retained by explicit unfolding. These permit pure
     /// field projections, never folded ownership or modular call transfer.
     pub(super) open_instances: ResourceContext,
@@ -3104,6 +3187,9 @@ pub struct ResourceInstance {
     pub(super) arguments: ResourceArguments,
     pub(super) schema: ResourceFieldSchema,
     pub(super) fields: ResourceArguments,
+    /// Present only in the open-handle ledger. These are the folded child
+    /// instances that must be returned before the parent can close.
+    pub(super) opened_children: std::sync::Arc<[(String, ResourceInstance)]>,
 }
 
 impl ResourceInstance {
@@ -3135,6 +3221,7 @@ impl ResourceInstance {
             arguments,
             schema,
             fields,
+            opened_children: Default::default(),
         })
     }
 
@@ -3687,7 +3774,7 @@ pub(super) struct Int32PredecessorUpperBoundEvidence {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Int32OneLeEvidence {
-    Direct(SignedOrderDerivationStep),
+    Direct(Box<SignedOrderDerivationStep>),
     EqualOne(Vec<BitvectorEqualityDerivationStep>),
 }
 
@@ -3730,18 +3817,18 @@ pub(super) struct ForallInt32InstantiationEvidence {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum AtomicPropositionDerivationEvidence {
-    MemoryDag(AtomicMemoryLoadEqualityEvidence),
-    LoadAddressCongruence(LoadAddressCongruenceEvidence),
-    PointerOffsetMemoryDag(PointerOffsetEqualityEvidence),
+    MemoryDag(Box<AtomicMemoryLoadEqualityEvidence>),
+    LoadAddressCongruence(Box<LoadAddressCongruenceEvidence>),
+    PointerOffsetMemoryDag(Box<PointerOffsetEqualityEvidence>),
     BitvectorEqualityPath(Vec<BitvectorEqualityDerivationStep>),
     ForallInt32Instantiation(Box<ForallInt32InstantiationEvidence>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
-    Int32IncrementUpperBound(SignedOrderDerivationStep),
-    Int32IncrementConstantUpperBound(SignedOrderDerivationStep),
-    Int32IncrementStrictlyIncreases(SignedOrderDerivationStep),
-    Int32IncrementBelowMaxIsDefined(SignedOrderDerivationStep),
-    Int32OnePlusBelowMaxIsDefined(SignedOrderDerivationStep),
-    Int32OnePlusStrictlyIncreases(SignedOrderDerivationStep),
+    Int32IncrementUpperBound(Box<SignedOrderDerivationStep>),
+    Int32IncrementConstantUpperBound(Box<SignedOrderDerivationStep>),
+    Int32IncrementStrictlyIncreases(Box<SignedOrderDerivationStep>),
+    Int32IncrementBelowMaxIsDefined(Box<SignedOrderDerivationStep>),
+    Int32OnePlusBelowMaxIsDefined(Box<SignedOrderDerivationStep>),
+    Int32OnePlusStrictlyIncreases(Box<SignedOrderDerivationStep>),
     Int32NonnegativeAddWithinMaxIsDefined(Box<Int32NonnegativeAddWithinMaxEvidence>),
     Int32NonnegativeSubtractWithinValueIsDefined(Box<Int32NonnegativeSubtractWithinValueEvidence>),
     Int32IncrementLowerBound(Box<Int32IncrementBoundsEvidence>),
@@ -3749,13 +3836,13 @@ pub(super) enum AtomicPropositionDerivationEvidence {
     Int32IncrementStrictGreaterLowerBound(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementStrictGreaterFromStrictLower(Box<Int32IncrementBoundsEvidence>),
     Int32IncrementPreservesOrder(Box<Int32IncrementBoundsEvidence>),
-    Int32PositiveIsNonnegative(SignedOrderDerivationStep),
-    Int32StrictlyPositiveIsNonnegative(SignedOrderDerivationStep),
-    Int32SuccessorLeImpliesLt(SignedOrderDerivationStep),
-    Int32ConstantLowerBoundWeakening(SignedOrderDerivationStep),
-    Int32NegatedStrictSuccessorBound(SignedOrderDerivationStep),
-    Int32PositivePredecessorIsNonnegative(SignedOrderDerivationStep),
-    Int32PositivePredecessorStrictlyDecreases(SignedOrderDerivationStep),
+    Int32PositiveIsNonnegative(Box<SignedOrderDerivationStep>),
+    Int32StrictlyPositiveIsNonnegative(Box<SignedOrderDerivationStep>),
+    Int32SuccessorLeImpliesLt(Box<SignedOrderDerivationStep>),
+    Int32ConstantLowerBoundWeakening(Box<SignedOrderDerivationStep>),
+    Int32NegatedStrictSuccessorBound(Box<SignedOrderDerivationStep>),
+    Int32PositivePredecessorIsNonnegative(Box<SignedOrderDerivationStep>),
+    Int32PositivePredecessorStrictlyDecreases(Box<SignedOrderDerivationStep>),
     Int32NonnegativePredecessorUpperBound(Box<Int32PredecessorUpperBoundEvidence>),
     Int32OneLePredecessorIsNonnegative(Int32OneLeEvidence),
     Int32OneLePredecessorStrictlyDecreases(Int32OneLeEvidence),
@@ -3818,6 +3905,11 @@ pub struct PureFactContext {
     /// Exact equalities between distinct checked constructors. Any such fact
     /// makes the context inconsistent by constructor disjointness.
     pub(super) algebraic_constructor_conflicts: crate::persistent::PersistentMap<Proposition, ()>,
+    /// Direct constructor evidence indexed by the symbolic value it describes.
+    pub(super) algebraic_variable_constructors: crate::persistent::PersistentMap<
+        Variable,
+        crate::persistent::PersistentMap<Proposition, AlgebraicTerm>,
+    >,
     /// Exact disjunctive proposition facts. This derived index keeps bounded
     /// case search proportional to possible case splits rather than every
     /// unrelated proposition in the context.
@@ -3854,6 +3946,7 @@ pub struct PureFactContext {
     pub(super) prefer_symbolic_external_loads: bool,
     pub(super) force_symbolic_external_loads: bool,
     pub(super) allow_symbolic_contract_loads: bool,
+    pub(super) require_owned_expression_loads: bool,
     pub(super) transport_memory_load_condition_facts: bool,
     /// Proof-side specification lowering keeps an unresolved load as one
     /// symbolic term. Executable invariant checking leaves this false so it

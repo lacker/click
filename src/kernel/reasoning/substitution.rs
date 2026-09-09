@@ -733,13 +733,7 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
         Term::PointerOffset(offset) => collect_pointer_offset_bound_variables(offset, variables),
         Term::CValue(value) => collect_c_value_bound_variables(value, variables),
         Term::Sequence(sequence) => collect_sequence_bound_variables(sequence, variables),
-        Term::Algebraic(term) => {
-            if let AlgebraicTermNode::Constructor { fields, .. } = &term.node {
-                for field in fields {
-                    collect_algebraic_value_bound_variables(field, variables);
-                }
-            }
-        }
+        Term::Algebraic(term) => collect_algebraic_bound_variables(term, variables),
         Term::CExpressionOutcome(outcome) => {
             collect_expression_outcome_bound_variables(outcome, variables)
         }
@@ -850,7 +844,10 @@ fn collect_c_expression_bound_variables(
     }
 }
 
-fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut BTreeSet<Variable>) {
+pub(in crate::kernel) fn collect_c_statement_bound_variables(
+    statement: &CStatement,
+    variables: &mut BTreeSet<Variable>,
+) {
     match statement {
         CStatement::Skip
         | CStatement::Break
@@ -953,7 +950,10 @@ fn collect_c_memory_segment_bound_variables(
     }
 }
 
-fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Variable>) {
+pub(in crate::kernel) fn collect_c_state_bound_variables(
+    state: &CState,
+    variables: &mut BTreeSet<Variable>,
+) {
     for binding in state.locals.bindings.values() {
         if let CLocalBinding::Object { value, .. } = binding {
             collect_c_value_bound_variables(value, variables);
@@ -971,7 +971,7 @@ fn collect_c_state_bound_variables(state: &CState, variables: &mut BTreeSet<Vari
     }
 }
 
-fn collect_statement_outcome_bound_variables(
+pub(in crate::kernel) fn collect_statement_outcome_bound_variables(
     outcome: &CStatementOutcome,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1050,7 +1050,10 @@ fn collect_c_resource_spec_bound_variables(
     }
 }
 
-fn collect_c_function_bound_variables(function: &CFunction, variables: &mut BTreeSet<Variable>) {
+pub(in crate::kernel) fn collect_c_function_bound_variables(
+    function: &CFunction,
+    variables: &mut BTreeSet<Variable>,
+) {
     for resource in function.resource_requires() {
         collect_c_resource_spec_bound_variables(resource, variables);
     }
@@ -1098,6 +1101,7 @@ fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<V
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
+        | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
         | PointerBlock::Heap(_) => {}
@@ -1120,6 +1124,9 @@ fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeS
         CResource::Instance(instance) => {
             for value in instance.arguments.iter().chain(instance.fields.iter()) {
                 collect_algebraic_value_bound_variables(value, variables);
+            }
+            for (_, child) in instance.opened_children.iter() {
+                collect_resource_bound_variables(&CResource::Instance(child.clone()), variables);
             }
         }
         CResource::Memory(range) => {
@@ -1270,7 +1277,11 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
 
 fn collect_algebraic_bound_variables(term: &AlgebraicTerm, variables: &mut BTreeSet<Variable>) {
     match &term.node {
-        AlgebraicTermNode::Variable(_) => {}
+        AlgebraicTermNode::Variable(variable) => {
+            // Algebraic variables share the kernel identity namespace with
+            // scalar variables and binders. Freshness must reserve them too.
+            variables.insert(*variable);
+        }
         AlgebraicTermNode::Constructor { fields, .. } => {
             for field in fields {
                 collect_algebraic_value_bound_variables(field, variables);
@@ -2674,6 +2685,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
             slots: state.locals.slots.clone(),
         },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
+        next_resource_child: state.next_resource_child,
         resource_bindings: state.resource_bindings.clone(),
         open_instances: substitute_bitvector_variable_in_resource_context(
             &state.open_instances,
@@ -2756,6 +2768,20 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
                 .fields
                 .iter()
                 .map(|value| substitute_bitvector_variable_in_algebraic_value(value, from, to))
+                .collect();
+            result.opened_children = instance
+                .opened_children
+                .iter()
+                .map(|(name, child)| {
+                    let CResource::Instance(child) = substitute_bitvector_variable_in_c_resource(
+                        &CResource::Instance(child.clone()),
+                        from,
+                        to,
+                    ) else {
+                        unreachable!()
+                    };
+                    (name.clone(), child)
+                })
                 .collect();
             CResource::Instance(result)
         }
@@ -2853,6 +2879,55 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 witnesses: definition.witnesses.clone(),
                 condition: definition.condition.as_ref().map(|condition| {
                     substitute_bitvector_variable_in_spec_proposition(condition, from, to)
+                }),
+                matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
+                    field_index: body.field_index,
+                    algebraic_type: body.algebraic_type.clone(),
+                    arms: body
+                        .arms
+                        .iter()
+                        .map(|arm| CResourceMatchArm {
+                            children: arm
+                                .children
+                                .iter()
+                                .map(|child| CResourceChildSpec {
+                                    name: child.name.clone(),
+                                    binding: child.binding,
+                                    field_bindings: child.field_bindings.clone(),
+                                    arguments: child
+                                        .arguments
+                                        .iter()
+                                        .map(|argument| {
+                                            substitute_bitvector_variable_in_c_expression(
+                                                argument, from, to,
+                                            )
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            binding_types: arm.binding_types.clone(),
+                            contains: arm
+                                .contains
+                                .iter()
+                                .map(|resource| {
+                                    substitute_bitvector_variable_in_resource_spec(
+                                        resource, from, to,
+                                    )
+                                })
+                                .collect(),
+                            facts: arm
+                                .facts
+                                .iter()
+                                .map(|fact| {
+                                    substitute_bitvector_variable_in_spec_proposition(
+                                        fact, from, to,
+                                    )
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 }),
                 recursive: definition.recursive,
                 counted_population: definition.counted_population,
@@ -4067,6 +4142,7 @@ fn pointer_capture_avoiding_quantifier_body(
             Some(variable)
         }
         PointerBlock::Concrete(_)
+        | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
         | PointerBlock::Heap(_) => None,
@@ -4781,6 +4857,7 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
     CState {
         locals: CLocalEnvironment { bindings, slots },
         memory: substitute_pointer_variable_in_memory(&state.memory, from, to),
+        next_resource_child: state.next_resource_child,
         resource_bindings: state.resource_bindings.clone(),
         open_instances: substitute_pointer_variable_in_resource_context(
             &state.open_instances,
@@ -4856,6 +4933,20 @@ fn substitute_pointer_variable_in_c_resource(
                 .fields
                 .iter()
                 .map(|value| substitute_pointer_variable_in_algebraic_value(value, from, to))
+                .collect();
+            result.opened_children = instance
+                .opened_children
+                .iter()
+                .map(|(name, child)| {
+                    let CResource::Instance(child) = substitute_pointer_variable_in_c_resource(
+                        &CResource::Instance(child.clone()),
+                        from,
+                        to,
+                    ) else {
+                        unreachable!()
+                    };
+                    (name.clone(), child)
+                })
                 .collect();
             CResource::Instance(result)
         }
@@ -5620,6 +5711,51 @@ fn substitute_pointer_variable_in_c_function(
                 witnesses: definition.witnesses.clone(),
                 condition: definition.condition.as_ref().map(|condition| {
                     substitute_pointer_variable_in_spec_proposition(condition, from, to)
+                }),
+                matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
+                    field_index: body.field_index,
+                    algebraic_type: body.algebraic_type.clone(),
+                    arms: body
+                        .arms
+                        .iter()
+                        .map(|arm| CResourceMatchArm {
+                            children: arm
+                                .children
+                                .iter()
+                                .map(|child| CResourceChildSpec {
+                                    name: child.name.clone(),
+                                    binding: child.binding,
+                                    field_bindings: child.field_bindings.clone(),
+                                    arguments: child
+                                        .arguments
+                                        .iter()
+                                        .map(|argument| {
+                                            substitute_pointer_variable_in_c_expression(
+                                                argument, from, to,
+                                            )
+                                        })
+                                        .collect(),
+                                })
+                                .collect(),
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            binding_types: arm.binding_types.clone(),
+                            contains: arm
+                                .contains
+                                .iter()
+                                .map(|resource| {
+                                    substitute_pointer_variable_in_resource_spec(resource, from, to)
+                                })
+                                .collect(),
+                            facts: arm
+                                .facts
+                                .iter()
+                                .map(|fact| {
+                                    substitute_pointer_variable_in_spec_proposition(fact, from, to)
+                                })
+                                .collect(),
+                        })
+                        .collect(),
                 }),
                 recursive: definition.recursive,
                 counted_population: definition.counted_population,

@@ -9,15 +9,16 @@ mod api;
 mod assumptions;
 mod eval;
 mod functions;
-pub(crate) use functions::rewrite_resource_instance;
-mod loops;
 #[cfg(test)]
-pub(crate) use loops::invariant_discovery_calls;
+pub(crate) use functions::rewrite_resource_instance;
+pub(crate) use functions::rewrite_resource_instance_selecting_children;
+mod loops;
 mod memory_provenance;
 mod primitives;
 pub(crate) mod proof;
 mod reasoning;
 mod spec;
+pub(crate) use spec::capture_spec_algebraic_value;
 mod termination;
 
 pub use api::*;
@@ -47,6 +48,7 @@ pub(crate) use eval::terms_have_same_canonical_form;
 pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_capacity};
 pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::initialize_c_program_storage;
+pub(crate) use functions::modified_by_value_aggregate_parameter_with_current_ensure_in_source;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use loops::{c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge};

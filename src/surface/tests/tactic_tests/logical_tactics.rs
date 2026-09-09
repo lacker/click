@@ -2669,6 +2669,34 @@ fn smart_pure_pointer_add_zero_identity_produces_a_rewrite_certificate() {
 }
 
 #[test]
+fn explicit_pointer_translation_checks_only_named_premises() {
+    let source = r#"
+        theorem translated(p: int32*, arr: int32*, i: int32, n: int32) {
+            requires p == arr + i;
+            requires i < n;
+            ensures p + 1 == arr + (i + 1) by {
+                arithmetic() using { p == arr + i; i < n; }
+            }
+        }
+    "#;
+    verify_c0_sources(source, &[]).unwrap_or_else(|e| panic!("{}", e.message()));
+    for omitted in [
+        "arithmetic() using { p == arr + i; }",
+        "arithmetic() using { i < n; }",
+    ] {
+        let missing = source.replace("arithmetic() using { p == arr + i; i < n; }", omitted);
+        assert!(
+            verify_c0_sources(&missing, &[]).is_err(),
+            "unnamed ambient premises must not be used"
+        );
+    }
+    let unavailable = source.replace("requires i < n;", "requires i <= n;");
+    assert!(verify_c0_sources(&unavailable, &[]).is_err());
+    let wrong = source.replace("ensures p + 1", "ensures p + 2");
+    assert!(verify_c0_sources(&wrong, &[]).is_err());
+}
+
+#[test]
 fn pure_rewrite_rejects_an_int32_equality_that_is_not_available() {
     // `offset == 1` is not an available fact, so the explicit rewrite
     // certificate must be rejected instead of substituting an unproven

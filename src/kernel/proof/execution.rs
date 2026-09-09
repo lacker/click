@@ -10,7 +10,7 @@ use crate::kernel::{
     CFunctionExecutionCandidates, CLoopEffectCheck, CMemory, CMemoryRange, CResource,
     CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
     ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
-    ResourceContext, SpecProposition, Theorem,
+    ResourceContext, SpecProposition, Theorem, Variable,
 };
 use crate::persistent::PersistentSet;
 use std::collections::{BTreeMap, HashMap};
@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
+    static MATCH_SCOPE_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MATCH_FRESHNESS_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CHECKED_CALL_EVENT_LOOKUP_CANDIDATES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
@@ -379,6 +381,8 @@ pub(crate) struct CheckedResourceRewrite {
     pub(crate) before_facts: ProofFacts,
     pub(crate) after_facts: ProofFacts,
     definition: CCompositeResourceDefinition,
+    instance: Option<crate::kernel::ResourceInstance>,
+    selected_children: Option<Arc<[(String, Variable)]>>,
     load_equalities: Vec<crate::kernel::CheckedLoadEquality>,
 }
 
@@ -387,6 +391,7 @@ impl CheckedResourceRewrite {
         &self.before_state
     }
 
+    #[cfg(test)]
     fn check(
         function: &CFunction,
         before_state: &CState,
@@ -395,6 +400,29 @@ impl CheckedResourceRewrite {
         after_state: &CState,
         after_facts: &ProofFacts,
         call_events: &CheckedCallEvents,
+    ) -> Result<Self, &'static str> {
+        Self::check_with_children(
+            function,
+            before_state,
+            before_facts,
+            selected,
+            after_state,
+            after_facts,
+            call_events,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_with_children(
+        function: &CFunction,
+        before_state: &CState,
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+        call_events: &CheckedCallEvents,
+        selected_children: Option<Arc<[(String, Variable)]>>,
     ) -> Result<Self, &'static str> {
         let load_equality_capture =
             crate::kernel::CheckedLoadEqualityCapture::start_with_call_events(call_events);
@@ -407,17 +435,20 @@ impl CheckedResourceRewrite {
                 .resources()
                 .owned_instance(instance.identity())
                 .is_some();
-            let (expected, allowed) = crate::kernel::rewrite_resource_instance(
+            let (expected, allowed) = crate::kernel::rewrite_resource_instance_selecting_children(
                 before_state,
                 instance,
                 definition,
                 assumptions,
                 unfold,
+                selected_children.as_deref(),
             )?;
             let mut unchanged = after_state.clone();
             unchanged.resources = before_state.resources.clone();
             unchanged.open_instances = before_state.open_instances.clone();
+            unchanged.next_resource_child = before_state.next_resource_child;
             if unchanged != *before_state
+                || expected.next_resource_child != after_state.next_resource_child
                 || !expected
                     .resources
                     .same_exchange_from(&after_state.resources, &before_state.resources)
@@ -442,6 +473,8 @@ impl CheckedResourceRewrite {
                 before_facts: before_facts.clone(),
                 after_facts: after_facts.clone(),
                 definition: definition.clone(),
+                instance: Some(instance.clone()),
+                selected_children,
                 load_equalities: load_equality_capture.finish(),
             });
         }
@@ -633,6 +666,8 @@ impl CheckedResourceRewrite {
             before_facts: before_facts.clone(),
             after_facts: after_facts.clone(),
             definition,
+            instance: None,
+            selected_children: None,
             load_equalities,
         })
     }
@@ -947,6 +982,7 @@ pub(crate) struct CheckedFunctionEntry {
     assumptions: PureFactContext,
     /// `resource_relation_assumptions(&self.assumptions)`, computed once.
     relation_facts: Option<PureFactContext>,
+    match_reserved_variables: std::sync::OnceLock<std::collections::BTreeSet<Variable>>,
 }
 
 impl CheckedFunctionEntry {
@@ -968,6 +1004,7 @@ impl CheckedFunctionEntry {
             entry_state,
             assumptions,
             relation_facts: None,
+            match_reserved_variables: Default::default(),
         };
         entry.relation_facts = entry.resource_relation_assumptions(&entry.assumptions);
         Some(Arc::new(entry))
@@ -1050,7 +1087,10 @@ impl CheckedFunctionEntry {
 pub(crate) struct CheckedProofCasePartition {
     identity: Arc<()>,
     root_facts: ProofFacts,
-    case_facts: [Proposition; 2],
+    case_facts: Vec<Proposition>,
+    /// Generative constructor witnesses are introduced only at their unchanged
+    /// entry scope. Complementary propositional splits need no such scope.
+    witness_scope: Option<SharedValue<CState>>,
 }
 
 /// One entry of an outcome-evidence fork plan
@@ -1079,6 +1119,9 @@ pub(crate) struct CheckedProofCaseArm {
 }
 
 impl CheckedProofCasePartition {
+    pub(crate) fn case_fact(&self, index: usize) -> Option<&Proposition> {
+        self.case_facts.get(index)
+    }
     pub(crate) fn check(
         root_facts: &ProofFacts,
         then_fact: Proposition,
@@ -1093,7 +1136,8 @@ impl CheckedProofCasePartition {
         Some(Arc::new(Self {
             identity: Arc::new(()),
             root_facts: root_facts.clone(),
-            case_facts: [then_fact, else_fact],
+            case_facts: vec![then_fact, else_fact],
+            witness_scope: None,
         }))
     }
 }
@@ -1107,13 +1151,22 @@ impl CheckedProofCaseArm {
         self.arm_index
     }
 
+    pub(crate) fn width(&self) -> usize {
+        self.partition.case_facts.len()
+    }
+
     pub(crate) fn is_valid(&self) -> bool {
-        self.arm_index < 2
+        self.arm_index < self.width()
             && self
                 .facts
                 .introduced_since(&self.partition.root_facts)
                 .is_some_and(|introduced| {
                     introduced == vec![self.partition.case_facts[self.arm_index].clone()]
+                        || introduced.is_empty()
+                            && self
+                                .partition
+                                .root_facts
+                                .contains(&self.partition.case_facts[self.arm_index])
                 })
     }
 }
@@ -2210,6 +2263,7 @@ pub(crate) struct ProofExecutionContinuation {
 #[derive(Clone)]
 pub(crate) struct ExecutionProofCore {
     pub(crate) state: SharedValue<CState>,
+    initial_match_scope: SharedValue<CState>,
     /// The state the retained evidence has reached on the open trace: the
     /// outcome of the last recorded theorem, observation, rewrite, or
     /// join. `None` until the first is recorded, when the theorem starts
@@ -2234,6 +2288,10 @@ pub(crate) struct ExecutionProofCore {
     /// operation with several return outcomes can complete several traces at
     /// once. Forked proofs share every unchanged trace prefix.
     pub(crate) execution_evidence: SharedVec<PersistentSequence<CheckedExecutionEvent>>,
+    /// Post-return exchanges indexed by the selected outcome. Forking a
+    /// focused outcome must not copy or modify its sibling traces.
+    return_resource_rewrites:
+        crate::persistent::PersistentMap<usize, PersistentSequence<CheckedExecutionEvent>>,
     /// Events on the current unjoined path. A branch join restores its
     /// parent's set; finalization collects all retained arm events by walking
     /// the output trace once.
@@ -2262,19 +2320,14 @@ pub(crate) struct CheckedLoopInvariantLowerings {
     pub(super) body: Option<super::object::CheckedInvariantBody>,
     pub(super) snapshot: SharedValue<CState>,
     pub(super) checks: Vec<crate::kernel::CLoopInvariantCheck>,
-    pub(super) paths: Vec<Arc<crate::kernel::loops::CheckedInvariantLowering>>,
     pub(super) facts: super::ProofFacts,
     pub(super) effects: SharedVec<ExecutionPureFact>,
-    pub(super) path_count: usize,
 }
 
 #[cfg(test)]
 impl CheckedLoopInvariantLowerings {
     pub(crate) fn checks(&self) -> &[crate::kernel::CLoopInvariantCheck] {
         &self.checks
-    }
-    pub(crate) fn paths(&self) -> &[Arc<crate::kernel::loops::CheckedInvariantLowering>] {
-        &self.paths
     }
     pub(crate) fn snapshot(&self) -> &SharedValue<CState> {
         &self.snapshot
@@ -2928,8 +2981,79 @@ fn trace_completion(
                     if *state != rewrite.before_state {
                         return Err("post-return resource rewrite has a different input state");
                     }
+                    if let Some(instance) = &rewrite.instance
+                        && rewrite.definition.condition().is_some()
+                    {
+                        let path_case = crate::kernel::functions::instance_body_guard_case(
+                            state,
+                            instance,
+                            &rewrite.definition,
+                            executed_under,
+                        );
+                        let selected_case = crate::kernel::functions::instance_body_guard_case(
+                            state,
+                            instance,
+                            &rewrite.definition,
+                            rewrite.before_facts.assumptions(),
+                        );
+                        if path_case.is_none() || path_case != selected_case {
+                            return Err(
+                                "return fold guard is not justified on this execution path",
+                            );
+                        }
+                    }
+                    if let Some(instance) = &rewrite.instance {
+                        if rewrite.definition.matched.is_some() {
+                            let path_case = crate::kernel::functions::selected_instance_match_arm(
+                                instance,
+                                &rewrite.definition,
+                                executed_under,
+                            )
+                            .map(|(arm, _)| &arm.variant);
+                            let selected_case =
+                                crate::kernel::functions::selected_instance_match_arm(
+                                    instance,
+                                    &rewrite.definition,
+                                    rewrite.before_facts.assumptions(),
+                                )
+                                .map(|(arm, _)| &arm.variant);
+                            if path_case.is_err() || path_case != selected_case {
+                                return Err(
+                                    "return fold constructor is not justified on this execution path",
+                                );
+                            }
+                        }
+                        let (checked_state, _) =
+                            crate::kernel::rewrite_resource_instance_selecting_children(
+                                state,
+                                instance,
+                                &rewrite.definition,
+                                executed_under,
+                                false,
+                                rewrite.selected_children.as_deref(),
+                            )
+                            .map_err(
+                                |_| "return fold body is not justified on this execution path",
+                            )?;
+                        if !checked_state
+                            .resources
+                            .same_exchange_from(&rewrite.after_state.resources, &state.resources)
+                            || checked_state.next_resource_child
+                                != rewrite.after_state.next_resource_child
+                            || !checked_state.open_instances.same_exchange_from(
+                                &rewrite.after_state.open_instances,
+                                &state.open_instances,
+                            )
+                        {
+                            return Err(
+                                "return fold does not match this path's checked resource exchange",
+                            );
+                        }
+                    }
                     *state = rewrite.after_state.clone();
-                    *executed_under = rewrite.after_facts.assumptions().clone();
+                    // Folding introduces no pure facts. In particular, do not
+                    // publish a proof snapshot's entire assumption context as
+                    // facts of this path.
                 }
             }
             CheckedExecutionEvent::Condition(_) | CheckedExecutionEvent::ResourceObservation(_) => {
@@ -2940,9 +3064,15 @@ fn trace_completion(
             }
             // A post-execution case split records its arm after the path's
             // returning statement; it changes only the assumed facts.
-            CheckedExecutionEvent::ProofCase(_)
-            | CheckedExecutionEvent::Context(_)
-            | CheckedExecutionEvent::Call(_) => {}
+            CheckedExecutionEvent::ProofCase(arm) => {
+                if !arm.is_valid() {
+                    return Err("invalid post-execution proof case");
+                }
+                if let Some((_, executed_under)) = &mut completed {
+                    *executed_under = arm.facts.assumptions().clone();
+                }
+            }
+            CheckedExecutionEvent::Context(_) | CheckedExecutionEvent::Call(_) => {}
         }
     }
     let Some((outcome, executed_under)) =
@@ -3104,14 +3234,17 @@ impl ExecutionProofCore {
     }
 
     pub(crate) fn at_entry(state: CState, frontier: ExecutionFrontier) -> Self {
+        let state: SharedValue<CState> = state.into();
         Self {
-            state: state.into(),
+            initial_match_scope: state.clone(),
+            state,
             evidence_state: None,
             evidence_completed: false,
             evidence_source: None,
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
+            return_resource_rewrites: Default::default(),
             checked_call_events: CheckedCallEvents::new(),
             function_entry: None,
             frontier_loop_rules: Default::default(),
@@ -3802,6 +3935,11 @@ impl ExecutionProofCore {
         arm_index: usize,
         facts: ProofFacts,
     ) -> bool {
+        if partition.witness_scope.as_ref().is_some_and(|scope| {
+            self.evidence_state.is_some() || !self.state.shares_storage_with(scope)
+        }) {
+            return false;
+        }
         let arm = CheckedProofCaseArm {
             partition,
             arm_index,
@@ -3814,6 +3952,88 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::ProofCase(arm.clone()));
         }
         true
+    }
+
+    /// Constructor elimination at function entry. Reserve the selected
+    /// function/state once, then query the persistent fact index for each
+    /// fresh field; nested matches do not rescan the execution state.
+    pub(crate) fn algebraic_case_partition(
+        &self,
+        facts: &ProofFacts,
+        value: &crate::kernel::AlgebraicTerm,
+        environment: &crate::kernel::CExecutionEnvironment,
+        first_variable: u64,
+        stride: u64,
+    ) -> Option<(
+        Arc<CheckedProofCasePartition>,
+        Vec<Vec<(Variable, crate::kernel::Sort)>>,
+        u64,
+    )> {
+        use crate::kernel::{CFunctionOutcome, Term};
+        if stride == 0
+            || self.evidence_state.is_some()
+            || !self.frontier.is_at_function_entry()
+            || !self.state.shares_storage_with(&self.initial_match_scope)
+        {
+            return None;
+        }
+        let entry = self.function_entry.as_ref()?;
+        let reserved = entry.match_reserved_variables.get_or_init(|| {
+            #[cfg(test)]
+            MATCH_SCOPE_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+            crate::kernel::proposition_variables(&Proposition::CFunctionExecutes {
+                state: entry.caller_state.clone(),
+                function: entry.function.clone(),
+                arguments: entry.arguments.clone(),
+                outcome: CFunctionOutcome::Return {
+                    value: CValue::Void,
+                    state: entry.entry_state.clone(),
+                },
+            })
+        });
+        let environment_variables =
+            crate::kernel::reasoning::execution_environment_variable_index(environment);
+        let value_variables = crate::kernel::proposition_variables(&Proposition::Equal(
+            Term::Algebraic(value.clone()),
+            Term::Algebraic(value.clone()),
+        ));
+        let mut next = first_variable;
+        let mut overflow = false;
+        let equations =
+            crate::kernel::api::algebraic_constructor_case_equations(value, &mut || {
+                loop {
+                    let candidate = Variable(next);
+                    #[cfg(test)]
+                    MATCH_FRESHNESS_PROBES.with(|count| count.set(count.get() + 1));
+                    if let Some(successor) = next.checked_add(stride) {
+                        next = successor;
+                    } else {
+                        overflow = true;
+                        return candidate;
+                    }
+                    if !reserved.contains(&candidate)
+                        && !environment_variables.contains(&candidate)
+                        && !value_variables.contains(&candidate)
+                        && !facts.reserves_variable(candidate)
+                    {
+                        return candidate;
+                    }
+                }
+            })?;
+        if overflow {
+            return None;
+        }
+        let (case_facts, bindings) = equations.into_iter().unzip();
+        Some((
+            Arc::new(CheckedProofCasePartition {
+                identity: Arc::new(()),
+                root_facts: facts.clone(),
+                case_facts,
+                witness_scope: Some(self.state.clone()),
+            }),
+            bindings,
+            next,
+        ))
     }
 
     /// Forks the per-path evidence traces the way a post-execution case
@@ -3934,10 +4154,32 @@ impl ExecutionProofCore {
         after_state: &CState,
         after_facts: &ProofFacts,
     ) -> Result<(), &'static str> {
+        self.record_resource_rewrite_with_children(
+            function,
+            arguments,
+            before_facts,
+            selected,
+            after_state,
+            after_facts,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_resource_rewrite_with_children(
+        &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+        selected_children: Option<Arc<[(String, Variable)]>>,
+    ) -> Result<(), &'static str> {
         if self.evidence_completed {
             return Err("a resource rewrite was recorded after the trace completed");
         }
-        let mut rewrite = CheckedResourceRewrite::check(
+        let mut rewrite = CheckedResourceRewrite::check_with_children(
             function,
             self.reached_state(),
             before_facts,
@@ -3945,6 +4187,7 @@ impl ExecutionProofCore {
             after_state,
             after_facts,
             &self.checked_call_events,
+            selected_children,
         )?;
         if self.frontier.is_at_function_entry() {
             rewrite.before_state =
@@ -3965,16 +4208,34 @@ impl ExecutionProofCore {
 
     /// A logical resource exchange after the returning C statement. This
     /// cannot execute C, change the result, or bypass the checked body rule.
+    #[cfg(test)]
     pub(crate) fn record_return_resource_rewrite(
         &mut self,
         function: &CFunction,
+        path_index: usize,
         before_facts: &ProofFacts,
         selected: &CResourceFact,
         after_facts: &ProofFacts,
     ) -> Result<(), &'static str> {
-        if self.execution_evidence.len() != 1 {
-            return Err("return instance folding currently requires one retained execution trace");
-        }
+        self.record_return_resource_rewrite_with_children(
+            function,
+            path_index,
+            before_facts,
+            selected,
+            after_facts,
+            None,
+        )
+    }
+
+    pub(crate) fn record_return_resource_rewrite_with_children(
+        &mut self,
+        function: &CFunction,
+        path_index: usize,
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_facts: &ProofFacts,
+        selected_children: Option<Arc<[(String, Variable)]>>,
+    ) -> Result<(), &'static str> {
         if !self.evidence_completed {
             return Err("return resource rewrite requires completed execution");
         }
@@ -3984,28 +4245,66 @@ impl ExecutionProofCore {
         let definition = function
             .composite_resource_definition(instance.name())
             .ok_or("instance definition is not registered on the function")?;
+        let mut trace = self
+            .return_resource_rewrites
+            .get(&path_index)
+            .or_else(|| self.execution_evidence.get(path_index))
+            .cloned()
+            .ok_or("return resource rewrite selected an unknown path")?;
+        // Read only the completing suffix. Persistent pop does not copy the
+        // path's earlier history, and no sibling path is inspected.
+        let before_state = loop {
+            match trace.pop() {
+                Some(CheckedExecutionEvent::ResourceRewrite(rewrite)) => {
+                    break rewrite.after_state;
+                }
+                Some(CheckedExecutionEvent::Statement(theorem)) => {
+                    let Proposition::CStatementVerifies {
+                        outcome: CStatementOutcome::Return { state, .. },
+                        ..
+                    } = checked_evidence_conclusion(&theorem)
+                    else {
+                        return Err("return resource rewrite requires a returning path");
+                    };
+                    break state.clone();
+                }
+                Some(
+                    CheckedExecutionEvent::Context(_)
+                    | CheckedExecutionEvent::Call(_)
+                    | CheckedExecutionEvent::ProofCase(_),
+                ) => {}
+                _ => return Err("return resource rewrite has no completing theorem"),
+            }
+        };
         // Compute the exchange in the retained C-body state, not the
         // caller-side projection used by postcondition expressions.
-        let (after_state, _) = crate::kernel::rewrite_resource_instance(
-            self.reached_state(),
+        let (after_state, _) = crate::kernel::rewrite_resource_instance_selecting_children(
+            &before_state,
             instance,
             definition,
             before_facts.assumptions(),
             false,
+            selected_children.as_deref(),
         )?;
-        let rewrite = CheckedResourceRewrite::check(
+        let rewrite = CheckedResourceRewrite::check_with_children(
             function,
-            self.reached_state(),
+            &before_state,
             before_facts,
             selected,
             &after_state,
             after_facts,
             &self.checked_call_events,
+            selected_children,
         )?;
-        self.evidence_state = Some(after_state.clone());
-        for trace in &mut *self.execution_evidence {
-            trace.push(CheckedExecutionEvent::ResourceRewrite(rewrite.clone()));
-        }
+        let mut trace = self
+            .return_resource_rewrites
+            .get(&path_index)
+            .unwrap_or(&self.execution_evidence[path_index])
+            .clone();
+        trace.push(CheckedExecutionEvent::ResourceRewrite(rewrite));
+        self.return_resource_rewrites = self
+            .return_resource_rewrites
+            .with_inserted(path_index, trace);
         Ok(())
     }
 
@@ -4123,10 +4422,79 @@ impl ExecutionProofCore {
         execution_semantics: crate::kernel::CExecutionSemantics,
         mode: crate::kernel::CFunctionContractExecutionMode,
     ) -> Result<crate::kernel::CCheckedFunctionExecution, &'static str> {
+        let (paths, has_checked_entry) =
+            self.checked_execution_paths(candidates, checked_function, &assumptions, None)?;
+        Ok(crate::kernel::CCheckedFunctionExecution {
+            state: candidates.state().clone(),
+            function: checked_function.clone(),
+            arguments: candidates.arguments().to_vec(),
+            assumptions,
+            environment,
+            execution_semantics,
+            mode,
+            execution: crate::kernel::SymbolicCExecution { paths, limit: None },
+            entry_representation_origin: has_checked_entry
+                .then(|| self.function_entry.as_ref())
+                .flatten()
+                .map(|entry| entry.caller_state().clone()),
+            checked_call_events: self.retained_call_events(),
+        })
+    }
+
+    /// One path theorem, not an assertion of whole-function coverage.
+    pub(crate) fn checked_return_path(
+        &self,
+        candidates: &CFunctionExecutionCandidates,
+        function: &CFunction,
+        assumptions: &PureFactContext,
+        path_index: usize,
+    ) -> Result<crate::kernel::SymbolicCExecutionPath, &'static str> {
+        self.checked_execution_paths(candidates, function, assumptions, Some(path_index))?
+            .0
+            .pop()
+            .ok_or("return fold selected an unknown path")
+    }
+
+    /// Collect a finished outcome's exchange without copying sibling traces.
+    pub(crate) fn collect_return_resource_rewrites(
+        &mut self,
+        source: &Self,
+        path_index: usize,
+    ) -> Result<(), &'static str> {
+        let base = self
+            .execution_evidence
+            .get(path_index)
+            .ok_or("return fold selected an unknown path")?;
+        let source_base = source
+            .execution_evidence
+            .get(path_index)
+            .ok_or("return fold selected an unknown source path")?;
+        if !base.shares_tail_with(source_base) {
+            return Err("return folds belong to a different execution path");
+        }
+        let rewritten = source
+            .return_resource_rewrites
+            .get(&path_index)
+            .ok_or("selected path has no checked return folds")?;
+        self.return_resource_rewrites = self
+            .return_resource_rewrites
+            .with_inserted(path_index, rewritten.clone());
+        Ok(())
+    }
+
+    fn checked_execution_paths(
+        &self,
+        candidates: &CFunctionExecutionCandidates,
+        checked_function: &CFunction,
+        assumptions: &PureFactContext,
+        selected: Option<usize>,
+    ) -> Result<(Vec<crate::kernel::SymbolicCExecutionPath>, bool), &'static str> {
         if candidates.paths().len() != self.execution_evidence.len() {
             return Err("the published paths do not match the retained traces one to one");
         }
-        if !crate::kernel::api::proof_case_partitions_are_exhaustive(&self.execution_evidence) {
+        if selected.is_none()
+            && !crate::kernel::api::proof_case_partitions_are_exhaustive(&self.execution_evidence)
+        {
             return Err("a proof-case partition is not exhausted by the retained traces");
         }
         if !crate::kernel::api::proof_evidence_function_refines_same_source(
@@ -4136,6 +4504,11 @@ impl ExecutionProofCore {
             return Err("the checked function does not refine the published function's source");
         }
         let function = checked_function;
+        let range = match selected {
+            Some(index) if index < candidates.paths().len() => index..index + 1,
+            Some(_) => return Err("return fold selected an unknown path"),
+            None => 0..candidates.paths().len(),
+        };
         // The checked entry vouches for the published function's entry only
         // when it was checked for that function and those arguments, and
         // either every trace starts at its entry state or that state
@@ -4146,7 +4519,7 @@ impl ExecutionProofCore {
             match entry.trace_entry_state(candidates.function(), candidates.arguments()) {
                 None => false,
                 Some(trace_entry) => {
-                    self.execution_evidence.iter().all(|trace| {
+                    self.execution_evidence[range.clone()].iter().all(|trace| {
                         crate::kernel::api::proof_evidence_initial_state(&trace.to_vec())
                             == Some(trace_entry)
                     }) || entry
@@ -4174,8 +4547,13 @@ impl ExecutionProofCore {
                 return Err("population materialization at entry needs a checked function entry");
             }
         }
-        let mut paths = Vec::with_capacity(candidates.paths().len());
-        for (candidate, trace) in candidates.paths().iter().zip(&self.execution_evidence) {
+        let mut paths = Vec::with_capacity(range.len());
+        for path_index in range {
+            let candidate = &candidates.paths()[path_index];
+            let trace = self
+                .return_resource_rewrites
+                .get(&path_index)
+                .unwrap_or(&self.execution_evidence[path_index]);
             let events = trace.to_vec();
             let (completed, statement_assumptions, interface_execution_facts) = trace_completion(
                 function,
@@ -4281,21 +4659,7 @@ impl ExecutionProofCore {
                 theorem,
             });
         }
-        Ok(crate::kernel::CCheckedFunctionExecution {
-            state: candidates.state().clone(),
-            function: checked_function.clone(),
-            arguments: candidates.arguments().to_vec(),
-            assumptions,
-            environment,
-            execution_semantics,
-            mode,
-            execution: crate::kernel::SymbolicCExecution { paths, limit: None },
-            entry_representation_origin: has_checked_entry
-                .then(|| self.function_entry.as_ref())
-                .flatten()
-                .map(|entry| entry.caller_state().clone()),
-            checked_call_events: self.retained_call_events(),
-        })
+        Ok((paths, has_checked_entry))
     }
 
     /// Checks that every retained event carries the kernel judgment its tag
@@ -4359,6 +4723,552 @@ mod tests {
         CResourceAccessMode, CResourceFact, CResourceSpec, CType, CValue, Pointer, PointerBlock,
         PointerOffsetTerm, SpecExpression, c_function, int32,
     };
+
+    fn constructor_partition_fixture(
+        width: usize,
+    ) -> (ExecutionProofCore, crate::kernel::AlgebraicTerm) {
+        use crate::kernel::{
+            AlgebraicSchemas, AlgebraicTerm, AlgebraicTermNode, AlgebraicType, AlgebraicValueType,
+            AlgebraicVariantType,
+        };
+        let variants: Arc<[AlgebraicVariantType]> = (0..width)
+            .map(|index| AlgebraicVariantType {
+                name: format!("C{index}"),
+                fields: vec![AlgebraicValueType::C(CType::Int32)],
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let key = AlgebraicValueType::Algebraic {
+            name: "Cases".into(),
+            arguments: vec![],
+        };
+        let value = AlgebraicTerm {
+            algebraic_type: AlgebraicType {
+                rigid: false,
+                name: "Cases".into(),
+                arguments: vec![],
+                variants: variants.clone(),
+                schemas: Arc::new(AlgebraicSchemas::new(BTreeMap::from([(key, variants)]))),
+            },
+            node: AlgebraicTermNode::Variable(Variable(8)),
+        };
+        let state = CState::new();
+        let function = c_function(
+            CType::Int32,
+            "entry",
+            vec![],
+            CStatement::Return(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(4_000_000)),
+            ))),
+        );
+        let mut core = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+        assert!(core.record_checked_function_entry(&function, &[], &state, PureFactContext::new()));
+        (core, value)
+    }
+
+    #[test]
+    fn constructor_partition_checks_complete_coverage_and_exact_scopes() {
+        for width in [1, 2, 4, 16] {
+            let (core, value) = constructor_partition_fixture(width);
+            let root = ProofFacts::default();
+            let (partition, fields, _) = core
+                .algebraic_case_partition(
+                    &root,
+                    &value,
+                    &crate::kernel::CExecutionEnvironment::new(),
+                    4_000_000,
+                    65_536,
+                )
+                .unwrap();
+            assert_eq!(fields.len(), width);
+            let mut traces = Vec::new();
+            for index in 0..width {
+                let mut arm = core.clone();
+                assert!(arm.record_proof_case_arm(
+                    partition.clone(),
+                    index,
+                    root.with_fact(partition.case_fact(index).unwrap().clone())
+                ));
+                traces.push(arm.execution_evidence[0].clone());
+            }
+            assert!(crate::kernel::api::proof_case_partitions_are_exhaustive(
+                &traces
+            ));
+            if width > 1 {
+                assert!(!crate::kernel::api::proof_case_partitions_are_exhaustive(
+                    &traces[1..]
+                ));
+            }
+            let mut wrong = core.clone();
+            assert!(!wrong.record_proof_case_arm(partition.clone(), width, root.clone()));
+            assert!(!wrong.record_proof_case_arm(partition.clone(), 0, root.clone()));
+            let facts = root.with_fact(partition.case_fact(0).unwrap().clone());
+            let extra = facts.with_fact(Proposition::Predicate {
+                name: "unjustified".into(),
+                arguments: vec![],
+            });
+            assert!(!wrong.record_proof_case_arm(partition.clone(), 0, extra));
+            wrong.state = CState::new().with_local("changed", int32(1)).into();
+            assert!(!wrong.record_proof_case_arm(partition.clone(), 0, facts));
+            assert!(
+                wrong
+                    .algebraic_case_partition(
+                        &root,
+                        &value,
+                        &crate::kernel::CExecutionEnvironment::new(),
+                        0,
+                        1
+                    )
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn constructor_partition_witnesses_avoid_source_facts_and_previous_matches() {
+        let (core, value) = constructor_partition_fixture(2);
+        let occupied = Variable(4_065_536);
+        let root = ProofFacts::from_ordered(&[Proposition::Equal(
+            crate::kernel::Term::CValue(CValue::Int32(Bitvector32Term::Variable(occupied))),
+            crate::kernel::Term::CValue(int32(0)),
+        )]);
+        let env = crate::kernel::CExecutionEnvironment::new();
+        let (partition, fields, next) = core
+            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .unwrap();
+        assert!(fields.iter().flatten().all(|(var, _)| var.0 > occupied.0));
+        let facts = root.with_fact(partition.case_fact(0).unwrap().clone());
+        let (_, later, _) = core
+            .algebraic_case_partition(&facts, &value, &env, next, 65_536)
+            .unwrap();
+        assert!(later.iter().flatten().all(|(var, _)| var.0 >= next));
+        assert!(
+            core.algebraic_case_partition(&root, &value, &env, u64::MAX, 1)
+                .is_none()
+        );
+        assert!(
+            core.algebraic_case_partition(&root, &value, &env, 0, 0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn constructor_partition_reserves_algebraic_variables_in_opaque_environment_terms() {
+        use crate::kernel::{AlgebraicTermNode, CExecutionEnvironment, PureFunctionArgument};
+        let (core, mut value) = constructor_partition_fixture(2);
+        value.node = AlgebraicTermNode::Variable(Variable(4_065_536));
+        let function = c_function(
+            CType::Int32,
+            "opaque_environment",
+            vec![],
+            CStatement::Return(CExpression::Value(CValue::Int32(
+                Bitvector32Term::ClickFunctionApplication {
+                    name: "opaque".into(),
+                    arguments: vec![PureFunctionArgument::Algebraic(value.clone())],
+                },
+            ))),
+        );
+        let environment = CExecutionEnvironment::new().with_function(function);
+        value.node = AlgebraicTermNode::Variable(Variable(8));
+        let (_, fields, _) = core
+            .algebraic_case_partition(
+                &ProofFacts::default(),
+                &value,
+                &environment,
+                4_000_000,
+                65_536,
+            )
+            .unwrap();
+        assert!(fields.iter().flatten().all(|(var, _)| var.0 > 4_065_536));
+    }
+
+    #[test]
+    fn constructor_partition_freshness_is_indexed_and_output_linear() {
+        for size in [16, 64, 256] {
+            let (core, value) = constructor_partition_fixture(2);
+            let mut facts = ProofFacts::from_ordered(
+                &(0..size)
+                    .map(|index| Proposition::Predicate {
+                        name: format!("ambient{index}"),
+                        arguments: vec![],
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let environment = crate::kernel::CExecutionEnvironment::new();
+            let builds = MATCH_SCOPE_INDEX_BUILDS.with(std::cell::Cell::get);
+            let probes = MATCH_FRESHNESS_PROBES.with(std::cell::Cell::get);
+            let mut next = 4_000_000;
+            for _ in 0..size {
+                let (partition, fields, successor) = core
+                    .algebraic_case_partition(&facts, &value, &environment, next, 65_536)
+                    .unwrap();
+                assert_eq!(fields.iter().map(Vec::len).sum::<usize>(), 2);
+                facts = facts.with_fact(partition.case_fact(0).unwrap().clone());
+                next = successor;
+            }
+            assert_eq!(
+                MATCH_SCOPE_INDEX_BUILDS.with(std::cell::Cell::get) - builds,
+                1
+            );
+            assert_eq!(
+                MATCH_FRESHNESS_PROBES.with(std::cell::Cell::get) - probes,
+                2 * size + 1
+            );
+        }
+    }
+
+    #[test]
+    fn return_instance_guard_and_body_cannot_use_sibling_assumptions() {
+        use crate::kernel::{
+            AlgebraicSchemas, AlgebraicTerm, AlgebraicTermNode, AlgebraicType, AlgebraicValue,
+            AlgebraicValueType, AlgebraicVariantType, CResourceMatchArm, CResourceMatchBody,
+            ConditionTerm, ResourceFieldSchema, ResourceFieldType, ResourceInstance, Term,
+            Variable,
+        };
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
+            AlgebraicVariantType {
+                name: "Left".into(),
+                fields: vec![],
+            },
+            AlgebraicVariantType {
+                name: "Right".into(),
+                fields: vec![],
+            },
+        ]
+        .into();
+        let ty = AlgebraicType {
+            name: "Case".into(),
+            arguments: vec![],
+            rigid: false,
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(std::collections::BTreeMap::from(
+                [(
+                    AlgebraicValueType::Algebraic {
+                        name: "Case".into(),
+                        arguments: vec![],
+                    },
+                    variants,
+                )],
+            ))),
+        };
+        let model = AlgebraicTerm {
+            algebraic_type: ty.clone(),
+            node: AlgebraicTermNode::Variable(Variable(43)),
+        };
+        let schema = ResourceFieldSchema::new(vec![
+            ("value".into(), ResourceFieldType::C(CType::Int32)),
+            ("model".into(), ResourceFieldType::Algebraic(ty.clone())),
+        ])
+        .unwrap();
+        let instance = ResourceInstance::new(
+            Variable(1),
+            "cell".into(),
+            vec![].into(),
+            schema.clone(),
+            vec![int32(7).into(), AlgebraicValue::Algebraic(model.clone())].into(),
+        )
+        .unwrap();
+        let word = Bitvector32Term::Variable(Variable(42));
+        let guard = ConditionTerm::equal(word.clone(), Bitvector32Term::Constant(0));
+        let condition = SpecProposition::Comparison {
+            left: SpecExpression::Value(CValue::Int32(word)),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(0)),
+        };
+        for mode in 0..3 {
+            let guarded = mode == 0;
+            let matched = mode == 2;
+            let definition = CCompositeResourceDefinition::new(
+                "cell",
+                vec![],
+                guarded.then(|| condition.clone()),
+                false,
+                vec![],
+                if guarded || matched {
+                    vec![]
+                } else {
+                    vec![condition.clone()]
+                },
+            )
+            .with_instance_schema(Some(schema.clone()))
+            .with_resource_match_body(matched.then(|| {
+                CResourceMatchBody {
+                    field_index: 1,
+                    algebraic_type: ty.clone(),
+                    arms: ["Left", "Right"]
+                        .into_iter()
+                        .map(|variant| CResourceMatchArm {
+                            children: vec![],
+                            variant: variant.into(),
+                            bindings: vec![],
+                            binding_types: vec![],
+                            contains: vec![],
+                            facts: vec![],
+                        })
+                        .collect(),
+                }
+            }));
+            let selected = CResourceFact::own(CResource::Instance(instance.clone()));
+            let before = CState::new().with_resource_context(
+                ResourceContext::new().unchecked_with_fact(selected.clone()),
+            );
+            let case_fact = |variant: &str| {
+                Proposition::Equal(
+                    Term::Algebraic(model.clone()),
+                    Term::Algebraic(AlgebraicTerm {
+                        algebraic_type: ty.clone(),
+                        node: AlgebraicTermNode::Constructor {
+                            variant: variant.into(),
+                            fields: vec![],
+                        },
+                    }),
+                )
+            };
+            let left = ProofFacts::default().with_fact(if matched {
+                case_fact("Left")
+            } else {
+                Proposition::ConditionIs(guard.clone(), true)
+            });
+            let right = ProofFacts::default().with_fact(if matched {
+                case_fact("Right")
+            } else {
+                Proposition::ConditionIs(guard.clone(), false)
+            });
+            let (open, _) = crate::kernel::rewrite_resource_instance(
+                &before,
+                &instance,
+                &definition,
+                left.assumptions(),
+                true,
+            )
+            .unwrap();
+            let statement = CStatement::Return(CExpression::Value(int32(0)));
+            let function = c_function(CType::Int32, "test", vec![], statement.clone())
+                .with_composite_resource_definitions(vec![definition]);
+            let mut core = ExecutionProofCore::at_entry(before, ExecutionFrontier::default());
+            let mut trace = PersistentSequence::default();
+            trace.push(CheckedExecutionEvent::Statement(Theorem::new(
+                Proposition::CStatementVerifies {
+                    state: open.clone(),
+                    statement,
+                    outcome: CStatementOutcome::Return {
+                        value: int32(0),
+                        state: open,
+                    },
+                },
+            )));
+            let (path_facts, rewrite_facts) = if guarded {
+                (&left, &right)
+            } else {
+                (&right, &left)
+            };
+            trace.push(CheckedExecutionEvent::Context(
+                path_facts.assumptions().clone(),
+            ));
+            core.execution_evidence = vec![trace].into();
+            core.evidence_completed = true;
+            // Even when both guard arms have identical memory, a rewrite checked
+            // under a sibling's case cannot certify this path.
+            core.record_return_resource_rewrite(
+                &function,
+                0,
+                rewrite_facts,
+                &selected,
+                rewrite_facts,
+            )
+            .unwrap();
+            let events = core.return_resource_rewrites.get(&0).unwrap().to_vec();
+            let expected = if matched {
+                "return fold constructor is not justified on this execution path"
+            } else if guarded {
+                "return fold guard is not justified on this execution path"
+            } else {
+                "return fold body is not justified on this execution path"
+            };
+            assert_eq!(
+                trace_completion(&function, &events, path_facts.assumptions(), false).err(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn return_instance_folds_are_indexed_and_do_not_copy_sibling_traces() {
+        use crate::kernel::{ResourceFieldSchema, ResourceFieldType, ResourceInstance, Variable};
+        let schema =
+            ResourceFieldSchema::new(vec![("value".into(), ResourceFieldType::C(CType::Int32))])
+                .unwrap();
+        let instance = ResourceInstance::new(
+            Variable(1),
+            "cell".into(),
+            vec![].into(),
+            schema.clone(),
+            vec![int32(7).into()].into(),
+        )
+        .unwrap();
+        let definition = CCompositeResourceDefinition::new(
+            "cell",
+            vec![],
+            None,
+            false,
+            vec![crate::kernel::CResourceSpec::OwnMemory(
+                crate::kernel::CMemorySegment {
+                    base: CExpression::Value(CValue::pointer(crate::kernel::Pointer::symbolic(
+                        Variable(100),
+                    ))),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(1)),
+                    element_width: 4,
+                    guard: None,
+                },
+            )],
+            vec![],
+        )
+        .with_instance_schema(Some(schema));
+        let statement = CStatement::Return(CExpression::Value(int32(7)));
+        let function = c_function(CType::Int32, "test", vec![], statement.clone())
+            .with_composite_resource_definitions(vec![definition.clone()]);
+        let selected = CResourceFact::own(CResource::Instance(instance.clone()));
+        let folded = CState::new()
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(selected.clone()));
+        let facts = ProofFacts::default();
+        let (open, _) = crate::kernel::rewrite_resource_instance(
+            &folded,
+            &instance,
+            &definition,
+            facts.assumptions(),
+            true,
+        )
+        .unwrap();
+        let trace = |state: CState| {
+            let mut trace = PersistentSequence::default();
+            trace.push(CheckedExecutionEvent::Statement(Theorem::new(
+                Proposition::CStatementVerifies {
+                    state: state.clone(),
+                    statement: statement.clone(),
+                    outcome: CStatementOutcome::Return {
+                        value: int32(7),
+                        state,
+                    },
+                },
+            )));
+            trace.push(CheckedExecutionEvent::Context(PureFactContext::new()));
+            trace
+        };
+        let mut work_samples = Vec::new();
+        for size in [16, 32, 64, 128] {
+            let mut core =
+                ExecutionProofCore::at_entry(folded.clone(), ExecutionFrontier::default());
+            core.execution_evidence = (0..size)
+                .map(|index| {
+                    // A sibling lacks the body ownership. Its state cannot be used
+                    // to satisfy this path's fold, or vice versa.
+                    trace(if index == size - 1 {
+                        CState::new()
+                    } else {
+                        open.clone()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into();
+            core.evidence_completed = true;
+            let base = core.clone();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                core.record_return_resource_rewrite(&function, size / 2, &facts, &selected, &facts)
+                    .unwrap();
+            });
+            work_samples.push(work);
+            for index in 0..size {
+                assert!(
+                    core.execution_evidence[index]
+                        .shares_tail_with(&base.execution_evidence[index])
+                );
+                assert_eq!(
+                    core.return_resource_rewrites.get(&index).is_some(),
+                    index == size / 2
+                );
+            }
+            assert!(
+                core.record_return_resource_rewrite(&function, size - 1, &facts, &selected, &facts)
+                    .is_err()
+            );
+            assert!(
+                core.record_return_resource_rewrite(&function, size, &facts, &selected, &facts)
+                    .is_err()
+            );
+            assert!(
+                core.record_return_resource_rewrite(&function, size / 2, &facts, &selected, &facts)
+                    .is_err()
+            );
+            let events = core
+                .return_resource_rewrites
+                .get(&(size / 2))
+                .unwrap()
+                .to_vec();
+            let (outcome, _, _) =
+                trace_completion(&function, &events, facts.assumptions(), false).unwrap();
+            assert_eq!(
+                outcome,
+                CStatementOutcome::Return {
+                    value: int32(7),
+                    state: folded.clone()
+                }
+            );
+            // Copying an event to a different path with a different body
+            // state is rejected during final certification.
+            let mut forged = base.execution_evidence[size - 1].clone();
+            forged.push(events.last().unwrap().clone());
+            assert!(
+                trace_completion(&function, &forged.to_vec(), facts.assumptions(), false).is_err()
+            );
+            let mut collected = base.clone();
+            collected
+                .collect_return_resource_rewrites(&core, size / 2)
+                .unwrap();
+            let extra = Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::equal(
+                    Bitvector32Term::Variable(Variable(1000)),
+                    Bitvector32Term::Constant(9),
+                ),
+                true,
+            );
+            let snapshot_facts = facts.with_fact(extra.clone());
+            let mut snapshot = base.clone();
+            snapshot
+                .record_return_resource_rewrite(
+                    &function,
+                    0,
+                    &snapshot_facts,
+                    &selected,
+                    &snapshot_facts,
+                )
+                .unwrap();
+            let (_, retained, _) = trace_completion(
+                &function,
+                &snapshot.return_resource_rewrites.get(&0).unwrap().to_vec(),
+                facts.assumptions(),
+                false,
+            )
+            .unwrap();
+            assert!(
+                !retained.proves(&extra),
+                "a fold must not publish unrelated snapshot assumptions"
+            );
+            let mut unrelated = base;
+            unrelated.execution_evidence[size / 2] = trace(open.clone());
+            assert!(
+                unrelated
+                    .collect_return_resource_rewrites(&core, size / 2)
+                    .is_err()
+            );
+        }
+        for pair in work_samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0] + 128,
+                "path-local fold work: {work_samples:?}"
+            );
+        }
+    }
 
     #[test]
     fn instance_rewrite_certificate_rejects_unrelated_state_and_fact_changes() {

@@ -39,14 +39,39 @@ unknown trees and function applications remain symbolic in proofs.
 Run `cargo run --bin click -- verify examples/modeled-binary-tree` from the
 repository root. The example is also checked by `scripts/check.sh`.
 
-## Remaining C connection
+## Verified C initializer
 
-These are proofs about finite algebraic trees, not yet about C pointers or
-memory ownership. Mirroring is a pure proof exercise, not a new C operation.
-The sidecar imports the unchanged C but still declares no C function proof.
-In particular, it does not yet establish C traversal termination, acyclicity,
-or rotation correctness. The next step is a recursive resource relating heap
-nodes to the pure model, including node identities for the in-order list.
+The sidecar also defines `HeapTree`, an example-local model recording each
+node's address, payload, and left/right submodels. Its `tree_at(p)` resource
+relates that model to the actual heap:
+
+- `Empty` requires `p == 0` and owns no memory.
+- `Node(identity, value, left_model, right_model)` requires a nonnull `p`
+  equal to `identity`, owns the three struct fields, and relates the stored
+  payload to `value`.
+- The children own `tree_at(p->left)` and `tree_at(p->right)`, with the
+  corresponding submodels. Their memory ownership is disjoint from each
+  other and the parent. Model addresses alone grant no ownership.
+
+The unchanged `tree_node_init` is verified for arbitrary owned child models.
+It takes separately owned writable parent fields and two modeled children,
+performs the original three stores, and constructs a parent resource with
+`HeapTree::Node(node, value, old(l.model), old(r.model))`. Folding explicitly
+selects and consumes both children; no parent open handle is required.
+
+The focused [resource_tree_node_init mdtest](../../mdtests/resource_tree_node_init.md)
+also checks reading a payload through this resource and constructing an empty
+tree. Expansion/rechecking and rejection tests cover wrong payloads or node
+identities, swapped/missing links, unreadable child arguments, duplicate child
+selection, and overlapping or reused ownership.
+
+## Remaining C proofs
+
+The generic `Tree<T>` theorems above remain pure model exercises; mirroring
+is not a C operation. Only `tree_node_init` has a C function proof in this
+example. Traversal termination, membership, rotations, and the heap-derived
+in-order sequence are not yet verified. The next algorithm proof can use
+`HeapTree`'s identities as well as values when describing a rotation.
 
 The missing heap-derived sequence model is tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),

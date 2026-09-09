@@ -36,6 +36,17 @@ fn write_havoc_string(identity: &mut String, tag: &str, value: &str) {
 fn write_havoc_block(identity: &mut String, block: PointerBlock) {
     match block {
         PointerBlock::Concrete(name) => write_havoc_string(identity, "bc", &name),
+        PointerBlock::StringLiteral {
+            identity: name,
+            bytes,
+        } => {
+            write_havoc_string(identity, "bsl", &name);
+            let _ = write!(identity, "{}:", bytes.len());
+            for byte in bytes {
+                let _ = write!(identity, "{byte:02x}");
+            }
+            identity.push(';');
+        }
         PointerBlock::Function(name) => write_havoc_string(identity, "bf", &name),
         PointerBlock::FunctionSymbolic(variable) => {
             let _ = write!(identity, "bfs{};", variable.0);
@@ -1442,6 +1453,20 @@ impl CMemory {
         self
     }
 
+    /// Ends the lifetime of one automatic-storage object at a function exit.
+    pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
+        if !self.blocks.contains_key(block) {
+            return self.clone();
+        }
+
+        let mut memory = self.clone();
+        std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
+        std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
+        std::sync::Arc::make_mut(&mut memory.union_cells)
+            .retain(|(pointer, _), _| &pointer.block != block);
+        memory
+    }
+
     pub(in crate::kernel) fn free_heap_block(
         mut self,
         pointer: &Pointer,
@@ -2330,9 +2355,16 @@ impl CMemory {
         }
     }
 
-    pub(in crate::kernel) fn string_literal_pointer(function: &str, name: &str) -> Pointer {
+    pub(in crate::kernel) fn string_literal_pointer(
+        function: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> Pointer {
         Pointer {
-            block: format!("string:{function}:{name}").into(),
+            block: PointerBlock::StringLiteral {
+                identity: format!("{function}:{name}"),
+                bytes: bytes.to_vec(),
+            },
             offset: PointerOffsetTerm::Constant(0),
         }
     }
@@ -2402,16 +2434,15 @@ impl CMemory {
         self.blocks
             .iter()
             .filter_map(|(block, contents)| {
-                (contents.is_read_only() && block.starts_with("string:")).then(|| {
-                    Proposition::CMemoryLoadable {
+                (contents.is_read_only() && matches!(block, PointerBlock::StringLiteral { .. }))
+                    .then(|| Proposition::CMemoryLoadable {
                         memory: self.clone(),
                         base: Pointer {
                             block: block.clone(),
                             offset: PointerOffsetTerm::Constant(0),
                         },
                         bytes: contents.size().clone(),
-                    }
-                })
+                    })
             })
             .collect()
     }
@@ -2530,6 +2561,27 @@ impl CMemory {
 }
 
 impl CState {
+    pub(crate) fn resource_instance_at_path(
+        &self,
+        identity: Variable,
+        children: &[String],
+    ) -> Option<&ResourceInstance> {
+        let mut instance = self.resource_instance_fields(identity)?;
+        for name in children {
+            crate::instrumentation::record_deterministic_work(1);
+            let parent = self.open_instances.owned_instance(instance.identity)?;
+            let index = parent
+                .opened_children
+                .binary_search_by(|(slot, _)| slot.cmp(name))
+                .ok()?;
+            let (_, child) = &parent.opened_children[index];
+            instance = self
+                .resources
+                .owned_instance(child.identity)
+                .or_else(|| self.open_instances.owned_instance(child.identity))?;
+        }
+        Some(instance)
+    }
     pub(crate) fn resource_instance_fields(&self, identity: Variable) -> Option<&ResourceInstance> {
         let actual = match &self.resource_bindings {
             Some(bindings) => *bindings.get(&identity)?,

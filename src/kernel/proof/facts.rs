@@ -43,6 +43,8 @@ pub(crate) struct ProofFacts {
     /// frontier. Structural frame checking consumes these as transition
     /// evidence; they are not user premises and have no Surface spelling.
     memory_effect_summaries: PersistentSequence<Proposition>,
+    /// Selected load identities checked while presenting a rewritten goal.
+    rewritten_load_evidence: PersistentSequence<CheckedLoadEquality>,
     /// Universal facts introduced specifically by a checked predicate unfold.
     /// Outcome smart search never probes ambient theorem or path universals.
     predicate_unfolded_universal_facts: PersistentSequence<Proposition>,
@@ -88,6 +90,118 @@ enum BitvectorEqualityAtomKey {
 }
 
 impl ProofFacts {
+    /// Check only corresponding leaves of two presentations of one goal.
+    /// No ambient fact search or pairwise load census is performed.
+    pub(crate) fn with_checked_rewritten_loads(
+        &self,
+        original: &Proposition,
+        presented: &Proposition,
+    ) -> Option<Self> {
+        let capture = CheckedLoadEqualityCapture::start_with_call_events(
+            &super::CheckedCallEvents::default(),
+        );
+        let mut pending = vec![(original, presented)];
+        let mut equalities = Vec::new();
+        let mut bound_variables = BTreeSet::new();
+        while let Some((left, right)) = pending.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            match (left, right) {
+                (Proposition::And(a, b), Proposition::And(c, d))
+                | (Proposition::Or(a, b), Proposition::Or(c, d))
+                | (Proposition::Implies(a, b), Proposition::Implies(c, d)) => {
+                    pending.push((a, c));
+                    pending.push((b, d));
+                }
+                (Proposition::Not(a), Proposition::Not(b)) => pending.push((a, b)),
+                (
+                    Proposition::ForAll {
+                        var: a,
+                        sort: s,
+                        body: b,
+                    },
+                    Proposition::ForAll {
+                        var: c,
+                        sort: t,
+                        body: d,
+                    },
+                ) if a == c && s == t => {
+                    bound_variables.insert(*a);
+                    pending.push((b, d));
+                }
+                (Proposition::ConditionIs(a, p), Proposition::ConditionIs(b, q)) if p == q => {
+                    let pairs = match (a, b) {
+                        (
+                            ConditionTerm::Bitvector32SignedLessEqual(a, b),
+                            ConditionTerm::Bitvector32SignedLessEqual(c, d),
+                        )
+                        | (
+                            ConditionTerm::Bitvector32SignedLessThan(a, b),
+                            ConditionTerm::Bitvector32SignedLessThan(c, d),
+                        )
+                        | (
+                            ConditionTerm::Bitvector32Equal(a, b),
+                            ConditionTerm::Bitvector32Equal(c, d),
+                        ) => [(a, c), (b, d)],
+                        _ if a == b => continue,
+                        _ => return None,
+                    };
+                    for (a, b) in pairs {
+                        if a == b {
+                            continue;
+                        }
+                        // A load atom is independent of a surrounding binder.
+                        // Do not use ambient premises to identify a bound
+                        // value, or a load with an explicitly bound address.
+                        if !bound_variables.is_empty()
+                            && [a, b].iter().any(|term| match term.as_ref() {
+                                Bitvector32Term::Variable(variable) => {
+                                    bound_variables.contains(variable)
+                                }
+                                Bitvector32Term::Constant(_) => false,
+                                _ => true,
+                            })
+                        {
+                            return None;
+                        }
+                        let selected = Proposition::ConditionIs(
+                            ConditionTerm::equal(a.as_ref().clone(), b.as_ref().clone()),
+                            true,
+                        );
+                        if !self
+                            .with_selected_load_equality_bridge(&selected)
+                            .contains(&selected)
+                            && !checked_origin_load_equality(a, b, self.assumptions())
+                            && !checked_stored_origin_equality(a, b, self.assumptions())
+                        {
+                            return None;
+                        }
+                        equalities.push(Proposition::ConditionIs(
+                            ConditionTerm::equal(a.as_ref().clone(), b.as_ref().clone()),
+                            true,
+                        ));
+                    }
+                }
+                _ if left == right => (),
+                _ => return None,
+            }
+        }
+        let evidence = capture.finish();
+        let events = super::CheckedCallEvents::default();
+        if evidence
+            .iter()
+            .any(|e| !e.checks_with_call_events(self.assumptions(), &events))
+        {
+            return None;
+        }
+        let mut facts = self.clone();
+        for equality in equalities {
+            facts = facts.with_fact(equality);
+        }
+        for witness in evidence {
+            facts.rewritten_load_evidence.push(witness);
+        }
+        Some(facts)
+    }
     /// Exact premise-store identity, without comparing ambient propositions.
     pub(super) fn shares_premises_with(&self, other: &Self) -> bool {
         self.top_level_exact
@@ -162,6 +276,7 @@ impl ProofFacts {
             by_quantified_equivalence,
             memory_effect_summaries,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
+            rewritten_load_evidence: PersistentSequence::default(),
             implications_by_consequent,
             assumptions,
             implicit_transport_assumptions,
@@ -174,6 +289,7 @@ impl ProofFacts {
     /// only the explicit predicate-unfold delta, never the ambient fact set.
     pub(crate) fn resync_ordered_preserving_provenance(&self, facts: &[Proposition]) -> Self {
         let mut successor = Self::from_ordered(facts);
+        successor.rewritten_load_evidence = self.rewritten_load_evidence.clone();
         for fact in self.predicate_unfolded_universal_facts.iter() {
             if successor.contains_top_level(fact) {
                 successor = successor.with_predicate_unfold_fact(fact.clone());
@@ -250,6 +366,7 @@ impl ProofFacts {
             by_quantified_equivalence,
             memory_effect_summaries,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
+            rewritten_load_evidence: self.rewritten_load_evidence.clone(),
             implications_by_consequent,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
             implicit_transport_assumptions,
@@ -284,6 +401,10 @@ impl ProofFacts {
             Bitvector32Term::Variable(fresh),
         );
         (fresh, body)
+    }
+
+    pub(crate) fn reserves_variable(&self, variable: Variable) -> bool {
+        self.reserved_variables.contains(&variable)
     }
 
     pub(crate) fn freshen_pointer_forall_body(

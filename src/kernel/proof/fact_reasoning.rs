@@ -665,6 +665,9 @@ pub(crate) fn check_signed_affine_arithmetic(
     goal: &Proposition,
     premises: &[Proposition],
 ) -> Result<(), ArithmeticCheckError> {
+    if check_pointer_translation_arithmetic(goal, premises) {
+        return Ok(());
+    }
     let goal_proposition = goal;
     let affine_goal = signed_affine_claim(goal);
     let mut inequalities = Vec::new();
@@ -1046,10 +1049,309 @@ fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContex
         .fold(PureFactContext::new(), PureFactContext::assume_proposition)
 }
 
-/// Checks the small float certificate used by `simp using`: an IEEE
-/// comparison of one finite value with itself has the corresponding reflexive
-/// result. The finite classification must be one of the explicit premises;
-/// no ambient context is consulted here.
+/// Translate one explicitly named pointer equality by the same exact byte
+/// displacement. No equality graph or ambient fact context is consulted.
+/// Scaled signed sums may be distributed only with explicit overflow bounds.
+pub(crate) fn check_pointer_translation_arithmetic(
+    goal: &Proposition,
+    premises: &[Proposition],
+) -> bool {
+    fn sides(
+        proposition: &Proposition,
+    ) -> Option<(
+        &PointerOffsetTerm,
+        &PointerOffsetTerm,
+        Option<(&PointerBlock, &PointerBlock)>,
+    )> {
+        match proposition {
+            Proposition::ConditionIs(ConditionTerm::PointerEqual(a, b), true) => {
+                Some((&a.offset, &b.offset, Some((&a.block, &b.block))))
+            }
+            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(a, b), true) => {
+                Some((a, b, None))
+            }
+            _ => None,
+        }
+    }
+    let Some((left, right, blocks)) = sides(goal) else {
+        return false;
+    };
+    let mut relation = None;
+    let mut inequalities = Vec::new();
+    for premise in premises {
+        crate::instrumentation::record_deterministic_work(1);
+        if let Some(parts) = sides(premise) {
+            if relation.replace(parts).is_some() {
+                return false;
+            }
+        } else {
+            let Proposition::ConditionIs(condition, _) = premise else {
+                return false;
+            };
+            let (x, y) = match condition {
+                ConditionTerm::Bitvector32SignedLessThan(x, y)
+                | ConditionTerm::Bitvector32SignedLessEqual(x, y)
+                | ConditionTerm::Bitvector32SignedGreaterThan(x, y)
+                | ConditionTerm::Bitvector32SignedGreaterEqual(x, y) => (x, y),
+                _ => return false,
+            };
+            if ![x, y].iter().all(|term| {
+                matches!(
+                    term.as_ref(),
+                    Bitvector32Term::Variable(_) | Bitvector32Term::Constant(_)
+                )
+            }) {
+                return false;
+            }
+            let Some(SignedAffineClaim::Inequality(bound)) = signed_affine_claim(premise) else {
+                return false;
+            };
+            inequalities.push(bound);
+        }
+    }
+    let Some((a, b, premise_blocks)) = relation else {
+        return false;
+    };
+    let (a, b) = match (blocks, premise_blocks) {
+        (None, None) => (a, b),
+        (Some((l, r)), Some((x, y))) if l == x && r == y => (a, b),
+        (Some((l, r)), Some((x, y))) if l == y && r == x => (b, a),
+        _ => return false,
+    };
+    let mut bounds = signed_affine_atom_bounds(&inequalities);
+    // x < y, where both are int32 atoms, also supplies x < INT_MAX.
+    // This is a direct interval consequence, not a transitive bound search.
+    for premise in premises {
+        let (x, y) = match premise {
+            Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessThan(x, y), true)
+            | Proposition::ConditionIs(ConditionTerm::Bitvector32SignedGreaterThan(y, x), true) => {
+                (x, y)
+            }
+            _ => continue,
+        };
+        if matches!(x.as_ref(), Bitvector32Term::Variable(_))
+            && matches!(
+                y.as_ref(),
+                Bitvector32Term::Variable(_) | Bitvector32Term::Constant(_)
+            )
+        {
+            let upper = match y.as_ref() {
+                Bitvector32Term::Constant(value) => i64::from(*value as i32),
+                _ => i64::from(i32::MAX),
+            };
+            let entry = bounds
+                .entry(x.as_ref().clone())
+                .or_insert((i64::from(i32::MIN), i64::from(i32::MAX)));
+            entry.1 = entry.1.min(upper - 1);
+        }
+    }
+    // Only split a sum of two scalar atoms here. Larger expressions stay
+    // opaque; checking an enclosing sum must not repeatedly traverse every
+    // nested prefix to rediscover its bounds.
+    let atom_range = |value: &Bitvector32Term| match value {
+        Bitvector32Term::Constant(value) => {
+            Some((i64::from(*value as i32), i64::from(*value as i32)))
+        }
+        Bitvector32Term::Variable(_) => Some(
+            bounds
+                .get(value)
+                .copied()
+                .unwrap_or((i64::from(i32::MIN), i64::from(i32::MAX))),
+        ),
+        _ => None,
+    };
+    let sum_is_defined = |x: &Bitvector32Term, y: &Bitvector32Term| {
+        let (Some((xmin, xmax)), Some((ymin, ymax))) = (atom_range(x), atom_range(y)) else {
+            return false;
+        };
+        xmin + ymin >= i64::from(i32::MIN) && xmax + ymax <= i64::from(i32::MAX)
+    };
+    enum Part<'a> {
+        Offset(&'a PointerOffsetTerm),
+        Scaled(&'a Bitvector32Term, i64),
+    }
+    let mut terms = BTreeMap::<PointerOffsetTerm, i128>::new();
+    let mut constant = 0i128;
+    for (offset, sign) in [(left, 1i128), (a, -1), (right, -1), (b, 1)] {
+        let mut pending = vec![Part::Offset(offset)];
+        while let Some(part) = pending.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            let atom = match part {
+                Part::Offset(PointerOffsetTerm::Constant(value)) => {
+                    let Some(next) = constant.checked_add(sign * i128::from(*value)) else {
+                        return false;
+                    };
+                    constant = next;
+                    continue;
+                }
+                Part::Offset(PointerOffsetTerm::Add(x, y)) => {
+                    pending.push(Part::Offset(x));
+                    pending.push(Part::Offset(y));
+                    continue;
+                }
+                Part::Offset(PointerOffsetTerm::Int32Scaled { value, byte_width }) => {
+                    pending.push(Part::Scaled(value, *byte_width));
+                    continue;
+                }
+                Part::Scaled(Bitvector32Term::Constant(value), width) => {
+                    let value = i128::from(*value as i32) * i128::from(width);
+                    let Some(next) = constant.checked_add(sign * value) else {
+                        return false;
+                    };
+                    constant = next;
+                    continue;
+                }
+                Part::Scaled(Bitvector32Term::Add(x, y), width) if sum_is_defined(x, y) => {
+                    pending.push(Part::Scaled(x, width));
+                    pending.push(Part::Scaled(y, width));
+                    continue;
+                }
+                Part::Scaled(value, width) => PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(value.clone()),
+                    byte_width: width,
+                },
+                Part::Offset(value) => value.clone(),
+            };
+            let entry = terms.entry(atom).or_default();
+            let Some(next) = entry.checked_add(sign) else {
+                return false;
+            };
+            *entry = next;
+        }
+    }
+    constant == 0 && terms.values().all(|coefficient| *coefficient == 0)
+}
+
+#[cfg(test)]
+mod pointer_translation_tests {
+    use super::*;
+
+    fn add(a: PointerOffsetTerm, b: PointerOffsetTerm) -> PointerOffsetTerm {
+        PointerOffsetTerm::Add(Box::new(a), Box::new(b))
+    }
+    fn scaled(value: Bitvector32Term) -> PointerOffsetTerm {
+        PointerOffsetTerm::Int32Scaled {
+            value: Box::new(value),
+            byte_width: 4,
+        }
+    }
+    fn eq(a: PointerOffsetTerm, b: PointerOffsetTerm) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::PointerEqual(
+                Box::new(Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: a,
+                }),
+                Box::new(Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: b,
+                }),
+            ),
+            true,
+        )
+    }
+    fn example() -> (Proposition, Vec<Proposition>) {
+        let p = PointerOffsetTerm::Variable(Variable(100));
+        let arr = PointerOffsetTerm::Variable(Variable(101));
+        let i = Bitvector32Term::Variable(Variable(1));
+        let n = Bitvector32Term::Variable(Variable(2));
+        let relation = eq(p.clone(), add(arr.clone(), scaled(i.clone())));
+        let bound = Proposition::ConditionIs(ConditionTerm::signed_less_than(i.clone(), n), true);
+        let goal = eq(
+            add(p, PointerOffsetTerm::Constant(4)),
+            add(
+                arr,
+                scaled(Bitvector32Term::Add(
+                    Box::new(i),
+                    Box::new(Bitvector32Term::Constant(1)),
+                )),
+            ),
+        );
+        (goal, vec![relation, bound])
+    }
+
+    #[test]
+    fn pointer_translation_requires_relation_bounds_and_matching_displacement() {
+        let (goal, premises) = example();
+        assert!(check_pointer_translation_arithmetic(&goal, &premises));
+        assert!(!check_pointer_translation_arithmetic(&goal, &premises[..1]));
+        assert!(!check_pointer_translation_arithmetic(&goal, &premises[1..]));
+        let Proposition::ConditionIs(ConditionTerm::PointerEqual(a, b), true) = goal else {
+            unreachable!()
+        };
+        let mut wrong_advance = a.clone();
+        wrong_advance.offset = add(wrong_advance.offset, PointerOffsetTerm::Constant(4));
+        assert!(!check_pointer_translation_arithmetic(
+            &Proposition::ConditionIs(ConditionTerm::PointerEqual(wrong_advance, b.clone()), true),
+            &premises
+        ));
+        let mut wrong_block = a.clone();
+        wrong_block.block = PointerBlock::Symbolic(Variable(99));
+        assert!(!check_pointer_translation_arithmetic(
+            &Proposition::ConditionIs(ConditionTerm::PointerEqual(wrong_block, b.clone()), true),
+            &premises
+        ));
+        assert!(!check_pointer_translation_arithmetic(
+            &Proposition::ConditionIs(ConditionTerm::PointerEqual(a, b), false),
+            &premises
+        ));
+    }
+
+    #[test]
+    fn pointer_translation_does_not_distribute_wrapped_signed_sum() {
+        let p = PointerOffsetTerm::Variable(Variable(1));
+        let q = PointerOffsetTerm::Variable(Variable(2));
+        let premises = [eq(p.clone(), q.clone())];
+        let goal = eq(
+            add(
+                add(p, scaled(Bitvector32Term::Constant(i32::MAX as u32))),
+                PointerOffsetTerm::Constant(4),
+            ),
+            add(
+                q,
+                scaled(Bitvector32Term::Add(
+                    Box::new(Bitvector32Term::Constant(i32::MAX as u32)),
+                    Box::new(Bitvector32Term::Constant(1)),
+                )),
+            ),
+        );
+        assert!(!check_pointer_translation_arithmetic(&goal, &premises));
+    }
+
+    #[test]
+    fn pointer_translation_checking_scales_with_explicit_input() {
+        let mut previous = None;
+        for size in [16, 32, 64, 128] {
+            let (mut goal, mut premises) = example();
+            let Proposition::ConditionIs(ConditionTerm::PointerEqual(a, b), true) = &mut goal
+            else {
+                unreachable!()
+            };
+            for index in 0..size {
+                let delta = PointerOffsetTerm::Variable(Variable(1000 + index));
+                a.offset = add(a.offset.clone(), delta.clone());
+                b.offset = add(b.offset.clone(), delta);
+                premises.push(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(2000 + index)),
+                        Bitvector32Term::Constant(100),
+                    ),
+                    true,
+                ));
+            }
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                check_pointer_translation_arithmetic(&goal, &premises)
+            });
+            assert!(valid);
+            assert!(work > size as usize);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 3);
+            }
+            previous = Some(work);
+        }
+    }
+}
+
 /// `arithmetic using (aligned(base, m))` closes `aligned(base + k, n)` (or
 /// its negation) exactly as the atomic prover decides it: from the one listed
 /// base fact, or from nothing for a heap base.
@@ -1066,6 +1368,10 @@ pub(crate) fn check_pointer_alignment_arithmetic(
         == Some(*value)
 }
 
+/// Checks the small float proof used by `simp using`: an IEEE
+/// comparison of one finite value with itself has the corresponding reflexive
+/// result. The finite classification must be one of the explicit premises;
+/// no ambient context is consulted here.
 pub(crate) fn check_float_reflexive_comparison(
     proposition: &Proposition,
     premises: &[Proposition],

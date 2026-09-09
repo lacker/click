@@ -39,6 +39,11 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                     names.extend(arm_names);
                 }
             }
+            ProofTactic::Match(proof_match) => {
+                for arm in &proof_match.arms {
+                    collect_applied_theorems(&arm.tactics, names);
+                }
+            }
             ProofTactic::Branch(proof_branch) => {
                 collect_applied_theorems(&proof_branch.then_tactics, names);
                 collect_applied_theorems(&proof_branch.else_tactics, names);
@@ -2228,6 +2233,7 @@ pub(in crate::surface) fn parse_c_layouts(
                         },
                         struct_name: global.struct_name().map(str::to_owned),
                         array_shape: None,
+                        ambiguous: false,
                     },
                 );
             }
@@ -2246,6 +2252,7 @@ pub(in crate::surface) fn parse_c_layouts(
                         ),
                         struct_name: None,
                         array_shape: array.index_shape(),
+                        ambiguous: false,
                     },
                 );
             }
@@ -2261,8 +2268,99 @@ pub(in crate::surface) fn parse_c_layouts(
                     )),
                     struct_name: Some(aggregate.struct_name().to_owned()),
                     array_shape: None,
+                    ambiguous: false,
                 },
             );
+        }
+        for function in &unit.functions {
+            let mut names = BTreeMap::<&str, usize>::new();
+            for name in function
+                .static_locals()
+                .values()
+                .map(|object| object.name())
+                .chain(
+                    function
+                        .static_arrays()
+                        .values()
+                        .map(|object| object.name()),
+                )
+                .chain(
+                    function
+                        .static_aggregates()
+                        .values()
+                        .map(|object| object.name()),
+                )
+                .chain(
+                    function
+                        .static_aggregate_arrays()
+                        .values()
+                        .map(|object| object.name()),
+                )
+            {
+                *names.entry(name).or_default() += 1;
+            }
+            for local in function.static_locals().values() {
+                if let Some(pointer_type) = local.c_type().pointer_type() {
+                    objects.insert(
+                        format!("{}::{}", function.name(), local.name()),
+                        parser::QualifiedCObject {
+                            expression: CExpression::TypedLoad {
+                                pointer: Box::new(CExpression::Value(
+                                    CValue::typed_pointer_with_pointee_constant(
+                                        CMemory::static_pointer(
+                                            function.name(),
+                                            local.kernel_name(),
+                                        ),
+                                        pointer_type.to_kernel_type(),
+                                        local.is_constant(),
+                                    )
+                                    .with_pointer_pointee_volatile(local.is_volatile()),
+                                )),
+                                value_type: local.c_type().to_kernel_type(),
+                            },
+                            struct_name: None,
+                            array_shape: None,
+                            ambiguous: names[local.name()] > 1,
+                        },
+                    );
+                }
+            }
+            for array in function.static_arrays().values() {
+                if let Some(pointer_type) = array.element_type().pointer_type() {
+                    objects.insert(
+                        format!("{}::{}", function.name(), array.name()),
+                        parser::QualifiedCObject {
+                            expression: CExpression::Value(
+                                CValue::typed_pointer_with_pointee_constant(
+                                    CMemory::static_pointer(function.name(), array.kernel_name()),
+                                    pointer_type.to_kernel_type(),
+                                    array.is_constant(),
+                                ),
+                            ),
+                            struct_name: None,
+                            array_shape: Some(array.shape().to_vec()),
+                            ambiguous: names[array.name()] > 1,
+                        },
+                    );
+                }
+            }
+            for aggregate in function.static_aggregates().values() {
+                objects.insert(
+                    format!("{}::{}", function.name(), aggregate.name()),
+                    parser::QualifiedCObject {
+                        expression: CExpression::Value(
+                            CValue::typed_pointer_with_pointee_constant(
+                                CMemory::static_pointer(function.name(), aggregate.kernel_name()),
+                                CType::Int32Pointer,
+                                aggregate.is_constant(),
+                            ),
+                        ),
+                        struct_name: Some(aggregate.struct_name().to_owned()),
+                        array_shape: None,
+                        ambiguous: names[aggregate.name()] > 1,
+                    },
+                );
+            }
         }
         qualified_objects.insert(source_path.clone(), objects);
         for (name, layout) in &unit.structs {
@@ -3280,6 +3378,100 @@ pub(in crate::surface) fn composite_resource_definitions(
             })
             .collect();
         let observes_its_population = body.facts().iter().any(proposition_contains_resource_count);
+        let matched = if let Some(matched) = &body.matched {
+            let schema = definition
+                .field_schema()
+                .ok_or_else(|| ClickError::new("resource match requires a checked field schema"))?;
+            let field_index = definition
+                .fields()
+                .iter()
+                .position(|field| field.name == matched.field)
+                .ok_or_else(|| ClickError::new("unknown resource match field"))?;
+            let crate::kernel::ResourceFieldType::Algebraic(algebraic_type) =
+                &schema.fields()[field_index].1
+            else {
+                return Err(ClickError::new(
+                    "resource match requires an algebraic field",
+                ));
+            };
+            let scopes = validation::resource_match_arm_scopes(definition, |name| {
+                click_function_environment
+                    .algebraic_type_definitions
+                    .get(name)
+            })?;
+            let mut arms = Vec::new();
+            for (variant, bindings, arm) in scopes {
+                let parameters = arm
+                    .parameters()
+                    .iter()
+                    .map(|parameter| {
+                        syntax::C0Parameter::new(
+                            parameter.c_type(),
+                            parameter.name().to_string(),
+                            parameter.struct_name().map(str::to_string),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let contains = arm
+                    .composite_body()
+                    .unwrap()
+                    .contains()
+                    .iter()
+                    .map(|resource| {
+                        resource_clause_to_resource_spec_with_parameters(
+                            resource,
+                            &parameters,
+                            None,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let facts = lower_composite_resource_facts_with_bindings(
+                    &arm,
+                    predicate_environment,
+                    click_function_environment,
+                    &bindings,
+                )?;
+                let binding_types = algebraic_type
+                    .variants
+                    .iter()
+                    .find(|entry| entry.name == variant)
+                    .ok_or_else(|| ClickError::new("unknown resource match constructor"))?
+                    .fields
+                    .clone();
+                arms.push(crate::kernel::CResourceMatchArm {
+                    children: arm
+                        .composite_body()
+                        .unwrap()
+                        .children
+                        .iter()
+                        .map(|child| {
+                            Ok(crate::kernel::CResourceChildSpec {
+                                name: child.name.clone(),
+                                binding: child.identity,
+                                arguments: child
+                                    .arguments
+                                    .iter()
+                                    .map(resource_argument_to_c_expression)
+                                    .collect::<Result<_, _>>()?,
+                                field_bindings: child.field_bindings.clone(),
+                            })
+                        })
+                        .collect::<Result<_, ClickError>>()?,
+                    variant,
+                    bindings: bindings.into_iter().map(|(name, _)| name).collect(),
+                    binding_types,
+                    contains,
+                    facts,
+                });
+            }
+            Some(crate::kernel::CResourceMatchBody {
+                field_index,
+                algebraic_type: algebraic_type.clone(),
+                arms,
+            })
+        } else {
+            None
+        };
         definitions.push(
             if observes_its_population {
                 CCompositeResourceDefinition::counted_population(
@@ -3300,6 +3492,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                 )
             }
             .with_witnesses(witnesses)
+            .with_resource_match_body(matched)
             .with_instance_schema(definition.field_schema().cloned()),
         );
     }

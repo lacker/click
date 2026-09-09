@@ -1411,6 +1411,7 @@ impl PureFactContext {
             && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
             && self.force_symbolic_external_loads == other.force_symbolic_external_loads
             && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
+            && self.require_owned_expression_loads == other.require_owned_expression_loads
             && self.transport_memory_load_condition_facts
                 == other.transport_memory_load_condition_facts
             && self.keep_spec_loads_symbolic == other.keep_spec_loads_symbolic
@@ -1448,6 +1449,9 @@ impl PureFactContext {
         }
         if self.allow_symbolic_contract_loads {
             fingerprint ^= 1 << 60;
+        }
+        if self.require_owned_expression_loads {
+            fingerprint ^= 1 << 63;
         }
         if self.keep_spec_loads_symbolic {
             fingerprint ^= 1 << 62;
@@ -1715,6 +1719,7 @@ impl PureFactContext {
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
         self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
+        self.algebraic_variable_constructors = crate::persistent::PersistentMap::default();
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
@@ -1894,13 +1899,72 @@ impl PureFactContext {
         };
     }
 
+    fn adjust_algebraic_variable_constructor(&mut self, proposition: &Proposition, insert: bool) {
+        let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = proposition else {
+            return;
+        };
+        let (variable, constructor) = match (&left.node, &right.node) {
+            (AlgebraicTermNode::Variable(variable), AlgebraicTermNode::Constructor { .. }) => {
+                (*variable, right)
+            }
+            (AlgebraicTermNode::Constructor { .. }, AlgebraicTermNode::Variable(variable)) => {
+                (*variable, left)
+            }
+            _ => return,
+        };
+        if left.algebraic_type != right.algebraic_type
+            || !left.is_well_formed()
+            || !right.is_well_formed()
+        {
+            return;
+        }
+        let entries = self
+            .algebraic_variable_constructors
+            .get(&variable)
+            .cloned()
+            .unwrap_or_default();
+        let entries = if insert {
+            entries.with_inserted(proposition.clone(), constructor.clone())
+        } else {
+            entries.without_key(proposition)
+        };
+        self.algebraic_variable_constructors = if entries.is_empty() {
+            self.algebraic_variable_constructors.without_key(&variable)
+        } else {
+            self.algebraic_variable_constructors
+                .with_inserted(variable, entries)
+        };
+    }
+
+    pub(in crate::kernel) fn known_algebraic_constructor(
+        &self,
+        value: &AlgebraicTerm,
+    ) -> Option<AlgebraicTerm> {
+        match &value.node {
+            AlgebraicTermNode::Constructor { .. } => value.is_well_formed().then(|| value.clone()),
+            AlgebraicTermNode::Variable(variable) => {
+                let (premise, constructor) = self
+                    .algebraic_variable_constructors
+                    .get(variable)?
+                    .iter()
+                    .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+                    .find(|(_, constructor)| constructor.algebraic_type == value.algebraic_type)?;
+                record_reasoning_provenance(self, premise);
+                Some(constructor.clone())
+            }
+            _ => None,
+        }
+    }
+
     fn rebuild_algebraic_constructor_field_equalities(&mut self) {
+        self.algebraic_variable_constructors = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
         for proposition in facts {
             self.adjust_algebraic_constructor_field_equalities(&proposition, true);
             self.adjust_algebraic_constructor_conflict(&proposition, true);
+            self.adjust_algebraic_variable_constructor(&proposition, true);
         }
     }
 
@@ -2108,6 +2172,7 @@ impl PureFactContext {
             }
             self.adjust_algebraic_constructor_field_equalities(&proposition, true);
             self.adjust_algebraic_constructor_conflict(&proposition, true);
+            self.adjust_algebraic_variable_constructor(&proposition, true);
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
             self.adjust_nonmemory_separation_fact(&proposition, true);
@@ -2123,6 +2188,7 @@ impl PureFactContext {
             }
             self.adjust_algebraic_constructor_field_equalities(proposition, false);
             self.adjust_algebraic_constructor_conflict(proposition, false);
+            self.adjust_algebraic_variable_constructor(proposition, false);
             self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
             self.adjust_nonmemory_separation_fact(proposition, false);
@@ -2200,6 +2266,9 @@ impl PureFactContext {
             && self
                 .algebraic_constructor_conflicts
                 .shares_root_with(&other.algebraic_constructor_conflicts)
+            && self
+                .algebraic_variable_constructors
+                .shares_root_with(&other.algebraic_variable_constructors)
             && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(
@@ -2277,6 +2346,22 @@ impl PureFactContext {
 
     pub(crate) fn should_allow_symbolic_contract_loads(&self) -> bool {
         self.allow_symbolic_contract_loads
+    }
+
+    pub(crate) fn require_owned_expression_loads(mut self) -> Self {
+        if self.allow_symbolic_contract_loads {
+            self.allow_symbolic_contract_loads = false;
+            self.content_fingerprint ^= 1 << 60;
+        }
+        if !self.require_owned_expression_loads {
+            self.require_owned_expression_loads = true;
+            self.content_fingerprint ^= 1 << 63;
+        }
+        self
+    }
+
+    pub(in crate::kernel) fn should_require_owned_expression_loads(&self) -> bool {
+        self.require_owned_expression_loads
     }
 
     pub(crate) fn transport_memory_load_condition_facts(mut self) -> Self {

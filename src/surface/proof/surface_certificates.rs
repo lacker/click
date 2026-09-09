@@ -1057,6 +1057,29 @@ pub(super) fn lower_surface_atomic_derivation(
         })?;
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
+    if matches!(
+        &lowered_conclusion,
+        Proposition::ConditionIs(
+            ConditionTerm::PointerEqual(_, _) | ConditionTerm::PointerOffsetEqual(_, _),
+            true
+        )
+    ) && crate::kernel::proof::fact_reasoning::check_pointer_translation_arithmetic(
+        &lowered_conclusion,
+        &premise_pairs
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>(),
+    ) {
+        return Ok((
+            conclusion,
+            SourceProof::Script(vec![ProofTactic::ArithmeticUsing(
+                premise_pairs
+                    .iter()
+                    .map(|(_, surface)| surface.clone())
+                    .collect(),
+            )]),
+        ));
+    }
     // A `rewrite` step substitutes the exact terms of its equality, so its
     // premise is usable only when the surface form lowers at view to
     // the same kernel equality the plan rewrote with. A snapshot-bridged

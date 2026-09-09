@@ -316,6 +316,20 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
             self.focused_branch,
         )
     }
+
+    /// Replace the language's lexical environment without changing any
+    /// semantic goal, premise, branch, or evidence.
+    pub(crate) fn with_locals(&self, locals: L) -> Self {
+        Self::new(
+            ProofState {
+                locals,
+                open_branches: self.state.open_branches.clone(),
+                added_facts: self.state.added_facts.clone(),
+                checked_facts: self.state.checked_facts.clone(),
+            },
+            self.focused_branch,
+        )
+    }
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
@@ -1140,8 +1154,6 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
                 checks: checks.to_vec(),
                 facts: branch.state.facts.clone(),
                 effects: execution.core.effect_facts.clone(),
-                paths: Vec::new(),
-                path_count: 0,
                 body: None,
             },
         };
@@ -1340,70 +1352,6 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         Ok((Self::new(state, focused_branch), result))
     }
 
-    /// Build and retain lowering evidence from this branch's own checked facts.
-    /// No caller-supplied context or portable success token is accepted.
-    pub(crate) fn retain_checked_invariant_lowerings(
-        &self,
-        loop_entry: &crate::kernel::CState,
-        checks: &[crate::kernel::CLoopInvariantCheck],
-    ) -> Result<Self, String> {
-        let (branch, execution) = self
-            .focused_frontier_execution()
-            .map_err(|_| "invariant lowering requires an execution frontier".to_string())?;
-        if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {
-            return Err("invariant lowering requires a loop body".into());
-        }
-        if execution.core.checked_invariant_lowerings.is_some() {
-            self.validate_checked_invariant_lowerings(checks)?;
-            return Ok(self.clone());
-        }
-        let mut facts = branch.state.facts.clone();
-        for fact in execution.core.effect_facts.iter() {
-            facts = facts.with_fact(fact.proposition().clone());
-        }
-        for fact in crate::kernel::certified_store_equations(&execution.core.effect_facts) {
-            facts = facts.with_fact(fact);
-        }
-        let paths = crate::kernel::loops::verify_invariant_checks_at_back_edge_using(
-            &execution.core.state,
-            loop_entry,
-            checks,
-            facts.assumptions(),
-            &mut crate::kernel::ExecutionBudget::default(),
-        )?;
-        let mut core = execution.core.clone();
-        core.checked_invariant_lowerings =
-            Some(Arc::new(super::execution::CheckedLoopInvariantLowerings {
-                snapshot: core.state.clone(),
-                checks: checks.to_vec(),
-                facts: branch.state.facts.clone(),
-                effects: core.effect_facts.clone(),
-                path_count: paths.len(),
-                paths: paths,
-                body: None,
-            }));
-        let state = ProofBranchState {
-            facts: branch.state.facts.clone(),
-            unfolded_predicates: branch.state.unfolded_predicates.clone(),
-            execution: Some(Arc::new(ProofExecutionState::new(
-                core,
-                execution.presentation.clone(),
-            ))),
-        };
-        Ok(Self::new(
-            ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self
-                    .state
-                    .open_branches
-                    .with_branch_state_at(self.focused_branch, state),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            },
-            self.focused_branch,
-        ))
-    }
-
     /// Validate only retained evidence. Preparation, lowering, and proof
     /// discovery are deliberately absent from the closure boundary.
     pub(crate) fn validate_checked_invariant_lowerings(
@@ -1434,17 +1382,8 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
                 "invariant closure evidence belongs to a different invariant bundle".into(),
             );
         }
-        if let Some(body) = &evidence.body {
-            if !evidence.paths.is_empty() || evidence.path_count != 0 || !body.recheck() {
-                return Err("invariant closure has invalid body evidence".into());
-            }
-            return Ok(());
-        }
-        if evidence.paths.len() != evidence.path_count
-            || (!checks.is_empty() && evidence.paths.is_empty())
-            || !evidence.paths.iter().all(|path| path.recheck())
-        {
-            return Err("invariant closure has invalid lowering evidence".into());
+        if !evidence.body.as_ref().is_some_and(|body| body.recheck()) {
+            return Err("invariant closure has missing or invalid body evidence".into());
         }
         Ok(())
     }
@@ -1920,6 +1859,88 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             introduced_facts,
         })
     }
+
+    /// Duplicate the same obligation without introducing assumptions. Used
+    /// to organize a checked constructor partition; only its leaves may
+    /// introduce the kernel-issued constructor equations.
+    pub(crate) fn split_frontier_match_group(
+        &self,
+    ) -> Result<ProofSplit<L, ProofObligation<P, O>, ProofExecutionState<S>>, FrontierSplitError>
+    {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(FrontierSplitError::Completed)?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err(FrontierSplitError::NotFrontier);
+        }
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [branch.clone(), branch.clone()]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(vec![]),
+                    checked_facts: Arc::new(vec![]),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+            introduced_facts: [vec![], vec![]],
+        })
+    }
+
+    pub(crate) fn introduce_frontier_match_case(
+        &self,
+        partition: Arc<CheckedProofCasePartition>,
+        index: usize,
+    ) -> Result<Self, &'static str> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or("match requires an open branch")?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err("match requires an execution frontier");
+        }
+        let case = partition
+            .case_fact(index)
+            .ok_or("match case index is outside its partition")?
+            .clone();
+        let mut execution = branch
+            .state
+            .execution
+            .as_deref()
+            .cloned()
+            .ok_or("match requires execution state")?;
+        let facts = branch.state.facts.with_fact(case.clone());
+        if !execution
+            .core
+            .record_proof_case_arm(partition, index, facts.clone())
+        {
+            return Err("match witness scope or case premise is invalid");
+        }
+        let mut successor = branch.clone();
+        successor.state.facts = facts;
+        successor.state.execution = Some(Arc::new(execution));
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .replace_at(self.focused_branch, successor),
+                added_facts: Arc::new(vec![case.clone()]),
+                checked_facts: Arc::new(vec![case]),
+            },
+            self.focused_branch,
+        ))
+    }
 }
 
 impl<L, O, E> Deref for ProofObject<L, O, E> {
@@ -2075,7 +2096,6 @@ mod tests {
                 },
             );
             let frontier = root(facts.clone(), core);
-            let before = crate::kernel::loops::invariant_discovery_calls();
             let ((body, scope), opening_work) =
                 crate::instrumentation::measure_deterministic_work(|| {
                     frontier
@@ -2098,21 +2118,15 @@ mod tests {
                     .is_err()
             );
             let complete = body.apply_normalize().ok().unwrap();
-            let ((closed, prepared), closing_work) =
-                crate::instrumentation::measure_deterministic_work(|| {
-                    let closed = frontier
-                        .retain_invariant_body(scope.clone(), &complete)
-                        .unwrap();
-                    closed
-                        .validate_checked_invariant_lowerings(&checks)
-                        .unwrap();
-                    let prepared = closed
-                        .retain_checked_invariant_lowerings(&entry, &checks)
-                        .unwrap();
-                    (closed, prepared)
-                });
-            assert_eq!(before, crate::kernel::loops::invariant_discovery_calls());
-            assert!(prepared.shares_state_with(&closed));
+            let (closed, closing_work) = crate::instrumentation::measure_deterministic_work(|| {
+                let closed = frontier
+                    .retain_invariant_body(scope.clone(), &complete)
+                    .unwrap();
+                closed
+                    .validate_checked_invariant_lowerings(&checks)
+                    .unwrap();
+                closed
+            });
             assert!(
                 closed
                     .validate_checked_invariant_lowerings(&checks[..1])
@@ -2138,12 +2152,6 @@ mod tests {
                 }
                 let stale = root(changed_facts, changed);
                 assert!(stale.validate_checked_invariant_lowerings(&checks).is_err());
-                assert!(
-                    stale
-                        .retain_checked_invariant_lowerings(&entry, &checks)
-                        .is_err(),
-                    "invalid supplied evidence must not fall back to discovery"
-                );
                 if variant < 3 {
                     assert!(
                         stale
@@ -2261,12 +2269,18 @@ mod tests {
 
     #[test]
     fn invariant_bundle_closure_checks_retained_evidence_and_context_locally() {
-        use crate::kernel::proof::{ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind};
+        use crate::kernel::proof::{
+            ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
+        };
         use crate::kernel::{
             CComparisonOperator, CLoopInvariantCheck, CState, CValue, SpecExpression,
             SpecProposition,
         };
-        type TestProof = ProofObject<(), ProofObligation<(), ()>, ProofExecutionState<()>>;
+        type TestProof = ProofObject<
+            (),
+            ProofObligation<(), Arc<OutcomeProofState<()>>>,
+            ProofExecutionState<()>,
+        >;
         let root = |facts: ProofFacts, core: ExecutionProofCore| -> TestProof {
             ProofObject::root(
                 (),
@@ -2317,6 +2331,7 @@ mod tests {
                 CState::new(),
                 ExecutionFrontier {
                     region: ExecutionRegionKind::LoopBody,
+                    position: FrontierPosition::RegionBoundary,
                     ..Default::default()
                 },
             );
@@ -2335,9 +2350,11 @@ mod tests {
                     .validate_checked_invariant_lowerings(&checks)
                     .is_err()
             );
-            let prepared = requested
-                .retain_checked_invariant_lowerings(&CState::new(), &checks)
+            let (body, scope) = unprepared
+                .open_invariant_body(&CState::new(), &checks, |_| ())
                 .unwrap();
+            let completed = body.apply_normalize().ok().unwrap();
+            let prepared = unprepared.retain_invariant_body(scope, &completed).unwrap();
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
                 prepared.validate_checked_invariant_lowerings(&checks)
             });
@@ -2384,17 +2401,20 @@ mod tests {
                     .is_err()
             );
             let mut incomplete = core.clone();
-            Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap())
-                .paths
-                .pop();
+            Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap()).body = None;
             assert!(
                 root(facts.clone(), incomplete)
                     .validate_checked_invariant_lowerings(&checks)
                     .is_err()
             );
-            // Coverage metadata cannot claim more paths than are supplied.
+            // A body for another judgment cannot certify this bundle.
             let mut incomplete = core.clone();
-            Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap()).path_count += 1;
+            Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap())
+                .body
+                .as_mut()
+                .unwrap()
+                .goal =
+                Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true);
             assert!(
                 root(facts.clone(), incomplete)
                     .validate_checked_invariant_lowerings(&checks)

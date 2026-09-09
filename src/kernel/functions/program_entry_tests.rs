@@ -14,6 +14,27 @@ fn scalar_ownership(name: &str) -> CResourceFact {
 }
 
 #[test]
+fn static_declaration_preserves_a_cell_materialized_before_its_block() {
+    let function =
+        storage_function("increment", vec![]).with_static_variables(vec![CStaticLocal::new(
+            "calls",
+            "calls",
+            CType::Int32,
+            int32(5),
+        )]);
+    let pointer = CMemory::static_pointer("increment", "calls");
+    let state = CState::new().with_memory(CMemory::new().store(pointer.clone(), int32(37)));
+    assert!(!state.memory().has_block(&pointer.block));
+    let initialized = initialize_c_function_globals(&state, &function);
+    assert!(initialized.memory().has_block(&pointer.block));
+    assert_eq!(
+        initialized.memory().load(&pointer),
+        CExpressionOutcome::Value(int32(37))
+    );
+    assert!(initialized.resources().facts().is_empty());
+}
+
+#[test]
 fn startup_coalesces_declarations_and_calls_cannot_replenish_ownership() {
     let global = CGlobal::new("state", CType::Int32, int32(7));
     let left = storage_function("left", vec![global.clone()]);

@@ -3,6 +3,11 @@
 # PUBLIC_TACTIC_FORMS and confirms that each needle remains in its fixture.
 
 [[form]]
+id = "proof-match"
+path = "mdtests/proof_match_resource.md"
+needle = "match c.model {"
+
+[[form]]
 id = "both"
 path = "mdtests/proof_both_and.md"
 needle = "both { normalize(); } and {"
@@ -209,7 +214,7 @@ needle = "contradiction(x == x);"
 
 [[form]]
 id = "close-invariants"
-path = "mdtests/c_decreases_loop.md"
+path = "mdtests/c_decreases_count_up.md"
 needle = "close_invariants();"
 
 [[form]]

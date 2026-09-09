@@ -1,6 +1,255 @@
 use super::*;
 use crate::surface::parser::algebraic_field_c_type_supported;
 
+pub(in crate::surface) fn resource_match_arm_scopes<'a>(
+    definition: &ResourceDefinition,
+    lookup: impl Fn(&str) -> Option<&'a AlgebraicTypeDefinition>,
+) -> Result<Vec<(String, Vec<(String, ClickType)>, ResourceDefinition)>, ClickError> {
+    let Some(matched) = definition
+        .composite_body()
+        .and_then(|body| body.matched.as_ref())
+    else {
+        return Ok(vec![]);
+    };
+    let Some(ClickType::Algebraic(application)) = definition
+        .fields()
+        .iter()
+        .find(|field| field.name() == matched.field)
+        .map(ResourceFieldDefinition::click_type)
+    else {
+        return Err(ClickError::new(
+            "resource match requires an algebraic resource field",
+        ));
+    };
+    let datatype = lookup(&application.name)
+        .ok_or_else(|| ClickError::new("unknown resource match datatype"))?;
+    let reserved = definition
+        .parameters()
+        .iter()
+        .map(|p| p.name())
+        .chain(definition.fields().iter().map(|f| f.name()))
+        .collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+    let variants = datatype
+        .variants()
+        .iter()
+        .map(|variant| (variant.name(), variant))
+        .collect::<BTreeMap<_, _>>();
+    for arm in &matched.arms {
+        if arm.type_name != datatype.name() {
+            return Err(ClickError::new(
+                "resource match pattern names the wrong datatype",
+            ));
+        }
+        if !seen.insert(arm.variant.as_str()) {
+            return Err(ClickError::new("resource match repeats a constructor arm"));
+        }
+        let variant = variants
+            .get(arm.variant.as_str())
+            .ok_or_else(|| ClickError::new("unknown resource match constructor"))?;
+        if arm.bindings.len() != variant.fields().len() {
+            return Err(ClickError::new(
+                "resource match constructor has the wrong number of bindings",
+            ));
+        }
+        let mut parameters = definition.parameters.clone();
+        let mut bindings = Vec::new();
+        let mut substitution = BTreeMap::new();
+        let mut names = BTreeSet::new();
+        for (index, (name, field)) in arm.bindings.iter().zip(variant.fields()).enumerate() {
+            if reserved.contains(name.as_str()) || !names.insert(name.as_str()) {
+                return Err(ClickError::new(
+                    "resource match binding duplicates or shadows a resource name",
+                ));
+            }
+            let ty = instantiate_field_type(datatype, application, field)?;
+            match &ty {
+                ClickType::C(_) => parameters.push(FunctionParameter {
+                    name: name.clone(),
+                    click_type: ty.clone(),
+                    struct_name: None,
+                    function_pointer_signature: None,
+                    constant: false,
+                    pointee_constant: false,
+                }),
+                ClickType::Algebraic(application) => {
+                    substitution.insert(
+                        name.clone(),
+                        ContractExpression::AlgebraicVariable {
+                            name: name.clone(),
+                            algebraic_type: application.clone(),
+                            binder_index: index,
+                        },
+                    );
+                }
+                ClickType::Parameter(_) => {
+                    return Err(ClickError::new("unresolved resource match binding type"));
+                }
+            }
+            bindings.push((name.clone(), ty));
+        }
+        let mut children = Vec::new();
+        let mut child_names = BTreeSet::new();
+        let mut child_equations = BTreeSet::new();
+        let binding_indexes = bindings
+            .iter()
+            .enumerate()
+            .map(|(index, (name, ty))| (name.as_str(), (index, ty)))
+            .collect::<BTreeMap<_, _>>();
+        let mut equations = BTreeMap::<(Variable, &str), Vec<(usize, &ContractExpression)>>::new();
+        for (index, fact) in arm.body.facts.iter().enumerate() {
+            if let ClickProposition::Comparison {
+                left,
+                operator: ComparisonOperator::Equal,
+                right,
+            } = fact
+            {
+                for (access, value) in [(left, right), (right, left)] {
+                    if let ContractExpression::ResourceField(access) = access
+                        && access.children.is_empty()
+                    {
+                        equations
+                            .entry((access.identity, access.field.as_str()))
+                            .or_default()
+                            .push((index, value));
+                    }
+                }
+            }
+        }
+        for resource in &arm.body.contains {
+            if matches!(resource, ResourceClause::OwnMemory(_)) {
+                continue;
+            }
+            let ResourceClause::Named { binding, resource } = resource else {
+                return Err(ClickError::new(
+                    "resource match children require named exclusive ownership",
+                ));
+            };
+            let ResourceClause::Declared {
+                name, arguments, ..
+            } = resource.as_ref()
+            else {
+                return Err(ClickError::new(
+                    "child ownership requires a declared resource",
+                ));
+            };
+            if name != definition.name() || !binding.children.is_empty() {
+                return Err(ClickError::new(
+                    "this slice supports direct recursive children of the same resource",
+                ));
+            }
+            for argument in arguments {
+                // C expressions are read-only. The kernel checks their value,
+                // ownership requirements, and path obligations when rewriting.
+                resource_argument_to_c_expression(argument)?;
+            }
+            if reserved.contains(binding.name.as_str())
+                || names.contains(binding.name.as_str())
+                || !child_names.insert(binding.name.clone())
+            {
+                return Err(ClickError::new(
+                    "child name duplicates or shadows a resource binding",
+                ));
+            }
+            let mut field_bindings = Vec::new();
+            for field in definition.fields() {
+                let candidates = equations
+                    .get(&(binding.identity, field.name()))
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "child `{}` needs an equation for field `{}`",
+                            binding.name,
+                            field.name()
+                        ))
+                    })?;
+                let [(fact_index, value)] = candidates.as_slice() else {
+                    return Err(ClickError::new("duplicate child field equation"));
+                };
+                let variable = match value {
+                    ContractExpression::Binding(name)
+                    | ContractExpression::CBinding(name)
+                    | ContractExpression::AlgebraicVariable { name, .. }
+                    | ContractExpression::CFragment(CExpression::Variable(name)) => name,
+                    _ => {
+                        return Err(ClickError::new(
+                            "child fields must be related to immediate constructor bindings",
+                        ));
+                    }
+                };
+                let (index, ty) = binding_indexes
+                    .get(variable.as_str())
+                    .filter(|(_, ty)| *ty == field.click_type())
+                    .ok_or_else(|| {
+                        ClickError::new(
+                            "child field requires a constructor binding of the same type",
+                        )
+                    })?;
+                let _ = ty;
+                field_bindings.push(*index);
+                child_equations.insert(*fact_index);
+            }
+            children.push(ResourceChildBody {
+                name: binding.name.clone(),
+                identity: binding.identity,
+                arguments: arguments.clone(),
+                field_bindings,
+            });
+        }
+        let mut referenced = BTreeSet::new();
+        for fact in &arm.body.facts {
+            collect_click_proposition_referenced_names(fact, &mut referenced);
+        }
+        for resource in &arm.body.contains {
+            if let ResourceClause::OwnMemory(segment) = resource {
+                referenced.extend(contract_segment_referenced_names(segment));
+            }
+        }
+        for child in &children {
+            for argument in &child.arguments {
+                collect_contract_expression_referenced_names(argument, &mut referenced);
+            }
+        }
+        if let Some(name) = referenced
+            .iter()
+            .find(|name| !reserved.contains(name.as_str()) && !names.contains(name.as_str()))
+        {
+            return Err(ClickError::new(format!(
+                "unbound name `{name}` in resource match arm"
+            )));
+        }
+        let mut body = arm.body.clone();
+        body.children = children;
+        body.contains
+            .retain(|resource| matches!(resource, ResourceClause::OwnMemory(_)));
+        body.fields = definition.fields().to_vec();
+        body.facts = body
+            .facts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !child_equations.contains(index))
+            .map(|(_, fact)| fact)
+            .map(|fact| substitute_click_proposition(fact, &substitution).map_err(ClickError::new))
+            .collect::<Result<_, _>>()?;
+        result.push((
+            arm.variant.clone(),
+            bindings,
+            ResourceDefinition {
+                name: definition.name.clone(),
+                parameters,
+                composite_body: Some(body),
+                field_schema: definition.field_schema.clone(),
+            },
+        ));
+    }
+    if seen.len() != datatype.variants().len() {
+        return Err(ClickError::new(
+            "resource match must cover every constructor",
+        ));
+    }
+    Ok(result)
+}
+
 pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(), ClickError> {
     let algebraic_definitions = combined_algebraic_type_definitions(file)?;
     let mut names = BTreeSet::new();
@@ -533,35 +782,42 @@ pub(super) fn validate_algebraic_type_uses(
         let Some(body) = definition.composite_body() else {
             continue;
         };
-        let variables = definition
-            .parameters()
-            .iter()
-            .filter_map(|parameter| {
-                parameter
-                    .click_type()
-                    .c_type()
-                    .map(|c_type| (parameter.name().to_string(), c_type))
-            })
-            .collect();
-        if let Some(condition) = body.condition() {
-            validate_algebraic_proposition(
-                condition,
-                &variables,
-                click_functions,
-                &predicate_types,
-                &definitions,
-                &format!("resource `{}` condition", definition.name()),
-            )?;
-        }
-        for fact in body.facts() {
-            validate_algebraic_proposition(
-                fact,
-                &variables,
-                click_functions,
-                &predicate_types,
-                &definitions,
-                &format!("resource `{}` fact", definition.name()),
-            )?;
+        let arm_scopes =
+            resource_match_arm_scopes(definition, |name| definitions.get(name).copied())?;
+        for definition in std::iter::once(definition)
+            .chain(arm_scopes.iter().map(|(_, _, definition)| definition))
+        {
+            let body = definition.composite_body().unwrap_or(body);
+            let variables = definition
+                .parameters()
+                .iter()
+                .filter_map(|parameter| {
+                    parameter
+                        .click_type()
+                        .c_type()
+                        .map(|c_type| (parameter.name().to_string(), c_type))
+                })
+                .collect();
+            if let Some(condition) = body.condition() {
+                validate_algebraic_proposition(
+                    condition,
+                    &variables,
+                    click_functions,
+                    &predicate_types,
+                    &definitions,
+                    &format!("resource `{}` condition", definition.name()),
+                )?;
+            }
+            for fact in body.facts() {
+                validate_algebraic_proposition(
+                    fact,
+                    &variables,
+                    click_functions,
+                    &predicate_types,
+                    &definitions,
+                    &format!("resource `{}` fact", definition.name()),
+                )?;
+            }
         }
     }
     for function in file.function_blocks() {
@@ -1125,11 +1381,18 @@ fn validate_algebraic_expression(
             )?;
             Ok(None)
         }
-        ContractExpression::BitwiseNot(inner)
-        | ContractExpression::Old(inner)
+        ContractExpression::Old(inner)
         | ContractExpression::At {
             expression: inner, ..
-        } => {
+        } => validate_algebraic_expression(
+            inner,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        ),
+        ContractExpression::BitwiseNot(inner) => {
             validate_algebraic_expression(
                 inner,
                 variables,

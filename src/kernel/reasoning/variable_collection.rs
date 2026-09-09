@@ -987,24 +987,35 @@ fn collect_execution_environment_variables_uncached(
 ) {
     for function in environment.functions.values() {
         collect_c_function_bitvector_variables(function, variables);
+        collect_c_function_bound_variables(function, variables);
     }
     for contract in environment.function_contracts.values() {
         collect_c_function_bitvector_variables(&contract.function, variables);
+        collect_c_function_bound_variables(&contract.function, variables);
     }
     for rule in environment.verified_function_rules.values() {
         collect_c_function_bitvector_variables(&rule.function, variables);
+        collect_c_function_bound_variables(&rule.function, variables);
     }
     for rule in environment.verified_loop_rules.iter() {
         collect_c_state_bitvector_variables(&rule.symbolic_entry_state, variables);
+        collect_c_state_bound_variables(&rule.symbolic_entry_state, variables);
         collect_c_statement_bitvector_variables(&rule.loop_statement, variables);
+        collect_c_statement_bound_variables(&rule.loop_statement, variables);
         collect_assumption_variables(&rule.required_assumptions, variables);
+        for fact in rule.required_assumptions.pure_facts() {
+            collect_proposition_bound_variables(&fact, variables);
+        }
         for path in &rule.paths {
             collect_c_statement_outcome_bitvector_variables(&path.outcome, variables);
+            collect_statement_outcome_bound_variables(&path.outcome, variables);
             for fact in &path.facts {
                 collect_proposition_bitvector_variables(fact.proposition(), variables);
+                collect_proposition_bound_variables(fact.proposition(), variables);
             }
             for obligation in &path.obligations {
                 collect_proposition_bitvector_variables(obligation.proposition(), variables);
+                collect_proposition_bound_variables(obligation.proposition(), variables);
             }
         }
     }
@@ -1241,6 +1252,7 @@ pub(in crate::kernel) fn collect_pointer_bitvector_variables(
             variables.insert(*variable);
         }
         PointerBlock::Concrete(_)
+        | PointerBlock::StringLiteral { .. }
         | PointerBlock::Function(_)
         | PointerBlock::ExternalArgument
         | PointerBlock::Heap(_) => {}
@@ -1258,6 +1270,7 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
                 variables.insert(*variable);
             }
             PointerBlock::Concrete(_)
+            | PointerBlock::StringLiteral { .. }
             | PointerBlock::Function(_)
             | PointerBlock::ExternalArgument
             | PointerBlock::Heap(_) => {}

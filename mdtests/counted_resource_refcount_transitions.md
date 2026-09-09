@@ -38,13 +38,11 @@ struct object* object_retain(struct object* obj) {
     requires count(object_ref(obj)) < 2147483647;
     owns object_ref(obj);
     produces object_ref(obj);
-    mutable obj->refs;
 
     ensures result == obj;
 } by {
     open(object_ref(obj)) {
         execute();
-        frame();
     }
     simp();
 }
@@ -53,7 +51,6 @@ void object_release_nonfinal(struct object* obj) {
     requires 1 < count(object_ref(obj));
     owns object_ref(obj);
     consumes object_ref(obj);
-    mutable obj->refs;
 } by {
     open(object_ref(obj)) {
         have 1 < obj->refs by simp;
@@ -63,7 +60,6 @@ void object_release_nonfinal(struct object* obj) {
             }
         }
         execute();
-        frame();
     }
     simp();
 }

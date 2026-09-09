@@ -51,8 +51,12 @@ int32 nested_count(int32 n, int32 m) {
                     close_invariants();
                 }
             }
+            have 0 <= i - 1 by {
+                apply(int32_positive_predecessor_is_nonnegative(i)) using { i > 0; }
+            }
             step();
-            close_invariants();
+            have i >= 0 by { arithmetic() using { 0 <= i; } }
+            close_invariants by { simp(); }
         }
     }
     step();
