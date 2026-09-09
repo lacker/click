@@ -445,16 +445,10 @@ impl CheckedResourceRewrite {
             )?;
             let mut unchanged = after_state.clone();
             unchanged.resources = before_state.resources.clone();
-            unchanged.open_instances = before_state.open_instances.clone();
-            unchanged.next_resource_child = before_state.next_resource_child;
             if unchanged != *before_state
-                || expected.next_resource_child != after_state.next_resource_child
                 || !expected
                     .resources
                     .same_exchange_from(&after_state.resources, &before_state.resources)
-                || !expected
-                    .open_instances
-                    .same_exchange_from(&after_state.open_instances, &before_state.open_instances)
             {
                 return Err("instance rewrite changed an unchecked part of the state");
             }
@@ -1088,6 +1082,8 @@ pub(crate) struct CheckedProofCasePartition {
     identity: Arc<()>,
     root_facts: ProofFacts,
     case_facts: Vec<Proposition>,
+    /// Exact contradictions checked under root premises plus that case only.
+    excluded: Vec<Option<Proposition>>,
     /// Generative constructor witnesses are introduced only at their unchanged
     /// entry scope. Complementary propositional splits need no such scope.
     witness_scope: Option<SharedValue<CState>>,
@@ -1119,6 +1115,23 @@ pub(crate) struct CheckedProofCaseArm {
 }
 
 impl CheckedProofCasePartition {
+    pub(crate) fn excluding_constructor_case(
+        &self,
+        index: usize,
+        fact: Proposition,
+    ) -> Option<Arc<Self>> {
+        self.witness_scope.as_ref()?;
+        let case = self.case_facts.get(index)?;
+        if !self.root_facts.with_fact(case.clone()).contradicts(&fact) {
+            return None;
+        }
+        let mut successor = self.clone();
+        // Coverage from the old partition must not discharge this new one.
+        successor.identity = Arc::new(());
+        successor.excluded[index] = Some(fact);
+        Some(Arc::new(successor))
+    }
+
     pub(crate) fn case_fact(&self, index: usize) -> Option<&Proposition> {
         self.case_facts.get(index)
     }
@@ -1137,12 +1150,20 @@ impl CheckedProofCasePartition {
             identity: Arc::new(()),
             root_facts: root_facts.clone(),
             case_facts: vec![then_fact, else_fact],
+            excluded: vec![None, None],
             witness_scope: None,
         }))
     }
 }
 
 impl CheckedProofCaseArm {
+    pub(crate) fn excluded_cases(&self) -> Vec<bool> {
+        self.partition
+            .excluded
+            .iter()
+            .map(Option::is_some)
+            .collect()
+    }
     pub(crate) fn identity(&self) -> usize {
         Arc::as_ptr(&self.partition.identity) as usize
     }
@@ -3038,11 +3059,9 @@ fn trace_completion(
                         if !checked_state
                             .resources
                             .same_exchange_from(&rewrite.after_state.resources, &state.resources)
-                            || checked_state.next_resource_child
-                                != rewrite.after_state.next_resource_child
-                            || !checked_state.open_instances.same_exchange_from(
-                                &rewrite.after_state.open_instances,
-                                &state.open_instances,
+                            || !checked_state.instance_field_scope.same_exchange_from(
+                                &rewrite.after_state.instance_field_scope,
+                                &state.instance_field_scope,
                             )
                         {
                             return Err(
@@ -4023,11 +4042,12 @@ impl ExecutionProofCore {
         if overflow {
             return None;
         }
-        let (case_facts, bindings) = equations.into_iter().unzip();
+        let (case_facts, bindings): (Vec<_>, Vec<_>) = equations.into_iter().unzip();
         Some((
             Arc::new(CheckedProofCasePartition {
                 identity: Arc::new(()),
                 root_facts: facts.clone(),
+                excluded: vec![None; case_facts.len()],
                 case_facts,
                 witness_scope: Some(self.state.clone()),
             }),
@@ -4825,6 +4845,61 @@ mod tests {
     }
 
     #[test]
+    fn constructor_partition_exclusion_requires_its_exact_contradiction() {
+        let (core, mut value) = constructor_partition_fixture(2);
+        value.node = crate::kernel::AlgebraicTermNode::Constructor {
+            variant: "C0".into(),
+            fields: vec![crate::kernel::AlgebraicValue::C(int32(11))],
+        };
+        let root = ProofFacts::default();
+        let (partition, _, _) = core
+            .algebraic_case_partition(
+                &root,
+                &value,
+                &crate::kernel::CExecutionEnvironment::new(),
+                4_000_000,
+                65_536,
+            )
+            .unwrap();
+        let live = partition.case_fact(0).unwrap().clone();
+        let dead = partition.case_fact(1).unwrap().clone();
+        assert!(
+            partition
+                .excluding_constructor_case(0, live.clone())
+                .is_none()
+        );
+        assert!(
+            partition
+                .excluding_constructor_case(1, live.clone())
+                .is_none()
+        );
+        assert!(
+            partition
+                .excluding_constructor_case(2, dead.clone())
+                .is_none()
+        );
+        let excluded = partition.excluding_constructor_case(1, dead).unwrap();
+        assert!(!Arc::ptr_eq(&partition.identity, &excluded.identity));
+        let mut old_arm = core.clone();
+        assert!(old_arm.record_proof_case_arm(partition, 0, root.with_fact(live.clone())));
+        assert!(!crate::kernel::api::proof_case_partitions_are_exhaustive(
+            &old_arm.execution_evidence
+        ));
+        let mut live_arm = core;
+        assert!(live_arm.record_proof_case_arm(excluded, 0, root.with_fact(live)));
+        assert!(crate::kernel::api::proof_case_partitions_are_exhaustive(
+            &live_arm.execution_evidence
+        ));
+        // New exclusion evidence cannot discharge an old partition's missing arm.
+        assert!(!crate::kernel::api::proof_case_partitions_are_exhaustive(
+            &[
+                old_arm.execution_evidence[0].clone(),
+                live_arm.execution_evidence[0].clone(),
+            ]
+        ));
+    }
+
+    #[test]
     fn constructor_partition_witnesses_avoid_source_facts_and_previous_matches() {
         let (core, value) = constructor_partition_fixture(2);
         let occupied = Variable(4_065_536);
@@ -5332,6 +5407,15 @@ mod tests {
             )
             .is_err()
         );
+        let mut forged = opened.clone();
+        forged.instance_field_scope = ResourceContext::new().unchecked_with_fact(selected.clone());
+        assert!(
+            CheckedResourceRewrite::check(
+                &function, &before, &facts, &selected, &forged, &facts, &calls,
+            )
+            .is_err(),
+            "a rewrite cannot retain scratch field bindings as a handle"
+        );
         let forged_facts = facts.with_fact(Proposition::ConditionIs(
             crate::kernel::ConditionTerm::Constant(false),
             true,
@@ -5366,8 +5450,8 @@ mod tests {
             for identity in 2..=size {
                 let mut unrelated = instance.clone();
                 unrelated.identity = Variable(identity);
-                state.open_instances = state
-                    .open_instances
+                state.resources = state
+                    .resources
                     .unchecked_with_fact(CResourceFact::own(CResource::Instance(unrelated)));
             }
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {

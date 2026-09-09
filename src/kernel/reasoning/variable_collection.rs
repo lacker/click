@@ -827,7 +827,7 @@ pub(in crate::kernel) fn collect_c_state_bitvector_variables(
     }
     collect_memory_bitvector_variables(&state.memory, variables);
     collect_resource_context_bitvector_variables(&state.resources, variables);
-    collect_resource_context_bitvector_variables(&state.open_instances, variables);
+    collect_resource_context_bitvector_variables(&state.instance_field_scope, variables);
     for population in state.counted_populations.iter() {
         for argument in population.arguments.iter() {
             collect_algebraic_value_bitvector_variables(argument, variables);

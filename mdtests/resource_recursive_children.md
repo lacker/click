@@ -1,7 +1,7 @@
 # Recursive named child resources
 
-Only the selected constructor's immediate child is exposed. The parent's
-open handle keeps its name, and the child must be folded before the parent.
+Only the selected constructor's immediate children are exposed, under independent
+names. Unfold consumes the parent; constructing it again consumes folded children.
 
 ```c filename=resource_recursive_children.c
 int32 read_root(int32* p, int32* next) { return *p; }
@@ -30,11 +30,11 @@ int32 read_root(int32* p, int32* next) {
     requires root.model == Chain::More(next, Chain::End);
     ensures root.model == old(root.model);
 } by {
-    unfold(root);
-    unfold(root.tail);
+    unfold(root) as { tail: t };
+    unfold(t);
     execute();
-    fold(root.tail);
-    fold(root);
+    let t = fold(chain(next), { model: Chain::End });
+    let root = fold(chain(p), { model: old(root.model) }, { tail: t });
     simp();
 }
 
@@ -61,11 +61,11 @@ int32 read_left(int32* p, int32* left, int32* right) {
     ensures result == 2;
     ensures root.model == old(root.model);
 } by {
-    unfold(root);
-    unfold(root.left);
+    unfold(root) as { left: l, right: r };
+    unfold(l);
     execute();
-    fold(root.left);
-    fold(root);
+    let l = fold(tree(left), { model: Tree::Leaf(2) });
+    let root = fold(tree(p), { model: old(root.model) }, { left: l, right: r });
     simp();
 }
 ```

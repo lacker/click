@@ -12384,6 +12384,8 @@ fn source_expander_derives_separation_from_call_postconditions() {
         + 1;
     let c_sources = [("init.c", init_c_source), ("pipeline.c", pipeline_c_source)];
 
+    verify_c0_sources(click_source, &c_sources)
+        .expect("bounded call ranges should verify before expansion");
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("call postconditions should expand into an explicit separation derivation");
     // The call postconditions are written against the snapshots where they were read:

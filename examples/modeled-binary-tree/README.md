@@ -65,13 +65,25 @@ tree. Expansion/rechecking and rejection tests cover wrong payloads or node
 identities, swapped/missing links, unreadable child arguments, duplicate child
 selection, and overlapping or reused ownership.
 
+## Verified C left rotation
+
+The unchanged `tree_rotate_left` consumes a tree whose root and right child
+are nonempty, and produces the returned tree with model
+`heap_rotate_left(old(t.model))`. This exact structural transformation retains
+both node addresses and payloads and all three arbitrary subtrees.
+
+Two entry proof matches name the root and pivot fields and close the empty
+cases from the preconditions. Unfolding exposes independent child resources;
+after the original C loads and stores, explicit folds reconstruct the lower
+node and returned pivot. No named open handles are used. The proof checks
+memory ownership as well as the model transformation. A separate in-order
+sequence preservation theorem remains future work.
+
 ## Remaining C proofs
 
 The generic `Tree<T>` theorems above remain pure model exercises; mirroring
-is not a C operation. Only `tree_node_init` has a C function proof in this
-example. Traversal termination, membership, rotations, and the heap-derived
-in-order sequence are not yet verified. The next algorithm proof can use
-`HeapTree`'s identities as well as values when describing a rotation.
+is not a C operation. Traversal termination, membership, right rotation, and
+the heap-derived in-order sequence are not yet verified.
 
 The missing heap-derived sequence model is tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),

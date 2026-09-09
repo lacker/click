@@ -3007,10 +3007,9 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
-    pub(super) next_resource_child: u64,
-    /// Exclusive handles retained by explicit unfolding. These permit pure
-    /// field projections, never folded ownership or modular call transfer.
-    pub(super) open_instances: ResourceContext,
+    /// Lexical field values for scratch resource-body evaluation only.
+    /// This is not ownership and is never populated by unfolding a resource.
+    pub(super) instance_field_scope: ResourceContext,
     /// Call-local formal identities; the ledger retains actual caller identities.
     pub(super) resource_bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
     pub(super) locals: CLocalEnvironment,
@@ -3190,9 +3189,6 @@ pub struct ResourceInstance {
     pub(super) arguments: ResourceArguments,
     pub(super) schema: ResourceFieldSchema,
     pub(super) fields: ResourceArguments,
-    /// Present only in the open-handle ledger. These are the folded child
-    /// instances that must be returned before the parent can close.
-    pub(super) opened_children: std::sync::Arc<[(String, ResourceInstance)]>,
 }
 
 impl ResourceInstance {
@@ -3224,7 +3220,6 @@ impl ResourceInstance {
             arguments,
             schema,
             fields,
-            opened_children: Default::default(),
         })
     }
 

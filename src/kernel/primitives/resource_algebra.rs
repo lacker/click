@@ -236,7 +236,7 @@ impl ResourceContext {
         let CResource::Instance(instance) = fact.resource() else {
             return None;
         };
-        if !fact.has_valid_instance_access() || !instance.opened_children.is_empty() {
+        if !fact.has_valid_instance_access() {
             return Some(ResourceContextValidityError::InvalidInstanceAccess(
                 fact.clone(),
             ));

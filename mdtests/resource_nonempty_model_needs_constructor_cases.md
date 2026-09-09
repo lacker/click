@@ -1,14 +1,12 @@
-# Nonempty is not yet enough to expose constructor fields
+# Excluding the empty constructor exposes an arbitrary cell payload
 
-This records a missing proof operation, not an invalid C program or contract.
+The empty constructor closes by an explicitly checked contradiction.
 For an owned `Some(value)` cell the read is safe, and its model is preserved.
 The precondition excludes `None` but does not give the proof a name for
 `value`. Pure `match` expressions are symbolic; they do not introduce
 constructor cases and fresh field bindings into an execution proof.
 
-When proof-level constructor elimination is supported, replace this rejection
-with a proof that explicitly names the `Some` field and checks the exhaustive
-cases. Do not specialize the precondition to `Some(7)` or alter the C.
+The live arm names the arbitrary `Some` field and preserves ownership.
 
 ```c filename=read.c
 int read(int* p) { return *p; }
@@ -31,13 +29,18 @@ int read(int* p) {
     requires c.model != Maybe::None;
     ensures c.model == old(c.model);
 } by {
-    unfold(c);
-    execute();
-    fold(c);
-    simp();
+    match c.model {
+        Maybe::None => { contradiction(c.model == Maybe::None); },
+        Maybe::Some(value) => {
+            unfold(c);
+            execute();
+            fold(c);
+            simp();
+        },
+    }
 }
 ```
 
 ```expect
-fail: resource match requires constructor evidence for the instance field
+pass
 ```

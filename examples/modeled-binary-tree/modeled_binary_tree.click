@@ -42,6 +42,71 @@ void tree_node_init(struct tree_node* node, int value,
     simp();
 }
 
+function heap_right(tree: HeapTree) -> HeapTree {
+    match tree {
+        HeapTree::Empty => HeapTree::Empty,
+        HeapTree::Node(node, value, left, right) => right,
+    }
+}
+
+function heap_rotate_left(tree: HeapTree) -> HeapTree {
+    match tree {
+        HeapTree::Empty => HeapTree::Empty,
+        HeapTree::Node(node, value, left, right) => match right {
+            HeapTree::Empty => tree,
+            HeapTree::Node(pivot_node, pivot_value, middle, far_right) =>
+                HeapTree::Node(pivot_node, pivot_value,
+                    HeapTree::Node(node, value, left, middle), far_right),
+        },
+    }
+}
+
+struct tree_node* tree_rotate_left(struct tree_node* root) {
+    consumes t: tree_at(root);
+    requires t.model != HeapTree::Empty;
+    requires heap_right(t.model) != HeapTree::Empty;
+    produces rotated: tree_at(result);
+    ensures rotated.model == heap_rotate_left(old(t.model));
+} by {
+    match t.model {
+        HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
+        HeapTree::Node(node, value, left_model, right_model) => {
+            have heap_right(t.model) == right_model by {
+                rewrite(t.model == HeapTree::Node(node, value, left_model, right_model));
+                unfold(heap_right(HeapTree::Node(node, value, left_model, right_model)));
+                normalize();
+            }
+            have right_model != HeapTree::Empty by {
+                rewrite(right_model == heap_right(t.model));
+                assumption();
+            }
+            match right_model {
+                HeapTree::Empty => { contradiction(right_model == HeapTree::Empty); },
+                HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model) => {
+                    unfold(t) as { left: l, right: r };
+                    unfold(r) as { left: m, right: z };
+                    execute();
+                    let lower = fold(tree_at(root), {
+                        model: HeapTree::Node(node, value, left_model, middle_model)
+                    }, { left: l, right: m });
+                    let rotated = fold(tree_at(result), {
+                        model: HeapTree::Node(pivot_node, pivot_value,
+                            HeapTree::Node(node, value, left_model, middle_model), far_right_model)
+                    }, { left: lower, right: z });
+                    have rotated.model == heap_rotate_left(old(t.model)) by {
+                        rewrite(old(t.model) == HeapTree::Node(node, value, left_model, right_model));
+                        rewrite(right_model == HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model));
+                        unfold(heap_rotate_left(HeapTree::Node(node, value, left_model,
+                            HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model))));
+                        normalize();
+                    }
+                    simp();
+                },
+            }
+        },
+    }
+}
+
 spec enum Tree<T> {
     Empty,
     Node(Tree<T>, T, Tree<T>),
