@@ -629,7 +629,14 @@ inconsistent.
 
 ---
 
-## 13. Range byte counts wrap modulo 2^32
+## 13. ~~Range byte counts wrap modulo 2^32~~ — fixed
+
+**Status: fixed.** Range lowering now uses one canonical 32-bit byte-count
+helper. Direct loadability requirements and public spec loadability carry
+forward-range and no-overflow conditions; spec claims record them as proof
+obligations while the atomic loadability fact stays separate. Internal
+composite-resource summaries remain symbolic until their owning resource is
+used, preserving the existing resource-expansion contract.
 
 **Severity: high.** A huge or negative element range lowers to a tiny byte
 footprint, so a `loadable` fact is certified for memory that was never claimed.
