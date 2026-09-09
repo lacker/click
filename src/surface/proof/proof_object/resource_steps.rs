@@ -29,7 +29,7 @@ impl<'a> Proof<'a> {
         };
         let before: &CState = outcome.map_or(&*execution.core.state, |goal| &*goal.data.core.state);
         let instance = before
-            .resource_instance_fields(binding.identity)
+            .resource_instance_at_path(binding.identity, &binding.children)
             .ok_or_else(|| self.step_error("resource instance has no owned or open handle"))?;
         let definition = context
             .function

@@ -418,7 +418,9 @@ impl CheckedResourceRewrite {
             let mut unchanged = after_state.clone();
             unchanged.resources = before_state.resources.clone();
             unchanged.open_instances = before_state.open_instances.clone();
+            unchanged.next_resource_child = before_state.next_resource_child;
             if unchanged != *before_state
+                || expected.next_resource_child != after_state.next_resource_child
                 || !expected
                     .resources
                     .same_exchange_from(&after_state.resources, &before_state.resources)
@@ -2988,6 +2990,8 @@ fn trace_completion(
                         if !checked_state
                             .resources
                             .same_exchange_from(&rewrite.after_state.resources, &state.resources)
+                            || checked_state.next_resource_child
+                                != rewrite.after_state.next_resource_child
                             || !checked_state.open_instances.same_exchange_from(
                                 &rewrite.after_state.open_instances,
                                 &state.open_instances,
@@ -4619,6 +4623,7 @@ mod tests {
                     arms: ["Left", "Right"]
                         .into_iter()
                         .map(|variant| CResourceMatchArm {
+                            children: vec![],
                             variant: variant.into(),
                             bindings: vec![],
                             binding_types: vec![],

@@ -802,8 +802,42 @@ evidence for the actual instance field (for example,
 `c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
 implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
 The same ownership, unchanged-field, and path-local return checks still apply.
-This slice accepts immediate owned memory and facts, not child resources,
-witnesses, nested resource matches/guards, or arbitrary match scrutinees.
+Match arms can also expose named, directly recursive child instances:
+
+<!-- verified-example: mdtests/resource_recursive_children.md -->
+```click
+resource tree(p: int32*) {
+    field model: Tree;
+    match model {
+        Tree::Leaf(value) => { owns p[0..1]; fact p[0] == value; },
+        Tree::Branch(value, lp, lm, rp, rm) => {
+            owns p[0..1];
+            owns left: tree(lp);
+            owns right: tree(rp);
+            fact p[0] == value;
+            fact left.model == lm;
+            fact right.model == rm;
+        },
+    }
+}
+```
+
+Here `Tree` is declared in the fixture. After `unfold(root)`, the children
+are named `root.left` and `root.right`. Their folded ownership does not
+grant direct memory access: `unfold(root.left)` exposes the left child's body.
+The parent name remains an open handle, not folded ownership. Before
+`fold(root)`, every recorded child must be back in folded form with the same
+identity, arguments, and fields. Folding the parent consumes their exposed
+ownership and makes the child paths unavailable. Reopening may bind fresh child
+resource identities; this does not change model values or C pointer identities.
+
+Each child currently uses the parent's resource definition. Equations for all
+child fields must bind them to immediate constructor fields of the matching
+types. In particular, the matched model strictly descends to a proper submodel.
+Child arguments accept C bindings or literals, not loads/computed expressions.
+Mixed resource families, witnesses, nested resource matches/guards, arbitrary
+match scrutinees, and passing child paths as contract arguments remain
+unsupported. No operation automatically unfolds an entire recursive structure.
 
 Field establishment, updates, and ordinary inline-call transport remain
 unsupported. A declaration alone grants no ownership, and binding an instance
@@ -1102,8 +1136,24 @@ The fixture covers repeated calls, reset, and another file's independent
 that the value is representable: signed sources need both bounds, unsigned
 sources need the upper bound. This differs from the low-bit `uint32` cast.
 
-This slice supports file-scope scalars, scalar arrays, and struct objects.
-It does not qualify functions, function-local statics, or arrays of structs.
+For a function-local static, include the function name:
+
+<!-- verified-example: mdtests/qualified_function_static_ownership.md -->
+```click
+owns &counter_file::increment::calls[0..1];
+```
+
+This names the same storage as the unqualified `calls` inside `increment`.
+Callers can transfer its ownership, and expressions such as
+`old(counter_file::increment::calls)` refer to its value. Qualification grants
+no access by itself and never initializes or replenishes the resource.
+Ordinary automatic locals and parameters cannot be named this way. If several
+block scopes in a function declare statics with the same name, the reference
+is rejected as ambiguous.
+
+This syntax supports file-scope and function-local static scalars, scalar
+arrays (including multidimensional arrays), and struct objects. It does not
+qualify functions as values or arrays of structs.
 Aliases must be unique and cannot share a name with a specification datatype.
 Existing unqualified references and `verifying "file.c";` remain unchanged.
 

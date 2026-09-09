@@ -16,6 +16,186 @@ int32 read(int32* p) {
 
 const GUARDED_CELL_C: &str = "int32 read(int32* p) { if (p == 0) return 0; return *p; }";
 
+const RECURSIVE_CHILD_SOURCE: &str = r#"verifying "read.c";
+spec enum Chain { End, More(int32, int32*, Chain) }
+resource chain(p: int32*) {
+    field model: Chain;
+    match model {
+        Chain::End => { fact p == 0; },
+        Chain::More(value, next, rest) => {
+            owns p[0..1];
+            owns tail: chain(next);
+            fact p[0] == value;
+            fact tail.model == rest;
+        },
+    }
+}
+int32 read(int32* p, int32* next, int32 value) {
+    owns root: chain(p);
+    requires root.model == Chain::More(value, next, Chain::End);
+    ensures result == value;
+    ensures root.model == old(root.model);
+} by { BODY }
+"#;
+
+#[test]
+fn recursive_child_resources_round_trip_and_expand() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32* next, int32 value) { return *p; }",
+    )];
+    for body in [
+        "unfold(root); unfold(root.tail); execute(); fold(root.tail); fold(root); simp();",
+        "unfold(root); have root.tail.model == Chain::End by { simp(); } unfold(root.tail); fold(root.tail); fold(root); unfold(root); execute(); fold(root); simp();",
+    ] {
+        let source = RECURSIVE_CHILD_SOURCE.replace("BODY", body);
+        let verified = verify_c0_sources(&source, &c).unwrap();
+        verify_c0_sources(
+            &source.replace(
+                &format!("by {{ {body} }}"),
+                &verified[0].expanded_proof_source().unwrap(),
+            ),
+            &c,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn recursive_child_resources_deep_paths_own_memory_and_recheck() {
+    let source = r#"verifying "middle.c";
+        spec enum Nonempty { Last(int32), More(int32, int32*, Nonempty) }
+        resource chain(p: int32*) {
+            field model: Nonempty;
+            match model {
+                Nonempty::Last(value) => { owns p[0..1]; fact p[0] == value; },
+                Nonempty::More(value, next, rest) => {
+                    owns p[0..1]; fact p[0] == value;
+                    owns tail: chain(next); fact tail.model == rest;
+                },
+            }
+        }
+        int32 middle(int32* p, int32* q, int32* r) {
+            owns root: chain(p);
+            requires root.model == Nonempty::More(7, q, Nonempty::More(8, r, Nonempty::Last(9)));
+            ensures result == 8;
+            ensures root.model == old(root.model);
+        } by { BODY }
+    "#;
+    let body = "unfold(root); unfold(root.tail); unfold(root.tail.tail); have root.tail.tail.model == Nonempty::Last(9) by { simp(); } execute(); fold(root.tail.tail); fold(root.tail); fold(root); simp();";
+    let c = [(
+        "middle.c",
+        "int32 middle(int32* p, int32* q, int32* r) { return *q; }",
+    )];
+    let source = source.replace("BODY", body);
+    let verified = verify_c0_sources(&source, &c).unwrap();
+    verify_c0_sources(
+        &source.replace(
+            &format!("by {{ {body} }}"),
+            &verified[0].expanded_proof_source().unwrap(),
+        ),
+        &c,
+    )
+    .unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace(body, "unfold(root); execute(); fold(root); simp();"),
+            &c
+        )
+        .is_err()
+    );
+    assert!(verify_c0_sources(&source.replace("result == 8", "result == 9"), &c).is_err());
+}
+
+#[test]
+fn recursive_child_resources_do_not_capture_earlier_function_names() {
+    let source = RECURSIVE_CHILD_SOURCE
+        .replace(
+            "BODY",
+            "unfold(root); unfold(root.root); execute(); fold(root.root); fold(root); simp();",
+        )
+        .replace("owns tail: chain(next);", "owns root: chain(next);")
+        .replace("fact tail.model", "fact root.model");
+    let declaration = source.find("resource chain").unwrap();
+    let function = source.find("int32 read").unwrap();
+    let reordered = format!(
+        "{}{}{}",
+        &source[..declaration],
+        &source[function..],
+        &source[declaration..function]
+    );
+    verify_c0_sources(
+        &reordered,
+        &[(
+            "read.c",
+            "int32 read(int32* p, int32* next, int32 value) { return *p; }",
+        )],
+    )
+    .unwrap();
+}
+
+#[test]
+fn recursive_child_resources_reject_bad_lifetimes_and_folds() {
+    let c = [(
+        "read.c",
+        "int32 read(int32* p, int32* next, int32 value) { return *p; }",
+    )];
+    for body in [
+        "unfold(root.tail); execute(); simp();",
+        "unfold(root); unfold(root.tail); execute(); fold(root); simp();",
+        "unfold(root); unfold(root.tail); unfold(root.tail); execute(); fold(root.tail); fold(root); simp();",
+        "unfold(root); execute(); fold(root.tail); fold(root); simp();",
+        "unfold(root); execute(); fold(root); unfold(root.tail); simp();",
+        "unfold(root); unfold(root.missing); execute(); fold(root); simp();",
+        "unfold(root); unfold(root.tail.tail); execute(); fold(root); simp();",
+    ] {
+        let source = RECURSIVE_CHILD_SOURCE.replace("BODY", body);
+        assert!(verify_c0_sources(&source, &c).is_err(), "accepted {body}");
+    }
+    let source =
+        RECURSIVE_CHILD_SOURCE.replace("BODY", "unfold(root); execute(); fold(root); simp();");
+    let changed = [(
+        "read.c",
+        "int32 read(int32* p, int32* next, int32 value) { *p = 0; return *p; }",
+    )];
+    assert!(verify_c0_sources(&source, &changed).is_err());
+}
+
+#[test]
+fn recursive_child_resources_reject_nonstructural_definitions() {
+    for (from, to) in [
+        ("fact tail.model == rest;", ""),
+        ("fact tail.model == rest;", "fact tail.model == model;"),
+        ("fact tail.model == rest;", "fact tail.model == value;"),
+        (
+            "fact tail.model == rest;",
+            "fact tail.model == Chain::More(value, next, rest);",
+        ),
+        (
+            "owns tail: chain(next);",
+            "owns tail: chain(next); owns tail: chain(next);",
+        ),
+        ("owns tail: chain(next);", "views chain(next);"),
+    ] {
+        assert!(
+            parser::parse(&RECURSIVE_CHILD_SOURCE.replace("BODY", "").replace(from, to)).is_err(),
+            "accepted {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn algebraic_pointer_constructor_null_literal_is_explicitly_unsupported() {
+    let error =
+        parser::parse("spec enum Ptr { At(int32*) } function null_ptr() -> Ptr { Ptr::At(0) }")
+            .unwrap_err();
+    assert!(
+        error.message().contains("expects int32*, got int32"),
+        "{}",
+        error.message()
+    );
+}
+
 const MATCH_CELL_SOURCE: &str = r#"verifying "read.c";
 spec enum Maybe<T> { None, Some(T) }
 resource cell(p: int32*) {

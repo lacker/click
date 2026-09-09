@@ -486,6 +486,7 @@ pub struct ResourceDefinition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositeResourceBody {
+    children: Vec<ResourceChildBody>,
     fields: Vec<ResourceFieldDefinition>,
     matched: Option<ResourceMatchBody>,
     condition: Option<ClickProposition>,
@@ -495,6 +496,14 @@ pub struct CompositeResourceBody {
     /// `where` proposition is also one of `facts`; the witness name is in
     /// scope for every later clause of the body.
     witnesses: Vec<ResourceWitness>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceChildBody {
+    name: String,
+    identity: Variable,
+    arguments: Vec<ContractExpression>,
+    field_bindings: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -783,6 +792,7 @@ pub enum ResourceClause {
 pub struct ResourceInstanceBinding {
     name: String,
     identity: Variable,
+    children: Vec<String>,
     schema: Option<crate::kernel::ResourceFieldSchema>,
     fields: Option<crate::kernel::ResourceArguments>,
 }
@@ -792,6 +802,7 @@ pub struct ResourceFieldAccess {
     owner: String,
     resource_name: String,
     identity: Variable,
+    children: Vec<String>,
     field: String,
     field_index: usize,
     click_type: Option<ClickType>,

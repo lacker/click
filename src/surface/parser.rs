@@ -9,6 +9,7 @@ pub(super) struct QualifiedCObject {
     pub expression: CExpression,
     pub struct_name: Option<String>,
     pub array_shape: Option<Vec<u32>>,
+    pub ambiguous: bool,
 }
 
 /// Click's recursive-descent proposition and contract-expression parsers use
@@ -737,7 +738,12 @@ impl Parser {
     fn parse_qualified_c_name(&mut self) -> Result<(String, CExpression), ClickError> {
         let alias = self.expect_ident("C source alias")?;
         self.expect(Token::ColonColon)?;
-        let name = self.expect_ident("C declaration name")?;
+        let mut name = self.expect_ident("C declaration name")?;
+        if self.peek() == Some(&Token::ColonColon) {
+            self.expect(Token::ColonColon)?;
+            let local = self.expect_ident("function-local static name")?;
+            name = format!("{name}::{local}");
+        }
         let qualified = format!("{alias}::{name}");
         let source = self
             .source_aliases
@@ -748,12 +754,18 @@ impl Parser {
             Some(objects) => objects
                 .get(source)
                 .and_then(|objects| objects.get(&name))
-                .map(|object| object.expression.clone())
+                .map(|object| {
+                    if object.ambiguous {
+                        Err(self.error(format!("ambiguous function-local static `{qualified}`: multiple block scopes declare this name")))
+                    } else {
+                        Ok(object.expression.clone())
+                    }
+                })
                 .ok_or_else(|| {
                     self.error(format!(
-                        "no supported file-scope C object `{qualified}` in `{source}`"
+                        "no supported C object `{qualified}` in `{source}`"
                     ))
-                })?,
+                })??,
         };
         Ok((qualified, expression))
     }
@@ -899,6 +911,9 @@ impl Parser {
             &mut self.current_algebraic_params,
             algebraic_parameter_types(&parsed_parameters.parameters),
         );
+        let previous_resource_bindings = std::mem::take(&mut self.current_resource_bindings);
+        let previous_resource_targets = std::mem::take(&mut self.current_resource_targets);
+        let previous_contract_bindings = std::mem::take(&mut self.current_contract_bindings);
         let composite_body = match self.peek() {
             Some(Token::Semicolon) if is_abstract => {
                 self.position += 1;
@@ -922,6 +937,9 @@ impl Parser {
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
         self.current_algebraic_params = previous_algebraic_params;
+        self.current_resource_bindings = previous_resource_bindings;
+        self.current_resource_targets = previous_resource_targets;
+        self.current_contract_bindings = previous_contract_bindings;
         Ok(ResourceDefinition {
             name,
             parameters: parsed_parameters.parameters,
@@ -964,6 +982,7 @@ impl Parser {
                             owner: "__body".into(),
                             resource_name: resource_name.into(),
                             identity: Variable(u64::MAX),
+                            children: vec![],
                             field: field.name.clone(),
                             field_index,
                             click_type: Some(field.click_type.clone()),
@@ -1003,7 +1022,11 @@ impl Parser {
                     .cloned()
                     .collect::<Vec<_>>();
                 self.match_nesting += 1;
+                let saved_bindings = self.current_resource_bindings.clone();
+                let saved_targets = self.current_resource_targets.clone();
                 let body = self.parse_composite_resource_body(resource_name);
+                self.current_resource_bindings = saved_bindings;
+                self.current_resource_targets = saved_targets;
                 self.match_nesting -= 1;
                 let body = body?;
                 for name in inserted {
@@ -1032,6 +1055,7 @@ impl Parser {
             self.expect(Token::RBrace)?;
             self.current_resource_fields = previous_resource_fields;
             return Ok(CompositeResourceBody {
+                children: vec![],
                 fields,
                 matched: Some(ResourceMatchBody { field, arms }),
                 condition: None,
@@ -1094,7 +1118,10 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    contains.push(self.parse_resource_target(ResourceAccessMode::Own)?);
+                    if self.match_nesting == 0 && self.peek_next() == Some(&Token::Colon) {
+                        return Err(self.error("named child resources currently require a constructor match arm"));
+                    }
+                    contains.push(self.parse_owned_resource_binding()?);
                     self.expect(Token::Semicolon)?;
                 }
                 Some("views") => {
@@ -1129,6 +1156,7 @@ impl Parser {
             .collect();
         self.current_resource_fields = previous_resource_fields;
         Ok(CompositeResourceBody {
+            children: vec![],
             fields,
             matched: None,
             condition,
@@ -2532,6 +2560,7 @@ impl Parser {
             binding: ResourceInstanceBinding {
                 name: name.clone(),
                 identity,
+                children: vec![],
                 schema: None,
                 fields: None,
             },
@@ -2542,12 +2571,22 @@ impl Parser {
     }
 
     fn parse_owned_resource_target(&mut self) -> Result<ResourceClause, ClickError> {
-        if let Some(target) = self
+        if let Some(mut target) = self
             .peek_ident()
             .and_then(|name| self.current_resource_targets.get(name))
             .cloned()
         {
             self.position += 1;
+            while self.peek() == Some(&Token::Dot) {
+                self.position += 1;
+                let child = self.expect_ident("child resource name")?;
+                let ResourceClause::Named { binding, .. } = &mut target else {
+                    return Err(self.error("child access requires a named resource"));
+                };
+                binding.name.push('.');
+                binding.name.push_str(&child);
+                binding.children.push(child);
+            }
             return Ok(target);
         }
         let start = self.position;
@@ -4057,6 +4096,7 @@ impl Parser {
             _ => None,
         };
         let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
+        let mut scalar_range_offset = None;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
             || (self.peek() == Some(&Token::LBracket) && !self.contract_bracket_is_range())
         {
@@ -4164,7 +4204,8 @@ impl Parser {
                     }
                     let offset = flatten_array_indices(indexes, &shape);
                     base = if has_following_range {
-                        CExpression::Add(Box::new(base), Box::new(offset))
+                        scalar_range_offset = Some(offset);
+                        base
                     } else {
                         CExpression::Index(Box::new(base), Box::new(offset))
                     };
@@ -4315,13 +4356,17 @@ impl Parser {
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
-        let start = contract_expression_as_c_fragment(&start_expression)
+        let mut start = contract_expression_as_c_fragment(&start_expression)
             .ok_or_else(|| self.error("memory segment start must be a current C expression"))?;
         self.expect(Token::DotDot)?;
         let end_expression = self.parse_contract_expression()?;
-        let end = contract_expression_as_c_fragment(&end_expression)
+        let mut end = contract_expression_as_c_fragment(&end_expression)
             .ok_or_else(|| self.error("memory segment end must be a current C expression"))?;
         self.expect(Token::RBracket)?;
+        if let Some(offset) = scalar_range_offset {
+            start = CExpression::Add(Box::new(offset.clone()), Box::new(start));
+            end = CExpression::Add(Box::new(offset), Box::new(end));
+        }
         Ok(vec![ContractSegment {
             state: ContractSegmentState::Current,
             base,
@@ -5151,6 +5196,18 @@ impl Parser {
                     }
                 }
                 Some(Token::Arrow | Token::Dot) => {
+                    if let ContractExpression::ResourceField(access) = &mut expression {
+                        if self.peek() != Some(&Token::Dot) {
+                            return Err(self.error("resource children use `.`, not `->`"));
+                        }
+                        self.position += 1;
+                        let next = self.expect_ident("resource child or field name")?;
+                        access
+                            .children
+                            .push(std::mem::replace(&mut access.field, next));
+                        access.click_type = None;
+                        continue;
+                    }
                     if let ContractExpression::CFragment(CExpression::Variable(owner)) = &expression
                         && let Some((identity, resource_name)) =
                             self.current_resource_bindings.get(owner).cloned()
@@ -5165,6 +5222,7 @@ impl Parser {
                             owner,
                             resource_name,
                             identity,
+                            children: vec![],
                             field,
                             field_index: 0,
                             click_type: None,

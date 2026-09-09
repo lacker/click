@@ -31,9 +31,12 @@ The regression is `explicit_invariant_body_copy3_checks_and_expands`.
 It preserves the original C and converts only the already-expanded closer to
 `close_invariants by { simp(); }`.
 
-The recursive Surface structural planner's implication case is outlined into
-a non-inlined helper. This keeps its large local temporaries off every nested
-conjunction/quantifier frame without changing search order or stack limits.
+The recursive Surface structural planner's connective cases are outlined into
+non-inlined helpers. This keeps branch-local temporaries out of the shared
+dispatcher without changing search order or stack limits. Snapshot annotation
+uses an explicit postorder work stack, with one nonrecursive node-construction
+helper. Small-stack regressions cover its supported depth, depth rejection,
+operand order, and linear work over multiple input sizes.
 The existing four-size, small-stack kernel reasoning regression remains enabled.
 
 Bare closers and automatic preservation still use the legacy preparation
