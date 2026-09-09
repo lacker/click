@@ -1203,6 +1203,9 @@ pub(crate) struct CheckedExecutionBranch {
     interface_execution_facts: Vec<ExecutionPureFact>,
     interface_effect_facts: Vec<ExecutionPureFact>,
     interface_resource_definitions: Option<Vec<crate::kernel::CCompositeResourceDefinition>>,
+    // Keep the actual selected lowering results, not just their boolean verdicts.
+    // Contextual checking remains below until these judgments have proof bodies.
+    interface_lowerings: Arc<Vec<[CheckedInterfaceLowering; 3]>>,
 }
 
 #[derive(Clone)]
@@ -1341,6 +1344,7 @@ impl CheckedExecutionBranch {
             interface_execution_facts: Vec::new(),
             interface_effect_facts,
             interface_resource_definitions: None,
+            interface_lowerings: Arc::new(Vec::new()),
         })
     }
 
@@ -1500,18 +1504,32 @@ impl CheckedExecutionBranch {
             .execution_start_state
             .as_ref()
             .unwrap_or(&split.state);
+        let mut interface_lowerings = Vec::with_capacity(interface_specs.len());
         for spec in interface_specs {
-            for (arm, facts) in arms.iter().zip(arm_facts) {
-                if !interface_spec_is_established(spec, arm.reached_state(), reference_state, facts)
-                {
-                    return Err("an interface fact is not established by both concrete arms");
-                }
-            }
-            if !interface_spec_is_established(spec, joined_state, reference_state, successor_facts)
-            {
-                return Err("an interface fact is not retained at the abstract successor");
-            }
+            let concrete = |index: usize| {
+                CheckedInterfaceLowering::check(
+                    spec,
+                    arms[index].reached_state(),
+                    reference_state,
+                    arm_facts[index],
+                )
+                .ok_or("an interface fact is not established by both concrete arms")
+            };
+            let then_lowering = concrete(0)?;
+            let else_lowering = concrete(1)?;
+            let successor = CheckedInterfaceLowering::check(
+                spec,
+                joined_state,
+                reference_state,
+                successor_facts,
+            )
+            .ok_or("an interface fact is not retained at the abstract successor")?;
+            interface_lowerings.push([then_lowering, else_lowering, successor]);
         }
+        let interface_propositions = interface_lowerings
+            .iter()
+            .map(|lowerings| &lowerings[2].path.proposition)
+            .collect::<std::collections::BTreeSet<_>>();
         let introduced = successor_facts
             .introduced_since(root_facts)
             .ok_or("the interface successor facts do not descend from the branch root")?;
@@ -1519,9 +1537,7 @@ impl CheckedExecutionBranch {
             let common_arm_fact = arm_facts
                 .iter()
                 .all(|facts| checked_branch_fact_is_available(facts, fact));
-            let interface_fact = interface_specs
-                .iter()
-                .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, fact));
+            let interface_fact = interface_propositions.contains(fact);
             let interface_resource_fact = ResourceContext::new()
                 .unchecked_with_facts(successor_interface_resources.clone())
                 .observable_facts_assuming_valid(successor_facts.assumptions())
@@ -1608,6 +1624,7 @@ impl CheckedExecutionBranch {
             interface_resource_definitions: Some(
                 function.composite_resource_definitions().to_vec(),
             ),
+            interface_lowerings: Arc::new(interface_lowerings),
         })
     }
 
@@ -1662,6 +1679,19 @@ impl CheckedExecutionBranch {
         self.interface_resource_definitions
             .as_ref()
             .is_none_or(|definitions| definitions == function.composite_resource_definitions())
+            && self.interface_lowerings.iter().all(|lowerings| {
+                lowerings[0].spec == lowerings[1].spec
+                    && lowerings[0].spec == lowerings[2].spec
+                    && lowerings[0].reference == lowerings[1].reference
+                    && lowerings[0].reference == lowerings[2].reference
+                    && lowerings[2].snapshot == self.joined_state
+                    && lowerings[0].facts.shares_premises_with(&self.arms[0].facts)
+                    && lowerings[1].facts.shares_premises_with(&self.arms[1].facts)
+                    && self
+                        .interface_successor_facts
+                        .as_ref()
+                        .is_some_and(|facts| lowerings[2].facts.shares_premises_with(facts))
+            })
     }
 }
 
@@ -2055,14 +2085,29 @@ fn interface_resource_intrinsic_fact(
     })
 }
 
-fn interface_spec_is_established(
-    spec: &SpecProposition,
-    state: &CState,
-    reference_state: &CState,
-    facts: &ProofFacts,
-) -> bool {
-    interface_spec_paths(spec, state, reference_state).is_some_and(|paths| {
-        paths.into_iter().any(|path| {
+/// The selected kernel lowering and the precise context in which it passed
+/// the existing checks. This is retained lowering evidence, NOT a replacement
+/// for a completed proposition proof. In particular, generated load-variable
+/// equations remain distinct from safety obligations and the asserted value.
+#[derive(Clone)]
+struct CheckedInterfaceLowering {
+    spec: Arc<SpecProposition>,
+    snapshot: CState,
+    reference: CState,
+    facts: ProofFacts,
+    path: Arc<crate::kernel::spec::SpecPropositionPath>,
+}
+
+impl CheckedInterfaceLowering {
+    fn check(
+        spec: &SpecProposition,
+        state: &CState,
+        reference_state: &CState,
+        facts: &ProofFacts,
+    ) -> Option<Self> {
+        let paths = interface_spec_paths(spec, state, reference_state)?;
+        let path = paths.into_iter().find(|path| {
+            crate::instrumentation::record_deterministic_work(1);
             facts.assumptions().proves(&path.proposition)
                 && path
                     .facts
@@ -2072,18 +2117,15 @@ fn interface_spec_is_established(
                     .obligations
                     .iter()
                     .all(|obligation| facts.assumptions().proves(obligation.proposition()))
+        })?;
+        Some(Self {
+            spec: Arc::new(spec.clone()),
+            snapshot: state.clone(),
+            reference: reference_state.clone(),
+            facts: facts.clone(),
+            path: Arc::new(path),
         })
-    })
-}
-
-fn interface_spec_lowers_to(
-    spec: &SpecProposition,
-    state: &CState,
-    reference_state: &CState,
-    expected: &Proposition,
-) -> bool {
-    interface_spec_paths(spec, state, reference_state)
-        .is_some_and(|paths| paths.iter().any(|path| &path.proposition == expected))
+    }
 }
 
 /// One path retained from a complete kernel C-condition evaluation.
@@ -6636,6 +6678,92 @@ mod tests {
     }
 
     #[test]
+    fn interface_lowering_retains_generated_facts_and_read_obligations() {
+        use crate::kernel::{CPointerValue, SpecMemory};
+        let state = CState::new();
+        let pointer = crate::kernel::Pointer {
+            block: "interface_cell".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load = SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(CPointerValue::new(
+                pointer,
+                CType::Int32Pointer,
+            )))),
+            value_type: CType::Int32,
+        };
+        let spec = SpecProposition::Comparison {
+            left: load.clone(),
+            operator: CComparisonOperator::Equal,
+            right: load,
+        };
+        let path = interface_spec_paths(&spec, &state, &state)
+            .unwrap()
+            .remove(0);
+        assert!(
+            !path.facts.is_empty(),
+            "retain the load-variable definition, not just the asserted equality"
+        );
+        assert!(
+            !path.obligations.is_empty(),
+            "reflexivity does not establish read safety"
+        );
+        let mut facts = ProofFacts::default().with_fact(path.proposition.clone());
+        for fact in &path.facts {
+            facts = facts.with_fact(fact.proposition().clone());
+        }
+        assert!(CheckedInterfaceLowering::check(&spec, &state, &state, &facts).is_none());
+        for obligation in &path.obligations {
+            facts = facts.with_fact(obligation.proposition().clone());
+        }
+        let checked = CheckedInterfaceLowering::check(&spec, &state, &state, &facts).unwrap();
+        assert_eq!(checked.path.as_ref(), &path);
+        assert!(checked.facts.shares_premises_with(&facts));
+        assert_eq!(checked.snapshot, state);
+        assert_eq!(checked.reference, state);
+        assert_eq!(checked.spec.as_ref(), &spec);
+        let copy = checked.clone();
+        assert!(Arc::ptr_eq(&copy.path, &checked.path));
+        assert!(Arc::ptr_eq(&copy.spec, &checked.spec));
+    }
+
+    #[test]
+    fn interface_lowering_retention_shares_unrelated_history() {
+        let spec = SpecProposition::Comparison {
+            left: SpecExpression::Value(int32(1)),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(1)),
+        };
+        let samples = [16, 32, 64, 128].map(|size| {
+            let mut facts = ProofFacts::default();
+            let mut state = CState::new();
+            for index in 0..size {
+                facts = facts.with_fact(Proposition::Predicate {
+                    name: format!("unrelated_{index}"),
+                    arguments: Vec::new(),
+                });
+                state = state.with_local(format!("unrelated_{index}"), int32(index));
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let checked =
+                    CheckedInterfaceLowering::check(&spec, &state, &state, &facts).unwrap();
+                let copy = checked.clone();
+                assert!(copy.facts.shares_premises_with(&facts));
+                assert_eq!(copy.snapshot, state);
+                assert_eq!(copy.reference, state);
+                assert!(Arc::ptr_eq(&copy.path, &checked.path));
+            });
+            work
+        });
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] * 2),
+            "retention scanned unrelated history: {samples:?}"
+        );
+    }
+
+    #[test]
     fn checked_interface_branch_rejects_unproved_facts_and_unowned_resources() {
         let function = c_function(
             CType::Void,
@@ -6751,6 +6879,23 @@ mod tests {
             &successor_facts,
         )
         .expect("the exact fact-only abstraction should check");
+        assert_eq!(checked.interface_lowerings.len(), 1);
+        let retained = &checked.interface_lowerings[0];
+        assert!(retained[0].facts.shares_premises_with(&root_facts));
+        assert!(retained[1].facts.shares_premises_with(&root_facts));
+        assert!(retained[2].facts.shares_premises_with(&successor_facts));
+        assert!(
+            retained
+                .iter()
+                .all(|lowering| lowering.path.proposition == checked_fact)
+        );
+        assert!(checked.matches_interface_resource_definitions(&function));
+        let mut stale = checked.clone();
+        stale.interface_successor_facts = Some(successor_facts.with_fact(Proposition::Predicate {
+            name: "stale".into(),
+            arguments: Vec::new(),
+        }));
+        assert!(!stale.matches_interface_resource_definitions(&function));
         assert_eq!(
             checked
                 .interface_execution_facts()

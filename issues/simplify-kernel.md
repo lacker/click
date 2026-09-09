@@ -279,7 +279,7 @@ while still violating the search/checking boundary.
 
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
-| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `interface_spec_is_established` | Still validates resource deltas and lowered interface propositions/facts/obligations by contextual proof. General fallbacks for theorem premises, common successor facts, and `validates_exhaustive_join` split obligations are removed. | Retain selected resource-delta and interface-lowering derivations; the census below identifies the surviving dependencies. |
+| Proof-object events: `proof/execution.rs` resource rewrite/observation `check`, `CheckedInterfaceLowering::check` | Still validates resource deltas and lowered interface propositions/facts/obligations by contextual proof. Selected interface lowering paths are now retained. General fallbacks for theorem premises, common successor facts, and `validates_exhaustive_join` split obligations are removed. | Retain selected resource-delta and interface-lowering derivations; the census below identifies the surviving dependencies. |
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
@@ -481,13 +481,40 @@ missing obligation, evidence present only on the other arm, omitted arms,
 and unrelated roots. A four-size deterministic regression checks availability
 against growing unrelated fact histories.
 
-**Still open:** `interface_spec_is_established` re-lowers the interface at each
-arm and successor, then proves its proposition, generated facts, and obligations.
-The surface `apply_branch_interface_with_proof_facts` also proves assertions
-and may transport entry loadability. Replacing only the final join check with
-a planner-issued success flag would not migrate this authority. Retain checked
-interface-lowering/proof evidence tied to each concrete arm, reference snapshot,
-selected interface, and abstract successor before removing those calls.
+**Lowering retention (2026-09-09):** each checked branch now retains three
+kernel-created `CheckedInterfaceLowering` records per selected interface fact:
+then arm, else arm, and abstract successor. Each stores the exact selected
+lowering path (asserted proposition, generated facts, and safety obligations),
+selected specification, snapshot, reference snapshot, and persistent fact root.
+Successor-fact admission uses the selected successor proposition rather than
+re-lowering every interface for every introduced fact. Cloning the records shares
+their path payloads; regression coverage checks all three positions, missing
+read safety, stale fact-root rejection, and four-size unrelated-history scaling.
+
+This is retained **lowering evidence**, not yet a completed proof object for its
+judgments. `CheckedInterfaceLowering::check` still performs the same contextual
+proposition, generated-fact, and obligation checks. Those checks have deliberately
+not been deleted or replaced by a planner-issued success flag. The surface
+`apply_branch_interface_with_proof_facts` also still proves assertions and may
+transport entry loadability.
+
+An unlanded proof-body prototype at `934c5b1a` passed all 14
+`proof_branch_` mdtests and the memory-continuation expansion audit, but failed
+promptly in `perpetual-service`'s `service_step.contract`. Its complete conjunction
+contained an unspellable generated equation between a load variable and a
+`MemoryLoad`, not a user-written arithmetic assertion. Treating the whole
+lowering result as an ordinary synthesized `have` goal is therefore insufficient.
+The prototype was removed; the original C and sidecars are unchanged.
+
+**Next:** use the retained records to distinguish checked load-definition
+evidence from user propositions and read-safety goals. Retain an actual checked
+derivation for the former and completed proof bodies for the latter, preserving
+the exact input bindings. Do not omit generated equalities or safety obligations
+because the asserted value is reflexive. Before deleting the contextual calls,
+require the original `perpetual-service`, `proof_branch_memory_continuation.md`,
+`proof_branch_pointer_local.md`, and `step_nested_branches.md` to verify and
+expand/recheck without hidden search in explicit checking. Add rejection tests
+for wrong roots, snapshots, missing definitions, and missing safety proofs.
 
 ### Pointer-offset effect-equality census (2026-09-09)
 
