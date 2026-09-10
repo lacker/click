@@ -772,7 +772,7 @@ mod tests {
     #[test]
     fn integer_function_aliases_keep_shallow_application_identity() {
         for depth in [8usize, 16, 32, 64] {
-            let mut value = IntegerTerm::var(Variable(71_000)).into();
+            let mut value: SharedIntegerTerm = IntegerTerm::var(Variable(71_000)).into();
             for _ in 0..depth {
                 let application = SharedIntegerApplication::intern(
                     "successor".to_string(),
