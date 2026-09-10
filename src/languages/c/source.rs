@@ -1465,15 +1465,7 @@ fn parse_function_macro_definition(input: &str) -> Result<MacroDefinition, &'sta
         }
         parameter_names.push(parameter);
     }
-    let replacement = input[close + 1..].trim_start();
-    if replacement.contains('#') {
-        return Err("function-like macro stringification and token pasting are not supported");
-    }
-    let replacement = if trailing_comments_only(replacement) {
-        String::new()
-    } else {
-        replacement.trim_end().to_string()
-    };
+    let replacement = parse_macro_replacement(input[close + 1..].trim_start())?;
     Ok(MacroDefinition::FunctionLike {
         parameters: parameter_names,
         replacement,
@@ -2500,6 +2492,18 @@ int32 run(int32 value) {
             let error = local_include_paths("main.c", source).unwrap_err();
             assert!(error.to_string().contains(expected));
         }
+    }
+
+    #[test]
+    fn function_macro_replacements_preserve_hashes_inside_literals() {
+        let source = r##"#define HASH(value) "#"
+#define COMMENT(value) value /* # is only a comment */
+int32 run() { return HASH(1); }
+int32 keep(int32 value) { return COMMENT(value); }
+"##;
+        let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
+        assert!(expanded.source().contains("return \"#\";"));
+        assert!(expanded.source().contains("return value;"));
     }
 
     #[test]
