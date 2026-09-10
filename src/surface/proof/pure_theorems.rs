@@ -1263,12 +1263,13 @@ fn verify_theorem_ensure(
     )? {
         return Ok(verified);
     }
-    let goal = lower_pure_theorem_proposition_with_integer_values(
+    let (goal, goal_introductions) = lower_pure_theorem_proposition_recording_introductions(
         theorem.name(),
         surface_goal,
         &context.values,
-        &context.integer_values,
         &context.array_refs,
+        &BTreeMap::new(),
+        &context.integer_values,
         &context.memory,
         predicate_environment,
         click_function_environment,
@@ -1299,6 +1300,7 @@ fn verify_theorem_ensure(
                 context,
                 surface_goal,
                 &goal,
+                &goal_introductions,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
@@ -1327,6 +1329,7 @@ fn verify_theorem_ensure(
                 context,
                 surface_goal,
                 &goal,
+                &goal_introductions,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
@@ -1382,6 +1385,7 @@ fn verify_theorem_ensure(
                         context,
                         surface_goal,
                         &goal,
+                        &goal_introductions,
                         &tactics,
                         predicate_environment,
                         click_function_environment,
@@ -1849,6 +1853,7 @@ fn check_direct_pure_goal_with_proof(
     context: &PureTheoremContext,
     surface_goal: &ClickProposition,
     goal: &Proposition,
+    goal_introductions: &crate::kernel::LoweringIntroductions,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
@@ -1862,7 +1867,8 @@ fn check_direct_pure_goal_with_proof(
         predicate_environment,
         click_function_environment,
         theorem_environment,
-    );
+    )
+    .with_recorded_goal_introductions(Some(goal_introductions.clone()));
     let Some(proof) = root.try_simp_closure()? else {
         return Ok(None);
     };
@@ -2181,6 +2187,7 @@ fn check_pure_script_with_proof(
     context: &PureTheoremContext,
     surface_goal: &ClickProposition,
     goal: &Proposition,
+    goal_introductions: &crate::kernel::LoweringIntroductions,
     tactics: &[ProofTactic],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -2195,7 +2202,8 @@ fn check_pure_script_with_proof(
         predicate_environment,
         click_function_environment,
         theorem_environment,
-    );
+    )
+    .with_recorded_goal_introductions(Some(goal_introductions.clone()));
 
     if let [ProofTactic::SimpUsing(simp)] = tactics
         && let Some(proof) = root.try_restricted_simp_closure(&simp.premises)
@@ -3671,8 +3679,37 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
+    lower_pure_theorem_proposition_recording_introductions(
+        theorem_name,
+        proposition,
+        values,
+        array_refs,
+        algebraic_values,
+        integer_values,
+        memory,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map(|(proposition, _)| proposition)
+}
+
+/// The pure-theorem lowering, also returning the head chain the kernel
+/// recorded. A pure goal keeps that record so its introductions read the
+/// exact binder the lowering chose rather than reconstructing one.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_pure_theorem_proposition_recording_introductions(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+    lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         &PureFactContext::new(),
         values,

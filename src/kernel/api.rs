@@ -1279,6 +1279,35 @@ pub fn c_lower_spec_proposition_at_state(
     entry_state: Option<&CState>,
     assumptions: &PureFactContext,
 ) -> Result<(Proposition, Vec<Proposition>, Vec<Proposition>), String> {
+    let (proposition, facts, obligations, _) = c_lower_spec_proposition_at_state_with_provenance(
+        state,
+        proposition,
+        entry_state,
+        assumptions,
+    )?;
+    Ok((proposition, facts, obligations))
+}
+
+/// [`c_lower_spec_proposition_at_state`], also reporting the head chain of
+/// the lowered proposition: which of its outermost nodes this lowering
+/// inserted as a guard, which were written, and the exact kernel variable
+/// each written universal bound its written name to. A proof that
+/// introduces the head of this goal reads the record instead of inferring
+/// the correspondence from the shape the written syntax happens to share.
+pub fn c_lower_spec_proposition_at_state_with_provenance(
+    state: &CState,
+    proposition: &SpecProposition,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<
+    (
+        Proposition,
+        Vec<Proposition>,
+        Vec<Proposition>,
+        LoweringIntroductions,
+    ),
+    String,
+> {
     let lowering_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -1309,6 +1338,7 @@ pub fn c_lower_spec_proposition_at_state(
             .iter()
             .map(|obligation| obligation.proposition().clone())
             .collect(),
+        path.introductions.clone(),
     ))
 }
 

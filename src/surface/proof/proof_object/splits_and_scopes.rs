@@ -569,7 +569,8 @@ impl<'a> Proof<'a> {
                 );
             }
         }
-        let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
+        let (kernel, kernel_introductions) =
+            self.lower_surface_goal_recording_introductions(&proposition, "`have` proposition")?;
         // A post-execution unfold lets a predicate-call `have` prove the
         // predicate through its structural body. Pair that body kernel with
         // the same unfolded Surface view so `intro` retains binder names and
@@ -597,10 +598,10 @@ impl<'a> Proof<'a> {
         } else {
             proposition.clone()
         };
-        let body_kernel = if structural_proposition == proposition {
-            kernel.clone()
+        let (body_kernel, body_introductions) = if structural_proposition == proposition {
+            (kernel.clone(), kernel_introductions)
         } else {
-            self.lower_surface_goal(&structural_proposition, "`have` body")?
+            self.lower_surface_goal_recording_introductions(&structural_proposition, "`have` body")?
         };
         // A `have` stated at an execution frontier proves its goal from the
         // frontier's facts alone. After an explicit checked resource unfold,
@@ -732,10 +733,14 @@ impl<'a> Proof<'a> {
                 structural_proposition,
             ),
         };
-        if let (Some(Obligation::Proposition(parent)), Obligation::Proposition(body)) =
-            (self.focused_obligation(), &mut body_goal.obligation)
-        {
-            body.surface_bindings = parent.surface_bindings.clone();
+        if let Obligation::Proposition(body) = &mut body_goal.obligation {
+            // The nested goal was lowered here, so it owns the head chain
+            // that lowering recorded for it.
+            body.introductions = GoalIntroductions::from_lowering(body_introductions);
+            if let Some(Obligation::Proposition(parent)) = self.focused_obligation() {
+                body.surface_bindings = parent.surface_bindings.clone();
+                body.introduced_antecedents = parent.introduced_antecedents.clone();
+            }
         }
         let body = Proof {
             site: self.site.nested(ProofStepBlock::Have),

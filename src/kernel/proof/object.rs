@@ -166,7 +166,14 @@ pub(crate) enum PropositionCloseError {
 #[derive(Clone, Copy)]
 pub(crate) enum PropositionIntroduction {
     Implication,
-    Universal { variable: crate::kernel::Variable },
+    /// A universal introduction reports the exact kernel variable it bound
+    /// the body to, and the pointee type when the binder ranges over
+    /// pointers, so a caller's presentation names the same value the
+    /// checked goal now mentions.
+    Universal {
+        variable: crate::kernel::Variable,
+        pointer: Option<crate::kernel::CType>,
+    },
     Negation,
 }
 
@@ -699,9 +706,15 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         Ok(self.closed_focused())
     }
 
+    /// Introduces the head of the focused proposition goal.
+    ///
+    /// `presentation` derives the successor's opaque presentation from the
+    /// checked introduction: its kind, and the exact fact the kernel added,
+    /// when it added one. The callback chooses neither the kernel
+    /// proposition nor the introduced fact.
     pub(crate) fn apply_intro(
         &self,
-        presentation: impl FnOnce(&P, PropositionIntroduction) -> P,
+        presentation: impl FnOnce(&P, PropositionIntroduction, Option<&Proposition>) -> P,
     ) -> Result<Self, PropositionCloseError> {
         let (goal, facts) = self
             .focused_proposition()
@@ -713,13 +726,22 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 PropositionIntroduction::Implication,
             ),
             Proposition::ForAll { var, sort, body } => {
-                let (variable, body) = match sort {
+                let (variable, body, pointer) = match sort {
                     Sort::CPointer(c_type) => {
-                        facts.freshen_pointer_forall_body(*var, *c_type, body)
+                        let (variable, body) =
+                            facts.freshen_pointer_forall_body(*var, *c_type, body);
+                        (variable, body, Some(*c_type))
                     }
-                    _ => facts.freshen_int32_forall_body(*var, body),
+                    _ => {
+                        let (variable, body) = facts.freshen_int32_forall_body(*var, body);
+                        (variable, body, None)
+                    }
                 };
-                (body, None, PropositionIntroduction::Universal { variable })
+                (
+                    body,
+                    None,
+                    PropositionIntroduction::Universal { variable, pointer },
+                )
             }
             Proposition::Not(body) => (
                 Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true),
@@ -730,7 +752,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 return Err(PropositionCloseError::ExpectedIntroduction(other.clone()));
             }
         };
-        let presentation = presentation(&goal.presentation, introduction);
+        let presentation = presentation(&goal.presentation, introduction, introduced.as_ref());
         let obligation = match goal.outcome.clone() {
             Some(outcome) => {
                 super::PropositionObligation::at_outcome(proposition, presentation, outcome)
@@ -761,6 +783,54 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 ),
                 checked_facts: Arc::new(added_facts.clone()),
                 added_facts: Arc::new(added_facts),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    /// Replaces the opaque presentation of the focused proposition goal.
+    ///
+    /// Presentation only: the checked proposition, its facts, the branch
+    /// topology, and the focus are carried over unchanged, and the callback
+    /// sees nothing but the presentation it is replacing. This is how a
+    /// language-layer goal attaches the record of the lowering that produced
+    /// it after the goal was constructed; it establishes no proposition and
+    /// discharges nothing. `None` when the focused branch is not a
+    /// proposition goal.
+    pub(crate) fn with_focused_proposition_presentation(
+        &self,
+        presentation: impl FnOnce(&P) -> P,
+    ) -> Option<Self>
+    where
+        L: Clone,
+        S: Clone,
+        P: Clone,
+    {
+        let branch = self.state.open_branches.get(self.focused_branch)?;
+        let ProofObligation::Proposition(goal) = &branch.obligation else {
+            return None;
+        };
+        let presentation = presentation(&goal.presentation);
+        let obligation = match goal.outcome.clone() {
+            Some(outcome) => super::PropositionObligation::at_outcome(
+                goal.proposition().clone(),
+                presentation,
+                outcome,
+            ),
+            None => super::PropositionObligation::new(goal.proposition().clone(), presentation),
+        };
+        Some(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.replace_at(
+                    self.focused_branch,
+                    ProofBranch::new(
+                        ProofObligation::Proposition(obligation),
+                        branch.state.clone(),
+                    ),
+                ),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
             },
             self.focused_branch,
         ))
@@ -2378,8 +2448,8 @@ mod tests {
         let mut introduced = None;
 
         let next = proof
-            .apply_intro(|_, introduction| match introduction {
-                PropositionIntroduction::Universal { variable } => {
+            .apply_intro(|_, introduction, _| match introduction {
+                PropositionIntroduction::Universal { variable, .. } => {
                     introduced = Some(variable);
                 }
                 _ => panic!("expected universal introduction"),

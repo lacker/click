@@ -308,11 +308,56 @@ impl<'a> Proof<'a> {
         surface: &ClickProposition,
         description: &str,
     ) -> Result<Proposition, ClickError> {
+        self.lower_surface_goal_recording_introductions(surface, description)
+            .map(|(proposition, _)| proposition)
+    }
+
+    /// [`Self::lower_surface_goal`], also returning the head chain the
+    /// kernel lowering recorded for the goal it produced, when this context
+    /// lowered the goal itself. `None` means no lowering provenance was
+    /// recorded for this goal: the proposition came from a recorded
+    /// correspondence rather than from a lowering performed here.
+    pub(super) fn lower_surface_goal_recording_introductions(
+        &self,
+        surface: &ClickProposition,
+        description: &str,
+    ) -> Result<(Proposition, Option<crate::kernel::LoweringIntroductions>), ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(_) => self.lower_surface_proposition(surface, description),
+            // A pure goal may resolve through a recorded requirement
+            // correspondence, which carries no lowering of its own; only a
+            // lowering performed here records a head chain.
+            ProofContext::Pure(context) => {
+                if let Some(recorded) = context
+                    .theorem_context
+                    .surface_requirements
+                    .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
+                {
+                    return Ok((recorded.clone(), None));
+                }
+                let empty_algebraic_values = BTreeMap::new();
+                super::pure_theorems::lower_pure_theorem_proposition_recording_introductions(
+                    context.claim_label,
+                    surface,
+                    &context.theorem_context.values,
+                    &context.theorem_context.array_refs,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&empty_algebraic_values),
+                    &context.theorem_context.integer_values,
+                    &context.theorem_context.memory,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map(|(proposition, introductions)| (proposition, Some(introductions)))
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
+            }
             ProofContext::FixedState(context) => {
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                lower_fixed_state_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions_recording_introductions(
                     &surface,
                     self.facts().assumptions(),
                     context.parameters,
@@ -324,6 +369,7 @@ impl<'a> Proof<'a> {
                     context.predicate_environment,
                     context.click_function_environment,
                 )
+                .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
@@ -337,7 +383,7 @@ impl<'a> Proof<'a> {
                     .outcome_fixed_state_view()
                     .expect("a focused outcome judgment resolves its fixed-state view");
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                lower_fixed_state_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions_recording_introductions(
                     &surface,
                     self.facts().assumptions(),
                     view.parameters,
@@ -349,12 +395,50 @@ impl<'a> Proof<'a> {
                     view.predicate_environment,
                     view.click_function_environment,
                 )
+                .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
-            ProofContext::Execution(_) => self.lower_surface_proposition(surface, description),
+            // A goal stated at an execution frontier resolves through the
+            // shared proposition lowering, which may answer from a recorded
+            // correspondence; that route records no head chain of its own.
+            ProofContext::Execution(_) => self
+                .lower_surface_proposition(surface, description)
+                .map(|proposition| (proposition, None)),
         }
+    }
+
+    /// Lowers a Surface proposition a proof step cites as a fact of the
+    /// focused goal.
+    ///
+    /// Two things separate a citation from a newly stated goal. First, an
+    /// antecedent that one of this goal's own introductions added is
+    /// retained with the exact kernel fact the kernel added; re-lowering it
+    /// here would run under the fact context that introduction changed,
+    /// which produces no path at all for an antecedent no state satisfies.
+    /// Second, a citation may name a universal binder this goal introduced,
+    /// which resolves through the retained binding rather than through an
+    /// independently chosen value.
+    pub(in crate::surface::proof) fn lower_cited_surface_proposition(
+        &self,
+        surface: &ClickProposition,
+        description: &str,
+    ) -> Result<Proposition, ClickError> {
+        if let Some(goal) = self.proposition_obligation()
+            && let Some(retained) =
+                retained_introduced_antecedent(&goal.introduced_antecedents, surface)
+        {
+            return Ok(retained.clone());
+        }
+        let surface = self.substitute_goal_surface_bindings_in_proposition(surface)?;
+        if let Some(goal) = self.proposition_obligation()
+            && let Some(retained) =
+                retained_introduced_antecedent(&goal.introduced_antecedents, &surface)
+        {
+            return Ok(retained.clone());
+        }
+        self.lower_surface_proposition(&surface, description)
     }
 
     /// Materializes only proof-local substitutions named by this explicit

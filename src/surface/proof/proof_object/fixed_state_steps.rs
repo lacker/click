@@ -830,7 +830,7 @@ impl<'a> Proof<'a> {
         &self,
         surface: &ClickProposition,
     ) -> Result<KernelProofHandle, ClickError> {
-        let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
+        let proposition = self.lower_cited_surface_proposition(surface, "`extract` proposition")?;
         self.state.apply_extract(proposition).map_err(|error| match error {
             PropositionCloseError::ExtractUnavailable(proposition) => self.step_error(format!(
                 "`extract` proposition is not a proper conjunct, a discharged implication consequent, or a field equality of an exact same-constructor equality: {}",
