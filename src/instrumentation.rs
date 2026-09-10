@@ -548,7 +548,15 @@ pub fn measure_deterministic_work<R>(operation: impl FnOnce() -> R) -> (R, usize
 }
 
 pub fn deadline_exceeded() -> bool {
-    let work = !consume_tactic_work(1);
+    deadline_exceeded_with_work(1)
+}
+
+/// Check the active limits before an operation with an explicit work cost.
+/// Numeric kernels use this for magnitude-dependent work: a BigInt product
+/// must consume its allowance before multiplication, not just count a unit
+/// after the result has already been allocated.
+pub(crate) fn deadline_exceeded_with_work(units: usize) -> bool {
+    let work = !consume_tactic_work(units);
     let run = DEADLINES.with(|deadlines| {
         deadlines
             .borrow()
@@ -1164,6 +1172,39 @@ mod tests {
                     .any(|event| matches!(event, VerificationEvent::DeadlineExceeded(_))),
                 "work exhaustion must not masquerade as a real-time deadline"
             );
+        }
+    }
+
+    #[test]
+    fn weighted_work_consumes_the_active_tactic_budget_before_an_operation() {
+        let limits = TacticWorkLimits {
+            simple: 100,
+            smart: 100,
+            control: 100,
+        };
+        for class in ["simple", "smart", "control"] {
+            let (((), work), events) = with_tactic_work_limits(limits, || {
+                collect(|| {
+                    measure_deterministic_work(|| {
+                        let tactic = tactic(class, 0);
+                        emit(VerificationEvent::TacticStarted(tactic.clone()));
+                        assert!(!deadline_exceeded_with_work(60));
+                        assert!(!deadline_exceeded_with_work(40));
+                        assert!(deadline_exceeded_with_work(1));
+                        assert!(deadline_context().contains("deterministic"));
+                        emit(VerificationEvent::TacticFailed(tactic));
+                    })
+                })
+            });
+            assert_eq!(work, 101);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                VerificationEvent::TacticWorkBudgetExceeded {
+                    tactic,
+                    used: 101,
+                    limit: 100,
+                } if tactic.class == class
+            )));
         }
     }
 

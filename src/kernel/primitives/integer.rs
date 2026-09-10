@@ -269,4 +269,47 @@ mod tests {
         });
         assert!(wide_work > small_work * 100);
     }
+
+    #[test]
+    fn exact_integer_numeric_work_has_explicit_size_scaling() {
+        let mut additions = Vec::new();
+        let mut products = Vec::new();
+        for bits in [64usize, 128, 256, 512] {
+            let magnitude = BigInt::one() << bits;
+            let (sum, add_work) = crate::instrumentation::measure_deterministic_work(|| {
+                IntegerTerm::add(
+                    IntegerTerm::constant(magnitude.clone()),
+                    IntegerTerm::constant(-&magnitude - 7),
+                )
+            });
+            assert_eq!(sum.as_const(), Some(&BigInt::from(-7)));
+            let (product, product_work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    IntegerTerm::multiply(
+                        IntegerTerm::constant(magnitude.clone()),
+                        IntegerTerm::constant(-&magnitude),
+                    )
+                });
+            assert_eq!(product.as_const(), Some(&-(BigInt::one() << (2 * bits))));
+            additions.push(add_work);
+            products.push(product_work);
+        }
+        for pair in additions.windows(2) {
+            assert!(pair[1] > pair[0]);
+            assert!(
+                pair[1] <= 2 * pair[0] + 8,
+                "addition charges linear numeric work"
+            );
+        }
+        for pair in products.windows(2) {
+            assert!(
+                pair[1] > 3 * pair[0],
+                "multiplication must not charge only operand lengths"
+            );
+            assert!(
+                pair[1] <= 4 * pair[0] + 8,
+                "the conservative product allowance scales by bit products"
+            );
+        }
+    }
 }
