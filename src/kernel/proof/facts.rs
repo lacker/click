@@ -389,6 +389,45 @@ impl ProofFacts {
         (fresh, body)
     }
 
+    pub(crate) fn freshen_integer_forall_body(
+        &self,
+        binder: Variable,
+        body: &Proposition,
+    ) -> Option<(Variable, Proposition)> {
+        if !self.reserved_variables.contains(&binder) {
+            let replacement = crate::kernel::IntegerTerm::var(binder);
+            let body = super::super::reasoning::substitute_integer_variable_in_pure_proposition(
+                body,
+                binder,
+                &replacement,
+            )
+            .ok()?;
+            return Some((binder, body));
+        }
+        let body_variables = crate::kernel::proposition_variables(body);
+        let reserved_max = self.reserved_variables.iter().next_back().copied();
+        let body_max = body_variables.iter().next_back().copied();
+        let max_variable = reserved_max.into_iter().chain(body_max).max();
+        let mut fresh = match max_variable {
+            Some(variable) => Variable(variable.0.checked_add(1)?),
+            None => Variable(0),
+        };
+        loop {
+            if !self.reserved_variables.contains(&fresh) && !body_variables.contains(&fresh) {
+                break;
+            }
+            fresh = Variable(fresh.0.checked_add(1)?);
+        }
+        let replacement = crate::kernel::IntegerTerm::var(fresh);
+        let body = super::super::reasoning::substitute_integer_variable_in_pure_proposition(
+            body,
+            binder,
+            &replacement,
+        )
+        .ok()?;
+        Some((fresh, body))
+    }
+
     pub(crate) fn reserves_variable(&self, variable: Variable) -> bool {
         self.reserved_variables.contains(&variable)
     }
