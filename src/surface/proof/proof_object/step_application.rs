@@ -24,19 +24,6 @@ impl<'a> Proof<'a> {
         step: ProofStep,
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
-        self.apply_step_with_origin_mode(step, origin, false)
-    }
-
-    /// Applies one step while optionally retaining a closed structural-effect
-    /// frontier long enough for enclosing resource scopes to close. That
-    /// retained frontier is closed: only `ProofScope::join_inner` may consume
-    /// it, and the outermost resource join retires the goal.
-    pub(super) fn apply_step_with_origin_mode(
-        &self,
-        step: ProofStep,
-        origin: Option<ProofStepOrigin>,
-        retain_closed_loop_effect_goal: bool,
-    ) -> Result<Self, ClickError> {
         // Diagnostics from this step, and from every scope it opens, name the
         // source occurrence the driver is checking rather than a tree depth.
         if let Some(origin) = origin
@@ -44,15 +31,9 @@ impl<'a> Proof<'a> {
         {
             return self
                 .at_source_tactic(origin.source_index)
-                .apply_step_with_origin_mode(step, Some(origin), retain_closed_loop_effect_goal);
+                .apply_step_with_origin(step, Some(origin));
         }
         if self.focused_discharged() {
-            return Err(self.step_error(format!(
-                "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
-                proof_step_source_name(&step)
-            )));
-        }
-        if self.focused_loop_effect_closed() {
             return Err(self.step_error(format!(
                 "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
                 proof_step_source_name(&step)

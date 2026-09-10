@@ -841,7 +841,6 @@ impl<'a> Proof<'a> {
                 execution,
                 checked.added_facts.clone(),
                 checked.added_facts,
-                false,
             )
             .map_err(|error| self.execution_update_error("`open`", error))?;
         let body = Proof {

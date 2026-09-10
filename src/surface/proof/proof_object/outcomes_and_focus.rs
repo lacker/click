@@ -211,10 +211,9 @@ impl<'a> Proof<'a> {
         &self,
         requirement_facts: Arc<Vec<Proposition>>,
     ) -> Result<(Self, Vec<BranchId>), ClickError> {
-        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
+        if !matches!(self.focused_obligation(), Some(Obligation::Frontier(_))) {
             return Err(self.step_error("outcome goals require an open execution frontier"));
-        };
-        let effect_selection = frontier.selection;
+        }
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
@@ -281,7 +280,6 @@ impl<'a> Proof<'a> {
             goals.push(OpenBranch::function_outcome(
                 OutcomeObligation::new(
                     path_index,
-                    effect_selection,
                     Arc::new(OutcomeProofData::new(
                         OutcomeProofCore {
                             result: Arc::new(result),

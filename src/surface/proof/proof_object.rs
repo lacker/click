@@ -3,14 +3,13 @@ use super::pure_theorems::{
 };
 use super::*;
 use crate::kernel::proof::{
-    BranchId, CheckedBranchSplit, EffectGoalSelection, ExecutionUpdateError, FrontierObligation,
-    FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
-    OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
-    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofFocusError, ProofJoinError,
-    ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
-    ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
-    PropositionIntroduction, PropositionObligation as KernelPropositionObligation,
-    PropositionSplitError, SplitId,
+    BranchId, CheckedBranchSplit, ExecutionUpdateError, FrontierObligation, FrontierSplitError,
+    FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState as KernelOutcomeProofState,
+    ProofBranch, ProofBranchState, ProofExecutionState as KernelProofExecutionState, ProofFacts,
+    ProofFocusError, ProofJoinError, ProofObject as KernelProofObject,
+    ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
+    PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,
+    PropositionObligation as KernelPropositionObligation, PropositionSplitError, SplitId,
 };
 use crate::persistent::PersistentMap;
 
@@ -1045,7 +1044,7 @@ impl KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>>
 
 trait OpenBranchConstruction {
     fn proposition_in(state: BranchState, kernel: Proposition) -> Self;
-    fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self;
+    fn frontier(state: BranchState) -> Self;
     fn function_outcome(obligation: OutcomeObligation, state: BranchState) -> Self;
     fn surface_proposition_in(
         state: BranchState,
@@ -1074,11 +1073,8 @@ impl OpenBranchConstruction for OpenBranch {
         )
     }
 
-    fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self {
-        Self::new(
-            Obligation::Frontier(FrontierObligation::new(selection)),
-            state,
-        )
+    fn frontier(state: BranchState) -> Self {
+        Self::new(Obligation::Frontier(FrontierObligation), state)
     }
 
     fn function_outcome(obligation: OutcomeObligation, state: BranchState) -> Self {
@@ -1643,24 +1639,13 @@ impl<'a> Proof<'a> {
     }
 
     fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
-        (matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
-            && !self.focused_loop_effect_closed())
-        .then_some(())
-        .ok_or_else(|| {
-            self.step_error(format!(
-                "{operation} cannot advance C execution inside a proposition proof"
-            ))
-        })
-    }
-
-    /// A structural-effect frame may retain its closed frontier only while
-    /// resource scopes unwind. It remains addressable for those audited
-    /// representation transitions, but it is no longer an open semantic goal.
-    fn focused_loop_effect_closed(&self) -> bool {
-        // Loop framing is derived from ownership and never installs a
-        // separate closed structural goal, so no frontier is ever in this
-        // state. The guards below keep the shape they check.
-        false
+        matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
+            .then_some(())
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "{operation} cannot advance C execution inside a proposition proof"
+                ))
+            })
     }
 
     /// Names the failing step by where the user wrote it: the source tactic

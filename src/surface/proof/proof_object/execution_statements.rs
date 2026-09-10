@@ -120,7 +120,6 @@ impl<'a> Proof<'a> {
                 checked.execution,
                 added_facts.clone(),
                 added_facts,
-                false,
             )
             .map_err(|error| self.execution_update_error("`step`", error))?;
         Ok(Self {
@@ -249,10 +248,9 @@ impl<'a> Proof<'a> {
         error: ExecutionUpdateError,
     ) -> ClickError {
         match error {
-            ExecutionUpdateError::NotFrontier | ExecutionUpdateError::ClosedLoopEffect => self
-                .step_error(format!(
-                    "{operation} cannot advance C execution inside a proposition proof"
-                )),
+            ExecutionUpdateError::NotFrontier => self.step_error(format!(
+                "{operation} cannot advance C execution inside a proposition proof"
+            )),
             ExecutionUpdateError::MissingExecution => {
                 self.step_error("execution-frontier proof lost its semantic state")
             }
@@ -261,9 +259,6 @@ impl<'a> Proof<'a> {
             }
             ExecutionUpdateError::InvariantsAlreadyClosed => {
                 self.step_error("the invariant bundle was closed more than once on one path")
-            }
-            ExecutionUpdateError::LoopEffectNotClosed => {
-                unreachable!("execution and invariant updates do not discharge loop-effect goals")
             }
         }
     }
@@ -550,7 +545,7 @@ impl<'a> Proof<'a> {
                 };
                 let state = self
                     .state
-                    .publish_checked_frontier_transition(facts, execution, added, Vec::new(), false)
+                    .publish_checked_frontier_transition(facts, execution, added, Vec::new())
                     .map_err(|error| self.execution_update_error("proof `if`", error))?;
                 let successor = Self {
                     site: self.site.clone(),
@@ -1039,7 +1034,7 @@ impl<'a> Proof<'a> {
         };
         let state = self
             .state
-            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new(), false)
+            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new())
             .map_err(|error| self.execution_update_error("`have`", error))?;
         Ok(Self {
             site: self.site.clone(),
@@ -1182,7 +1177,7 @@ impl<'a> Proof<'a> {
             .clone();
         let state = self
             .state
-            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new(), false)
+            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new())
             .map_err(|error| self.execution_update_error("`loop`", error))?;
         Ok(Self {
             site: self.site.clone(),

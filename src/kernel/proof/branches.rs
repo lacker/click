@@ -237,6 +237,7 @@ impl<B: Clone> ProofBranches<B> {
     /// parent is not a retired identity of it. These are real checks in
     /// every build profile: a join is the step that lets one arm's verdict
     /// stand for the split, so its lineage may not rest on a `debug_assert`.
+    #[cfg(test)]
     pub(crate) fn join_at(
         &self,
         children: impl IntoIterator<Item = BranchId>,
