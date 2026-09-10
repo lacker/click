@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (23)
+## P1: before launch (22)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -69,7 +69,7 @@ C import and execution:
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify inline function definitions reached through headers](inline-functions-in-headers.md)
 - [Model the GNU C expression and declaration forms used by rbtree](gnu-c-extensions.md)
-- [Preserve `const` qualification in C types](const-qualified-types.md)
+- [Model C `_Bool` and `bool`](c-bool.md)
 - [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
 - [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)

@@ -2080,6 +2080,10 @@ pub enum C0Expression {
         /// This is the qualifier in `T * volatile *`, not volatility of the
         /// storage designated by `T *`.
         pointee_volatile: bool,
+        /// Const qualification of the storage reached by this pointer. An
+        /// unqualified cast retains the source view; a qualified destination
+        /// adds a read-only view without changing pointer identity.
+        pointee_constant: bool,
     },
     Conditional {
         condition: Box<C0Expression>,
@@ -3423,11 +3427,13 @@ impl C0Expression {
                 expression,
                 c_type,
                 pointee_volatile,
+                pointee_constant,
                 ..
-            } => crate::kernel::c_cast_with_pointee_volatile(
+            } => crate::kernel::c_cast_with_pointee_qualifiers(
                 expression.to_kernel_expression(),
                 c_type.to_kernel_type(),
                 *pointee_volatile,
+                *pointee_constant,
             ),
             Self::Conditional {
                 condition,
@@ -5227,6 +5233,7 @@ fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader
             .zip(&right.parameters)
             .all(|(left, right)| {
                 left.c_type == right.c_type
+                    && left.pointee_is_constant() == right.pointee_is_constant()
                     && left.struct_name == right.struct_name
                     && left.function_pointer_signature == right.function_pointer_signature
                     && left.array_element_width == right.array_element_width
@@ -5504,9 +5511,11 @@ impl Parser {
             C0Expression::PointerOffsetBytes { pointer, .. }
             | C0Expression::Subtract(pointer, _)
             | C0Expression::Add(pointer, _) => self.expression_pointee_is_constant(pointer),
-            C0Expression::Cast { expression, .. } => {
-                self.expression_pointee_is_constant(expression)
-            }
+            C0Expression::Cast {
+                expression,
+                pointee_constant,
+                ..
+            } => self.expression_pointee_is_constant(expression) || *pointee_constant,
             C0Expression::Conditional {
                 then_branch,
                 else_branch,
@@ -9196,6 +9205,7 @@ impl Parser {
                             c_type: C0Type::Int32,
                             struct_name: None,
                             pointee_volatile: false,
+                            pointee_constant: false,
                         }
                     } else {
                         expression
@@ -12720,6 +12730,7 @@ impl Parser {
                 c_type,
                 struct_name,
                 pointee_volatile,
+                pointee_constant,
             } => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((
@@ -12729,6 +12740,7 @@ impl Parser {
                         c_type,
                         struct_name,
                         pointee_volatile,
+                        pointee_constant,
                     },
                 ))
             }
@@ -13226,6 +13238,7 @@ impl Parser {
             c_type: common_type,
             struct_name: None,
             pointee_volatile: false,
+            pointee_constant: false,
         }
     }
 
@@ -13614,6 +13627,7 @@ impl Parser {
             c_type: C0Type::UInt8Pointer,
             struct_name: None,
             pointee_volatile: false,
+            pointee_constant: false,
         };
         let byte_offset = C0Expression::Multiply(
             Box::new(offset),
@@ -13653,8 +13667,7 @@ impl Parser {
                 .is_some_and(C0Type::is_pointer)
             && !parsed_type.has_deeper_volatile();
         if parsed_type.c_type.is_pointer()
-            && (parsed_type.pointee_constant
-                || parsed_type.is_constant
+            && (parsed_type.is_constant
                 || (parsed_type.is_volatile && !volatile_pointer_object_cast))
         {
             return Err(self.error_at_previous(
@@ -13699,6 +13712,7 @@ impl Parser {
             c_type,
             struct_name,
             pointee_volatile: volatile_pointer_object_cast,
+            pointee_constant: parsed_type.pointee_constant,
         });
     }
 
@@ -14243,6 +14257,7 @@ impl Parser {
                                 c_type: C0Type::UInt8Pointer,
                                 struct_name: None,
                                 pointee_volatile: false,
+                                pointee_constant: false,
                             };
                             let offset = C0Expression::Multiply(
                                 Box::new(first_index),

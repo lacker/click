@@ -717,10 +717,20 @@ pub fn c_cast_with_pointee_volatile(
     target_type: CType,
     pointee_volatile: bool,
 ) -> CExpression {
+    c_cast_with_pointee_qualifiers(expression, target_type, pointee_volatile, false)
+}
+
+pub fn c_cast_with_pointee_qualifiers(
+    expression: CExpression,
+    target_type: CType,
+    pointee_volatile: bool,
+    pointee_constant: bool,
+) -> CExpression {
     CExpression::Cast {
         expression: Box::new(expression),
         target_type,
         pointee_volatile,
+        pointee_constant,
     }
 }
 

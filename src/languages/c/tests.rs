@@ -266,17 +266,42 @@ fn c0_plain_char_inline_call_assignments_preserve_source_compatibility() {
 }
 
 #[test]
-fn c0_plain_char_qualified_pointer_casts_are_explicitly_rejected() {
+fn c0_plain_char_qualified_pointee_casts_preserve_read_only_views() {
+    use syntax::{C0Expression, C0Statement, C0Type};
+    let functions =
+        syntax::parse_functions("const char *view(char *p) { return (const char *)p; }")
+            .expect("a const-qualified pointee cast should parse");
+    assert!(matches!(
+        functions[0].body(),
+        C0Statement::Return(C0Expression::Cast {
+            c_type: C0Type::CharPointer,
+            pointee_constant: true,
+            ..
+        })
+    ));
+
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "cast.c";
+        const char *view(char *p) { ensures result == p; }
+        int read(char *p) {
+            views p[0..1];
+            ensures result == p[0];
+        }
+        "#,
+        &[(
+            "cast.c",
+            "const char *view(char *p) { return (const char *)p; } int read(char *p) { return ((const char *)p)[0]; }",
+        )],
+    )
+    .expect("qualified pointee casts should preserve identity and permit reads");
+}
+
+#[test]
+fn c0_plain_char_qualified_pointer_casts_reject_unsupported_qualifiers_and_writes() {
     for source in [
-        "char *f(char *p) { return (const char *)p; }",
-        "char *f(char *p) { return (char const *)p; }",
-        "const char *f(char *p) { return (const char *)p; }",
-        "char *f(unsigned char *p) { return (const char *)p; }",
-        "void f(char *p) { char *q = (const char *)p; }",
-        "void f(char *p) { char *q; q = (const char *)p; }",
         "char *f(char *p) { return (char * const)p; }",
         "char *f(char *p) { return (volatile char *)p; }",
-        "typedef const char *text; char *f(char *p) { return (text)p; }",
     ] {
         let error = syntax::parse_functions(source).expect_err(source);
         assert!(
@@ -287,6 +312,34 @@ fn c0_plain_char_qualified_pointer_casts_are_explicitly_rejected() {
             error.message()
         );
     }
+
+    for source in [
+        "char *f(char *p) { char *q = (const char *)p; return q; }",
+        "void f(char *p) { const char *q = (const char *)p; q[0] = 1; }",
+        "typedef const char *text; char *f(char *p) { return (text)p; }",
+    ] {
+        let error = syntax::parse_functions(source).expect_err(source);
+        assert!(
+            error.message().contains("const qualification")
+                || error.message().contains("const-qualified"),
+            "{source}: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn c0_function_declarations_reject_conflicting_pointee_const_parameters() {
+    let error = syntax::parse_functions(
+        "int32 read(const int32 *p); int32 read(int32 *p) { return p[0]; }",
+    )
+    .expect_err("function declarations with different pointee qualifiers must conflict");
+    assert!(
+        error
+            .message()
+            .contains("conflicting declarations for function `read`"),
+        "{error}"
+    );
 }
 
 #[test]

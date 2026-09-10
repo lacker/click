@@ -2308,10 +2308,12 @@ pub(in crate::surface) fn substitute_c_fragment(
             expression,
             target_type,
             pointee_volatile,
+            pointee_constant,
         } => Ok(CExpression::Cast {
             expression: Box::new(substitute_c_fragment(expression, substitutions)?),
             target_type: *target_type,
             pointee_volatile: *pointee_volatile,
+            pointee_constant: *pointee_constant,
         }),
         CExpression::FloatNegate(expression) => Ok(CExpression::FloatNegate(Box::new(
             substitute_c_fragment(expression, substitutions)?,

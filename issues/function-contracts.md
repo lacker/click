@@ -145,5 +145,4 @@ retains the distinct contract associated with each field.
   `scripts/check.sh` pass.
 
 Related: [struct-model.md](struct-model.md),
-[global-variables.md](global-variables.md), and
-[const-qualified-types.md](const-qualified-types.md).
+[global-variables.md](global-variables.md).

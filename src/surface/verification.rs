@@ -4139,6 +4139,7 @@ pub(in crate::surface) fn check_signature(
         .enumerate()
     {
         if expected.c_type() != actual.c_type()
+            || expected.pointee_is_constant() != actual.pointee_is_constant()
             || expected.name() != actual.name()
             || expected.struct_name() != actual.struct_name()
             || expected.function_pointer_signature() != actual.function_pointer_signature()
