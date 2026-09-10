@@ -145,6 +145,17 @@ branches. It can be rendered back to surface tactics for expansion. The
 serialization carries no semantic authority of its own and need not exist
 during ordinary verification in the intended architecture.
 
+No `ProofStep` is smart or internal-only, and both certificate constructors
+apply one admission rule: `from_proof_tactics` classifies source tactics and
+`from_steps` classifies serialized provenance, so a leaf that no explicit
+proof could spell is rejected from either direction. A smart tactic therefore
+has no step of its own. `close_invariants()`, for example, plans the
+back-edge bundle body, and the step retained for it is `close_invariants by`
+carrying that planned body; the bare closure request is a semantic-core
+update with no certificate leaf. Nested certificates are admitted where they
+are built, so validating one certificate costs a single pass over its own
+steps.
+
 ## Execution state inside a proof
 
 Kernel `ExecutionProofCore` owns the semantic execution state for one proof

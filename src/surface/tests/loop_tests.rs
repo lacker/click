@@ -1,5 +1,101 @@
 use super::*;
 
+/// Collects every `loop` clause reachable from a proof script, including the
+/// clauses nested inside another loop's own phase proofs.
+fn loop_clauses_in(tactics: &[ProofTactic], clauses: &mut Vec<StructuralClause>) {
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::Loop(clause) => {
+                clauses.push(clause.clone());
+                for phase in [clause.initialize_proof(), clause.preserve_proof()] {
+                    if let Some(nested) = phase.and_then(SourceProof::tactics) {
+                        loop_clauses_in(nested, clauses);
+                    }
+                }
+            }
+            ProofTactic::Both(both) => {
+                loop_clauses_in(&both.left_tactics, clauses);
+                loop_clauses_in(&both.right_tactics, clauses);
+            }
+            ProofTactic::Open(open) => loop_clauses_in(&open.tactics, clauses),
+            ProofTactic::If(proof_if) => {
+                loop_clauses_in(&proof_if.then_tactics, clauses);
+                loop_clauses_in(&proof_if.else_tactics, clauses);
+            }
+            ProofTactic::Branch(branch) => {
+                loop_clauses_in(&branch.then_tactics, clauses);
+                loop_clauses_in(&branch.else_tactics, clauses);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A loop's retained phase proofs are certificates: expanding a loop fixture
+/// must leave `initialize` and `preserve` bodies that contain no smart tactic,
+/// so nothing in them is a leaf `ProofCertificate` refuses. In particular the
+/// automatic preservation planner's own closer is expanded before the phase is
+/// retained; a bare `close_invariants()` or a trailing `simp()` would be
+/// rejected here exactly as `ProofCertificate::from_proof_tactics` rejects it.
+#[test]
+fn expanded_loop_phase_proofs_are_certificates() {
+    for (filename, function) in [
+        // Automatically planned initialization and preservation.
+        ("count_to_n_loop_invariant", "count_to_n_loop_invariant"),
+        // A source `close_invariants()` inside an explicit `preserve by`.
+        ("c_decreases_count_up", "count_to_n"),
+        // An explicit `close_invariants by` body.
+        ("loop_invariant_body", "count"),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(format!("{filename}.md"));
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let click = fixture.click_source.as_deref().unwrap();
+        let expanded = expand_c0_claim_source(click, &sources, function, CProofClaim::Grouped)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        assert!(
+            !expanded.contains("close_invariants();"),
+            "{filename}: {expanded}"
+        );
+        let parsed = crate::surface::parse(&expanded)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+        let block = parsed
+            .function_blocks()
+            .iter()
+            .find(|block| block.signature().name() == function)
+            .unwrap_or_else(|| panic!("{filename}: expansion lost `{function}`"));
+        let mut clauses = block.structural_clauses().to_vec();
+        if let Some(tactics) = block.grouped_proof().and_then(SourceProof::tactics) {
+            loop_clauses_in(tactics, &mut clauses);
+        }
+        assert!(!clauses.is_empty(), "{filename}: expansion lost its loop");
+        for clause in &clauses {
+            for (phase, proof) in [
+                ("initialize", clause.initialize_proof()),
+                ("preserve", clause.preserve_proof()),
+            ] {
+                let proof =
+                    proof.unwrap_or_else(|| panic!("{filename}: `{phase}` was not expanded"));
+                let tactics = proof.tactics().unwrap_or_else(|| {
+                    panic!("{filename}: `{phase}` stayed a smart proof: {expanded}")
+                });
+                ProofCertificate::from_proof_tactics(tactics).unwrap_or_else(|error| {
+                    panic!("{filename}: `{phase}` is not a certificate: {error:?}\n{expanded}")
+                });
+            }
+        }
+        verify_c0_sources(&expanded, &sources)
+            .unwrap_or_else(|e| panic!("{filename}: {}", e.message()));
+    }
+}
+
 #[test]
 fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
     for filename in [

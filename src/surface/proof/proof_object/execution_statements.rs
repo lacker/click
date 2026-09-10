@@ -233,15 +233,6 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn apply_close_invariants(&self) -> Result<KernelProofHandle, ClickError> {
-        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
-            return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));
-        }
-        self.state
-            .request_frontier_invariant_closure()
-            .map_err(|error| self.execution_update_error("`close_invariants`", error))
-    }
-
     pub(super) fn execution_update_error(
         &self,
         operation: &str,
@@ -414,6 +405,13 @@ impl<'a> Proof<'a> {
     }
 
     /// Record closure only after validating the exact retained evidence.
+    ///
+    /// The retained evidence is created by `retain_invariant_body`, which also
+    /// requests the frontier's closure, so a validated bundle is always an
+    /// already-closed one. Certification therefore adds no proof step of its
+    /// own: the bundle's certificate step is the `close_invariants by` node
+    /// carrying the checked body, never a bare closure request that no
+    /// explicit proof could spell.
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
@@ -425,7 +423,9 @@ impl<'a> Proof<'a> {
         if execution.core.region_invariants_close_requested {
             Ok(self.clone())
         } else {
-            self.apply_step(ProofStep::CloseInvariants)
+            Err(self.step_error(
+                "the loop invariant bundle carries checked body evidence without a closed frontier",
+            ))
         }
     }
 

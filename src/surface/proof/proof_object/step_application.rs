@@ -71,7 +71,6 @@ impl<'a> Proof<'a> {
                 premises,
             } => Some(self.apply_fixed_state_instantiate_using(quantified, argument, premises)),
             ProofStep::Mark(name) => Some(self.apply_execution_mark(name)),
-            ProofStep::CloseInvariants => Some(self.apply_close_invariants()),
             _ => None,
         };
         if let Some(successor) = checked_proposition_successor {

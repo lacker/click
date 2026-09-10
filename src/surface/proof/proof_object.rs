@@ -1357,7 +1357,7 @@ impl<'a> Proof<'a> {
             checked_propositions.push(closer.completed_proposition()?);
             steps.extend_from_slice(closer.certificate().steps());
         }
-        Ok((ProofCertificate::from_steps(steps), checked_propositions))
+        Ok((ProofCertificate::from_steps(steps)?, checked_propositions))
     }
 
     pub(super) fn is_complete(&self) -> bool {
@@ -1405,7 +1405,7 @@ impl<'a> Proof<'a> {
 
     pub(super) fn certificate(&self) -> ProofCertificate {
         self.certificate_after_node(None)
-            .expect("a complete proof derivation reaches its own root")
+            .expect("checked provenance reaches its own root and records only certificate steps")
     }
 
     /// Retains an output-sensitive certificate suffix from an exact ancestor.
@@ -1549,7 +1549,6 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ConstructResource(_) => "construct",
         ProofStep::ObserveResource(_) => "observe",
-        ProofStep::CloseInvariants => "close_invariants()",
         ProofStep::CloseInvariantsBy(_) => "close_invariants by",
         ProofStep::Mark(_) => "mark",
         _ => "tactic",

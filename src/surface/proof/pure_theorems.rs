@@ -1790,7 +1790,7 @@ fn verify_contract_refinement_theorem(
             .steps()
             .to_vec();
     certificate_steps.extend_from_slice(proof.completed_certificate()?.steps());
-    let certificate = ProofCertificate::from_steps(certificate_steps);
+    let certificate = ProofCertificate::from_steps(certificate_steps)?;
     Ok(Some(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
         ensure_index,

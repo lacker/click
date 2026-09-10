@@ -1147,11 +1147,18 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
                             continue;
                         }
                         match &merged {
-                            Ok(steps) => {
-                                theorem.expanded_proof =
-                                    Some(ProofCertificate::from_steps(steps.clone()));
-                                theorem.expansion_blocker = None;
-                            }
+                            // A merged record that is not a certificate blocks
+                            // this claim's expansion; it never becomes one.
+                            Ok(steps) => match ProofCertificate::from_steps(steps.clone()) {
+                                Ok(certificate) => {
+                                    theorem.expanded_proof = Some(certificate);
+                                    theorem.expansion_blocker = None;
+                                }
+                                Err(error) => {
+                                    theorem.expanded_proof = None;
+                                    theorem.expansion_blocker = Some(error.message().to_string());
+                                }
+                            },
                             Err(message) => {
                                 theorem.expanded_proof = None;
                                 theorem.expansion_blocker = Some(format!(

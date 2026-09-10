@@ -532,8 +532,8 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(parent.clone()),
                 step: Some(Arc::new(step(
-                    ProofCertificate::from_steps(left_steps),
-                    ProofCertificate::from_steps(right_steps),
+                    ProofCertificate::from_steps(left_steps)?,
+                    ProofCertificate::from_steps(right_steps)?,
                 ))),
                 focused_branch: marker.node.focused_branch,
                 depth: parent.depth + 1,

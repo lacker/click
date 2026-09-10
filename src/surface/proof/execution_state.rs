@@ -383,10 +383,9 @@ pub(super) fn finish_tactic_expansion_capture(
         None if proof_certificate_builder.steps.is_empty() && !allow_empty => {
             Err("selected tactic produced no standalone surface expansion".to_string())
         }
-        None => Ok(
-            ProofCertificate::from_steps(proof_certificate_builder.steps.clone())
-                .to_proof_tactics(),
-        ),
+        None => ProofCertificate::from_steps(proof_certificate_builder.steps.clone())
+            .map(|certificate| certificate.to_proof_tactics())
+            .map_err(|error| error.message().to_string()),
     });
 }
 
@@ -810,6 +809,9 @@ pub(super) fn surface_branch_path_for_outcome(
     }
 }
 
+/// Keeps only the outermost surface `if` of an already-admitted certificate,
+/// recursively. Every step it retains came from a certificate that its own
+/// constructor admitted, so the skeleton needs no second admission check.
 pub(super) fn surface_branch_skeleton(steps: &[ProofStep]) -> Vec<ProofStep> {
     let Some((condition, then_proof, else_proof)) =
         steps.iter().rev().find_map(|step| match step {
@@ -825,12 +827,12 @@ pub(super) fn surface_branch_skeleton(steps: &[ProofStep]) -> Vec<ProofStep> {
     };
     vec![ProofStep::If {
         condition: condition.clone(),
-        then_proof: Box::new(ProofCertificate::from_steps(surface_branch_skeleton(
-            then_proof.steps(),
-        ))),
-        else_proof: Box::new(ProofCertificate::from_steps(surface_branch_skeleton(
-            else_proof.steps(),
-        ))),
+        then_proof: Box::new(ProofCertificate::from_validated_steps(
+            surface_branch_skeleton(then_proof.steps()),
+        )),
+        else_proof: Box::new(ProofCertificate::from_validated_steps(
+            surface_branch_skeleton(else_proof.steps()),
+        )),
     }]
 }
 
@@ -909,12 +911,14 @@ pub(super) fn synthesize_surface_paths(
     let mut steps = prefix;
     steps.push(ProofStep::If {
         condition: first_choice.condition,
-        then_proof: Box::new(ProofCertificate::from_steps(synthesize_surface_paths(
-            then_paths,
-        )?)),
-        else_proof: Box::new(ProofCertificate::from_steps(synthesize_surface_paths(
-            else_paths,
-        )?)),
+        then_proof: Box::new(
+            ProofCertificate::from_steps(synthesize_surface_paths(then_paths)?)
+                .map_err(|error| error.message().to_string())?,
+        ),
+        else_proof: Box::new(
+            ProofCertificate::from_steps(synthesize_surface_paths(else_paths)?)
+                .map_err(|error| error.message().to_string())?,
+        ),
     });
     Ok(steps)
 }

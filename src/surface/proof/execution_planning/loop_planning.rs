@@ -529,7 +529,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let surface_tactics = leaf.path_certificate().to_proof_tactics();
+        let surface_tactics = leaf.path_certificate()?.to_proof_tactics();
         let (certificate, selected_offsets) =
             certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
         let case_offsets = selected_offsets
@@ -772,7 +772,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let source_tactics = leaf.path_certificate().to_proof_tactics();
+        let source_tactics = leaf.path_certificate()?.to_proof_tactics();
         let region_simp = context_execution.presentation.region_simp;
         let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
         let invariants_close_requested = context_execution.core.region_invariants_close_requested;
