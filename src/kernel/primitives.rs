@@ -1465,6 +1465,11 @@ pub enum SpecProposition {
         variable: Variable,
         body: Box<SpecProposition>,
     },
+    ForAllInteger {
+        name: String,
+        variable: Variable,
+        body: Box<SpecProposition>,
+    },
     ForAllPointer {
         name: String,
         variable: Variable,
@@ -1472,6 +1477,11 @@ pub enum SpecProposition {
         body: Box<SpecProposition>,
     },
     ExistsInt32 {
+        name: String,
+        variable: Variable,
+        body: Box<SpecProposition>,
+    },
+    ExistsInteger {
         name: String,
         variable: Variable,
         body: Box<SpecProposition>,

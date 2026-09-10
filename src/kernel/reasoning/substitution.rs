@@ -2957,6 +2957,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
                 right, from, to,
             )),
         ),
+        SpecProposition::ForAllInteger {
+            name,
+            variable,
+            body,
+        } if *variable != from => SpecProposition::ForAllInteger {
+            name: name.clone(),
+            variable: *variable,
+            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
         SpecProposition::ForAllInt32 {
             name,
             variable,
@@ -2977,6 +2988,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
             name: name.clone(),
             variable: *variable,
             c_type: *c_type,
+            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
+        SpecProposition::ExistsInteger {
+            name,
+            variable,
+            body,
+        } if *variable != from => SpecProposition::ExistsInteger {
+            name: name.clone(),
+            variable: *variable,
             body: Box::new(substitute_bitvector_variable_in_spec_proposition(
                 body, from, to,
             )),
@@ -6031,6 +6053,17 @@ fn substitute_pointer_variable_in_spec_proposition(
     to: &Pointer,
 ) -> SpecProposition {
     match proposition {
+        SpecProposition::ForAllInteger {
+            name,
+            variable,
+            body,
+        } => SpecProposition::ForAllInteger {
+            name: name.clone(),
+            variable: *variable,
+            body: Box::new(substitute_pointer_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
         SpecProposition::IntegerComparison {
             left,
             operator,
@@ -6123,6 +6156,17 @@ fn substitute_pointer_variable_in_spec_proposition(
             name: name.clone(),
             variable: *variable,
             c_type: *c_type,
+            body: Box::new(substitute_pointer_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
+        SpecProposition::ExistsInteger {
+            name,
+            variable,
+            body,
+        } => SpecProposition::ExistsInteger {
+            name: name.clone(),
+            variable: *variable,
             body: Box::new(substitute_pointer_variable_in_spec_proposition(
                 body, from, to,
             )),

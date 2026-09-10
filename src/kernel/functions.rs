@@ -3195,8 +3195,10 @@ fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool 
         }
         SpecProposition::Not(body)
         | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllInteger { body, .. }
         | SpecProposition::ForAllPointer { body, .. }
         | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsInteger { body, .. }
         | SpecProposition::ExistsPointer { body, .. } => {
             spec_proposition_is_state_independent(body)
         }
@@ -3235,8 +3237,10 @@ fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecPropos
         }
         SpecProposition::Not(body)
         | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllInteger { body, .. }
         | SpecProposition::ForAllPointer { body, .. }
         | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsInteger { body, .. }
         | SpecProposition::ExistsPointer { body, .. } => {
             spec_proposition_supports_stateful_memory_refinement(body)
         }
@@ -3635,8 +3639,10 @@ fn spec_proposition_reads_current_parameter(
         }
         SpecProposition::Not(body)
         | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllInteger { body, .. }
         | SpecProposition::ForAllPointer { body, .. }
         | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsInteger { body, .. }
         | SpecProposition::ExistsPointer { body, .. } => {
             spec_proposition_reads_current_parameter(body, parameter_name)
         }
@@ -4249,8 +4255,10 @@ fn spec_proposition_current_parameter_accesses(
         }
         SpecProposition::Not(body)
         | SpecProposition::ForAllInt32 { body, .. }
+        | SpecProposition::ForAllInteger { body, .. }
         | SpecProposition::ForAllPointer { body, .. }
         | SpecProposition::ExistsInt32 { body, .. }
+        | SpecProposition::ExistsInteger { body, .. }
         | SpecProposition::ExistsPointer { body, .. } => {
             spec_proposition_current_parameter_accesses(body, parameter_name, reads, unknown_read);
         }
