@@ -1365,14 +1365,21 @@ fn evaluate_spec_algebraic_value_at_state(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecAlgebraicValuePath>> {
     match value {
-        SpecAlgebraicValue::Integer(expression) => {
-            let SpecIntegerExpression::Term(term) = expression;
-            Ok(vec![SpecAlgebraicValuePath {
-                value: AlgebraicValue::Integer(term.clone()),
-                facts: Vec::new(),
-                obligations: Vec::new(),
-            }])
-        }
+        SpecAlgebraicValue::Integer(expression) => Ok(evaluate_spec_integer_expression_paths(
+            state,
+            expression,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| SpecAlgebraicValuePath {
+            value: AlgebraicValue::Integer(path.value),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect()),
         SpecAlgebraicValue::C(expression) => {
             Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
