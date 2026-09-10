@@ -2658,3 +2658,42 @@ fn parses_sequence_literals_snapshots_and_concatenation() {
         "([dst[0], dst[1]] ++ [dst[2]])"
     );
 }
+
+#[test]
+fn integer_datatype_match_bindings_shadow_each_source_carrier() {
+    let source = r#"
+        spec enum Pair { Make(int32, Integer) }
+        theorem extraction(value: Integer) {
+            ensures match Pair::Make(0, value) {
+                Pair::Make(value, inner) => inner,
+            } == value by { normalize(); }
+        }
+    "#;
+    verify_click_theorems(source).unwrap();
+    let bad = source.replace("=> inner,", "=> value,");
+    assert!(
+        verify_click_theorems(&bad).is_err(),
+        "a C field must not resolve to a same-named outer Integer"
+    );
+}
+
+#[test]
+fn symbolic_integer_datatype_match_rejects_unimplemented_field_binding() {
+    let source = r#"
+        spec enum Box { Wrapped(Integer) }
+        theorem capture(boxed: Box, value: Integer) {
+            ensures match boxed {
+                Box::Wrapped(value) => value,
+            } == value by { normalize(); }
+        }
+    "#;
+    let error =
+        verify_click_theorems(source).expect_err("symbolic fields must not capture outer names");
+    assert!(
+        error
+            .message()
+            .contains("symbolic Integer-valued datatype matches"),
+        "{}",
+        error.message()
+    );
+}

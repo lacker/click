@@ -157,6 +157,7 @@ impl<'a> TermRewrite<'a> {
     fn field(&mut self, v: &AlgebraicValue) -> AlgebraicValue {
         match v {
             AlgebraicValue::C(v) => AlgebraicValue::C(self.value(v)),
+            AlgebraicValue::Integer(v) => AlgebraicValue::Integer(v.clone()),
             AlgebraicValue::Algebraic(v) => AlgebraicValue::Algebraic(self.algebraic(v)),
         }
     }

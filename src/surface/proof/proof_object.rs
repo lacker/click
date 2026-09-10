@@ -535,6 +535,7 @@ impl CheckedFocusedTransition {
 #[derive(Clone)]
 struct ProofLocals {
     values: PersistentMap<String, ContractExpression>,
+    integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     next_choice_variable: u64,
 }
 
@@ -542,6 +543,7 @@ impl Default for ProofLocals {
     fn default() -> Self {
         Self {
             values: PersistentMap::default(),
+            integer_values: PersistentMap::default(),
             next_choice_variable: 3_000_000,
         }
     }

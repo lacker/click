@@ -2090,6 +2090,12 @@ impl AnnotationLowerer<'_> {
                 }
                 let left_is_integer = self.contract_expression_is_integer(left, environment);
                 let right_is_integer = self.contract_expression_is_integer(right, environment);
+                let left_is_integer = left_is_integer
+                    || (right_is_integer
+                        && matches!(left, ContractExpression::AlgebraicMatch { .. }));
+                let right_is_integer = right_is_integer
+                    || (left_is_integer
+                        && matches!(right, ContractExpression::AlgebraicMatch { .. }));
                 if left_is_integer || right_is_integer {
                     if left_is_integer != right_is_integer
                         && !(if left_is_integer {
@@ -2262,6 +2268,44 @@ impl AnnotationLowerer<'_> {
     ) -> Result<crate::kernel::SpecIntegerExpression, String> {
         use crate::kernel::SpecIntegerExpression;
         check_integer_lowering_work(1)?;
+        if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
+            let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
+            if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =
+                &scrutinee.node
+            {
+                let arm = arms
+                    .iter()
+                    .find(|arm| arm.variant == *variant)
+                    .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
+                if arm.bindings.len() != fields.len() {
+                    return Err("datatype match field count mismatch".into());
+                }
+                let mut body_environment = environment.clone();
+                for (name, field) in arm.bindings.iter().zip(fields) {
+                    body_environment.integer_values.remove(name);
+                    body_environment.values.remove(name);
+                    body_environment.algebraic_values.remove(name);
+                    body_environment.array_refs.remove(name);
+                    match field {
+                        crate::kernel::SpecAlgebraicValue::Integer(value) => {
+                            body_environment
+                                .integer_values
+                                .insert(name.clone(), value.clone());
+                        }
+                        crate::kernel::SpecAlgebraicValue::C(value) => {
+                            body_environment.values.insert(name.clone(), value.clone());
+                        }
+                        crate::kernel::SpecAlgebraicValue::Algebraic(value) => {
+                            body_environment
+                                .algebraic_values
+                                .insert(name.clone(), value.clone());
+                        }
+                    }
+                }
+                return self.lower_contract_integer_to_spec(&arm.body, &body_environment);
+            }
+            return Err("symbolic Integer-valued datatype matches are not supported yet".into());
+        }
         match expression {
             ContractExpression::Binding(name) => {
                 let value = environment
@@ -2434,13 +2478,24 @@ impl AnnotationLowerer<'_> {
                     for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
                         match field {
                             SpecAlgebraicValue::C(field) => {
+                                body_environment.integer_values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
                                 body_environment
                                     .values
                                     .insert(binding.clone(), field.clone());
                             }
                             SpecAlgebraicValue::Algebraic(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.integer_values.remove(binding);
                                 body_environment
                                     .algebraic_values
+                                    .insert(binding.clone(), field.clone());
+                            }
+                            SpecAlgebraicValue::Integer(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
+                                body_environment
+                                    .integer_values
                                     .insert(binding.clone(), field.clone());
                             }
                         }
@@ -2477,6 +2532,19 @@ impl AnnotationLowerer<'_> {
                                                 binding.clone(),
                                             ),
                                         },
+                                    );
+                                }
+                                AlgebraicValueType::Integer => {
+                                    body_environment.values.remove(binding);
+                                    body_environment.algebraic_values.remove(binding);
+                                    let variable =
+                                        crate::kernel::Variable(self.next_quantifier_variable);
+                                    self.next_quantifier_variable += 1;
+                                    body_environment.integer_values.insert(
+                                        binding.clone(),
+                                        crate::kernel::SpecIntegerExpression::Term(
+                                            crate::kernel::IntegerTerm::var(variable),
+                                        ),
                                     );
                                 }
                             }
@@ -2876,6 +2944,9 @@ impl AnnotationLowerer<'_> {
                         AlgebraicValueType::C(_) => self
                             .lower_contract_expression_to_spec(argument, environment)
                             .map(SpecAlgebraicValue::C),
+                        AlgebraicValueType::Integer => self
+                            .lower_contract_integer_to_spec(argument, environment)
+                            .map(SpecAlgebraicValue::Integer),
                         AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
                             self.lower_contract_algebraic_to_spec(argument, environment)
                                 .map(SpecAlgebraicValue::Algebraic)
@@ -2903,13 +2974,24 @@ impl AnnotationLowerer<'_> {
                     for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
                         match field {
                             SpecAlgebraicValue::C(field) => {
+                                body_environment.integer_values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
                                 body_environment
                                     .values
                                     .insert(binding.clone(), field.clone());
                             }
                             SpecAlgebraicValue::Algebraic(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.integer_values.remove(binding);
                                 body_environment
                                     .algebraic_values
+                                    .insert(binding.clone(), field.clone());
+                            }
+                            SpecAlgebraicValue::Integer(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
+                                body_environment
+                                    .integer_values
                                     .insert(binding.clone(), field.clone());
                             }
                         }
@@ -2944,6 +3026,19 @@ impl AnnotationLowerer<'_> {
                                             )?,
                                         node: SpecAlgebraicExpressionNode::Binding(binding.clone()),
                                     },
+                                );
+                            }
+                            AlgebraicValueType::Integer => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
+                                let variable =
+                                    crate::kernel::Variable(self.next_quantifier_variable);
+                                self.next_quantifier_variable += 1;
+                                body_environment.integer_values.insert(
+                                    binding.clone(),
+                                    crate::kernel::SpecIntegerExpression::Term(
+                                        crate::kernel::IntegerTerm::var(variable),
+                                    ),
                                 );
                             }
                         }
@@ -4101,7 +4196,7 @@ fn click_type_to_algebraic_value_type(
     match click_type {
         ClickType::Parameter(name) => Err(format!("unresolved type parameter `{name}`")),
         ClickType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
-        ClickType::Integer => Err("Integer is not yet an algebraic field type".to_string()),
+        ClickType::Integer => Ok(AlgebraicValueType::Integer),
         ClickType::Algebraic(application) if application.rigid => {
             Ok(AlgebraicValueType::Parameter(application.name.clone()))
         }
@@ -4196,6 +4291,7 @@ fn instantiate_algebraic_kernel_field_type(
     field: &AlgebraicFieldType,
 ) -> Result<AlgebraicValueType, String> {
     match field {
+        AlgebraicFieldType::Integer => Ok(AlgebraicValueType::Integer),
         AlgebraicFieldType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()

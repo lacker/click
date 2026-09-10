@@ -324,6 +324,7 @@ fn validate_algebraic_field_declaration(
             owner.name(),
             variant.name()
         ))),
+        AlgebraicFieldType::Integer => Ok(()),
         AlgebraicFieldType::C(_) => Ok(()),
         AlgebraicFieldType::Algebraic { name, arguments } => {
             let nested = definitions.get(name.as_str()).ok_or_else(|| {
@@ -517,7 +518,9 @@ fn arguments_preserve_owner_parameters(
 
 fn algebraic_field_is_grounded(field: &AlgebraicFieldType, grounded: &BTreeSet<&str>) -> bool {
     match field {
-        AlgebraicFieldType::Parameter(_) | AlgebraicFieldType::C(_) => true,
+        AlgebraicFieldType::Parameter(_)
+        | AlgebraicFieldType::Integer
+        | AlgebraicFieldType::C(_) => true,
         AlgebraicFieldType::Algebraic { name, .. } => grounded.contains(name.as_str()),
     }
 }
@@ -1115,6 +1118,23 @@ fn validate_algebraic_proposition(
     }
 }
 
+fn expression_is_integer_binding(
+    expression: &ContractExpression,
+    bindings: &BTreeSet<String>,
+) -> bool {
+    match expression {
+        ContractExpression::Binding(name) => bindings.contains(name),
+        ContractExpression::Negate(inner) => expression_is_integer_binding(inner, bindings),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            expression_is_integer_binding(left, bindings)
+                || expression_is_integer_binding(right, bindings)
+        }
+        _ => false,
+    }
+}
+
 fn validate_algebraic_expression(
     expression: &ContractExpression,
     variables: &BTreeMap<String, C0Type>,
@@ -1302,6 +1322,7 @@ fn validate_algebraic_expression(
                 }
                 let mut arm_variables = variables.clone();
                 let mut algebraic_bindings = BTreeMap::new();
+                let mut integer_bindings = BTreeSet::new();
                 let mut bindings = BTreeSet::new();
                 for (binding_index, (binding, field)) in
                     arm.bindings.iter().zip(variant.fields()).enumerate()
@@ -1329,9 +1350,7 @@ fn validate_algebraic_expression(
                             );
                         }
                         ClickType::Integer => {
-                            return Err(ClickError::new(
-                                "Integer match bindings are not available in this slice",
-                            ));
+                            integer_bindings.insert(binding.clone());
                         }
                     }
                 }
@@ -1347,13 +1366,19 @@ fn validate_algebraic_expression(
                 )?;
                 let arm_type = match algebraic_arm_type {
                     Some(application) => Some(ClickType::Algebraic(application)),
-                    None => infer_contract_expression_type(
-                        &arm_body,
-                        &arm_variables,
-                        click_functions,
-                        context,
-                    )?
-                    .map(ClickType::C),
+                    None => {
+                        if expression_is_integer_binding(&arm_body, &integer_bindings) {
+                            Some(ClickType::Integer)
+                        } else {
+                            infer_contract_expression_type(
+                                &arm_body,
+                                &arm_variables,
+                                click_functions,
+                                context,
+                            )?
+                            .map(ClickType::C)
+                        }
+                    }
                 };
                 if let (Some(expected), Some(actual)) = (&result_type, &arm_type) {
                     let compatible = match (expected, actual) {
@@ -2209,6 +2234,7 @@ pub(super) fn instantiate_field_type(
     field: &AlgebraicFieldType,
 ) -> Result<ClickType, ClickError> {
     match field {
+        AlgebraicFieldType::Integer => Ok(ClickType::Integer),
         AlgebraicFieldType::C(c_type) => Ok(ClickType::C(*c_type)),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()

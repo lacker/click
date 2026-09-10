@@ -929,6 +929,7 @@ pub enum SpecPureFunctionArgument {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecAlgebraicValue {
     C(SpecExpression),
+    Integer(SpecIntegerExpression),
     Algebraic(SpecAlgebraicExpression),
 }
 
@@ -965,6 +966,7 @@ pub struct AlgebraicType {
 pub enum AlgebraicValueType {
     Parameter(String),
     C(CType),
+    Integer,
     Algebraic {
         name: String,
         arguments: Vec<AlgebraicValueType>,
@@ -1057,7 +1059,9 @@ impl AlgebraicSchemas {
             for (value_type, constructors) in &variants {
                 if constructors.iter().any(|constructor| {
                     constructor.fields.iter().all(|field| match field {
-                        AlgebraicValueType::C(_) | AlgebraicValueType::Parameter(_) => true,
+                        AlgebraicValueType::C(_)
+                        | AlgebraicValueType::Integer
+                        | AlgebraicValueType::Parameter(_) => true,
                         AlgebraicValueType::Algebraic { .. } => grounded.contains(field),
                     })
                 }) {
@@ -1131,6 +1135,7 @@ pub enum PureFunctionArgument {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AlgebraicValue {
     C(CValue),
+    Integer(IntegerTerm),
     Algebraic(AlgebraicTerm),
 }
 
@@ -1164,10 +1169,11 @@ impl AlgebraicTerm {
                     AlgebraicTermNode::Variable(_) => {}
                     AlgebraicTermNode::Constructor { fields, .. } => {
                         for field in fields {
-                            pending.push(match field {
-                                AlgebraicValue::C(v) => Node::Value(v),
-                                AlgebraicValue::Algebraic(v) => Node::Algebraic(v),
-                            });
+                            match field {
+                                AlgebraicValue::C(v) => pending.push(Node::Value(v)),
+                                AlgebraicValue::Integer(_) => {}
+                                AlgebraicValue::Algebraic(v) => pending.push(Node::Algebraic(v)),
+                            }
                         }
                     }
                     AlgebraicTermNode::Match { scrutinee, arms } => {
@@ -1175,10 +1181,13 @@ impl AlgebraicTerm {
                         for arm in arms {
                             pending.push(Node::Algebraic(&arm.body));
                             for binding in &arm.bindings {
-                                pending.push(match binding {
-                                    AlgebraicValue::C(v) => Node::Value(v),
-                                    AlgebraicValue::Algebraic(v) => Node::Algebraic(v),
-                                });
+                                match binding {
+                                    AlgebraicValue::C(v) => pending.push(Node::Value(v)),
+                                    AlgebraicValue::Integer(_) => {}
+                                    AlgebraicValue::Algebraic(v) => {
+                                        pending.push(Node::Algebraic(v))
+                                    }
+                                }
                             }
                         }
                     }
@@ -1383,6 +1392,7 @@ impl AlgebraicValue {
     pub fn as_c_value(&self) -> Option<&CValue> {
         match self {
             Self::C(value) => Some(value),
+            Self::Integer(_) => None,
             Self::Algebraic(_) => None,
         }
     }
@@ -1390,6 +1400,7 @@ impl AlgebraicValue {
     pub(in crate::kernel) fn value_type(&self) -> AlgebraicValueType {
         match self {
             Self::C(value) => AlgebraicValueType::C(value.c_type()),
+            Self::Integer(_) => AlgebraicValueType::Integer,
             Self::Algebraic(value) => value.algebraic_type.value_type(),
         }
     }
@@ -1404,6 +1415,7 @@ impl AlgebraicValue {
         }
         match self {
             Self::C(_) => true,
+            Self::Integer(_) => true,
             Self::Algebraic(value) => {
                 (matches!(expected, AlgebraicValueType::Parameter(_))
                     || schemas

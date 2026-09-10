@@ -732,6 +732,7 @@ fn collect_algebraic_value_bound_variables(
 ) {
     match value {
         AlgebraicValue::C(value) => collect_c_value_bound_variables(value, variables),
+        AlgebraicValue::Integer(value) => collect_integer_bound_variables(value, variables),
         AlgebraicValue::Algebraic(value) => collect_algebraic_bound_variables(value, variables),
     }
 }
@@ -2141,6 +2142,7 @@ fn substitute_bitvector_variable_in_algebraic_value(
         AlgebraicValue::C(value) => {
             AlgebraicValue::C(substitute_bitvector_variable_in_c_value(value, from, to))
         }
+        AlgebraicValue::Integer(value) => AlgebraicValue::Integer(value.clone()),
         AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
             substitute_bitvector_variable_in_algebraic_term(value, from, to),
         ),
@@ -2661,6 +2663,9 @@ fn substitute_bitvector_variable_in_spec_algebraic_expression(
                         SpecAlgebraicValue::C(field) => SpecAlgebraicValue::C(
                             substitute_bitvector_variable_in_spec_expression(field, from, to),
                         ),
+                        SpecAlgebraicValue::Integer(field) => {
+                            SpecAlgebraicValue::Integer(field.clone())
+                        }
                         SpecAlgebraicValue::Algebraic(field) => SpecAlgebraicValue::Algebraic(
                             substitute_bitvector_variable_in_spec_algebraic_expression(
                                 field, from, to,
@@ -5058,6 +5063,7 @@ fn substitute_pointer_variable_in_algebraic_value(
         AlgebraicValue::C(value) => {
             AlgebraicValue::C(substitute_pointer_variable_in_c_value(value, from, to))
         }
+        AlgebraicValue::Integer(value) => AlgebraicValue::Integer(value.clone()),
         AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
             substitute_pointer_variable_in_algebraic_term(value, from, to),
         ),
@@ -5971,6 +5977,9 @@ fn substitute_pointer_variable_in_spec_algebraic_expression(
                         SpecAlgebraicValue::C(field) => SpecAlgebraicValue::C(
                             substitute_pointer_variable_in_spec_expression(field, from, to),
                         ),
+                        SpecAlgebraicValue::Integer(field) => {
+                            SpecAlgebraicValue::Integer(field.clone())
+                        }
                         SpecAlgebraicValue::Algebraic(field) => SpecAlgebraicValue::Algebraic(
                             substitute_pointer_variable_in_spec_algebraic_expression(
                                 field, from, to,

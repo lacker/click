@@ -669,6 +669,7 @@ fn format_declared_resource(
             .iter()
             .map(|argument| match argument {
                 AlgebraicValue::C(value) => describe_c_value(value, parameters, arguments),
+                AlgebraicValue::Integer(value) => format!("{value:?}"),
                 AlgebraicValue::Algebraic(value) =>
                     format!("<{} model>", value.algebraic_type.name),
             })

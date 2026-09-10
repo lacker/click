@@ -416,6 +416,7 @@ pub struct AlgebraicVariantDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AlgebraicFieldType {
     Parameter(String),
+    Integer,
     C(C0Type),
     Algebraic {
         name: String,

@@ -9,6 +9,7 @@ pub(in crate::surface::proof) struct ExecutionMatchPlan {
     source: ProofMatch,
     case_indices: Vec<usize>,
     bindings: Vec<PersistentMap<String, ContractExpression>>,
+    integer_bindings: Vec<PersistentMap<String, crate::kernel::SpecIntegerExpression>>,
     parent_locals: ProofLocals,
     deferred_base: PersistentSequence<DeferredPostExecutionTactic>,
     excluded: Vec<Option<ProofCertificate>>,
@@ -178,6 +179,7 @@ impl<'a> Proof<'a> {
             self.facts(), &value, context.function_environment, first, 65_536,
         ).ok_or_else(|| self.step_error("proof `match` requires a supported ADT at unchanged function entry, before C execution or resource unfolding"))?;
         let mut bindings = Vec::with_capacity(source.arms.len());
+        let mut integer_bindings = Vec::with_capacity(source.arms.len());
         for (arm, &index) in source.arms.iter().zip(&case_indices) {
             let Some(Proposition::Equal(_, Term::Algebraic(constructor))) =
                 partition.case_fact(index)
@@ -188,6 +190,7 @@ impl<'a> Proof<'a> {
                 unreachable!()
             };
             let mut scope = self.state.locals().values.clone();
+            let mut integer_scope = self.state.locals().integer_values.clone();
             for (name, field) in arm.bindings.iter().zip(fields) {
                 let expression = match field {
                     AlgebraicValue::C(value) => {
@@ -205,10 +208,18 @@ impl<'a> Proof<'a> {
                             },
                         }
                     }
+                    AlgebraicValue::Integer(value) => {
+                        integer_scope = integer_scope.with_inserted(
+                            name.clone(),
+                            crate::kernel::SpecIntegerExpression::Term(value.clone()),
+                        );
+                        ContractExpression::Binding(name.clone())
+                    }
                 };
                 scope = scope.with_inserted(name.clone(), expression);
             }
             bindings.push(scope);
+            integer_bindings.push(integer_scope);
         }
         let mut parent_locals = self.state.locals().clone();
         parent_locals.next_choice_variable = next;
@@ -217,6 +228,7 @@ impl<'a> Proof<'a> {
             source: source.clone(),
             case_indices,
             bindings,
+            integer_bindings,
             parent_locals,
             deferred_base: execution.presentation.post_execution_tactics.clone(),
             excluded: vec![None; source.arms.len()],
@@ -253,6 +265,7 @@ impl<'a> Proof<'a> {
             .map_err(|message| self.step_error(message))?;
         let mut locals = plan.parent_locals.clone();
         locals.values = plan.bindings[index].clone();
+        locals.integer_values = plan.integer_bindings[index].clone();
         let arm = &plan.source.arms[index];
         let Some(Proposition::Equal(_, Term::Algebraic(constructor))) =
             plan.partition.case_fact(plan.case_indices[index])
