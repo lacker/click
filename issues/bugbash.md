@@ -1,9 +1,7 @@
-# Bug bash: open soundness holes and C mis-models
+# Bug bash: open tooling failures
 
-Six remaining items are tracked here: one C-language soundness bug and five
-tooling failures. The soundness bug admits a claim that C does not guarantee;
-the tooling failures reject supported inputs or expose verifier reliability
-gaps.
+Five remaining tooling failures are tracked here. They reject supported inputs
+or expose verifier reliability gaps.
 
 This is deliberately a bundle rather than one file per problem, so the set
 stays together while it is triaged. **Split it up as work starts**: when a
@@ -11,72 +9,12 @@ root cause is picked up, move its section into its own `issues/<name>.md`, add
 the Open-list line, and delete the section here. Delete this file when the
 last section is gone.
 
-The soundness bug comes first; the tooling failures follow it. Several entries
-say what *not* to do: those directions were built and measured, and each broke
-sound proofs elsewhere or lost a capability the tree uses. Read them before
-starting.
+The following tooling failures block use rather than admitting false claims.
+Several entries say what *not* to do: those directions were built and
+measured, and each broke sound proofs elsewhere or lost a capability the tree
+uses. Read them before starting.
 
-## Reproducing
-
-The soundness regression is a self-contained pair. Write the files into an
-empty directory and run:
-
-```sh
-click verify --time-limit 30s t.click
-```
-
-Exit 0 is the bug. The pair below was re-run against the release binary and
-reproduces. Its regression is intended to land as an mdtest whose `expect`
-block is a rejection, so the diagnostic in the acceptance criteria is a shape,
-not an exact string.
-
----
-
-## 1. A `for` initializer's variable stays readable after the loop
-
-**Severity: high.** C0 accepts a program C rejects, and proves a value for the
-out-of-scope read.
-
-**Violated invariant.** A variable declared in a `for` initializer is scoped to
-the loop (C11 6.8.5p5). Naming it afterwards is a use of an undeclared
-identifier, which is a constraint violation, not a value.
-
-**Mechanism.** Not localized. `for` is lowered as sugar over `while` in
-`src/languages/c/syntax.rs`; the initializer's declaration is emitted into the
-enclosing block, so the binding outlives the loop it belongs to.
-
-**Regression** (`mdtests/for_initializer_scope_rejected.md`):
-
-```c
-int32 for_initializer_scope_rejected() {
-    int32 total = 0;
-    for (int32 i = 0; i < 3; i++) {
-        total = total + i;
-    }
-    return i;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 for_initializer_scope_rejected() {
-    ensures result == 3;
-}
-```
-
-**Acceptance criteria.**
-- The C source is rejected with a source-positioned diagnostic naming `i`.
-- A `for` loop whose index is declared before the loop, and read after it,
-  still verifies.
-
----
-
-The following five items are tooling failures. They block use rather than
-admitting false claims, but the first one means the CLI and the fixture gate
-disagree about the same input, which is its own problem.
-
-## 2. `click verify` rejects every source that calls `realloc`
+## 1. `click verify` rejects every source that calls `realloc`
 
 Extracting
 the checked-in `mdtests/realloc_preserves_calloc_prefix.md` (expect: pass) into
@@ -88,7 +26,7 @@ are dedicated statement forms; the harness entry point does not compute that
 closure. Documented `realloc` support is unreachable from the CLI. Acceptance:
 that mdtest's sources verify through `click verify`, and a CLI test pins it.
 
-## 3. `--changed-since` cannot resolve project-local headers
+## 2. `--changed-since` cannot resolve project-local headers
 
 A project with
 `cap.h`, `m.c` containing `#include "cap.h"`, and a sidecar verifies with
@@ -98,7 +36,7 @@ change in the tree. Incremental mode builds its source bundle without headers.
 Acceptance: incremental verification of a project with local headers works, and
 a header edit selects the functions whose translation units include it.
 
-## 4. A trivial theorem produces a smart proof with no certificate
+## 3. A trivial theorem produces a smart proof with no certificate
 
 `theorem small(x: int32) { requires x < 10; ensures x < 20; }` under the default
 prover fails with `smart proof for small.ensures_0 succeeded but did not
@@ -107,12 +45,12 @@ produce a pure surface certificate`. `ensures x <= 10` works. This is the
 feature work. Acceptance: the theorem verifies, or the search declines promptly
 with an actionable diagnostic.
 
-## 5. `execute()` emits a certificate the checker rejects
+## 4. `execute()` emits a certificate the checker rejects
 
 This occurs for `break` inside an `if` inside a nested `while`, in the same
-class as item 4.
+class as item 3.
 
-## 6. Panic (`unreachable!`) when a local struct initializer zero-fills a
+## 5. Panic (`unreachable!`) when a local struct initializer zero-fills a
 `float`/`double` field
 
 A crash, not a wrong answer. Acceptance: the initializer is either supported

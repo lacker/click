@@ -8638,6 +8638,24 @@ fn c0_syntax_accepts_sibling_scopes_reusing_a_name() {
 }
 
 #[test]
+fn c0_syntax_rejects_for_initializer_name_after_loop() {
+    let error = syntax::parse_function(
+        r#"
+        int32 for_initializer_scope_rejected() {
+            int32 total = 0;
+            for (int32 i = 0; i < 3; i++) {
+                total = total + i;
+            }
+            return i;
+        }
+        "#,
+    )
+    .expect_err("a for-loop initializer declaration is scoped to the loop");
+    assert!(error.message().contains("undeclared identifier `i`"));
+    assert_eq!(error.position().map(|position| position.line), Some(7));
+}
+
+#[test]
 fn c0_syntax_accepts_else_if_and_unbraced_controlled_statements() {
     let function = syntax::parse_function(
         r#"
