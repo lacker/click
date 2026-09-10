@@ -64,6 +64,7 @@ struct SharedIntegerApplicationNode {
 impl SharedIntegerApplication {
     pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
         static INTERNER: OnceLock<Mutex<HashMap<u64, Vec<(String, Vec<PureFunctionArgument>, Weak<SharedIntegerApplicationNode>)>>>> = OnceLock::new();
+        static CLEANUP: OnceLock<Mutex<Vec<(u64, usize)>>> = OnceLock::new();
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut hasher = DefaultHasher::new();
         name.hash(&mut hasher);
@@ -71,6 +72,14 @@ impl SharedIntegerApplication {
         let key = hasher.finish();
         let interner = INTERNER.get_or_init(|| Mutex::new(HashMap::new()));
         let mut interner = interner.lock().expect("Integer application interner lock poisoned");
+        let cleanup = CLEANUP.get_or_init(|| Mutex::new(Vec::new()));
+        for _ in 0..8 {
+            let Some((fingerprint, pointer)) = cleanup.lock().expect("cleanup lock poisoned").pop() else { break };
+            if let Some(bucket) = interner.get_mut(&fingerprint) {
+                bucket.retain(|(_, _, node)| node.as_ptr() as usize != pointer || node.strong_count() != 0);
+                if bucket.is_empty() { interner.remove(&fingerprint); }
+            }
+        }
         if let Some(bucket) = interner.get(&key) {
             for (old_name, old_arguments, node) in bucket {
                 if old_name == &name && old_arguments == &arguments && let Some(node) = node.upgrade() {
@@ -81,6 +90,7 @@ impl SharedIntegerApplication {
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let node = Arc::new(SharedIntegerApplicationNode { id, name: name.clone(), arguments: arguments.clone() });
         interner.entry(key).or_default().push((name, arguments, Arc::downgrade(&node)));
+        cleanup.lock().expect("cleanup lock poisoned").push((key, Arc::as_ptr(&node) as usize));
         Self(node)
     }
     pub(crate) fn id(&self) -> u64 { self.0.id }
