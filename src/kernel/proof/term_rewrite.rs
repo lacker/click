@@ -15,6 +15,7 @@ pub(crate) struct TermRewrite<'a> {
     bitvector: Option<(&'a Bitvector32Term, &'a Bitvector32Term)>,
     conditions: Option<&'a HashMap<ConditionTerm, bool>>,
     collected_conditions: Option<Vec<ConditionTerm>>,
+    integer_cache: HashMap<u64, IntegerTerm>,
     pub(crate) changed: bool,
     #[cfg(test)]
     pub(crate) visits: usize,
@@ -27,6 +28,7 @@ impl<'a> TermRewrite<'a> {
             algebraic: Some((from, to)),
             bitvector: None,
             changed: false,
+            integer_cache: HashMap::new(),
             #[cfg(test)]
             visits: 0,
         }
@@ -38,6 +40,7 @@ impl<'a> TermRewrite<'a> {
             algebraic: None,
             bitvector: Some((from, to)),
             changed: false,
+            integer_cache: HashMap::new(),
             #[cfg(test)]
             visits: 0,
         }
@@ -49,6 +52,7 @@ impl<'a> TermRewrite<'a> {
             conditions: Some(conditions),
             collected_conditions: None,
             changed: false,
+            integer_cache: HashMap::new(),
             #[cfg(test)]
             visits: 0,
         }
@@ -177,19 +181,28 @@ impl<'a> TermRewrite<'a> {
     }
     fn integer(&mut self, v: &IntegerTerm) -> IntegerTerm {
         self.visit();
-        match v {
-            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => v.clone(),
-            IntegerTerm::Negate(value) => IntegerTerm::negate(self.integer(value)),
+        self.integer_shared(&SharedIntegerTerm::from(v.clone()))
+    }
+    fn integer_shared(&mut self, shared: &SharedIntegerTerm) -> IntegerTerm {
+        if let Some(result) = self.integer_cache.get(&shared.id()) {
+            return result.clone();
+        }
+        self.visit();
+        let result = match shared.as_ref() {
+            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => shared.as_ref().clone(),
+            IntegerTerm::Negate(value) => IntegerTerm::negate(self.integer_shared(value)),
             IntegerTerm::Add(left, right) => {
-                IntegerTerm::add(self.integer(left), self.integer(right))
+                IntegerTerm::add(self.integer_shared(left), self.integer_shared(right))
             }
             IntegerTerm::Subtract(left, right) => {
-                IntegerTerm::subtract(self.integer(left), self.integer(right))
+                IntegerTerm::subtract(self.integer_shared(left), self.integer_shared(right))
             }
             IntegerTerm::Multiply(left, right) => {
-                IntegerTerm::multiply(self.integer(left), self.integer(right))
+                IntegerTerm::multiply(self.integer_shared(left), self.integer_shared(right))
             }
-        }
+        };
+        self.integer_cache.insert(shared.id(), result.clone());
+        result
     }
     fn pointer(&mut self, p: &Pointer) -> Pointer {
         Pointer {

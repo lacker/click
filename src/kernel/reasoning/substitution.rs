@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 /// Rewrites kernel-minted load variables back to their defining load terms,
 /// using the certified defining equations the canonicalizing loader pushed
@@ -1435,17 +1436,34 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
 }
 
 fn collect_integer_bound_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+    let mut seen = BTreeSet::new();
+    collect_integer_bound_variables_seen(term, variables, &mut seen);
+}
+
+fn collect_integer_bound_variables_seen(
+    term: &IntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+    seen: &mut BTreeSet<u64>,
+) {
     match term {
         IntegerTerm::Constant(_) => {}
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
-        IntegerTerm::Negate(value) => collect_integer_bound_variables(value, variables),
+        IntegerTerm::Negate(value) => {
+            if seen.insert(value.id()) {
+                collect_integer_bound_variables_seen(value, variables, seen);
+            }
+        }
         IntegerTerm::Add(left, right)
         | IntegerTerm::Subtract(left, right)
         | IntegerTerm::Multiply(left, right) => {
-            collect_integer_bound_variables(left, variables);
-            collect_integer_bound_variables(right, variables);
+            if seen.insert(left.id()) {
+                collect_integer_bound_variables_seen(left, variables, seen);
+            }
+            if seen.insert(right.id()) {
+                collect_integer_bound_variables_seen(right, variables, seen);
+            }
         }
     }
 }
@@ -1458,26 +1476,41 @@ pub(crate) fn substitute_integer_variable(
     from: Variable,
     to: &IntegerTerm,
 ) -> IntegerTerm {
-    match term {
+    let mut memo = HashMap::new();
+    substitute_integer_variable_shared(&term.clone().into(), from, to, &mut memo)
+}
+
+fn substitute_integer_variable_shared(
+    shared: &SharedIntegerTerm,
+    from: Variable,
+    to: &IntegerTerm,
+    memo: &mut HashMap<u64, IntegerTerm>,
+) -> IntegerTerm {
+    if let Some(result) = memo.get(&shared.id()) {
+        return result.clone();
+    }
+    let result = match shared.as_ref() {
         IntegerTerm::Constant(value) => IntegerTerm::Constant(value.clone()),
         IntegerTerm::Variable(variable) if *variable == from => to.clone(),
         IntegerTerm::Variable(variable) => IntegerTerm::Variable(*variable),
         IntegerTerm::Negate(value) => {
-            IntegerTerm::negate(substitute_integer_variable(value, from, to))
+            IntegerTerm::negate(substitute_integer_variable_shared(value, from, to, memo))
         }
         IntegerTerm::Add(left, right) => IntegerTerm::add(
-            substitute_integer_variable(left, from, to),
-            substitute_integer_variable(right, from, to),
+            substitute_integer_variable_shared(left, from, to, memo),
+            substitute_integer_variable_shared(right, from, to, memo),
         ),
         IntegerTerm::Subtract(left, right) => IntegerTerm::subtract(
-            substitute_integer_variable(left, from, to),
-            substitute_integer_variable(right, from, to),
+            substitute_integer_variable_shared(left, from, to, memo),
+            substitute_integer_variable_shared(right, from, to, memo),
         ),
         IntegerTerm::Multiply(left, right) => IntegerTerm::multiply(
-            substitute_integer_variable(left, from, to),
-            substitute_integer_variable(right, from, to),
+            substitute_integer_variable_shared(left, from, to, memo),
+            substitute_integer_variable_shared(right, from, to, memo),
         ),
-    }
+    };
+    memo.insert(shared.id(), result.clone());
+    result
 }
 
 /// The proposition fragment accepted by checked mathematical-integer
@@ -1538,15 +1571,38 @@ fn integer_work(units: usize) -> Result<(), IntegerPureSubstitutionError> {
 }
 
 fn integer_term_weight(term: &IntegerTerm) -> usize {
+    let mut seen = BTreeSet::new();
+    integer_term_weight_seen(term, &mut seen)
+}
+
+fn integer_term_weight_seen(term: &IntegerTerm, seen: &mut BTreeSet<u64>) -> usize {
     match term {
         IntegerTerm::Constant(value) => value.bits() as usize + 2,
         IntegerTerm::Variable(_) => 1,
-        IntegerTerm::Negate(value) => 1usize.saturating_add(integer_term_weight(value)),
+        IntegerTerm::Negate(value) => {
+            if !seen.insert(value.id()) {
+                0
+            } else {
+                1usize.saturating_add(integer_term_weight_seen(value, seen))
+            }
+        }
         IntegerTerm::Add(left, right)
         | IntegerTerm::Subtract(left, right)
-        | IntegerTerm::Multiply(left, right) => 1usize
-            .saturating_add(integer_term_weight(left))
-            .saturating_add(integer_term_weight(right)),
+        | IntegerTerm::Multiply(left, right) => {
+            let left_weight = if seen.insert(left.id()) {
+                integer_term_weight_seen(left, seen)
+            } else {
+                0
+            };
+            let right_weight = if seen.insert(right.id()) {
+                integer_term_weight_seen(right, seen)
+            } else {
+                0
+            };
+            1usize
+                .saturating_add(left_weight)
+                .saturating_add(right_weight)
+        }
     }
 }
 
@@ -1616,6 +1672,15 @@ fn validate_integer_pure_term(
     term: &IntegerTerm,
     variables: &mut BTreeSet<Variable>,
 ) -> Result<(), IntegerPureSubstitutionError> {
+    let mut seen = BTreeSet::new();
+    validate_integer_pure_term_seen(term, variables, &mut seen)
+}
+
+fn validate_integer_pure_term_seen(
+    term: &IntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+    seen: &mut BTreeSet<u64>,
+) -> Result<(), IntegerPureSubstitutionError> {
     integer_work(1)?;
     match term {
         IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
@@ -1623,12 +1688,23 @@ fn validate_integer_pure_term(
             variables.insert(*variable);
             Ok(())
         }
-        IntegerTerm::Negate(value) => validate_integer_pure_term(value, variables),
+        IntegerTerm::Negate(value) => {
+            if seen.insert(value.id()) {
+                validate_integer_pure_term_seen(value, variables, seen)
+            } else {
+                Ok(())
+            }
+        }
         IntegerTerm::Add(left, right)
         | IntegerTerm::Subtract(left, right)
         | IntegerTerm::Multiply(left, right) => {
-            validate_integer_pure_term(left, variables)?;
-            validate_integer_pure_term(right, variables)
+            if seen.insert(left.id()) {
+                validate_integer_pure_term_seen(left, variables, seen)?;
+            }
+            if seen.insert(right.id()) {
+                validate_integer_pure_term_seen(right, variables, seen)?;
+            }
+            Ok(())
         }
     }
 }
@@ -1897,29 +1973,16 @@ fn substitute_integer_pure_condition(
         ConditionTerm::Constant(value) => return Ok(ConditionTerm::Constant(*value)),
         _ => unreachable!("pure Integer validation precedes substitution"),
     };
-    let left = Box::new(substitute_integer_pure_term(
-        left,
-        from,
-        to,
-        shadowed,
-        renamings,
-        replacement_work,
-    )?);
-    let right = Box::new(substitute_integer_pure_term(
-        right,
-        from,
-        to,
-        shadowed,
-        renamings,
-        replacement_work,
-    )?);
+    let left = substitute_integer_pure_term(left, from, to, shadowed, renamings, replacement_work)?;
+    let right =
+        substitute_integer_pure_term(right, from, to, shadowed, renamings, replacement_work)?;
     Ok(match operator {
-        0 => ConditionTerm::IntegerLessThan(left, right),
-        1 => ConditionTerm::IntegerLessEqual(left, right),
-        2 => ConditionTerm::IntegerGreaterThan(left, right),
-        3 => ConditionTerm::IntegerGreaterEqual(left, right),
-        4 => ConditionTerm::IntegerEqual(left, right),
-        _ => ConditionTerm::IntegerNotEqual(left, right),
+        0 => ConditionTerm::IntegerLessThan(left.into(), right.into()),
+        1 => ConditionTerm::IntegerLessEqual(left.into(), right.into()),
+        2 => ConditionTerm::IntegerGreaterThan(left.into(), right.into()),
+        3 => ConditionTerm::IntegerGreaterEqual(left.into(), right.into()),
+        4 => ConditionTerm::IntegerEqual(left.into(), right.into()),
+        _ => ConditionTerm::IntegerNotEqual(left.into(), right.into()),
     })
 }
 
@@ -1930,6 +1993,27 @@ fn substitute_integer_pure_term(
     shadowed: bool,
     renamings: &BTreeMap<Variable, Variable>,
     replacement_work: usize,
+) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
+    let mut memo = HashMap::new();
+    substitute_integer_pure_term_dag(
+        term,
+        from,
+        to,
+        shadowed,
+        renamings,
+        replacement_work,
+        &mut memo,
+    )
+}
+
+fn substitute_integer_pure_term_dag(
+    term: &IntegerTerm,
+    from: Variable,
+    to: &IntegerTerm,
+    shadowed: bool,
+    renamings: &BTreeMap<Variable, Variable>,
+    replacement_work: usize,
+    memo: &mut HashMap<(u64, u64, u8), IntegerTerm>,
 ) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
     integer_work(1)?;
     match term {
@@ -1947,64 +2031,99 @@ fn substitute_integer_pure_term(
                 Ok(IntegerTerm::Variable(*variable))
             }
         }
-        IntegerTerm::Negate(value) => Ok(IntegerTerm::Negate(Box::new(
-            substitute_integer_pure_term(value, from, to, shadowed, renamings, replacement_work)?,
-        ))),
-        IntegerTerm::Add(left, right) => Ok(IntegerTerm::Add(
-            Box::new(substitute_integer_pure_term(
-                left,
+        IntegerTerm::Negate(value) => {
+            let key = (value.id(), 0, 3);
+            if let Some(result) = memo.get(&key) {
+                return Ok(result.clone());
+            }
+            let result = IntegerTerm::negate(substitute_integer_pure_term_dag(
+                value,
                 from,
                 to,
                 shadowed,
                 renamings,
                 replacement_work,
-            )?),
-            Box::new(substitute_integer_pure_term(
-                right,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
-        )),
-        IntegerTerm::Subtract(left, right) => Ok(IntegerTerm::Subtract(
-            Box::new(substitute_integer_pure_term(
-                left,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
-            Box::new(substitute_integer_pure_term(
-                right,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
-        )),
-        IntegerTerm::Multiply(left, right) => Ok(IntegerTerm::Multiply(
-            Box::new(substitute_integer_pure_term(
-                left,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
-            Box::new(substitute_integer_pure_term(
-                right,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
-        )),
+                memo,
+            )?);
+            memo.insert(key, result.clone());
+            Ok(result)
+        }
+        IntegerTerm::Add(left, right) => substitute_integer_binary_dag(
+            left,
+            right,
+            from,
+            to,
+            shadowed,
+            renamings,
+            replacement_work,
+            memo,
+            0,
+        ),
+        IntegerTerm::Subtract(left, right) => substitute_integer_binary_dag(
+            left,
+            right,
+            from,
+            to,
+            shadowed,
+            renamings,
+            replacement_work,
+            memo,
+            1,
+        ),
+        IntegerTerm::Multiply(left, right) => substitute_integer_binary_dag(
+            left,
+            right,
+            from,
+            to,
+            shadowed,
+            renamings,
+            replacement_work,
+            memo,
+            2,
+        ),
     }
+}
+
+fn substitute_integer_binary_dag(
+    left: &SharedIntegerTerm,
+    right: &SharedIntegerTerm,
+    from: Variable,
+    to: &IntegerTerm,
+    shadowed: bool,
+    renamings: &BTreeMap<Variable, Variable>,
+    replacement_work: usize,
+    memo: &mut HashMap<(u64, u64, u8), IntegerTerm>,
+    operation: u8,
+) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
+    let key = (left.id(), right.id(), operation);
+    if let Some(result) = memo.get(&key) {
+        return Ok(result.clone());
+    }
+    let left = substitute_integer_pure_term_dag(
+        left,
+        from,
+        to,
+        shadowed,
+        renamings,
+        replacement_work,
+        memo,
+    )?;
+    let right = substitute_integer_pure_term_dag(
+        right,
+        from,
+        to,
+        shadowed,
+        renamings,
+        replacement_work,
+        memo,
+    )?;
+    let result = match operation {
+        0 => IntegerTerm::add(left, right),
+        1 => IntegerTerm::subtract(left, right),
+        _ => IntegerTerm::multiply(left, right),
+    };
+    memo.insert(key, result.clone());
+    Ok(result)
 }
 
 fn substitute_bitvector_variable_in_algebraic_term(
@@ -2850,6 +2969,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
     to: &Bitvector32Term,
 ) -> SpecProposition {
     match proposition {
+        SpecProposition::IntegerComparison {
+            left,
+            operator,
+            right,
+        } => SpecProposition::IntegerComparison {
+            left: left.clone(),
+            operator: *operator,
+            right: right.clone(),
+        },
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             SpecProposition::AlgebraicComparison {
                 left: substitute_bitvector_variable_in_spec_algebraic_expression(left, from, to),
@@ -5974,6 +6102,15 @@ fn substitute_pointer_variable_in_spec_proposition(
     to: &Pointer,
 ) -> SpecProposition {
     match proposition {
+        SpecProposition::IntegerComparison {
+            left,
+            operator,
+            right,
+        } => SpecProposition::IntegerComparison {
+            left: left.clone(),
+            operator: *operator,
+            right: right.clone(),
+        },
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             SpecProposition::AlgebraicComparison {
                 left: substitute_pointer_variable_in_spec_algebraic_expression(left, from, to),

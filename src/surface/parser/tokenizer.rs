@@ -179,10 +179,19 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                     index += 1;
                 }
                 let form: String = chars[start..index].iter().collect();
-                let value = form.parse::<u64>().map_err(|_| {
-                    ClickError::new(format!("{position}: number `{form}` does not fit in u64"))
-                })?;
-                if chars.get(index) == Some(&'u') && chars.get(index + 1) == Some(&'8') {
+                let oversized = form.parse::<u64>().is_err();
+                let value = form.parse::<u64>().unwrap_or(u64::MAX);
+                if oversized {
+                    if chars
+                        .get(index)
+                        .is_some_and(|suffix| matches!(*suffix, 'u' | 'i'))
+                    {
+                        return Err(ClickError::new(format!(
+                            "{position}: suffixed literal `{form}` does not fit in u64"
+                        )));
+                    }
+                    tokens.push(Token::BigNumber(form));
+                } else if chars.get(index) == Some(&'u') && chars.get(index + 1) == Some(&'8') {
                     if chars
                         .get(index + 2)
                         .is_some_and(|next| is_ident_continue(*next))
@@ -272,9 +281,9 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
                     {
                         tokens.push(Token::Number(narrow));
                     } else if let Ok(value) = i64::try_from(value) {
-                        tokens.push(Token::Int64Number(value));
+                        tokens.push(Token::UnsuffixedInt64(value));
                     } else {
-                        tokens.push(Token::UInt64Number(value));
+                        tokens.push(Token::UnsuffixedUInt64(value));
                     }
                 }
             }

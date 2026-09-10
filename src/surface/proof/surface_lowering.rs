@@ -2,8 +2,65 @@
 
 use super::pure_theorems::{
     lower_pure_theorem_proposition, lower_pure_theorem_proposition_with_algebraic_values,
+    lower_pure_theorem_proposition_with_integer_values,
 };
 use super::*;
+
+pub(super) fn proposition_uses_integer(
+    proposition: &ClickProposition,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+) -> bool {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            expression_uses_integer(left, integer_values)
+                || expression_uses_integer(right, integer_values)
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            proposition_uses_integer(left, integer_values)
+                || proposition_uses_integer(right, integer_values)
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        }
+        | ClickProposition::RangeAll { body, .. }
+        | ClickProposition::RangeAny { body, .. }
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. } => proposition_uses_integer(body, integer_values),
+        _ => false,
+    }
+}
+
+fn expression_uses_integer(
+    expression: &ContractExpression,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+) -> bool {
+    match expression {
+        ContractExpression::Binding(name) => integer_values.get(name).is_some(),
+        ContractExpression::Negate(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::Index(_, inner) => expression_uses_integer(inner, integer_values),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            expression_uses_integer(left, integer_values)
+                || expression_uses_integer(right, integer_values)
+        }
+        ContractExpression::Let {
+            click_type,
+            value,
+            body,
+            ..
+        } => {
+            matches!(click_type, Some(ClickType::Integer))
+                || expression_uses_integer(value, integer_values)
+                || expression_uses_integer(body, integer_values)
+        }
+        _ => false,
+    }
+}
 
 impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn lower_surface_proposition(
@@ -20,20 +77,33 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                lower_pure_theorem_proposition_with_algebraic_values(
-                    context.claim_label,
-                    surface,
-                    &context.theorem_context.values,
-                    &context.theorem_context.array_refs,
-                    context
-                        .structural_induction_setup
-                        .as_ref()
-                        .map(|setup| &setup.algebraic_values)
-                        .unwrap_or(&BTreeMap::new()),
-                    &context.theorem_context.memory,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                )
+                if proposition_uses_integer(surface, &context.theorem_context.integer_values) {
+                    lower_pure_theorem_proposition_with_integer_values(
+                        context.claim_label,
+                        surface,
+                        &context.theorem_context.values,
+                        &context.theorem_context.integer_values,
+                        &context.theorem_context.array_refs,
+                        &context.theorem_context.memory,
+                        context.predicate_environment,
+                        context.click_function_environment,
+                    )
+                } else {
+                    lower_pure_theorem_proposition_with_algebraic_values(
+                        context.claim_label,
+                        surface,
+                        &context.theorem_context.values,
+                        &context.theorem_context.array_refs,
+                        context
+                            .structural_induction_setup
+                            .as_ref()
+                            .map(|setup| &setup.algebraic_values)
+                            .unwrap_or(&BTreeMap::new()),
+                        &context.theorem_context.memory,
+                        context.predicate_environment,
+                        context.click_function_environment,
+                    )
+                }
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })

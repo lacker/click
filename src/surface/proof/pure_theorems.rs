@@ -100,6 +100,8 @@ pub(in crate::surface) fn verify_concrete_theorem_definition(
 pub(super) struct PureTheoremContext {
     pub(super) memory: CMemory,
     pub(super) values: BTreeMap<String, CValue>,
+    pub(super) integer_values:
+        crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     pub(super) array_refs: ClickArrayRefs,
     pub(super) requires: Vec<Proposition>,
     pub(super) surface_requirements: SurfacePropositionMap,
@@ -862,6 +864,7 @@ pub(super) fn pure_theorem_context(
 ) -> Result<PureTheoremContext, ClickError> {
     let memory = CMemory::new();
     let values = pure_theorem_parameter_values(theorem.parameters());
+    let integer_values = pure_theorem_parameter_integer_values(theorem.parameters());
     let array_refs = pure_theorem_array_refs(theorem.parameters(), &values, &memory);
     let requires = theorem
         .requires()
@@ -873,10 +876,11 @@ pub(super) fn pure_theorem_context(
                     theorem.name()
                 )));
             };
-            lower_pure_theorem_proposition(
+            lower_pure_theorem_proposition_with_integer_values(
                 theorem.name(),
                 proposition,
                 &values,
+                &integer_values,
                 &array_refs,
                 &memory,
                 predicate_environment,
@@ -902,10 +906,31 @@ pub(super) fn pure_theorem_context(
     Ok(PureTheoremContext {
         memory,
         values,
+        integer_values,
         array_refs,
         requires,
         surface_requirements,
     })
+}
+
+fn pure_theorem_parameter_integer_values(
+    parameters: &[FunctionParameter],
+) -> crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression> {
+    parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, parameter)| matches!(parameter.click_type(), ClickType::Integer))
+        .fold(
+            crate::persistent::PersistentMap::default(),
+            |values, (index, parameter)| {
+                values.with_inserted(
+                    parameter.name().to_string(),
+                    crate::kernel::SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(
+                        crate::kernel::Variable(index as u64),
+                    )),
+                )
+            },
+        )
 }
 
 pub(in crate::surface) fn pure_theorem_parameter_values(
@@ -1232,10 +1257,11 @@ fn verify_theorem_ensure(
     )? {
         return Ok(verified);
     }
-    let goal = lower_pure_theorem_proposition(
+    let goal = lower_pure_theorem_proposition_with_integer_values(
         theorem.name(),
         surface_goal,
         &context.values,
+        &context.integer_values,
         &context.array_refs,
         &context.memory,
         predicate_environment,
@@ -1718,10 +1744,11 @@ fn verify_contract_refinement_theorem(
         .try_authoritative_linear_script(proof_tactics)?
         .ok_or_else(refinement_failure)?;
     let checked = proof.completed_proposition()?;
-    let goal = lower_pure_theorem_proposition(
+    let goal = lower_pure_theorem_proposition_with_integer_values(
         theorem.name(),
         surface_goal,
         &context.values,
+        &context.integer_values,
         &context.array_refs,
         &context.memory,
         predicate_environment,
@@ -2061,6 +2088,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::Normalize
         | ProofStep::NormalizeUsing(_)
         | ProofStep::ArithmeticUsing(_)
+        | ProofStep::IntegerCertificate(_)
         | ProofStep::Intro
         | ProofStep::Induct { .. }
         | ProofStep::ApplyInduction { .. }
@@ -2147,7 +2175,9 @@ fn check_pure_script_with_proof(
     let checked = if tactics.iter().any(|tactic| {
         matches!(
             tactic,
-            ProofTactic::ArithmeticUsing(_) | ProofTactic::NormalizeUsing(_)
+            ProofTactic::ArithmeticUsing(_)
+                | ProofTactic::NormalizeUsing(_)
+                | ProofTactic::IntegerCertificate(_)
         )
     }) {
         root.try_authoritative_linear_script(tactics)?
@@ -2893,20 +2923,22 @@ fn lower_pure_simp_after_function_unfold(
             &unfolded_surface_goal,
             &mut opaque_calls,
         );
-        let refreshed_goal = lower_fixed_state_proposition_through_kernel_with_opaque_calls(
-            &unfolded_surface_goal,
-            &assumptions,
-            &context.values,
-            &context.array_refs,
-            &state,
-            &state,
-            None,
-            &RecordedSnapshots::new(),
-            predicate_environment,
-            click_function_environment,
-            &opaque_calls,
-        )
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let refreshed_goal =
+            lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
+                &unfolded_surface_goal,
+                &assumptions,
+                &context.values,
+                &context.array_refs,
+                &context.integer_values,
+                &state,
+                &state,
+                None,
+                &RecordedSnapshots::new(),
+                predicate_environment,
+                click_function_environment,
+                &opaque_calls,
+            )
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
         let Some(plan) = plan_simp_certificate(&refreshed_goal, &assumptions) else {
             continue;
         };
@@ -3024,6 +3056,8 @@ pub(super) fn click_function_applications(
         applications: &mut Vec<ClickFunctionApplication>,
     ) {
         match term {
+            ContractExpression::IntegerLiteral(_) => {}
+            ContractExpression::Negate(inner) => expression(inner, known_facts, applications),
             ContractExpression::ResourceField(_)
             | ContractExpression::AlgebraicVariable { .. }
             | ContractExpression::Binding(_) => {}
@@ -3547,6 +3581,35 @@ pub(super) fn lower_pure_theorem_proposition(
         click_function_environment,
         &BTreeSet::new(),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_pure_theorem_proposition_with_integer_values(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let state = CState::new().with_memory(memory.clone());
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
+        proposition,
+        &PureFactContext::new(),
+        values,
+        array_refs,
+        integer_values,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        predicate_environment,
+        click_function_environment,
+        &BTreeSet::new(),
+    )
+    .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4282,11 +4345,12 @@ fn prove_pure_theorem_tactics(
                         &next_surface_goal,
                         &mut opaque_calls,
                     );
-                    goal = lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+                    goal = lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
                         &next_surface_goal,
                         &assumptions,
                         &values,
                         &context.array_refs,
+                        &context.integer_values,
                         &state,
                         &state,
                         None,

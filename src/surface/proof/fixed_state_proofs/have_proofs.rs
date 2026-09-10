@@ -115,6 +115,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_alge
         values,
         array_refs,
         algebraic_values,
+        &crate::persistent::PersistentMap::default(),
         pre_state,
         state,
         result,
@@ -132,6 +133,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
@@ -149,13 +151,14 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         (!click_function_calls.is_empty()).then(|| assumptions.clone().keep_spec_loads_symbolic());
     let assumptions = symbolic_load_assumptions.as_ref().unwrap_or(assumptions);
     let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
-    let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_values(
+    let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
         proposition,
         states.element_types,
         &states.entry_state,
         states.entry_values,
         states.current_values,
         algebraic_values.clone(),
+        integer_values,
         result,
         recorded_snapshots,
         assumptions,
@@ -195,6 +198,39 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         values,
         array_refs,
         &BTreeMap::new(),
+        &crate::persistent::PersistentMap::default(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+) -> Result<Proposition, String> {
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        &BTreeMap::new(),
+        integer_values,
         pre_state,
         state,
         result,

@@ -87,6 +87,14 @@ fn unify_click_type(
                 validation::describe_click_type(actual)
             )),
         },
+        ClickType::Integer => match actual {
+            ClickType::Integer => Ok(()),
+            _ => Err(format!(
+                "expected {}, got {}",
+                validation::describe_click_type(pattern),
+                validation::describe_click_type(actual)
+            )),
+        },
         ClickType::Algebraic(expected) => {
             let ClickType::Algebraic(actual) = actual else {
                 return Err(format!(
@@ -123,6 +131,7 @@ pub(super) fn instantiate_click_type(
             .cloned()
             .ok_or_else(|| format!("unresolved type parameter `{name}`")),
         ClickType::C(c_type) => Ok(ClickType::C(*c_type)),
+        ClickType::Integer => Ok(ClickType::Integer),
         ClickType::Algebraic(application) => Ok(ClickType::Algebraic(instantiate_algebraic_type(
             application,
             substitution,
@@ -288,7 +297,7 @@ pub(super) fn instantiate_function_for_surface_call_with_variables(
         .zip(arguments)
         .map(|(parameter, argument)| match parameter.click_type() {
             ClickType::C(c_type) => Some(ClickType::C(*c_type)),
-            ClickType::Algebraic(_) | ClickType::Parameter(_) => {
+            ClickType::Algebraic(_) | ClickType::Parameter(_) | ClickType::Integer => {
                 syntactic_expression_type(argument, variables)
             }
         })
@@ -386,7 +395,7 @@ pub(super) fn instantiate_predicate_for_surface_call(
         .zip(arguments)
         .map(|(parameter, argument)| match parameter.click_type() {
             ClickType::C(c_type) => Some(ClickType::C(*c_type)),
-            ClickType::Algebraic(_) | ClickType::Parameter(_) => {
+            ClickType::Algebraic(_) | ClickType::Parameter(_) | ClickType::Integer => {
                 syntactic_expression_type(argument, variables)
             }
         })

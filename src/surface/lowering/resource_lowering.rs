@@ -1041,6 +1041,9 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
     argument: &ContractExpression,
 ) -> Result<CExpression, ClickError> {
     match argument {
+        ContractExpression::IntegerLiteral(_) | ContractExpression::Negate(_) => Err(
+            ClickError::new("mathematical Integer values are not valid C resource arguments"),
+        ),
         ContractExpression::ResourceField(_) => Err(ClickError::new(
             "resource fields are symbolic Click values, not C arguments",
         )),

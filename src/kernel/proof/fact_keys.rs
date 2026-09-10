@@ -12,6 +12,7 @@ use crate::kernel::{
 };
 use num_bigint::BigInt;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 #[cfg(test)]
 thread_local! {
@@ -482,7 +483,7 @@ enum AlphaPropositionKey {
     Exists(Sort, Box<Self>),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaVariableKey {
     Bound(usize),
     Free(Variable),
@@ -621,19 +622,25 @@ enum AlphaConditionKey {
     IntegerComparison(IntegerComparisonOperator, AlphaIntegerKey, AlphaIntegerKey),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-enum AlphaIntegerKey {
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+struct AlphaIntegerKey {
+    nodes: Vec<AlphaIntegerNode>,
+    root: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaIntegerNode {
     Constant(BigInt),
     Variable(AlphaVariableKey),
-    Negate(Box<Self>),
+    Negate(usize),
     Binary {
         operator: IntegerTermBinaryOp,
-        left: Box<Self>,
-        right: Box<Self>,
+        left: usize,
+        right: usize,
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum IntegerTermBinaryOp {
     Add,
     Subtract,
@@ -644,34 +651,54 @@ fn alpha_integer_key(
     term: &IntegerTerm,
     bindings: &mut BTreeMap<Variable, usize>,
 ) -> Option<AlphaIntegerKey> {
+    let mut nodes = Vec::new();
+    let mut memo = HashMap::new();
+    let root = alpha_integer_node(&term.clone().into(), bindings, &mut memo, &mut nodes)?;
+    Some(AlphaIntegerKey { nodes, root })
+}
+
+fn alpha_integer_node(
+    shared: &crate::kernel::SharedIntegerTerm,
+    bindings: &mut BTreeMap<Variable, usize>,
+    memo: &mut HashMap<u64, usize>,
+    nodes: &mut Vec<AlphaIntegerNode>,
+) -> Option<usize> {
+    if let Some(index) = memo.get(&shared.id()) {
+        return Some(*index);
+    }
+    let term = shared.as_ref();
     crate::instrumentation::record_deterministic_work(1);
-    Some(match term {
+    let node = match term {
         IntegerTerm::Constant(value) => {
             crate::instrumentation::record_deterministic_work(value.bits() as usize + 1);
-            AlphaIntegerKey::Constant(value.clone())
+            AlphaIntegerNode::Constant(value.clone())
         }
         IntegerTerm::Variable(variable) => {
-            AlphaIntegerKey::Variable(alpha_variable_key::<false>(*variable, bindings)?)
+            AlphaIntegerNode::Variable(alpha_variable_key::<false>(*variable, bindings)?)
         }
         IntegerTerm::Negate(value) => {
-            AlphaIntegerKey::Negate(Box::new(alpha_integer_key(value, bindings)?))
+            AlphaIntegerNode::Negate(alpha_integer_node(value, bindings, memo, nodes)?)
         }
-        IntegerTerm::Add(left, right) => AlphaIntegerKey::Binary {
+        IntegerTerm::Add(left, right) => AlphaIntegerNode::Binary {
             operator: IntegerTermBinaryOp::Add,
-            left: Box::new(alpha_integer_key(left, bindings)?),
-            right: Box::new(alpha_integer_key(right, bindings)?),
+            left: alpha_integer_node(left, bindings, memo, nodes)?,
+            right: alpha_integer_node(right, bindings, memo, nodes)?,
         },
-        IntegerTerm::Subtract(left, right) => AlphaIntegerKey::Binary {
+        IntegerTerm::Subtract(left, right) => AlphaIntegerNode::Binary {
             operator: IntegerTermBinaryOp::Subtract,
-            left: Box::new(alpha_integer_key(left, bindings)?),
-            right: Box::new(alpha_integer_key(right, bindings)?),
+            left: alpha_integer_node(left, bindings, memo, nodes)?,
+            right: alpha_integer_node(right, bindings, memo, nodes)?,
         },
-        IntegerTerm::Multiply(left, right) => AlphaIntegerKey::Binary {
+        IntegerTerm::Multiply(left, right) => AlphaIntegerNode::Binary {
             operator: IntegerTermBinaryOp::Multiply,
-            left: Box::new(alpha_integer_key(left, bindings)?),
-            right: Box::new(alpha_integer_key(right, bindings)?),
+            left: alpha_integer_node(left, bindings, memo, nodes)?,
+            right: alpha_integer_node(right, bindings, memo, nodes)?,
         },
-    })
+    };
+    let index = nodes.len();
+    nodes.push(node);
+    memo.insert(shared.id(), index);
+    Some(index)
 }
 
 fn alpha_variable_key<const ALLOW_LOADS: bool>(
@@ -1254,4 +1281,36 @@ pub(crate) fn memory_free_quantified_key(
     }
     alpha_proposition_key::<false>(proposition, &mut BTreeMap::new(), &mut 0)
         .map(QuantifiedEquivalenceKey)
+}
+
+#[cfg(test)]
+mod integer_alpha_scaling_tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    #[test]
+    fn alpha_integer_keys_compare_and_hash_linearly_for_shared_dags() {
+        for depth in [8, 16, 32, 64] {
+            let build = |variable| {
+                let mut term = IntegerTerm::var(Variable(variable));
+                for _ in 0..depth {
+                    term = IntegerTerm::add(term.clone(), term.clone());
+                }
+                term
+            };
+            let left =
+                alpha_integer_key(&build(70_000), &mut BTreeMap::from([(Variable(70_000), 0)]))
+                    .unwrap();
+            let right =
+                alpha_integer_key(&build(71_000), &mut BTreeMap::from([(Variable(71_000), 0)]))
+                    .unwrap();
+            assert_eq!(left, right);
+            let mut left_hash = DefaultHasher::new();
+            let mut right_hash = DefaultHasher::new();
+            left.hash(&mut left_hash);
+            right.hash(&mut right_hash);
+            assert_eq!(left_hash.finish(), right_hash.finish());
+        }
+    }
 }

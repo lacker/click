@@ -3923,13 +3923,13 @@ fn forall_integer_application_preserves_exact_guard_and_wide_argument() {
     let bound = IntegerTerm::var(binder);
     let premise = Proposition::ConditionIs(
         ConditionTerm::IntegerGreaterEqual(
-            Box::new(bound.clone()),
-            Box::new(IntegerTerm::constant_i64(0)),
+            bound.clone().into(),
+            IntegerTerm::constant_i64(0).into(),
         ),
         true,
     );
     let conclusion = Proposition::ConditionIs(
-        ConditionTerm::IntegerEqual(Box::new(bound.clone()), Box::new(bound.clone())),
+        ConditionTerm::IntegerEqual(bound.clone().into(), bound.clone().into()),
         true,
     );
     let quantified = Proposition::ForAll {
@@ -3944,13 +3944,13 @@ fn forall_integer_application_preserves_exact_guard_and_wide_argument() {
         .expect("wide integer constant");
     let instantiated_premise = Proposition::ConditionIs(
         ConditionTerm::IntegerGreaterEqual(
-            Box::new(wide.clone()),
-            Box::new(IntegerTerm::constant_i64(0)),
+            wide.clone().into(),
+            IntegerTerm::constant_i64(0).into(),
         ),
         true,
     );
     let instantiated_conclusion = Proposition::ConditionIs(
-        ConditionTerm::IntegerEqual(Box::new(wide.clone()), Box::new(wide)),
+        ConditionTerm::IntegerEqual(wide.clone().into(), wide.into()),
         true,
     );
     let theorem = prove_forall_integer_application(
@@ -3977,8 +3977,8 @@ fn forall_integer_application_rejects_wrong_or_changed_guards() {
     let bound = IntegerTerm::var(binder);
     let guard = Proposition::ConditionIs(
         ConditionTerm::IntegerGreaterEqual(
-            Box::new(bound.clone()),
-            Box::new(IntegerTerm::constant_i64(0)),
+            bound.clone().into(),
+            IntegerTerm::constant_i64(0).into(),
         ),
         true,
     );
@@ -3988,7 +3988,7 @@ fn forall_integer_application_rejects_wrong_or_changed_guards() {
         body: Box::new(Proposition::Implies(
             Box::new(guard),
             Box::new(Proposition::ConditionIs(
-                ConditionTerm::IntegerEqual(Box::new(bound.clone()), Box::new(bound)),
+                ConditionTerm::IntegerEqual(bound.clone().into(), bound.into()),
                 true,
             )),
         )),
@@ -3996,8 +3996,8 @@ fn forall_integer_application_rejects_wrong_or_changed_guards() {
     let value = IntegerTerm::constant_i64(4);
     let changed = Proposition::ConditionIs(
         ConditionTerm::IntegerGreaterEqual(
-            Box::new(value.clone()),
-            Box::new(IntegerTerm::constant_i64(1)),
+            value.clone().into(),
+            IntegerTerm::constant_i64(1).into(),
         ),
         true,
     );
@@ -4009,8 +4009,8 @@ fn forall_integer_application_rejects_wrong_or_changed_guards() {
         sort: Sort::CInt32,
         body: Box::new(Proposition::ConditionIs(
             ConditionTerm::IntegerEqual(
-                Box::new(IntegerTerm::var(binder)),
-                Box::new(IntegerTerm::constant_i64(0)),
+                IntegerTerm::var(binder).into(),
+                IntegerTerm::constant_i64(0).into(),
             ),
             true,
         )),
@@ -4033,8 +4033,8 @@ fn forall_integer_application_renames_nested_forall_and_exists_once() {
             sort: Sort::Integer,
             body: Box::new(Proposition::ConditionIs(
                 ConditionTerm::IntegerEqual(
-                    Box::new(IntegerTerm::var(outer)),
-                    Box::new(IntegerTerm::var(repeated)),
+                    IntegerTerm::var(outer).into(),
+                    IntegerTerm::var(repeated).into(),
                 ),
                 true,
             )),
@@ -4099,8 +4099,8 @@ fn forall_integer_application_rejects_unsupported_carriers_and_nested_sorts() {
             sort: Sort::CInt32,
             body: Box::new(Proposition::ConditionIs(
                 ConditionTerm::IntegerEqual(
-                    Box::new(IntegerTerm::var(binder)),
-                    Box::new(IntegerTerm::constant_i64(0)),
+                    IntegerTerm::var(binder).into(),
+                    IntegerTerm::constant_i64(0).into(),
                 ),
                 true,
             )),
@@ -4159,8 +4159,8 @@ fn nested_integer_forall(depth: usize, capture: bool) -> Proposition {
     let outer = Variable(700);
     let mut body = Proposition::ConditionIs(
         ConditionTerm::IntegerEqual(
-            Box::new(IntegerTerm::var(outer)),
-            Box::new(IntegerTerm::constant_i64(0)),
+            IntegerTerm::var(outer).into(),
+            IntegerTerm::constant_i64(0).into(),
         ),
         true,
     );

@@ -208,6 +208,12 @@ pub(super) fn describe_pure_fact(
         Proposition::ConditionIs(condition, value) => {
             let kind = match condition {
                 ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality",
+                ConditionTerm::IntegerLessThan(_, _) => "Integer less-than",
+                ConditionTerm::IntegerLessEqual(_, _) => "Integer less-or-equal",
+                ConditionTerm::IntegerGreaterThan(_, _) => "Integer greater-than",
+                ConditionTerm::IntegerGreaterEqual(_, _) => "Integer greater-or-equal",
+                ConditionTerm::IntegerEqual(_, _) => "Integer equality",
+                ConditionTerm::IntegerNotEqual(_, _) => "Integer disequality",
                 ConditionTerm::Bitvector32SignedLessThan(_, _) => "signed less-than",
                 ConditionTerm::Bitvector32SignedLessEqual(_, _) => "signed less-or-equal",
                 ConditionTerm::Bitvector32SignedGreaterThan(_, _) => "signed greater-than",
@@ -252,12 +258,6 @@ pub(super) fn describe_pure_fact(
                 }
                 ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
                 ConditionTerm::PointerEqual(_, _) => "pointer equality",
-                ConditionTerm::IntegerLessThan(_, _) => "integer less-than",
-                ConditionTerm::IntegerLessEqual(_, _) => "integer less-or-equal",
-                ConditionTerm::IntegerGreaterThan(_, _) => "integer greater-than",
-                ConditionTerm::IntegerGreaterEqual(_, _) => "integer greater-or-equal",
-                ConditionTerm::IntegerEqual(_, _) => "integer equality",
-                ConditionTerm::IntegerNotEqual(_, _) => "integer inequality",
                 ConditionTerm::Constant(_) => "constant condition",
                 ConditionTerm::Variable(_) => "condition variable",
             };
@@ -1082,6 +1082,7 @@ pub(super) fn describe_binary_c_expression(
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
+        ContractExpression::IntegerLiteral(value) => value.clone(),
         ContractExpression::ResourceField(access) => {
             let mut parts = vec![access.owner.as_str()];
             parts.extend(access.children.iter().map(String::as_str));
@@ -1180,6 +1181,9 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             describe_snapshot_selector(selector),
             describe_contract_expression(expression)
         ),
+        ContractExpression::Negate(expression) => {
+            format!("-{}", describe_contract_expression(expression))
+        }
         ContractExpression::Add(left, right) => {
             describe_binary_contract_expression(left, "+", right)
         }
@@ -1254,6 +1258,31 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             describe_contract_expression(initial),
             describe_contract_expression(body)
         ),
+        ContractExpression::Let {
+            click_type: Some(ClickType::Integer),
+            ..
+        } => {
+            // Retain the type when printing checked evidence and flatten a
+            // chain of lexical aliases into one parenthesized expression.
+            let mut output = String::from("(");
+            let mut body = expression;
+            while let ContractExpression::Let {
+                name,
+                click_type: Some(ClickType::Integer),
+                value,
+                body: next,
+            } = body
+            {
+                output.push_str(&format!(
+                    "let {name}: Integer = {}; ",
+                    describe_contract_expression(value)
+                ));
+                body = next;
+            }
+            output.push_str(&describe_contract_expression(body));
+            output.push(')');
+            output
+        }
         ContractExpression::Let {
             name, value, body, ..
         } => format!(
@@ -1739,6 +1768,24 @@ pub(super) fn describe_pointer_offset(offset: &PointerOffsetTerm) -> String {
 pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
     match condition {
         ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality".to_string(),
+        ConditionTerm::IntegerLessThan(left, right) => {
+            format!("{left:?} < {right:?}")
+        }
+        ConditionTerm::IntegerLessEqual(left, right) => {
+            format!("{left:?} <= {right:?}")
+        }
+        ConditionTerm::IntegerGreaterThan(left, right) => {
+            format!("{left:?} > {right:?}")
+        }
+        ConditionTerm::IntegerGreaterEqual(left, right) => {
+            format!("{left:?} >= {right:?}")
+        }
+        ConditionTerm::IntegerEqual(left, right) => {
+            format!("{left:?} == {right:?}")
+        }
+        ConditionTerm::IntegerNotEqual(left, right) => {
+            format!("{left:?} != {right:?}")
+        }
         ConditionTerm::Constant(value) => value.to_string(),
         ConditionTerm::Variable(variable) => format!("cond{}", variable.0),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
@@ -1858,24 +1905,6 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
                 describe_pointer(left, &[], &[]),
                 describe_pointer(right, &[], &[])
             )
-        }
-        ConditionTerm::IntegerLessThan(left, right) => {
-            format!("{left} < {right}")
-        }
-        ConditionTerm::IntegerLessEqual(left, right) => {
-            format!("{left} <= {right}")
-        }
-        ConditionTerm::IntegerGreaterThan(left, right) => {
-            format!("{left} > {right}")
-        }
-        ConditionTerm::IntegerGreaterEqual(left, right) => {
-            format!("{left} >= {right}")
-        }
-        ConditionTerm::IntegerEqual(left, right) => {
-            format!("{left} == {right}")
-        }
-        ConditionTerm::IntegerNotEqual(left, right) => {
-            format!("{left} != {right}")
         }
     }
 }

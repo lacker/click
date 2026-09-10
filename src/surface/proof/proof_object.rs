@@ -399,6 +399,9 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
         ProofTactic::ArithmeticUsing(premises) => {
             Some(ProofStep::ArithmeticUsing(premises.clone()))
         }
+        ProofTactic::IntegerCertificate(certificate) => {
+            Some(ProofStep::IntegerCertificate(certificate.clone()))
+        }
         ProofTactic::NormalizeUsing(premises) => Some(ProofStep::NormalizeUsing(premises.clone())),
         ProofTactic::Intro => Some(ProofStep::Intro),
         ProofTactic::Split => Some(ProofStep::Split),

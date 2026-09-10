@@ -620,7 +620,8 @@ fn collect_contract_expression_binding_names(
     match expression {
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
-        | ContractExpression::Binding(_) => {}
+        | ContractExpression::Binding(_)
+        | ContractExpression::IntegerLiteral(_) => {}
         ContractExpression::AlgebraicConstructor { arguments, .. } => {
             for argument in arguments {
                 collect_contract_expression_binding_names(argument, names);
@@ -651,6 +652,7 @@ fn collect_contract_expression_binding_names(
         | ContractExpression::At {
             expression: base, ..
         }
+        | ContractExpression::Negate(base)
         | ContractExpression::BitwiseNot(base) => {
             collect_contract_expression_binding_names(base, names);
         }
@@ -1108,7 +1110,12 @@ fn rewrite_contract_expression_exact(
     match expression {
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
-        | ContractExpression::Binding(_) => (expression.clone(), false),
+        | ContractExpression::Binding(_)
+        | ContractExpression::IntegerLiteral(_) => (expression.clone(), false),
+        ContractExpression::Negate(inner) => {
+            let (inner, changed) = unary(inner);
+            (ContractExpression::Negate(Box::new(inner)), changed)
+        }
         ContractExpression::AlgebraicConstructor {
             algebraic_type,
             variant,
@@ -1729,11 +1736,38 @@ pub(in crate::surface) fn apply_contract_lets_to_expression(
     expression: ContractExpression,
     bindings: &[ContractLetBinding],
 ) -> Result<ContractExpression, String> {
-    let referenced_names = contract_expression_referenced_names(&expression);
-    let referenced_bindings = bindings
+    // Integer lets are deliberately retained as lexical aliases until the
+    // mathematical lowering pass. Resolve the transitive dependency closure
+    // with an indexed worklist: the old fixed-point loop rescanned every
+    // binding once per dependency depth, which made a linear alias chain
+    // quadratic before lowering even had a chance to preserve sharing.
+    let binding_indices = bindings
         .iter()
-        .filter(|binding| binding.value().is_some() && referenced_names.contains(&binding.name))
-        .cloned()
+        .enumerate()
+        .filter_map(|(index, binding)| binding.value().map(|_| (binding.name.as_str(), index)))
+        .collect::<BTreeMap<_, _>>();
+    let mut referenced_names = contract_expression_referenced_names(&expression);
+    let mut pending = referenced_names.iter().cloned().collect::<Vec<_>>();
+    let mut referenced_indices = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        let Some(&index) = binding_indices.get(name.as_str()) else {
+            continue;
+        };
+        if !referenced_indices.insert(index) {
+            continue;
+        }
+        let Some(value) = bindings[index].value() else {
+            continue;
+        };
+        for dependency in contract_expression_referenced_names(value) {
+            if referenced_names.insert(dependency.clone()) {
+                pending.push(dependency);
+            }
+        }
+    }
+    let referenced_bindings = referenced_indices
+        .into_iter()
+        .map(|index| bindings[index].clone())
         .collect::<Vec<_>>();
     let substitutions = contract_let_substitutions(bindings);
     let expression = substitute_contract_expression(&expression, &substitutions)?;
@@ -1785,7 +1819,10 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
-        ContractExpression::ResourceField(_) => {}
+        ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => {}
+        ContractExpression::Negate(inner) => {
+            collect_contract_expression_referenced_names(inner, names);
+        }
         ContractExpression::AlgebraicVariable { name, .. } => {
             names.insert(name.clone());
         }
@@ -1974,9 +2011,16 @@ pub(in crate::surface) fn contract_let_substitutions(
     bindings
         .iter()
         .filter_map(|binding| {
-            binding
-                .value()
-                .map(|value| (binding.name.clone(), value.clone()))
+            // Mathematical lets remain abbreviations until Integer lowering.
+            // Substituting them here duplicates every referenced tree and
+            // makes repeated binary let chains exponential in source size.
+            (binding.click_type != Some(ClickType::Integer))
+                .then(|| {
+                    binding
+                        .value()
+                        .map(|value| (binding.name.clone(), value.clone()))
+                })
+                .flatten()
         })
         .collect()
 }
@@ -1986,7 +2030,12 @@ pub(in crate::surface) fn substitute_contract_expression(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
-        ContractExpression::ResourceField(_) => Ok(expression.clone()),
+        ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => {
+            Ok(expression.clone())
+        }
+        ContractExpression::Negate(inner) => Ok(ContractExpression::Negate(Box::new(
+            substitute_contract_expression(inner, substitutions)?,
+        ))),
         ContractExpression::AlgebraicVariable { name, .. } => Ok(substitutions
             .get(name)
             .cloned()
@@ -2419,6 +2468,28 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
 ) -> Option<CExpression> {
     match expression {
         ContractExpression::ResourceField(_) => None,
+        ContractExpression::IntegerLiteral(value) => {
+            let value = value.parse::<u64>().ok()?;
+            Some(CExpression::Value(if value <= i32::MAX as u64 {
+                int32(value as u32)
+            } else if value <= i64::MAX as u64 {
+                CValue::Int64(Bitvector32Term::Int64Constant(value as i64))
+            } else {
+                CValue::UInt64(Bitvector32Term::UInt64Constant(value))
+            }))
+        }
+        ContractExpression::Negate(inner) => {
+            if let ContractExpression::IntegerLiteral(value) = inner.as_ref()
+                && let Ok(value) = value.parse::<u64>()
+                && value <= (i32::MAX as u64) + 1
+            {
+                return Some(CExpression::Value(int32(0u32.wrapping_sub(value as u32))));
+            }
+            Some(CExpression::Subtract(
+                Box::new(CExpression::Value(int32(0))),
+                Box::new(contract_expression_as_c_fragment(inner)?),
+            ))
+        }
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,
@@ -2508,7 +2579,8 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
-        ContractExpression::ResourceField(_) => None,
+        ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => None,
+        ContractExpression::Negate(_) => None,
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,

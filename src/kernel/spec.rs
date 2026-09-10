@@ -153,6 +153,37 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     match proposition {
+        SpecProposition::IntegerComparison {
+            left,
+            operator,
+            right,
+        } => {
+            let left = lower_spec_integer_expression(left, budget)?;
+            let right = lower_spec_integer_expression(right, budget)?;
+            let condition = match operator {
+                IntegerComparisonOperator::Equal => ConditionTerm::integer_equal(left, right),
+                IntegerComparisonOperator::NotEqual => {
+                    ConditionTerm::integer_not_equal(left, right)
+                }
+                IntegerComparisonOperator::LessThan => {
+                    ConditionTerm::integer_less_than(left, right)
+                }
+                IntegerComparisonOperator::LessEqual => {
+                    ConditionTerm::integer_less_equal(left, right)
+                }
+                IntegerComparisonOperator::GreaterThan => {
+                    ConditionTerm::integer_greater_than(left, right)
+                }
+                IntegerComparisonOperator::GreaterEqual => {
+                    ConditionTerm::integer_greater_equal(left, right)
+                }
+            };
+            Ok(vec![SpecPropositionPath {
+                proposition: Proposition::ConditionIs(condition, true),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             lower_spec_algebraic_comparison_at_state(
                 state,
@@ -604,6 +635,23 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             }])
         }
     }
+}
+
+fn lower_spec_integer_expression(
+    expression: &SpecIntegerExpression,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<IntegerTerm> {
+    budget.consume_expression_step()?;
+    let SpecIntegerExpression::Term(term) = expression;
+    let work = term.as_const().map_or(1, |value| {
+        usize::try_from(value.bits())
+            .unwrap_or(usize::MAX)
+            .saturating_add(1)
+    });
+    if crate::instrumentation::deadline_exceeded_with_work(work) {
+        return Err(ExecutionLimit::Deadline);
+    }
+    Ok(term.clone())
 }
 
 #[allow(clippy::too_many_arguments)]

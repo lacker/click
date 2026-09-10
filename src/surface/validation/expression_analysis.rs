@@ -57,6 +57,8 @@ pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &st
 
 pub(in crate::surface) fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::IntegerLiteral(_) => false,
+        ContractExpression::Negate(inner) => contains_old_expression(inner),
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => false,
@@ -130,6 +132,8 @@ pub(in crate::surface) fn contains_old_expression(expression: &ContractExpressio
 
 pub(in crate::surface) fn contains_resource_count(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::IntegerLiteral(_) => false,
+        ContractExpression::Negate(inner) => contains_resource_count(inner),
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => false,
@@ -247,6 +251,8 @@ pub(in crate::surface) fn collect_resource_count_families(
 ) {
     fn collect_expression(expression: &ContractExpression, families: &mut BTreeSet<String>) {
         match expression {
+            ContractExpression::IntegerLiteral(_) => {}
+            ContractExpression::Negate(inner) => collect_expression(inner, families),
             ContractExpression::ResourceField(_)
             | ContractExpression::AlgebraicVariable { .. }
             | ContractExpression::Binding(_) => {}
@@ -486,6 +492,8 @@ pub(in crate::surface) fn proposition_contains_old_expression(
 
 pub(in crate::surface) fn contains_at_expression(expression: &ContractExpression) -> bool {
     match expression {
+        ContractExpression::IntegerLiteral(_) => false,
+        ContractExpression::Negate(inner) => contains_at_expression(inner),
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => false,
@@ -623,6 +631,8 @@ pub(in crate::surface) fn collect_click_function_calls(
     calls: &mut BTreeSet<String>,
 ) {
     match expression {
+        ContractExpression::IntegerLiteral(_) => {}
+        ContractExpression::Negate(inner) => collect_click_function_calls(inner, calls),
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => {}
@@ -1080,6 +1090,8 @@ fn validate_recursive_calls_in_expression(
         )
     };
     match expression {
+        ContractExpression::IntegerLiteral(_) => Ok(()),
+        ContractExpression::Negate(inner) => recurse(inner, lower_bounds, structural_subterms),
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => Ok(()),

@@ -3606,6 +3606,7 @@ fn spec_proposition_reads_current_parameter(
     parameter_name: &str,
 ) -> bool {
     match proposition {
+        SpecProposition::IntegerComparison { .. } => false,
         SpecProposition::AlgebraicComparison { left, right, .. } => {
             spec_algebraic_expression_reads_current_parameter(left, parameter_name)
                 || spec_algebraic_expression_reads_current_parameter(right, parameter_name)
@@ -4199,6 +4200,7 @@ fn spec_proposition_current_parameter_accesses(
     unknown_read: &mut bool,
 ) {
     match proposition {
+        SpecProposition::IntegerComparison { .. } => {}
         SpecProposition::AlgebraicComparison { left, right, .. } => {
             spec_algebraic_expression_current_parameter_accesses(
                 left,

@@ -519,6 +519,9 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::SimpUsing(simp) => {
             write_using_premises(output, "simp()", &simp.premises, indent)
         }
+        ProofTactic::IntegerCertificate(certificate) => {
+            write_integer_certificate(output, certificate, indent)
+        }
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
         ProofTactic::CloseInvariantsBy(body) => {
             line(output, &prefix, "close_invariants by {");
@@ -578,6 +581,69 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         | ProofTactic::ExecuteUntil(_)
         | ProofTactic::Simp => unreachable!("certificate validation rejects this tactic"),
     }
+}
+
+fn write_integer_certificate(output: &mut String, certificate: &IntegerCertificate, indent: usize) {
+    let prefix = "    ".repeat(indent);
+    line(output, &prefix, "integer_certificate {");
+    let body = "    ".repeat(indent + 1);
+    for node in &certificate.nodes {
+        let text = match node {
+            IntegerCertificateNode::Premise {
+                index,
+                proposition,
+                result,
+            } => format!(
+                "premise {index}: {} => {};",
+                source_click_proposition(proposition),
+                source_click_proposition(result)
+            ),
+            IntegerCertificateNode::Scale {
+                source,
+                coefficient,
+                result,
+            } => format!(
+                "scale {source} by {} => {};",
+                describe_contract_expression(coefficient),
+                source_click_proposition(result)
+            ),
+            IntegerCertificateNode::Add {
+                left,
+                right,
+                result,
+            } => format!(
+                "add {left}, {right} => {};",
+                source_click_proposition(result)
+            ),
+            IntegerCertificateNode::EqualityToLessEqual {
+                source,
+                reverse,
+                result,
+            } => format!(
+                "eq_to_le {source}{} => {};",
+                if *reverse { " reverse" } else { "" },
+                source_click_proposition(result)
+            ),
+            IntegerCertificateNode::EqualityFromBounds {
+                lower,
+                upper,
+                result,
+            } => format!(
+                "eq_from_bounds {lower}, {upper} => {};",
+                source_click_proposition(result)
+            ),
+            IntegerCertificateNode::Trivial { result } => {
+                format!("trivial => {};", source_click_proposition(result))
+            }
+        };
+        line(output, &body, &text);
+    }
+    line(
+        output,
+        &body,
+        &format!("conclusion {};", certificate.conclusion),
+    );
+    line(output, &prefix, "}");
 }
 
 fn write_proof(output: &mut String, proof: &SourceProof, indent: usize) {

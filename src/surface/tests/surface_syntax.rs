@@ -1,6 +1,158 @@
 use super::*;
 
 #[test]
+fn integer_parameter_preserves_machine_literal_and_cast_behavior() {
+    for (c_type, expression) in [
+        ("int32", "-2147483648"),
+        ("int64", "2147483648"),
+        ("int64", "-2147483649"),
+        ("uint64", "18446744073709551615"),
+        ("uint32", "(uint32) 1"),
+        ("uint32", "(uint32) (-1)"),
+        ("uint32", "(uint32) (1 + 2)"),
+    ] {
+        for extra in ["", ", unused: Integer"] {
+            let source = format!(
+                "theorem compatibility(x: {c_type}{extra}) {{
+                    requires x == {expression};
+                    ensures x == {expression} by {{ assumption(); }}
+                }}"
+            );
+            verify_click_theorems(&source)
+                .unwrap_or_else(|error| panic!("{source}: {}", error.message()));
+        }
+    }
+}
+
+#[test]
+fn integer_symbolic_aliases_keep_simple_verification_bounded() {
+    let mut measured = Vec::new();
+    for depth in [8, 16, 32, 64] {
+        let mut source = String::from("theorem aliases(x: Integer) { let a0: Integer = x;\n");
+        for index in 1..=depth {
+            source.push_str(&format!(
+                "let a{index}: Integer = a{} + a{};\n",
+                index - 1,
+                index - 1
+            ));
+        }
+        source.push_str(&format!(
+            "requires a{depth} == a{depth};\n\
+             ensures a{depth} == a{depth} by {{ assumption(); }} }}"
+        ));
+        let (result, work) =
+            crate::instrumentation::measure_deterministic_work(|| verify_click_theorems(&source));
+        result.unwrap_or_else(|error| panic!("depth {depth}: {}", error.message()));
+        measured.push(work);
+    }
+    for pair in measured.windows(2) {
+        assert!(
+            pair[1] <= 3 * pair[0],
+            "alias traversal must not expand the tree: {measured:?}"
+        );
+    }
+}
+
+#[test]
+fn integer_simp_expansion_rechecks_without_smart_search() {
+    for (parameters, requires, claim, proof) in [
+        ("x: Integer", "", "x + 1 > x", "simp();"),
+        (
+            "x: Integer, y: Integer",
+            "requires x <= y; requires y <= x;",
+            "x == y",
+            "simp() using { x <= y; y <= x; }",
+        ),
+    ] {
+        let source = format!(
+            "theorem expansion({parameters}) {{ {requires} ensures {claim} by {{ {proof} }} }}"
+        );
+        let verified = verify_click_theorems(&source).unwrap();
+        let expanded = verified[0].expanded_proof_source().unwrap();
+        assert!(expanded.contains("integer_certificate"), "{expanded}");
+        assert!(!expanded.contains("simp"), "{expanded}");
+        let rechecked = source.replace(&format!("by {{ {proof} }}"), &expanded);
+        verify_click_theorems(&rechecked)
+            .unwrap_or_else(|error| panic!("{rechecked}: {}", error.message()));
+    }
+}
+
+#[test]
+fn integer_source_certificates_reject_missing_facts_and_tampered_nodes() {
+    for (requires, claim, nodes, conclusion, diagnostic) in [
+        (
+            "",
+            "x <= y",
+            "premise 0: x <= y => x <= y;",
+            0,
+            "not exactly available",
+        ),
+        (
+            "requires x <= y;",
+            "x <= y",
+            "premise 2147483647: x <= y => x <= y;",
+            0,
+            "indices must be contiguous",
+        ),
+        (
+            "requires x <= y;",
+            "x < y",
+            "premise 0: x <= y => x < y;",
+            0,
+            "NodeResultMismatch",
+        ),
+        (
+            "requires x <= y;",
+            "y <= x",
+            "premise 0: x <= y => x <= y; scale 0 by -1 => y <= x;",
+            1,
+            "InvalidCoefficient",
+        ),
+        (
+            "requires x <= y;",
+            "x <= y",
+            "premise 0: x <= y => x <= y; add 0, 9 => x <= y;",
+            1,
+            "InvalidNodeReference",
+        ),
+    ] {
+        let source = format!(
+            "theorem tamper(x: Integer, y: Integer) {{ {requires} ensures {claim} by {{ integer_certificate {{ {nodes} conclusion {conclusion}; }} }} }}"
+        );
+        let error = verify_click_theorems(&source).expect_err("tampered evidence must fail");
+        assert!(error.message().contains(diagnostic), "{}", error.message());
+    }
+    verify_click_theorems("theorem zero_premises() { ensures 0 == 0 by { integer_certificate { trivial => 0 == 0; conclusion 0; } } }").unwrap();
+}
+
+#[test]
+fn integer_alias_certificates_preserve_types_and_linear_source_on_expansion() {
+    for depth in [8, 16, 32, 64] {
+        let mut source = String::from("theorem aliases(x: Integer) { let a0: Integer = x;\n");
+        for index in 1..=depth {
+            source.push_str(&format!(
+                "let a{index}: Integer = a{} + a{};\n",
+                index - 1,
+                index - 1
+            ));
+        }
+        source.push_str(&format!(
+            "ensures a{depth} + 1 > a{depth} by {{ simp(); }} }}"
+        ));
+        let verified = verify_click_theorems(&source).unwrap();
+        let expanded = verified[0].expanded_proof_source().unwrap();
+        assert!(expanded.contains("integer_certificate"), "{expanded}");
+        assert!(
+            expanded.len() < 400 * (depth + 1),
+            "expansion must retain aliases"
+        );
+        let rewritten = source.replace("by { simp(); }", &expanded);
+        verify_click_theorems(&rewritten)
+            .unwrap_or_else(|error| panic!("depth {depth}: {}", error.message()));
+    }
+}
+
+#[test]
 fn parser_deep_const_rejects_qualification_beyond_first_pointer_level() {
     for spelling in [
         "const int **",
@@ -391,6 +543,32 @@ fn parses_pure_theorem_definition() {
     assert_eq!(theorem.requires()[0].label(), Some("input_nonnegative"));
     assert_eq!(theorem.ensures().len(), 1);
     assert_eq!(theorem.ensures()[0].name(), Some("output_nonnegative"));
+}
+
+#[test]
+fn parses_integer_theorem_parameters_and_keeps_decimal_spelling() {
+    let source = r#"
+        theorem exact_integer(x: Integer) {
+            ensures x == 100000000000000000000000000000000000001;
+        }
+    "#;
+    let file = parse(source).expect("Integer theorem should parse");
+    let theorem = &file.theorem_definitions()[0];
+    assert_eq!(theorem.parameters()[0].click_type(), &ClickType::Integer);
+    let Ensure::Proposition(ClickProposition::Comparison { right, .. }) =
+        theorem.ensures()[0].ensure()
+    else {
+        panic!("expected Integer comparison");
+    };
+    assert!(
+        matches!(right, ContractExpression::IntegerLiteral(value) if value == "100000000000000000000000000000000000001")
+    );
+}
+
+#[test]
+fn rejects_integer_as_an_algebraic_type_name() {
+    let error = parse("spec enum Integer { zero }").expect_err("Integer is reserved");
+    assert!(error.message().contains("reserved"));
 }
 
 #[test]

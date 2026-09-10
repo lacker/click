@@ -463,6 +463,42 @@ id = "language.word.address"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.add"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.conclusion"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.eq_from_bounds"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.eq_to_le"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.integer_certificate"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.premise"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.reverse"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.scale"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.trivial"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.aligned"
 path = "reference/language/grammar.md#word-index"
 
@@ -1233,6 +1269,10 @@ id = "tactic.arithmetic"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
+id = "tactic.integer_certificate"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
 id = "tactic.rewrite"
 path = "reference/tactics/index.md#proposition-reasoning"
 
@@ -1475,6 +1515,9 @@ id = "tactic-form.arithmetic"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.arithmetic-using"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.integer-certificate"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.intro"

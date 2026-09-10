@@ -57,6 +57,15 @@ documentation inventory keep the following accepted words synchronized.
 | `apply`, `have`, `if`, `cases`, `both`, `branch`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
+| `integer_certificate` | Starts an explicit mathematical-Integer affine certificate. |
+| `premise` | Names an exact premise node in an Integer certificate. |
+| `scale` | Scales an earlier Integer certificate node by an exact decimal coefficient. |
+| `add` | Adds two earlier Integer certificate nodes. |
+| `eq_to_le` | Converts an equality certificate node to a non-strict bound. |
+| `eq_from_bounds` | Closes an equality from opposite non-strict bounds. |
+| `trivial` | Checks a context-free Integer affine identity. |
+| `conclusion` | Selects the final node of an Integer certificate. |
+| `reverse` | Selects the reverse equality direction for `eq_to_le`. |
 | `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |
 | `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. |
 | `function`, `loop`, `statement`, `entry`, `exit` | Program-region and program-point selectors. |

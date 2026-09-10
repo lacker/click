@@ -10,6 +10,9 @@ mod execution;
 mod fact_keys;
 pub(crate) mod fact_reasoning;
 mod facts;
+pub(crate) mod integer_arithmetic;
+#[cfg(test)]
+mod integer_arithmetic_soundness_tests;
 mod object;
 mod obligations;
 mod storage;

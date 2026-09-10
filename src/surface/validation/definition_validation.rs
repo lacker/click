@@ -637,9 +637,15 @@ fn validate_theorem_definition(
             click_function_types,
             &format!("requires clause in theorem `{}`", theorem.name()),
         )?;
-        validate_proposition_expression_types(
+        validate_theorem_proposition_expression_types(
             proposition,
             &variables,
+            &theorem
+                .parameters()
+                .iter()
+                .filter(|parameter| matches!(parameter.click_type(), ClickType::Integer))
+                .map(|parameter| parameter.name().to_string())
+                .collect(),
             click_function_types,
             &format!("requires clause in theorem `{}`", theorem.name()),
         )?;
@@ -665,9 +671,15 @@ fn validate_theorem_definition(
             click_function_types,
             &format!("ensures clause in theorem `{}`", theorem.name()),
         )?;
-        validate_proposition_expression_types(
+        validate_theorem_proposition_expression_types(
             proposition,
             &variables,
+            &theorem
+                .parameters()
+                .iter()
+                .filter(|parameter| matches!(parameter.click_type(), ClickType::Integer))
+                .map(|parameter| parameter.name().to_string())
+                .collect(),
             click_function_types,
             &format!("ensures clause in theorem `{}`", theorem.name()),
         )?;
@@ -1429,6 +1441,16 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::IntegerLiteral(_) => Ok(()),
+        ContractExpression::Negate(inner) => collect_resource_fact_reads_from_contract_expression(
+            inner,
+            predicate_definitions,
+            click_function_definitions,
+            visited_predicates,
+            visited_functions,
+            reads,
+            resource_name,
+        ),
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => Ok(()),

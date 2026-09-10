@@ -147,6 +147,8 @@ pub(crate) enum PropositionCloseError {
     ConditionalNormalization(super::fact_reasoning::ConditionalNormalizationError),
     ArithmeticPremiseUnavailable(usize),
     Arithmetic(super::fact_reasoning::ArithmeticCheckError),
+    IntegerArithmeticPremiseUnavailable(usize),
+    IntegerArithmetic(super::integer_arithmetic::IntegerArithmeticCheckError),
     ExpectedIntroduction(Proposition),
     ExpectedConjunction(Proposition),
     MissingConjuncts(Proposition, Proposition),
@@ -678,6 +680,27 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         }
         super::fact_reasoning::check_signed_affine_arithmetic(goal.proposition(), premises)
             .map_err(PropositionCloseError::Arithmetic)?;
+        Ok(self.closed_focused())
+    }
+
+    pub(crate) fn apply_integer_arithmetic(
+        &self,
+        certificate: &super::integer_arithmetic::IntegerArithmeticCertificate,
+        premises: &[Proposition],
+    ) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        for (index, premise) in premises.iter().enumerate() {
+            if !facts.exact_available_across_effects(premise, &[]) {
+                return Err(PropositionCloseError::IntegerArithmeticPremiseUnavailable(
+                    index,
+                ));
+            }
+        }
+        certificate
+            .check(goal.proposition(), premises)
+            .map_err(PropositionCloseError::IntegerArithmetic)?;
         Ok(self.closed_focused())
     }
 

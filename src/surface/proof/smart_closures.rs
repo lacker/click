@@ -1,8 +1,51 @@
 //! Smart closure search and linear script interpretation.
 
 use super::*;
+use crate::kernel::proof::integer_arithmetic::{
+    IntegerArithmeticCertificate, IntegerArithmeticNode, integer_affine_claim,
+};
 use crate::kernel::{CFloatClassification, CFloatCondition};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
+
+fn integer_plan_to_surface_certificate(
+    plan: &IntegerArithmeticCertificate,
+    premise_pairs: &[(Proposition, ClickProposition)],
+    surface_goal: &ClickProposition,
+) -> Option<IntegerCertificate> {
+    let mut source_indices = BTreeMap::new();
+    let nodes = plan
+        .nodes
+        .iter()
+        .map(|node| match node {
+            IntegerArithmeticNode::Premise { index, .. } => {
+                let surface = premise_pairs.get(*index)?.1.clone();
+                Some(IntegerCertificateNode::Premise {
+                    index: {
+                        let next = source_indices.len();
+                        *source_indices.entry(*index).or_insert(next)
+                    },
+                    proposition: surface.clone(),
+                    result: surface,
+                })
+            }
+            IntegerArithmeticNode::EqualityFromBounds { lower, upper, .. } => {
+                Some(IntegerCertificateNode::EqualityFromBounds {
+                    lower: *lower,
+                    upper: *upper,
+                    result: surface_goal.clone(),
+                })
+            }
+            IntegerArithmeticNode::Trivial { .. } => Some(IntegerCertificateNode::Trivial {
+                result: surface_goal.clone(),
+            }),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(IntegerCertificate {
+        nodes,
+        conclusion: plan.conclusion,
+    })
+}
 
 fn kernel_upper_bound_split_candidate(
     proposition: &Proposition,
@@ -261,6 +304,29 @@ impl<'a> Proof<'a> {
         introduced_surfaces: &[ClickProposition],
         allow_function_unfold: bool,
     ) -> Result<Option<Self>, ClickError> {
+        // Integer arithmetic has its own compact, locally checked evidence
+        // path. Keep it ahead of the legacy signed arithmetic derivation so
+        // a mathematical Integer goal cannot accidentally enter the machine
+        // overflow checker.
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(goal) = self.goal()
+            && let Some(plan) = plan_integer_affine_certificate(goal, &[])
+            && plan.nodes.len() == 1
+            && matches!(
+                plan.nodes.first(),
+                Some(IntegerArithmeticNode::Trivial { .. })
+            )
+        {
+            let certificate = IntegerCertificate {
+                nodes: vec![IntegerCertificateNode::Trivial {
+                    result: surface_goal.clone(),
+                }],
+                conclusion: 0,
+            };
+            if let Ok(proof) = self.apply_step(ProofStep::IntegerCertificate(certificate)) {
+                return Ok(Some(proof));
+            }
+        }
         if let Some(proof) = self.try_goal_conditional_normalization() {
             return Ok(Some(proof));
         }
@@ -300,6 +366,22 @@ impl<'a> Proof<'a> {
         })();
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
+        }
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(goal) = self.goal()
+            && !anchored_pairs.is_empty()
+            && let Some(plan) = plan_integer_affine_certificate(
+                goal,
+                &anchored_pairs
+                    .iter()
+                    .map(|(kernel, _)| kernel.clone())
+                    .collect::<Vec<_>>(),
+            )
+            && let Some(certificate) =
+                integer_plan_to_surface_certificate(&plan, &anchored_pairs, surface_goal)
+            && let Ok(proof) = self.apply_step(ProofStep::IntegerCertificate(certificate))
+        {
+            return Ok(Some(proof));
         }
         if let Some(anchored) = self
             .try_outcome_anchored_order_transitivity(&anchored_pairs)
@@ -3112,6 +3194,23 @@ impl<'a> Proof<'a> {
             .iter()
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
+        if let Some(surface_goal) = proof.surface_goal()
+            && let Some(integer_values) = match proof.context.as_ref() {
+                ProofContext::Pure(context) => Some(&context.theorem_context.integer_values),
+                _ => None,
+            }
+            && super::surface_lowering::proposition_uses_integer(surface_goal, integer_values)
+            && restricted
+                .iter()
+                .all(|premise| integer_affine_claim(premise).is_some())
+            && let Some(plan) = plan_integer_affine_certificate(goal, &restricted)
+            && let Some(certificate) =
+                integer_plan_to_surface_certificate(&plan, &premise_pairs, surface_goal)
+            && let Ok(closed) = proof.apply_step(ProofStep::IntegerCertificate(certificate))
+            && closed.is_complete()
+        {
+            return Some(closed);
+        }
         let theorem_application_closes_goal =
             !matches!(self.context.as_ref(), ProofContext::Execution(_));
         plan_simp_certificate(goal, &assumptions_from_propositions(&restricted))

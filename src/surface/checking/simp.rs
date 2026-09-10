@@ -1,7 +1,13 @@
 use super::*;
+use crate::kernel::proof::integer_arithmetic::{
+    IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
+    integer_affine_claim,
+};
 use crate::kernel::{
     AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, PureFunctionArgument,
 };
+use num_bigint::BigInt;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface) enum SimpProposition {
@@ -1687,6 +1693,94 @@ pub(in crate::surface) fn check_simp_certificate(
     }
 }
 
+/// Plan the first context-free and bound-closing fragment of Integer `simp`.
+///
+/// The caller must pass only propositions already selected from the current
+/// proof context. This function performs no ambient fact lookup; the proof
+/// object wrapper remains responsible for exact availability checks before
+/// applying the returned certificate.
+pub(in crate::surface) fn plan_integer_affine_certificate(
+    goal: &Proposition,
+    premises: &[Proposition],
+) -> Option<IntegerArithmeticCertificate> {
+    let expected = integer_affine_claim(goal)?;
+    if claim_is_integer_trivial(&expected) {
+        return Some(IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::Trivial { result: expected }],
+            conclusion: 0,
+        });
+    }
+    if let Some(index) = premises.iter().position(|premise| premise == goal) {
+        return Some(IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::Premise {
+                index,
+                result: expected,
+            }],
+            conclusion: 0,
+        });
+    }
+    if expected.relation != IntegerAffineRelation::Equal {
+        return None;
+    }
+
+    // Index normalized non-strict premise forms once. The key contains only
+    // Variable identities and exact coefficients, never deep Integer terms.
+    let mut bounds = BTreeMap::new();
+    for (index, premise) in premises.iter().enumerate() {
+        let Some(claim) = integer_affine_claim(premise) else {
+            continue;
+        };
+        if claim.relation == IntegerAffineRelation::LessEqual {
+            bounds
+                .entry((claim.terms.clone(), claim.constant.clone()))
+                .or_insert(index);
+        }
+    }
+    let lower_key = (expected.terms.clone(), expected.constant.clone());
+    let mut opposite_terms = BTreeMap::new();
+    for (variable, coefficient) in &expected.terms {
+        opposite_terms.insert(*variable, -coefficient);
+    }
+    let upper_key = (opposite_terms, -expected.constant.clone());
+    let lower = *bounds.get(&lower_key)?;
+    let upper = *bounds.get(&upper_key)?;
+    let lower_claim = IntegerAffineClaim {
+        relation: IntegerAffineRelation::LessEqual,
+        terms: lower_key.0,
+        constant: lower_key.1,
+    };
+    Some(IntegerArithmeticCertificate {
+        nodes: vec![
+            IntegerArithmeticNode::Premise {
+                index: lower,
+                result: lower_claim,
+            },
+            IntegerArithmeticNode::Premise {
+                index: upper,
+                result: IntegerAffineClaim {
+                    relation: IntegerAffineRelation::LessEqual,
+                    terms: upper_key.0,
+                    constant: upper_key.1,
+                },
+            },
+            IntegerArithmeticNode::EqualityFromBounds {
+                lower: 0,
+                upper: 1,
+                result: expected,
+            },
+        ],
+        conclusion: 2,
+    })
+}
+
+fn claim_is_integer_trivial(claim: &IntegerAffineClaim) -> bool {
+    claim.terms.is_empty()
+        && match claim.relation {
+            IntegerAffineRelation::LessEqual => claim.constant <= BigInt::from(0),
+            IntegerAffineRelation::Equal => claim.constant == BigInt::from(0),
+        }
+}
+
 pub(in crate::surface) fn simp_proposition(
     proposition: &Proposition,
     assumptions: &PureFactContext,
@@ -1849,6 +1943,28 @@ pub(in crate::surface) fn simp_condition_without_assumptions(
         ConditionTerm::AlgebraicEqual(_, _) => {
             PureFactContext::new().decide_condition_for_simp(condition)
         }
+        ConditionTerm::IntegerEqual(left, right) => {
+            if left == right {
+                Some(true)
+            } else {
+                Some(left.as_const()? == right.as_const()?)
+            }
+        }
+        ConditionTerm::IntegerNotEqual(left, right) => {
+            if left == right {
+                Some(false)
+            } else {
+                Some(left.as_const()? != right.as_const()?)
+            }
+        }
+        ConditionTerm::IntegerLessThan(left, right) => Some(left.as_const()? < right.as_const()?),
+        ConditionTerm::IntegerLessEqual(left, right) => Some(left.as_const()? <= right.as_const()?),
+        ConditionTerm::IntegerGreaterThan(left, right) => {
+            Some(left.as_const()? > right.as_const()?)
+        }
+        ConditionTerm::IntegerGreaterEqual(left, right) => {
+            Some(left.as_const()? >= right.as_const()?)
+        }
         ConditionTerm::Constant(value) => Some(*value),
         ConditionTerm::Bitvector32Equal(left, right) => {
             let left = simp_bitvector(left);
@@ -1979,16 +2095,6 @@ pub(in crate::surface) fn simp_condition_without_assumptions(
                 .or_else(|| right.uint64_as_const())?;
             Some(left == right)
         }
-        ConditionTerm::IntegerLessThan(left, right) => Some(left.as_const()? < right.as_const()?),
-        ConditionTerm::IntegerLessEqual(left, right) => Some(left.as_const()? <= right.as_const()?),
-        ConditionTerm::IntegerGreaterThan(left, right) => {
-            Some(left.as_const()? > right.as_const()?)
-        }
-        ConditionTerm::IntegerGreaterEqual(left, right) => {
-            Some(left.as_const()? >= right.as_const()?)
-        }
-        ConditionTerm::IntegerEqual(left, right) => Some(left.as_const()? == right.as_const()?),
-        ConditionTerm::IntegerNotEqual(left, right) => Some(left.as_const()? != right.as_const()?),
         ConditionTerm::Variable(_)
         | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
         | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
@@ -2349,6 +2455,7 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::IntegerTerm;
 
     #[test]
     fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
@@ -2484,5 +2591,25 @@ mod tests {
                 right: range(target, target_len),
             }
         );
+    }
+
+    #[test]
+    fn integer_simp_planner_emits_explicit_bound_certificate() {
+        let x = IntegerTerm::Variable(Variable(71));
+        let y = IntegerTerm::Variable(Variable(72));
+        let lower = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(x.clone().into(), y.clone().into()),
+            true,
+        );
+        let upper = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(y.clone().into(), x.clone().into()),
+            true,
+        );
+        let goal = Proposition::ConditionIs(ConditionTerm::IntegerEqual(x.into(), y.into()), true);
+        let certificate = plan_integer_affine_certificate(&goal, &[lower.clone(), upper.clone()])
+            .expect("opposite integer bounds should produce a certificate");
+        certificate
+            .check(&goal, &[lower, upper])
+            .expect("the planned certificate should pass the kernel checker");
     }
 }

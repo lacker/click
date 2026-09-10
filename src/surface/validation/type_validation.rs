@@ -124,9 +124,128 @@ pub(super) fn validate_proposition_expression_types(
     }
 }
 
+/// Validate theorem propositions while retaining the separate mathematical
+/// Integer context.  The ordinary validator intentionally only knows C
+/// scalar types; dispatching Integer comparisons here keeps that validator in
+/// place for every proposition that is still entirely C-valued.
+pub(super) fn validate_theorem_proposition_expression_types(
+    proposition: &ClickProposition,
+    variables: &BTreeMap<String, C0Type>,
+    integer_bindings: &BTreeSet<String>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let mut locals = BTreeSet::new();
+            let left_kind = integer_expression_kind(left, integer_bindings, &mut locals);
+            let right_kind = integer_expression_kind(right, integer_bindings, &mut locals);
+            if left_kind == Some(true) || right_kind == Some(true) {
+                if left_kind.is_none() || right_kind.is_none() {
+                    return Err(ClickError::new(format!(
+                        "mathematical Integer expressions cannot be compared with C values in {context}"
+                    )));
+                }
+                if *operator == ComparisonOperator::In {
+                    return Err(ClickError::new(format!(
+                        "mathematical Integer expressions do not support `in` comparisons in {context}"
+                    )));
+                }
+                Ok(())
+            } else {
+                validate_comparison_expression_types(
+                    left,
+                    *operator,
+                    right,
+                    variables,
+                    click_functions,
+                    context,
+                )
+            }
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            validate_theorem_proposition_expression_types(
+                left,
+                variables,
+                integer_bindings,
+                click_functions,
+                context,
+            )?;
+            validate_theorem_proposition_expression_types(
+                right,
+                variables,
+                integer_bindings,
+                click_functions,
+                context,
+            )
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        } => validate_theorem_proposition_expression_types(
+            body,
+            variables,
+            integer_bindings,
+            click_functions,
+            context,
+        ),
+        _ => {
+            validate_proposition_expression_types(proposition, variables, click_functions, context)
+        }
+    }
+}
+
+// Some(true) has an Integer binding or explicit Integer type; Some(false)
+// contains only contextual numerals. Numerals alone do not change the domain
+// of an otherwise machine-valued comparison. None is outside this fragment.
+fn integer_expression_kind(
+    expression: &ContractExpression,
+    integer_bindings: &BTreeSet<String>,
+    locals: &mut BTreeSet<String>,
+) -> Option<bool> {
+    match expression {
+        ContractExpression::IntegerLiteral(_) => Some(false),
+        ContractExpression::Binding(name) => {
+            (locals.contains(name) || integer_bindings.contains(name)).then_some(true)
+        }
+        ContractExpression::Negate(inner) => {
+            integer_expression_kind(inner, integer_bindings, locals)
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            let left = integer_expression_kind(left, integer_bindings, locals)?;
+            let right = integer_expression_kind(right, integer_bindings, locals)?;
+            Some(left || right)
+        }
+        ContractExpression::Let {
+            name,
+            click_type: Some(ClickType::Integer),
+            value,
+            body,
+        } => {
+            integer_expression_kind(value, integer_bindings, locals)?;
+            let inserted = locals.insert(name.clone());
+            let body_kind = integer_expression_kind(body, integer_bindings, locals);
+            if inserted {
+                locals.remove(name);
+            }
+            body_kind.map(|_| true)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SpecValueType {
     Scalar(Option<C0Type>),
+    Integer,
     Sequence(Option<C0Type>),
     Algebraic(AlgebraicTypeApplication),
 }
@@ -137,6 +256,7 @@ fn spec_value_matches_click_type(actual: &SpecValueType, expected: &ClickType) -
         (SpecValueType::Scalar(Some(actual)), ClickType::C(expected)) => {
             click_types_compatible(*actual, *expected)
         }
+        (SpecValueType::Integer, ClickType::Integer) => true,
         (SpecValueType::Algebraic(actual), ClickType::Algebraic(expected)) => actual == expected,
         _ => false,
     }
@@ -146,6 +266,7 @@ fn describe_spec_value_type(value_type: &SpecValueType) -> String {
     match value_type {
         SpecValueType::Scalar(Some(c_type)) => describe_c0_type(*c_type),
         SpecValueType::Scalar(None) => "a C value".to_string(),
+        SpecValueType::Integer => "Integer".to_string(),
         SpecValueType::Sequence(_) => "a sequence".to_string(),
         SpecValueType::Algebraic(application) => {
             describe_click_type(&ClickType::Algebraic(application.clone()))
@@ -330,7 +451,17 @@ fn infer_spec_value_type(
             value,
             body,
         } => {
-            let value_type = infer_spec_value_type(value, variables, click_functions, context)?;
+            // Unsuffixed numeric syntax is deliberately kept untyped until
+            // its surrounding spec expression supplies a context.  A typed
+            // Integer let is one such context, including a theorem with no
+            // Integer parameter at all.
+            let value_type = if matches!(click_type, Some(ClickType::Integer))
+                && is_untyped_integer_literal_expression(value)
+            {
+                SpecValueType::Integer
+            } else {
+                infer_spec_value_type(value, variables, click_functions, context)?
+            };
             if let Some(expected) = click_type
                 && !spec_value_matches_click_type(&value_type, expected)
             {
@@ -373,6 +504,7 @@ fn infer_spec_value_type(
                                     Some(ClickType::Algebraic(application))
                                 }
                                 SpecValueType::Scalar(c_type) => c_type.map(ClickType::C),
+                                SpecValueType::Integer => Some(ClickType::Integer),
                                 SpecValueType::Sequence(_) => None,
                             },
                         )
@@ -403,6 +535,7 @@ fn infer_spec_value_type(
             Ok(match return_type {
                 ClickType::Algebraic(application) => SpecValueType::Algebraic(application),
                 ClickType::C(c_type) => SpecValueType::Scalar(Some(c_type)),
+                ClickType::Integer => SpecValueType::Integer,
                 ClickType::Parameter(_) => SpecValueType::Scalar(None),
             })
         }
@@ -412,6 +545,20 @@ fn infer_spec_value_type(
             click_functions,
             context,
         )?)),
+    }
+}
+
+fn is_untyped_integer_literal_expression(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::IntegerLiteral(_) => true,
+        ContractExpression::Negate(inner) => is_untyped_integer_literal_expression(inner),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            is_untyped_integer_literal_expression(left)
+                && is_untyped_integer_literal_expression(right)
+        }
+        _ => false,
     }
 }
 
@@ -495,6 +642,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Extract(_)
             | ProofTactic::Normalize
             | ProofTactic::NormalizeUsing(_)
+            | ProofTactic::IntegerCertificate(_)
             | ProofTactic::ArithmeticUsing(_)
             | ProofTactic::Intro
             | ProofTactic::Split
@@ -611,6 +759,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::InstantiateUsing { .. } => "instantiate",
         ProofTactic::Simp => "simp",
         ProofTactic::SimpUsing(_) => "simp",
+        ProofTactic::IntegerCertificate(_) => "integer_certificate",
     }
 }
 
@@ -725,6 +874,7 @@ pub(in crate::surface) fn describe_click_type(click_type: &ClickType) -> String 
     match click_type {
         ClickType::Parameter(name) => name.clone(),
         ClickType::C(c_type) => describe_c0_type(*c_type),
+        ClickType::Integer => "Integer".to_string(),
         ClickType::Algebraic(application) => {
             if application.arguments.is_empty() {
                 application.name.clone()
@@ -831,8 +981,35 @@ pub(super) fn infer_contract_expression_type(
     match expression {
         ContractExpression::ResourceField(access) => match &access.click_type {
             Some(ClickType::C(ty)) => Ok(Some(*ty)),
+            Some(ClickType::Integer) => Err(ClickError::new(
+                "Integer resource fields are not available in this slice",
+            )),
             _ => Err(ClickError::new("expected a scalar resource field")),
         },
+        ContractExpression::IntegerLiteral(value) => {
+            let value = value.parse::<u64>().map_err(|_| {
+                ClickError::new(format!(
+                    "arbitrary Integer literal `{value}` needs Integer context"
+                ))
+            })?;
+            Ok(Some(if value <= i32::MAX as u64 {
+                C0Type::Int32
+            } else if value <= i64::MAX as u64 {
+                C0Type::Int64
+            } else {
+                C0Type::UInt64
+            }))
+        }
+        ContractExpression::Negate(inner) => {
+            if let ContractExpression::IntegerLiteral(value) = inner.as_ref()
+                && value
+                    .parse::<u64>()
+                    .is_ok_and(|value| value <= (i32::MAX as u64) + 1)
+            {
+                return Ok(Some(C0Type::Int32));
+            }
+            infer_contract_expression_type(inner, variables, click_functions, context)
+        }
         ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicVariable { .. } => Err(ClickError::new(format!(
             "algebraic values are only valid in algebraic equality or as a `match` scrutinee in {context}"
@@ -1632,6 +1809,10 @@ fn validate_contract_expression_calls(
     context: &str,
 ) -> Result<(), ClickError> {
     match expression {
+        ContractExpression::IntegerLiteral(_) => Ok(()),
+        ContractExpression::Negate(inner) => {
+            validate_contract_expression_calls(inner, click_functions, context)
+        }
         ContractExpression::ResourceField(_)
         | ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::Binding(_) => Ok(()),

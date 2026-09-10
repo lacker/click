@@ -1,6 +1,34 @@
 use super::*;
 use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
 
+fn integer_comparison_operator(
+    operator: ComparisonOperator,
+) -> Result<crate::kernel::IntegerComparisonOperator, String> {
+    Ok(match operator {
+        ComparisonOperator::Equal => crate::kernel::IntegerComparisonOperator::Equal,
+        ComparisonOperator::NotEqual => crate::kernel::IntegerComparisonOperator::NotEqual,
+        ComparisonOperator::LessThan => crate::kernel::IntegerComparisonOperator::LessThan,
+        ComparisonOperator::LessEqual => crate::kernel::IntegerComparisonOperator::LessEqual,
+        ComparisonOperator::GreaterThan => crate::kernel::IntegerComparisonOperator::GreaterThan,
+        ComparisonOperator::GreaterEqual => crate::kernel::IntegerComparisonOperator::GreaterEqual,
+        ComparisonOperator::In => return Err("Integer expressions do not support `in`".to_string()),
+    })
+}
+
+fn is_unsuffixed_integer_literal_expression(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::IntegerLiteral(_) => true,
+        ContractExpression::Negate(inner) => is_unsuffixed_integer_literal_expression(inner),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            is_unsuffixed_integer_literal_expression(left)
+                && is_unsuffixed_integer_literal_expression(right)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -38,6 +66,11 @@ pub(in crate::surface) fn check_resource_field_schemas(
                         return Err(ClickError::new(format!(
                             "unresolved resource field type `{name}`"
                         )));
+                    }
+                    ClickType::Integer => {
+                        return Err(ClickError::new(
+                            "Integer resource fields are not available in this slice",
+                        ));
                     }
                 };
                 Ok((field.name().to_string(), ty))
@@ -669,17 +702,18 @@ fn fixed_state_elaboration<'a>(
 }
 
 /// Elaborates a fixed-state proposition with already-elaborated symbolic
-/// algebraic bindings. The bindings are logical values captured at the
+/// algebraic and Integer bindings. The bindings are logical values captured at the
 /// application site, so entering `old(...)` or another snapshot keeps the
 /// same value instead of re-evaluating its source expression there.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_values(
+pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
     proposition: &ClickProposition,
     array_element_types: BTreeMap<String, CType>,
     entry_state: &CState,
     entry_values: BTreeMap<String, CValue>,
     current_values: BTreeMap<String, CValue>,
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     result: Option<&CValue>,
     snapshots: &RecordedSnapshots,
     assumptions: &PureFactContext,
@@ -701,6 +735,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_value
     );
     let mut context = context;
     context.algebraic_values = algebraic_values;
+    context.integer_values = integer_values.clone();
     lowerer.click_proposition_to_spec_proposition(proposition, &context)
 }
 
@@ -1265,6 +1300,157 @@ struct AnnotationLowerer<'a> {
     count_assumptions: Option<&'a PureFactContext>,
 }
 
+/// Lower explicit arithmetic evidence without constructing or cloning a C
+/// state. Its only environment is the already captured mathematical bindings.
+pub(in crate::surface) fn lower_integer_certificate_proposition(
+    proposition: &ClickProposition,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+) -> Result<Proposition, String> {
+    use crate::kernel::{ConditionTerm, IntegerComparisonOperator, SpecIntegerExpression};
+    check_integer_lowering_work(1)?;
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => {
+            let SpecIntegerExpression::Term(left) =
+                lower_contract_integer_to_spec(left, integer_values)?;
+            let SpecIntegerExpression::Term(right) =
+                lower_contract_integer_to_spec(right, integer_values)?;
+            check_integer_lowering_work(
+                integer_root_work(&left).saturating_add(integer_root_work(&right)),
+            )?;
+            let condition = match integer_comparison_operator(*operator)? {
+                IntegerComparisonOperator::Equal => ConditionTerm::integer_equal(left, right),
+                IntegerComparisonOperator::NotEqual => {
+                    ConditionTerm::integer_not_equal(left, right)
+                }
+                IntegerComparisonOperator::LessThan => {
+                    ConditionTerm::integer_less_than(left, right)
+                }
+                IntegerComparisonOperator::LessEqual => {
+                    ConditionTerm::integer_less_equal(left, right)
+                }
+                IntegerComparisonOperator::GreaterThan => {
+                    ConditionTerm::integer_greater_than(left, right)
+                }
+                IntegerComparisonOperator::GreaterEqual => {
+                    ConditionTerm::integer_greater_equal(left, right)
+                }
+            };
+            Ok(Proposition::ConditionIs(condition, true))
+        }
+        ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
+            lower_integer_certificate_proposition(body, integer_values)?,
+        ))),
+        _ => Err("an Integer certificate requires a mathematical comparison".into()),
+    }
+}
+
+fn lower_contract_integer_to_spec(
+    expression: &ContractExpression,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+) -> Result<crate::kernel::SpecIntegerExpression, String> {
+    use crate::kernel::{IntegerTerm, SpecIntegerExpression};
+    check_integer_lowering_work(1)?;
+    match expression {
+        ContractExpression::IntegerLiteral(value) => {
+            check_integer_lowering_work(value.len().saturating_mul(4))?;
+            let value = value
+                .parse::<num_bigint::BigInt>()
+                .map_err(|_| format!("invalid Integer literal `{value}`"))?;
+            Ok(SpecIntegerExpression::Term(IntegerTerm::constant(value)))
+        }
+        ContractExpression::Binding(name) => {
+            let value = integer_values
+                .get(name)
+                .ok_or_else(|| format!("`{name}` is not an Integer binding"))?;
+            let SpecIntegerExpression::Term(term) = value;
+            check_integer_lowering_work(integer_root_work(term))?;
+            Ok(value.clone())
+        }
+        ContractExpression::Negate(inner) => {
+            let SpecIntegerExpression::Term(term) =
+                lower_contract_integer_to_spec(inner, integer_values)?;
+            check_integer_lowering_work(integer_root_work(&term))?;
+            Ok(SpecIntegerExpression::Term(IntegerTerm::negate(term)))
+        }
+        ContractExpression::Add(left, right) => {
+            let left = lower_contract_integer_to_spec(left, integer_values)?;
+            let right = lower_contract_integer_to_spec(right, integer_values)?;
+            lower_integer_operation(left, right, IntegerOperation::Add)
+        }
+        ContractExpression::Subtract(left, right) => {
+            let left = lower_contract_integer_to_spec(left, integer_values)?;
+            let right = lower_contract_integer_to_spec(right, integer_values)?;
+            lower_integer_operation(left, right, IntegerOperation::Subtract)
+        }
+        ContractExpression::Multiply(left, right) => {
+            let left = lower_contract_integer_to_spec(left, integer_values)?;
+            let right = lower_contract_integer_to_spec(right, integer_values)?;
+            lower_integer_operation(left, right, IntegerOperation::Multiply)
+        }
+        ContractExpression::Let {
+            name,
+            click_type: Some(ClickType::Integer),
+            value,
+            body,
+        } => {
+            let value = lower_contract_integer_to_spec(value, integer_values)?;
+            let integer_values = integer_values.with_inserted(name.clone(), value);
+            lower_contract_integer_to_spec(body, &integer_values)
+        }
+        _ => Err("expected a specification-side Integer expression".to_string()),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum IntegerOperation {
+    Add,
+    Subtract,
+    Multiply,
+}
+
+fn integer_root_work(term: &crate::kernel::IntegerTerm) -> usize {
+    term.as_const().map_or(1, |value| {
+        usize::try_from(value.bits())
+            .unwrap_or(usize::MAX)
+            .saturating_add(1)
+    })
+}
+
+fn check_integer_lowering_work(work: usize) -> Result<(), String> {
+    if crate::instrumentation::deadline_exceeded_with_work(work.max(1)) {
+        Err("Integer lowering exceeded the active verification work budget".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn lower_integer_operation(
+    left: crate::kernel::SpecIntegerExpression,
+    right: crate::kernel::SpecIntegerExpression,
+    operation: IntegerOperation,
+) -> Result<crate::kernel::SpecIntegerExpression, String> {
+    use crate::kernel::{IntegerTerm, SpecIntegerExpression};
+    let SpecIntegerExpression::Term(left) = left;
+    let SpecIntegerExpression::Term(right) = right;
+    let work = match operation {
+        IntegerOperation::Multiply => {
+            integer_root_work(&left).saturating_mul(integer_root_work(&right))
+        }
+        _ => integer_root_work(&left).saturating_add(integer_root_work(&right)),
+    };
+    check_integer_lowering_work(work)?;
+    let term = match operation {
+        IntegerOperation::Add => IntegerTerm::add(left, right),
+        IntegerOperation::Subtract => IntegerTerm::subtract(left, right),
+        IntegerOperation::Multiply => IntegerTerm::multiply(left, right),
+    };
+    Ok(SpecIntegerExpression::Term(term))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResolvedProgramPoint {
     Current,
@@ -1793,6 +1979,12 @@ impl AnnotationLowerer<'_> {
                                     self.lower_contract_expression_to_spec(argument, environment)?,
                                 );
                             }
+                            ClickType::Integer => {
+                                return Err(format!(
+                                    "predicate `{}` has an unsupported Integer parameter",
+                                    definition.name()
+                                ));
+                            }
                         }
                     }
                     return self.click_proposition_to_spec_proposition(
@@ -1856,6 +2048,29 @@ impl AnnotationLowerer<'_> {
                     return Ok(SpecProposition::SequenceMembership {
                         element: self.lower_contract_expression_to_spec(left, environment)?,
                         sequence: self.lower_contract_sequence_to_spec(right, environment)?,
+                    });
+                }
+                let left_is_integer = self.contract_expression_is_integer(left, environment);
+                let right_is_integer = self.contract_expression_is_integer(right, environment);
+                if left_is_integer || right_is_integer {
+                    if left_is_integer != right_is_integer
+                        && !(if left_is_integer {
+                            is_unsuffixed_integer_literal_expression(right)
+                        } else {
+                            is_unsuffixed_integer_literal_expression(left)
+                        })
+                    {
+                        return Err(
+                            "mathematical Integer expressions cannot be compared with C values"
+                                .to_string(),
+                        );
+                    }
+                    return Ok(SpecProposition::IntegerComparison {
+                        left: self
+                            .lower_contract_integer_to_spec(left, &environment.integer_values)?,
+                        operator: integer_comparison_operator(*operator)?,
+                        right: self
+                            .lower_contract_integer_to_spec(right, &environment.integer_values)?,
                     });
                 }
                 let has_algebraic = contract_expression_is_algebraic(
@@ -1974,12 +2189,65 @@ impl AnnotationLowerer<'_> {
             .transpose()
     }
 
+    fn contract_expression_is_integer(
+        &self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> bool {
+        match expression {
+            ContractExpression::IntegerLiteral(_) => false,
+            ContractExpression::Binding(name) => environment.integer_values.contains_key(name),
+            ContractExpression::Negate(inner) => {
+                self.contract_expression_is_integer(inner, environment)
+            }
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right) => {
+                self.contract_expression_is_integer(left, environment)
+                    || self.contract_expression_is_integer(right, environment)
+            }
+            ContractExpression::Let {
+                click_type: Some(ClickType::Integer),
+                ..
+            } => true,
+            ContractExpression::Call { name, .. } => self
+                .click_function_environment
+                .get(name)
+                .is_some_and(|function| function.return_type() == &ClickType::Integer),
+            _ => false,
+        }
+    }
+
+    fn lower_contract_integer_to_spec(
+        &mut self,
+        expression: &ContractExpression,
+        integer_values: &crate::persistent::PersistentMap<
+            String,
+            crate::kernel::SpecIntegerExpression,
+        >,
+    ) -> Result<crate::kernel::SpecIntegerExpression, String> {
+        lower_contract_integer_to_spec(expression, integer_values)
+    }
+
     fn lower_contract_expression_to_spec(
         &mut self,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
+            ContractExpression::IntegerLiteral(value) => {
+                let value = value.parse::<u64>().map_err(|_| {
+                    "an arbitrary Integer literal requires Integer context".to_string()
+                })?;
+                let value = if value <= i32::MAX as u64 {
+                    CValue::Int32(Bitvector32Term::Constant(value as u32))
+                } else if value <= i64::MAX as u64 {
+                    CValue::Int64(Bitvector32Term::Int64Constant(value as i64))
+                } else {
+                    CValue::UInt64(Bitvector32Term::UInt64Constant(value))
+                };
+                Ok(SpecExpression::Value(value))
+            }
             ContractExpression::ResourceField(access) => {
                 let Some(ClickType::C(c_type)) = &access.click_type else {
                     return Err("expected a scalar resource field".into());
@@ -2162,6 +2430,25 @@ impl AnnotationLowerer<'_> {
                 selector,
                 expression,
             } => self.lower_at_expression_to_spec(selector, expression, environment),
+            ContractExpression::Negate(expression) => {
+                if self.contract_expression_is_integer(expression, environment) {
+                    return Err(
+                        "an Integer expression must be lowered as a comparison operand".to_string(),
+                    );
+                }
+                if let ContractExpression::IntegerLiteral(value) = expression.as_ref()
+                    && let Ok(value) = value.parse::<u64>()
+                    && value <= (i32::MAX as u64) + 1
+                {
+                    return Ok(SpecExpression::Value(CValue::Int32(
+                        Bitvector32Term::Constant(0u32.wrapping_sub(value as u32)),
+                    )));
+                }
+                Ok(SpecExpression::Subtract(
+                    Box::new(SpecExpression::Value(int32(0))),
+                    Box::new(self.lower_contract_expression_to_spec(expression, environment)?),
+                ))
+            }
             // Arithmetic on a pointer offsets it by whole elements, as C does.
             ContractExpression::Add(left, right) => {
                 if let Some(element_type) = self.contract_pointer_element_type(left, environment) {
@@ -2332,6 +2619,14 @@ impl AnnotationLowerer<'_> {
                         .algebraic_values
                         .insert(name.clone(), value);
                     return self.lower_contract_expression_to_spec(body, &body_environment);
+                }
+                if matches!(click_type, Some(ClickType::Integer))
+                    || self.contract_expression_is_integer(value, environment)
+                {
+                    return Err(
+                        "an Integer let expression must be lowered as a comparison operand"
+                            .to_string(),
+                    );
                 }
                 let value = self.lower_contract_expression_to_spec(value, environment)?;
                 if let (Some(ClickType::C(c_type)), SpecExpression::Value(fixed)) =
@@ -2673,6 +2968,10 @@ impl AnnotationLowerer<'_> {
                     "function `{}` has unresolved type parameter `{name}`",
                     definition.name()
                 )),
+                ClickType::Integer => Err(format!(
+                    "function `{}` has an unsupported Integer parameter",
+                    definition.name()
+                )),
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),
@@ -2765,6 +3064,7 @@ impl AnnotationLowerer<'_> {
                 )))
             }
             ClickType::C(c_type) => Ok(Some(ClickType::C(*c_type))),
+            ClickType::Integer => Ok(Some(ClickType::Integer)),
             ClickType::Parameter(_) => {
                 self.infer_unconstrained_call_argument_type(argument, environment)
             }
@@ -2979,6 +3279,7 @@ impl AnnotationLowerer<'_> {
         ));
         Some(SpecElaborationContext {
             values,
+            integer_values: environment.integer_values.clone(),
             algebraic_values: environment.algebraic_values.clone(),
             array_refs,
             current_memory: SpecMemory::Fixed(state.memory().clone()),
@@ -3652,6 +3953,7 @@ fn click_type_to_algebraic_value_type(
     match click_type {
         ClickType::Parameter(name) => Err(format!("unresolved type parameter `{name}`")),
         ClickType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
+        ClickType::Integer => Err("Integer is not yet an algebraic field type".to_string()),
         ClickType::Algebraic(application) if application.rigid => {
             Ok(AlgebraicValueType::Parameter(application.name.clone()))
         }

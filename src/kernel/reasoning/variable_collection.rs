@@ -587,6 +587,10 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match proposition {
+        SpecProposition::IntegerComparison { left, right, .. } => {
+            collect_spec_integer_variables(left, variables);
+            collect_spec_integer_variables(right, variables);
+        }
         SpecProposition::AlgebraicComparison { left, right, .. } => {
             collect_spec_algebraic_expression_bitvector_variables(left, variables);
             collect_spec_algebraic_expression_bitvector_variables(right, variables);
@@ -658,6 +662,14 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
             collect_spec_expression_bitvector_variables(expression, variables);
         }
     }
+}
+
+fn collect_spec_integer_variables(
+    expression: &SpecIntegerExpression,
+    variables: &mut BTreeSet<Variable>,
+) {
+    let SpecIntegerExpression::Term(term) = expression;
+    collect_integer_variables(term, variables);
 }
 
 fn collect_spec_algebraic_expression_bitvector_variables(
@@ -1117,17 +1129,49 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
 }
 
 fn collect_integer_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+    let mut seen = BTreeSet::new();
+    collect_integer_variables_seen(term, variables, &mut seen);
+}
+
+fn collect_integer_variables_seen(
+    term: &IntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+    seen: &mut BTreeSet<u64>,
+) {
     match term {
         IntegerTerm::Constant(_) => {}
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
-        IntegerTerm::Negate(value) => collect_integer_variables(value, variables),
+        IntegerTerm::Negate(value) => collect_shared_integer_variables(value, variables, seen),
         IntegerTerm::Add(left, right)
         | IntegerTerm::Subtract(left, right)
         | IntegerTerm::Multiply(left, right) => {
-            collect_integer_variables(left, variables);
-            collect_integer_variables(right, variables);
+            collect_shared_integer_variables(left, variables, seen);
+            collect_shared_integer_variables(right, variables, seen);
+        }
+    }
+}
+
+fn collect_shared_integer_variables(
+    term: &SharedIntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+    seen: &mut BTreeSet<u64>,
+) {
+    if !seen.insert(term.id()) {
+        return;
+    }
+    match term.as_ref() {
+        IntegerTerm::Constant(_) => {}
+        IntegerTerm::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        IntegerTerm::Negate(value) => collect_shared_integer_variables(value, variables, seen),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            collect_shared_integer_variables(left, variables, seen);
+            collect_shared_integer_variables(right, variables, seen);
         }
     }
 }

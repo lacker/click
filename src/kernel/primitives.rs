@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 mod contracts;
 pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
 mod integer;
-pub use integer::{IntegerComparisonOperator, IntegerTerm};
+pub use integer::{IntegerComparisonOperator, IntegerTerm, SharedIntegerTerm};
 mod derivations;
 mod memory_state;
 pub(crate) use memory_state::{
@@ -277,12 +277,12 @@ pub enum ConditionTerm {
     Float64(CFloatCondition),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
     PointerEqual(Box<Pointer>, Box<Pointer>),
-    IntegerLessThan(Box<IntegerTerm>, Box<IntegerTerm>),
-    IntegerLessEqual(Box<IntegerTerm>, Box<IntegerTerm>),
-    IntegerGreaterThan(Box<IntegerTerm>, Box<IntegerTerm>),
-    IntegerGreaterEqual(Box<IntegerTerm>, Box<IntegerTerm>),
-    IntegerEqual(Box<IntegerTerm>, Box<IntegerTerm>),
-    IntegerNotEqual(Box<IntegerTerm>, Box<IntegerTerm>),
+    IntegerLessThan(SharedIntegerTerm, SharedIntegerTerm),
+    IntegerLessEqual(SharedIntegerTerm, SharedIntegerTerm),
+    IntegerGreaterThan(SharedIntegerTerm, SharedIntegerTerm),
+    IntegerGreaterEqual(SharedIntegerTerm, SharedIntegerTerm),
+    IntegerEqual(SharedIntegerTerm, SharedIntegerTerm),
+    IntegerNotEqual(SharedIntegerTerm, SharedIntegerTerm),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -855,6 +855,19 @@ pub struct SpecAlgebraicExpression {
     pub node: SpecAlgebraicExpressionNode,
 }
 
+/// A specification-side mathematical integer expression.
+///
+/// This stays separate from [`SpecExpression`], whose scalar nodes carry C
+/// values and therefore have machine-width semantics. Surface lowering
+/// resolves names to kernel variables before constructing this form; there is
+/// no lookup in `CState.locals` and no C representation.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecIntegerExpression {
+    /// A pure mathematical value. Shared children preserve specification
+    /// abbreviations without copying their expanded expression trees.
+    Term(IntegerTerm),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecAlgebraicExpressionNode {
     Variable(Variable),
@@ -1415,6 +1428,11 @@ pub enum SpecPredicateArgument {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecProposition {
+    IntegerComparison {
+        left: SpecIntegerExpression,
+        operator: IntegerComparisonOperator,
+        right: SpecIntegerExpression,
+    },
     AlgebraicComparison {
         left: SpecAlgebraicExpression,
         equal: bool,

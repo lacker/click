@@ -98,6 +98,11 @@ path = "mdtests/pure_arithmetic_affine.md"
 needle = "arithmetic() using {"
 
 [[form]]
+id = "integer-certificate"
+path = "mdtests/integer_certificate_surface.md"
+needle = "integer_certificate {"
+
+[[form]]
 id = "apply-theorem"
 path = "mdtests/pure_theorem_apply.md"
 needle = "apply(nonnegative_body(y));"

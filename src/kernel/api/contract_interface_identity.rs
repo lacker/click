@@ -374,6 +374,7 @@ impl Names {
         self.visit();
         use SpecProposition::*;
         match proposition {
+            IntegerComparison { .. } => {}
             AlgebraicComparison { left, right, .. } => {
                 self.algebraic(left);
                 self.algebraic(right);

@@ -182,6 +182,47 @@ than assigning modular meaning to the invariant. Add a concrete neighboring
 case with an overflowing prefix and a representable final mathematical sum
 to guard against checking only the final result.
 
+## Implementation review decisions (2026-09-10)
+
+- Preserve symbolic expression sharing across specification abbreviations.
+  A chain `a0 = x; a1 = a0 + a0; ...` has linear source size and must not
+  materialize its exponentially expanded arithmetic tree. Constant folding
+  alone does not meet this requirement. Use immutable shared Integer nodes
+  with stable, shallow identities, and visit each reachable node once in
+  appropriate traversals. This preserves ordinary source binding semantics.
+- Shared-node identities must remain sound across threads and while any live
+  term refers to them. Interning keys must contain shallow child identities;
+  cache maintenance must not repeatedly hash an unrelated large numeral or
+  retain dead expression graphs indefinitely. Renaming/substitution caches
+  must account for lexical binder scope.
+- Distinguish numeric literals that can take an expected type from expressions
+  that establish an Integer type. Merely adding an unused Integer parameter
+  must not change validation or machine arithmetic in another clause.
+- Numeric work checks must consume the active verification budget before the
+  operation. Recording a testing counter after arithmetic is insufficient.
+  Keep the expression-visit budget separate from magnitude-dependent cost;
+  do not simulate a weighted charge with a loop of unit checkpoints.
+- Explicit arithmetic certificates permit zero premises for tautologies.
+  Validate indices before allocating storage; a sparse enormous premise index
+  must fail locally. Every supplied premise must be exactly available, and
+  the kernel must validate every claimed node result independently.
+
+The exact-value kernel foundation and checked pure Integer universal
+specialization have passed the full gate and are integrated. The scalar source
+stage adds theorem parameters, typed specification aliases, contextual literals,
+and printable linear arithmetic evidence. Symbolic aliases retain sharing
+through validation, lowering, rewriting, substitution, and arithmetic checking;
+the depth-8/16/32/64 regression checks the complete simple-proof path. Alpha keys
+serialize the shared graph with local child indices so equality and hashing
+also avoid tree expansion. Certificate lowering borrows the mathematical
+bindings without cloning unrelated C state for each evidence node.
+
+This is a staged implementation, not completion of this issue. Explicit machine
+conversions, source quantifiers and theorem applications, pure functions,
+datatype/resource fields, `Nat` relationships, typed folds, and the unchanged C
+summation regression remain to be completed. The user documentation states the
+current scalar boundary; the full acceptance criteria below remain open.
+
 ## Implementation and integration sequence
 
 1. Land this design record, then agree on the minimal shared kernel/surface

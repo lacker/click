@@ -68,6 +68,9 @@ fn is_tactic_name(name: &str) -> bool {
 enum Token {
     Ident(String),
     Number(u32),
+    BigNumber(String),
+    UnsuffixedInt64(i64),
+    UnsuffixedUInt64(u64),
     UInt8Number(u8),
     UInt32Number(u32),
     Int64Number(i64),
@@ -116,6 +119,9 @@ impl Token {
         match self {
             Self::Ident(name) => format!("identifier `{name}`"),
             Self::Number(value) => format!("number `{value}`"),
+            Self::BigNumber(value) => format!("number `{value}`"),
+            Self::UnsuffixedInt64(value) => format!("number `{value}`"),
+            Self::UnsuffixedUInt64(value) => format!("number `{value}`"),
             Self::UInt8Number(value) => format!("uint8 number `{value}u8`"),
             Self::UInt32Number(value) => format!("uint32 number `{value}u32`"),
             Self::Int64Number(value) => format!("int64 number `{value}i64`"),
@@ -132,6 +138,9 @@ impl Token {
         match self {
             Self::Ident(_)
             | Self::Number(_)
+            | Self::BigNumber(_)
+            | Self::UnsuffixedInt64(_)
+            | Self::UnsuffixedUInt64(_)
             | Self::UInt8Number(_)
             | Self::UInt32Number(_)
             | Self::Int64Number(_)
@@ -202,6 +211,9 @@ struct Parser {
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
     current_click_type_parameters: BTreeSet<String>,
     current_contract_bindings: BTreeSet<String>,
+    current_integer_params: BTreeSet<String>,
+    current_integer_lets: BTreeSet<String>,
+    integer_literal_context: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -299,7 +311,7 @@ fn algebraic_parameter_types(
             ClickType::Algebraic(application) => {
                 Some((parameter.name().to_string(), (application.clone(), index)))
             }
-            ClickType::Parameter(_) | ClickType::C(_) => None,
+            ClickType::Parameter(_) | ClickType::C(_) | ClickType::Integer => None,
         })
         .collect()
 }
@@ -403,6 +415,9 @@ impl Parser {
             current_algebraic_params: BTreeMap::new(),
             current_click_type_parameters: BTreeSet::new(),
             current_contract_bindings: BTreeSet::new(),
+            current_integer_params: BTreeSet::new(),
+            current_integer_lets: BTreeSet::new(),
+            integer_literal_context: false,
         })
     }
 
@@ -602,6 +617,9 @@ impl Parser {
         self.expect_ident_spelling("spec")?;
         self.expect_ident_spelling("enum")?;
         let name = self.expect_ident("algebraic datatype name")?;
+        if name == "Integer" {
+            return Err(self.error("`Integer` is reserved for the mathematical specification type"));
+        }
         let mut type_parameters = Vec::new();
         if self.peek() == Some(&Token::LessThan) {
             self.position += 1;
@@ -686,6 +704,11 @@ impl Parser {
                 ));
             }
             return Ok(AlgebraicFieldType::C(parsed.c_type));
+        }
+        if name == "Integer" {
+            return Err(self.error(
+                "Integer fields in specification datatypes are not available in this slice",
+            ));
         }
 
         self.position += 1;
@@ -835,6 +858,15 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
+        if parsed_parameters
+            .parameters
+            .iter()
+            .any(|parameter| matches!(parameter.click_type(), ClickType::Integer))
+        {
+            return Err(self.error(
+                "mathematical Integer parameters are supported only by pure theorems in this slice",
+            ));
+        }
         self.expect(Token::LBrace)?;
         let previous_struct_params = std::mem::replace(
             &mut self.current_struct_params,
@@ -873,8 +905,22 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
+        if parsed_parameters
+            .parameters
+            .iter()
+            .any(|parameter| matches!(parameter.click_type(), ClickType::Integer))
+        {
+            return Err(self.error(
+                "mathematical Integer parameters are supported only by pure theorems in this slice",
+            ));
+        }
         self.expect(Token::Arrow)?;
         let (return_type, parsed_c_return_type) = self.parse_click_type()?;
+        if matches!(return_type, ClickType::Integer) {
+            return Err(self.error(
+                "Click functions returning mathematical Integer are not available in this slice",
+            ));
+        }
         if let Some(parsed_return_type) = parsed_c_return_type {
             if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
                 return Err(self.error("only pointer-to-struct types are supported"));
@@ -1301,6 +1347,18 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
+        let previous_integer_params = std::mem::replace(
+            &mut self.current_integer_params,
+            parsed_parameters
+                .parameters
+                .iter()
+                .filter(|parameter| matches!(parameter.click_type(), ClickType::Integer))
+                .map(|parameter| parameter.name().to_string())
+                .collect(),
+        );
+        let previous_integer_literal_context =
+            std::mem::replace(&mut self.integer_literal_context, false);
+        let previous_integer_lets = std::mem::take(&mut self.current_integer_lets);
         let executes = if self.peek_ident() == Some("executes") {
             self.position += 1;
             let callback = self.expect_ident("callback parameter")?;
@@ -1364,6 +1422,24 @@ impl Parser {
                         }
                     };
                     contract_lets.push(ContractLetBinding { kind, ..binding });
+                    if matches!(
+                        contract_lets
+                            .last()
+                            .and_then(|binding| binding.click_type.as_ref()),
+                        Some(ClickType::Integer)
+                    ) {
+                        // The let is substituted into later clauses, so keep
+                        // its literal context active while those clauses are
+                        // parsed instead of losing the annotation first.
+                        self.integer_literal_context = true;
+                        self.current_integer_lets.insert(
+                            contract_lets
+                                .last()
+                                .expect("just pushed let binding")
+                                .name
+                                .clone(),
+                        );
+                    }
                 }
                 Some("requires") => {
                     let requirement = self.parse_requirement()?;
@@ -1468,6 +1544,9 @@ impl Parser {
         self.current_struct_array_params = previous_struct_array_params;
         self.current_algebraic_params = previous_algebraic_params;
         self.current_click_type_parameters = previous_type_parameters;
+        self.current_integer_params = previous_integer_params;
+        self.current_integer_lets = previous_integer_lets;
+        self.integer_literal_context = previous_integer_literal_context;
 
         let requires: Vec<Requirement> = requires
             .into_iter()
@@ -1835,7 +1914,13 @@ impl Parser {
         };
         let kind = if self.peek() == Some(&Token::Equal) {
             self.position += 1;
-            ContractLetBindingKind::Value(self.parse_contract_expression()?)
+            let previous_integer_literal_context = std::mem::replace(
+                &mut self.integer_literal_context,
+                matches!(click_type.as_ref(), Some(ClickType::Integer)),
+            );
+            let value = self.parse_contract_expression();
+            self.integer_literal_context = previous_integer_literal_context;
+            ContractLetBindingKind::Value(value?)
         } else if self.peek_ident() == Some("where") {
             self.position += 1;
             if click_type.is_none() {
@@ -2145,6 +2230,10 @@ impl Parser {
         if is_c_type_keyword(name) {
             let parsed = self.parse_type()?;
             return Ok((ClickType::C(parsed.c_type), Some(parsed)));
+        }
+        if name == "Integer" {
+            self.position += 1;
+            return Ok((ClickType::Integer, None));
         }
         if self.current_click_type_parameters.contains(name) {
             let name = name.to_string();
@@ -3215,7 +3304,10 @@ impl Parser {
                 else {
                     return Err(self.error("fold construction requires a declared resource"));
                 };
-                if self.current_contract_bindings.contains(&name) {
+                if self.current_contract_bindings.contains(&name)
+                    || self.current_integer_params.contains(&name)
+                    || self.current_integer_lets.contains(&name)
+                {
                     return Err(self.error("fold result conflicts with a C or pure binding"));
                 }
                 let identity =
@@ -3744,6 +3836,7 @@ impl Parser {
                 }
                 ProofTactic::ArithmeticUsing(Vec::new())
             }
+            "integer_certificate" => return self.parse_integer_certificate_tactic(),
             "intro" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Intro
@@ -4019,6 +4112,120 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
         Ok(premises)
+    }
+
+    fn parse_integer_certificate_tactic(&mut self) -> Result<ProofTactic, ClickError> {
+        let previous = std::mem::replace(&mut self.integer_literal_context, true);
+        let parsed = self.parse_integer_certificate_body();
+        self.integer_literal_context = previous;
+        parsed
+    }
+
+    fn parse_integer_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {
+        self.expect(Token::LBrace)?;
+        let mut nodes = Vec::new();
+        let mut conclusion = None;
+        while self.peek() != Some(&Token::RBrace) {
+            let keyword = self.expect_ident("integer certificate node")?;
+            match keyword.as_str() {
+                "premise" => {
+                    let index = self.expect_index("premise index")?;
+                    self.expect(Token::Colon)?;
+                    let proposition = self.parse_proposition()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::Premise {
+                        index,
+                        proposition,
+                        result,
+                    });
+                }
+                "scale" => {
+                    let source = self.expect_index("scale source")?;
+                    self.expect_ident_spelling("by")?;
+                    let coefficient = self.parse_contract_expression()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::Scale {
+                        source,
+                        coefficient,
+                        result,
+                    });
+                }
+                "add" => {
+                    let left = self.expect_index("left node")?;
+                    self.expect(Token::Comma)?;
+                    let right = self.expect_index("right node")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::Add {
+                        left,
+                        right,
+                        result,
+                    });
+                }
+                "eq_to_le" => {
+                    let source = self.expect_index("equality source")?;
+                    let reverse = if self.peek_ident() == Some("reverse") {
+                        self.position += 1;
+                        true
+                    } else {
+                        false
+                    };
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::EqualityToLessEqual {
+                        source,
+                        reverse,
+                        result,
+                    });
+                }
+                "eq_from_bounds" => {
+                    let lower = self.expect_index("lower bound")?;
+                    self.expect(Token::Comma)?;
+                    let upper = self.expect_index("upper bound")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::EqualityFromBounds {
+                        lower,
+                        upper,
+                        result,
+                    });
+                }
+                "trivial" => {
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::Trivial { result });
+                }
+                "conclusion" => {
+                    if conclusion.is_some() {
+                        return Err(self
+                            .error("integer certificate may contain only one `conclusion` line"));
+                    }
+                    conclusion = Some(self.expect_index("conclusion node")?);
+                    self.expect(Token::Semicolon)?;
+                }
+                _ => {
+                    return Err(self.error(format!("unknown integer certificate node `{keyword}`")));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        let conclusion = conclusion
+            .ok_or_else(|| self.error("integer certificate must end with `conclusion N;`"))?;
+        if nodes.is_empty() {
+            return Err(self.error("integer certificate must contain a node"));
+        }
+        Ok(ProofTactic::IntegerCertificate(IntegerCertificate {
+            nodes,
+            conclusion,
+        }))
     }
 
     fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {
@@ -5198,17 +5405,19 @@ impl Parser {
             }));
         }
         if self.peek() == Some(&Token::Minus) {
-            if let Some(value) = self.peek_next().and_then(negatable_int32_magnitude) {
+            if self.current_integer_params.is_empty()
+                && !self.integer_literal_context
+                && let Some(value) = self.peek_next().and_then(negatable_int32_magnitude)
+            {
                 self.position += 2;
                 return Ok(ContractExpression::CFragment(CExpression::Value(int32(
                     0u32.wrapping_sub(value),
                 ))));
             }
             self.position += 1;
-            return Ok(ContractExpression::Subtract(
-                Box::new(ContractExpression::CFragment(CExpression::Value(int32(0)))),
-                Box::new(self.parse_contract_unary()?),
-            ));
+            return Ok(ContractExpression::Negate(Box::new(
+                self.parse_contract_unary()?,
+            )));
         }
         if self.peek() == Some(&Token::Tilde) {
             self.position += 1;
@@ -5709,7 +5918,10 @@ impl Parser {
                 );
             };
             let binding_was_in_scope = !self.current_contract_bindings.insert(binding.name.clone());
+            let previous_integer_context = self.integer_literal_context;
+            self.integer_literal_context |= matches!(binding.click_type, Some(ClickType::Integer));
             let body = self.parse_contract_expression();
+            self.integer_literal_context = previous_integer_context;
             if !binding_was_in_scope {
                 self.current_contract_bindings.remove(&binding.name);
             }
@@ -5867,7 +6079,10 @@ impl Parser {
                 if let Some(field) = self.current_resource_fields.get(&name) {
                     return Ok(ContractExpression::ResourceField(field.clone()));
                 }
-                if self.current_contract_bindings.contains(&name) {
+                if self.current_contract_bindings.contains(&name)
+                    || self.current_integer_params.contains(&name)
+                    || self.current_integer_lets.contains(&name)
+                {
                     Ok(ContractExpression::Binding(name))
                 } else {
                     match self.current_algebraic_params.get(&name) {
@@ -5882,9 +6097,38 @@ impl Parser {
                     }
                 }
             }
+            Some(Token::Number(value))
+                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
+            {
+                Ok(ContractExpression::IntegerLiteral(value.to_string()))
+            }
             Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
-                CValue::Int32(Bitvector32Term::Constant(value)),
+                int32(value),
             ))),
+            Some(Token::BigNumber(value))
+                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
+            {
+                Ok(ContractExpression::IntegerLiteral(value))
+            }
+            Some(Token::BigNumber(_)) => {
+                Err(self.error("arbitrary decimal literals require a mathematical Integer context"))
+            }
+            Some(Token::UnsuffixedInt64(value))
+                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
+            {
+                Ok(ContractExpression::IntegerLiteral(value.to_string()))
+            }
+            Some(Token::UnsuffixedInt64(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(value))),
+            )),
+            Some(Token::UnsuffixedUInt64(value))
+                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
+            {
+                Ok(ContractExpression::IntegerLiteral(value.to_string()))
+            }
+            Some(Token::UnsuffixedUInt64(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(value))),
+            )),
             Some(Token::UInt8Number(value)) => Ok(ContractExpression::CFragment(
                 CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
             )),
@@ -6491,7 +6735,11 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
 fn negatable_int32_magnitude(token: &Token) -> Option<u32> {
     match token {
         Token::Number(value) if *value <= i32::MAX as u32 => Some(*value),
-        Token::Int64Number(value) if *value == i32::MAX as i64 + 1 => Some(i32::MAX as u32 + 1),
+        Token::Int64Number(value) | Token::UnsuffixedInt64(value)
+            if *value == i32::MAX as i64 + 1 =>
+        {
+            Some(i32::MAX as u32 + 1)
+        }
         _ => None,
     }
 }

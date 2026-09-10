@@ -1,5 +1,46 @@
 use super::*;
 
+#[test]
+fn integer_certificate_lowering_scales_with_nodes_not_unrelated_bindings() {
+    use crate::kernel::{IntegerTerm, SpecIntegerExpression};
+    let surface = ClickProposition::Comparison {
+        left: ContractExpression::Add(
+            Box::new(ContractExpression::Binding("x".into())),
+            Box::new(ContractExpression::IntegerLiteral("1".into())),
+        ),
+        operator: ComparisonOperator::GreaterThan,
+        right: ContractExpression::Binding("x".into()),
+    };
+    let mut costs = Vec::new();
+    for unrelated in [0, 64, 256, 1024] {
+        let mut bindings = crate::persistent::PersistentMap::default();
+        bindings = bindings.with_inserted(
+            "x".into(),
+            SpecIntegerExpression::Term(IntegerTerm::var(Variable(7))),
+        );
+        for index in 0..unrelated {
+            bindings = bindings.with_inserted(
+                format!("unused{index}"),
+                SpecIntegerExpression::Term(IntegerTerm::var(Variable(index + 100))),
+            );
+        }
+        let mut node_costs = Vec::new();
+        for nodes in [8, 16, 32, 64] {
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                for _ in 0..nodes {
+                    lower_integer_certificate_proposition(&surface, &bindings).unwrap();
+                }
+            });
+            node_costs.push(work);
+        }
+        for pair in node_costs.windows(2) {
+            assert_eq!(pair[1], 2 * pair[0]);
+        }
+        costs.push(node_costs[0]);
+    }
+    assert!(costs.iter().all(|cost| *cost == costs[0]), "{costs:?}");
+}
+
 thread_local! {
     pub(super) static PROPOSITION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

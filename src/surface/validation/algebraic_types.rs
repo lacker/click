@@ -86,6 +86,11 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
                 ClickType::Parameter(_) => {
                     return Err(ClickError::new("unresolved resource match binding type"));
                 }
+                ClickType::Integer => {
+                    return Err(ClickError::new(
+                        "Integer resource match bindings are not available in this slice",
+                    ));
+                }
             }
             bindings.push((name.clone(), ty));
         }
@@ -698,6 +703,14 @@ pub(super) fn validate_algebraic_type_uses(
                 )));
             }
             (ClickType::C(_), None) => {}
+            (ClickType::Integer, None) => {}
+            (ClickType::Integer, Some(actual)) => {
+                return Err(ClickError::new(format!(
+                    "function `{}` returns Integer, but its body has algebraic type {}",
+                    definition.name(),
+                    describe_click_type(&ClickType::Algebraic(actual))
+                )));
+            }
         }
         if !definition.type_parameters().is_empty() {
             let click_variables = definition
@@ -1063,6 +1076,12 @@ fn validate_algebraic_proposition(
                             describe_click_type(&ClickType::Algebraic(actual))
                         )));
                     }
+                    (ClickType::Integer, Some(ClickType::Integer)) => {}
+                    (ClickType::Integer, _) => {
+                        return Err(ClickError::new(format!(
+                            "predicate `{name}` argument {index} expects Integer in {context}"
+                        )));
+                    }
                     (ClickType::C(expected), Some(ClickType::C(actual)))
                         if !click_types_compatible(actual, *expected) =>
                     {
@@ -1092,6 +1111,15 @@ fn validate_algebraic_expression(
     context: &str,
 ) -> Result<Option<AlgebraicTypeApplication>, ClickError> {
     match expression {
+        ContractExpression::IntegerLiteral(_) => Ok(None),
+        ContractExpression::Negate(inner) => validate_algebraic_expression(
+            inner,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        ),
         ContractExpression::ResourceField(access) => Ok(match &access.click_type {
             Some(ClickType::Algebraic(ty)) => Some(ty.clone()),
             _ => None,
@@ -1169,6 +1197,14 @@ fn validate_algebraic_expression(
                             "constructor `{}::{variant}` argument {index} expects {}, got a C value in {context}",
                             definition.name(),
                             describe_click_type(&ClickType::Algebraic(expected.clone()))
+                        )));
+                    }
+                    (ClickType::Integer, None) => {}
+                    (ClickType::Integer, Some(actual)) => {
+                        return Err(ClickError::new(format!(
+                            "constructor `{}::{variant}` argument {index} expects Integer, got algebraic {} in {context}",
+                            definition.name(),
+                            describe_click_type(&ClickType::Algebraic(actual))
                         )));
                     }
                     (ClickType::C(expected), Some(actual)) => {
@@ -1278,6 +1314,11 @@ fn validate_algebraic_expression(
                                     binder_index: binding_index,
                                 },
                             );
+                        }
+                        ClickType::Integer => {
+                            return Err(ClickError::new(
+                                "Integer match bindings are not available in this slice",
+                            ));
                         }
                     }
                 }
@@ -1494,6 +1535,25 @@ fn validate_algebraic_expression(
                 definitions,
                 context,
             )?;
+            // Integer aliases are checked by the mathematical type validator.
+            // This pass only checks embedded algebraic uses; substituting the
+            // initializer would expand a linear chain of aliases exponentially.
+            if matches!(click_type, Some(ClickType::Integer)) {
+                if let Some(actual) = value_type {
+                    return Err(ClickError::new(format!(
+                        "let binding `{name}` expects Integer, got {} in {context}",
+                        describe_click_type(&ClickType::Algebraic(actual))
+                    )));
+                }
+                return validate_algebraic_expression(
+                    body,
+                    variables,
+                    click_functions,
+                    predicates,
+                    definitions,
+                    context,
+                );
+            }
             match (click_type, &value_type) {
                 (Some(ClickType::Algebraic(expected)), Some(actual)) if expected == actual => {}
                 (Some(ClickType::Algebraic(expected)), Some(actual)) => {
@@ -1588,6 +1648,12 @@ fn validate_algebraic_expression(
                     .unwrap_or_else(|| expected.click_type().clone());
                 match (&expected, actual) {
                     (ClickType::Parameter(_), _) => {}
+                    (ClickType::Integer, Some(ClickType::Integer)) => {}
+                    (ClickType::Integer, _) => {
+                        return Err(ClickError::new(format!(
+                            "function `{name}` argument {index} expects Integer in {context}"
+                        )));
+                    }
                     (ClickType::Algebraic(expected), Some(ClickType::Algebraic(actual)))
                         if expected == &actual => {}
                     (ClickType::Algebraic(expected), Some(ClickType::Algebraic(actual))) => {
@@ -1640,6 +1706,7 @@ fn validate_algebraic_expression(
                 ClickType::Parameter(_) => None,
                 ClickType::Algebraic(application) => Some(application),
                 ClickType::C(_) => None,
+                ClickType::Integer => None,
             }))
         }
         ContractExpression::QualifiedC { .. }
@@ -1669,6 +1736,10 @@ fn infer_generic_expression_type(
     context: &str,
 ) -> Result<Option<ClickType>, ClickError> {
     match expression {
+        ContractExpression::IntegerLiteral(_) => Ok(None),
+        ContractExpression::Negate(inner) => {
+            infer_generic_expression_type(inner, variables, click_functions, definitions, context)
+        }
         ContractExpression::ResourceField(access) => Ok(access.click_type.clone()),
         ContractExpression::AlgebraicVariable { algebraic_type, .. } => {
             Ok(Some(ClickType::Algebraic(algebraic_type.clone())))
@@ -2160,6 +2231,7 @@ fn validate_type_application(
         match argument {
             ClickType::Parameter(_) => {}
             ClickType::C(c_type) if algebraic_field_c_type_supported(*c_type) => {}
+            ClickType::Integer => {}
             ClickType::C(c_type) => {
                 return Err(ClickError::new(format!(
                     "{} is not a valid algebraic datatype argument in {context}",

@@ -240,6 +240,41 @@ them by vector position. Branch-local expansion therefore preserves the sibling'
 proof text and reports a compact `pN` path identifier if surface and execution
 coverage ever diverge.
 
+## Mathematical integers
+
+`Integer` is the specification type for signed mathematical integers of
+arbitrary size. It is separate from the C type `int` (an alias for `int32`).
+Integer addition, subtraction, negation, and multiplication are exact and do
+not generate machine-overflow obligations.
+
+The initial supported use sites are scalar theorem parameters and explicitly
+typed specification `let` bindings. Unsuffixed decimal literals take their
+type from an Integer expression, including values larger than 64 bits.
+Machine variables and suffixed machine literals require explicit conversions;
+those conversions are not yet available in this initial scalar slice.
+
+<!-- verified-example: mdtests/integer_successor.md -->
+```click
+theorem integer_successor(z: Integer) {
+    ensures z + 1 > z by {
+        simp();
+    }
+}
+```
+
+Equality, disequality, and the ordinary order comparisons are supported.
+`simp()` can produce explicit arithmetic evidence for supported linear
+comparisons. General multiplication is a valid expression; it does not imply
+a general nonlinear arithmetic solver. Expanded proofs retain the arithmetic
+evidence for ordinary verification to check.
+
+Integer values have no C storage or runtime representation. The initial slice
+does not yet support Integer quantifiers, theorem applications, pure-function
+signatures, datatype or resource fields, folds, or conversions to machine
+integers and `Nat`. Division,
+remainder, and bitwise operators are also unavailable. `Nat` remains the
+existing [structural natural-number datatype](../library/index.md#natural-numbers).
+
 ## Pure theorems
 
 Pure theorem declarations prove Click propositions without attaching the proof

@@ -55,6 +55,9 @@ impl<'a> Proof<'a> {
             ProofStep::Normalize => Some(self.apply_normalize()),
             ProofStep::NormalizeUsing(premises) => Some(self.apply_normalize_using(premises)),
             ProofStep::ArithmeticUsing(premises) => Some(self.apply_arithmetic_using(premises)),
+            ProofStep::IntegerCertificate(certificate) => {
+                Some(self.apply_integer_certificate(certificate))
+            }
             ProofStep::Intro => Some(self.apply_intro()),
             ProofStep::Split => Some(self.apply_split()),
             ProofStep::Left => Some(self.apply_left()),
@@ -291,6 +294,163 @@ impl<'a> Proof<'a> {
                 ),
                 _ => unreachable!("kernel returned an unrelated arithmetic error"),
             })
+    }
+
+    pub(super) fn apply_integer_certificate(
+        &self,
+        certificate: &IntegerCertificate,
+    ) -> Result<KernelProofHandle, ClickError> {
+        use crate::kernel::proof::integer_arithmetic::{
+            IntegerArithmeticCertificate, IntegerArithmeticNode, integer_affine_claim,
+        };
+
+        // Source premise nodes are the only way a certificate imports facts.
+        // Keep their explicit indices and reject holes or conflicting duplicate
+        // declarations before handing anything to the kernel checker.
+        let mut source_premises = std::collections::BTreeMap::new();
+        for node in &certificate.nodes {
+            let IntegerCertificateNode::Premise {
+                index, proposition, ..
+            } = node
+            else {
+                continue;
+            };
+            let lowered =
+                self.lower_integer_surface_proposition(proposition, "integer certificate premise")?;
+            if let Some(previous) = source_premises.insert(*index, lowered.clone())
+                && previous != lowered
+            {
+                return Err(self.step_error(format!(
+                    "integer certificate premise {index} is declared with two different propositions"
+                )));
+            }
+        }
+        let mut premises = Vec::with_capacity(source_premises.len());
+        for index in 0..source_premises.len() {
+            let Some(premise) = source_premises.remove(&index) else {
+                return Err(self.step_error(format!(
+                    "integer certificate premise indices must be contiguous; missing {index}"
+                )));
+            };
+            premises.push(premise);
+        }
+
+        let claim = |proof: &Self, proposition: &ClickProposition, description: &str| {
+            let proposition = proof.lower_integer_surface_proposition(proposition, description)?;
+            integer_affine_claim(&proposition).ok_or_else(|| {
+                proof.step_error(format!(
+                    "{description} must be a supported mathematical Integer affine proposition"
+                ))
+            })
+        };
+        let mut nodes = Vec::with_capacity(certificate.nodes.len());
+        for (node_index, node) in certificate.nodes.iter().enumerate() {
+            let lowered = match node {
+                IntegerCertificateNode::Premise {
+                    index,
+                    proposition,
+                    result,
+                } => {
+                    let supplied = premises.get(*index).ok_or_else(|| {
+                        self.step_error(format!("integer certificate premise {index} is out of range"))
+                    })?;
+                    let declared = self.lower_integer_surface_proposition(
+                        proposition,
+                        "integer certificate premise",
+                    )?;
+                    if supplied != &declared {
+                        return Err(self.step_error(format!(
+                            "integer certificate premise {index} does not match its declared source proposition"
+                        )));
+                    }
+                    IntegerArithmeticNode::Premise {
+                        index: *index,
+                        result: claim(self, result, "integer certificate premise result")?,
+                    }
+                }
+                IntegerCertificateNode::Scale {
+                    source,
+                    coefficient,
+                    result,
+                } => IntegerArithmeticNode::Scale {
+                    source: *source,
+                    coefficient: integer_constant_expression(coefficient).ok_or_else(|| {
+                        self.step_error(
+                            "integer certificate scale coefficient must be a constant Integer expression",
+                        )
+                    })?,
+                    result: claim(self, result, "integer certificate scale result")?,
+                },
+                IntegerCertificateNode::Add { left, right, result } => {
+                    IntegerArithmeticNode::Add {
+                        left: *left,
+                        right: *right,
+                        result: claim(self, result, "integer certificate addition result")?,
+                    }
+                }
+                IntegerCertificateNode::EqualityToLessEqual {
+                    source,
+                    reverse,
+                    result,
+                } => IntegerArithmeticNode::EqualityToLessEqual {
+                    source: *source,
+                    reverse: *reverse,
+                    result: claim(self, result, "integer certificate equality bound")?,
+                },
+                IntegerCertificateNode::EqualityFromBounds {
+                    lower,
+                    upper,
+                    result,
+                } => IntegerArithmeticNode::EqualityFromBounds {
+                    lower: *lower,
+                    upper: *upper,
+                    result: claim(self, result, "integer certificate equality")?,
+                },
+                IntegerCertificateNode::Trivial { result } => IntegerArithmeticNode::Trivial {
+                    result: claim(self, result, "integer certificate trivial result")?,
+                },
+            };
+            if nodes.len() != node_index {
+                return Err(self.step_error("integer certificate node indexing is not contiguous"));
+            }
+            nodes.push(lowered);
+        }
+        let kernel_certificate = IntegerArithmeticCertificate {
+            nodes,
+            conclusion: certificate.conclusion,
+        };
+        self.state
+            .apply_integer_arithmetic(&kernel_certificate, &premises)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("integer certificate requires a proposition goal")
+                }
+                PropositionCloseError::IntegerArithmeticPremiseUnavailable(index) => self
+                    .step_error(format!(
+                        "integer certificate premise {index} is not exactly available"
+                    )),
+                PropositionCloseError::IntegerArithmetic(error) => self.step_error(format!(
+                    "integer arithmetic certificate rejected: {error:?}"
+                )),
+                _ => unreachable!("kernel returned an unrelated integer arithmetic error"),
+            })
+    }
+
+    fn lower_integer_surface_proposition(
+        &self,
+        surface: &ClickProposition,
+        description: &str,
+    ) -> Result<Proposition, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => crate::surface::lower_integer_certificate_proposition(
+                surface,
+                &context.theorem_context.integer_values,
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not lower {description}: {message}"))
+            }),
+            _ => self.lower_surface_proposition_direct(surface, description),
+        }
     }
 
     // Preserve the rule/dispatcher frame boundary described above; `intro`
@@ -628,5 +788,37 @@ impl<'a> Proof<'a> {
             ),
             _ => unreachable!("kernel returned an unrelated enumerate error"),
         })
+    }
+}
+
+fn integer_constant_expression(expression: &ContractExpression) -> Option<num_bigint::BigInt> {
+    let literal = match expression {
+        ContractExpression::IntegerLiteral(value) => value,
+        ContractExpression::Negate(inner) => match inner.as_ref() {
+            ContractExpression::IntegerLiteral(value) => value,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if crate::instrumentation::deadline_exceeded_with_work(
+        literal
+            .len()
+            .saturating_mul(literal.len().saturating_add(4))
+            .max(1),
+    ) {
+        return None;
+    }
+    match expression {
+        ContractExpression::IntegerLiteral(value) => value.parse::<num_bigint::BigInt>().ok(),
+        // Keep the source coefficient grammar deliberately narrow.  Parsing
+        // arbitrary arithmetic here would create a second unbounded evaluator
+        // outside the checked certificate kernel.
+        ContractExpression::Negate(inner) => match inner.as_ref() {
+            ContractExpression::IntegerLiteral(value) => {
+                value.parse::<num_bigint::BigInt>().ok().map(|value| -value)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }

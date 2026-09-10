@@ -7,8 +7,12 @@
 use super::*;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 fn charge_integer_bits(value: &BigInt) {
     // BigInt arithmetic and hashing scale with the magnitude, so account for
@@ -34,14 +38,254 @@ fn charge_multiply_bits(left: &BigInt, right: &BigInt) {
 /// child tree here would make a long expression quadratic.  Public enum
 /// variants remain useful for deserialization and test construction; callers
 /// requiring canonical forms should use the constructors.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum IntegerTerm {
     Constant(BigInt),
     Variable(Variable),
-    Negate(Box<IntegerTerm>),
-    Add(Box<IntegerTerm>, Box<IntegerTerm>),
-    Subtract(Box<IntegerTerm>, Box<IntegerTerm>),
-    Multiply(Box<IntegerTerm>, Box<IntegerTerm>),
+    Negate(SharedIntegerTerm),
+    Add(SharedIntegerTerm, SharedIntegerTerm),
+    Subtract(SharedIntegerTerm, SharedIntegerTerm),
+    Multiply(SharedIntegerTerm, SharedIntegerTerm),
+}
+
+impl Clone for IntegerTerm {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Constant(value) => Self::Constant(value.clone()),
+            Self::Variable(variable) => Self::Variable(*variable),
+            Self::Negate(value) => Self::Negate(value.clone()),
+            Self::Add(left, right) => Self::Add(left.clone(), right.clone()),
+            Self::Subtract(left, right) => Self::Subtract(left.clone(), right.clone()),
+            Self::Multiply(left, right) => Self::Multiply(left.clone(), right.clone()),
+        }
+    }
+}
+
+/// An immutable Integer node.  Children are interned by shallow identity, so
+/// cloning a shared child never clones its transitive DAG.
+pub struct SharedIntegerTerm(Arc<SharedIntegerNode>);
+
+struct SharedIntegerNode {
+    id: u64,
+    term: IntegerTerm,
+}
+
+impl SharedIntegerTerm {
+    pub(crate) fn id(&self) -> u64 {
+        self.0.id
+    }
+
+    pub(crate) fn as_ref(&self) -> &IntegerTerm {
+        &self.0.term
+    }
+
+    pub(crate) fn intern(term: IntegerTerm) -> Self {
+        integer_interner()
+            .lock()
+            .expect("Integer interner lock poisoned")
+            .intern(term)
+    }
+}
+
+impl From<IntegerTerm> for SharedIntegerTerm {
+    fn from(term: IntegerTerm) -> Self {
+        Self::intern(term)
+    }
+}
+
+impl std::ops::Deref for SharedIntegerTerm {
+    type Target = IntegerTerm;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl Clone for SharedIntegerTerm {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl PartialEq for SharedIntegerTerm {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for SharedIntegerTerm {}
+
+impl Hash for SharedIntegerTerm {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+impl PartialOrd for SharedIntegerTerm {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SharedIntegerTerm {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id().cmp(&other.id())
+    }
+}
+
+impl fmt::Debug for SharedIntegerTerm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SharedIntegerTerm")
+            .field("id", &self.id())
+            .finish()
+    }
+}
+
+impl PartialEq for IntegerTerm {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for IntegerTerm {}
+
+impl Hash for IntegerTerm {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.shallow_key().hash(state);
+    }
+}
+
+impl PartialOrd for IntegerTerm {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for IntegerTerm {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.shallow_key().cmp(&other.shallow_key())
+    }
+}
+
+impl fmt::Debug for IntegerTerm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Constant(value) => formatter.debug_tuple("Constant").field(value).finish(),
+            Self::Variable(variable) => formatter.debug_tuple("Variable").field(variable).finish(),
+            Self::Negate(value) => formatter.debug_tuple("Negate").field(&value.id()).finish(),
+            Self::Add(left, right) => formatter
+                .debug_tuple("Add")
+                .field(&left.id())
+                .field(&right.id())
+                .finish(),
+            Self::Subtract(left, right) => formatter
+                .debug_tuple("Subtract")
+                .field(&left.id())
+                .field(&right.id())
+                .finish(),
+            Self::Multiply(left, right) => formatter
+                .debug_tuple("Multiply")
+                .field(&left.id())
+                .field(&right.id())
+                .finish(),
+        }
+    }
+}
+
+impl fmt::Display for SharedIntegerTerm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut seen = std::collections::BTreeSet::new();
+        fmt_integer_shared(self, formatter, &mut seen)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+enum IntegerShallowKey {
+    Constant(BigInt),
+    Variable(Variable),
+    Negate(u64),
+    Add(u64, u64),
+    Subtract(u64, u64),
+    Multiply(u64, u64),
+}
+
+impl IntegerTerm {
+    fn shallow_key(&self) -> IntegerShallowKey {
+        match self {
+            Self::Constant(value) => IntegerShallowKey::Constant(value.clone()),
+            Self::Variable(variable) => IntegerShallowKey::Variable(*variable),
+            Self::Negate(value) => IntegerShallowKey::Negate(value.id()),
+            Self::Add(left, right) => IntegerShallowKey::Add(left.id(), right.id()),
+            Self::Subtract(left, right) => IntegerShallowKey::Subtract(left.id(), right.id()),
+            Self::Multiply(left, right) => IntegerShallowKey::Multiply(left.id(), right.id()),
+        }
+    }
+}
+
+struct IntegerInterner {
+    next_id: u64,
+    nodes: HashMap<u64, Vec<(IntegerShallowKey, Weak<SharedIntegerNode>)>>,
+    cleanup_queue: VecDeque<(u64, usize)>,
+}
+
+static INTEGER_INTERNER: OnceLock<Mutex<IntegerInterner>> = OnceLock::new();
+
+fn integer_interner() -> &'static Mutex<IntegerInterner> {
+    INTEGER_INTERNER.get_or_init(|| {
+        Mutex::new(IntegerInterner {
+            next_id: 0,
+            nodes: HashMap::new(),
+            cleanup_queue: VecDeque::new(),
+        })
+    })
+}
+
+impl IntegerInterner {
+    fn intern(&mut self, term: IntegerTerm) -> SharedIntegerTerm {
+        for _ in 0..8 {
+            let Some((fingerprint, pointer)) = self.cleanup_queue.pop_front() else {
+                break;
+            };
+            if let Some(bucket) = self.nodes.get_mut(&fingerprint) {
+                bucket.retain(|(_, node)| {
+                    node.as_ptr() as usize != pointer || node.strong_count() != 0
+                });
+                if bucket.is_empty() {
+                    self.nodes.remove(&fingerprint);
+                }
+            }
+        }
+        let key = term.shallow_key();
+        let fingerprint = integer_key_fingerprint(&key);
+        if let Some(bucket) = self.nodes.get(&fingerprint) {
+            for (candidate, node) in bucket {
+                if candidate == &key
+                    && let Some(node) = node.upgrade()
+                {
+                    return SharedIntegerTerm(node);
+                }
+            }
+        }
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("mathematical Integer node identity exhausted");
+        let node = Arc::new(SharedIntegerNode { id, term });
+        self.nodes
+            .entry(fingerprint)
+            .or_default()
+            .push((key, Arc::downgrade(&node)));
+        self.cleanup_queue
+            .push_back((fingerprint, Arc::as_ptr(&node) as usize));
+        SharedIntegerTerm(node)
+    }
+}
+
+fn integer_key_fingerprint(key: &IntegerShallowKey) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -86,8 +330,8 @@ impl IntegerTerm {
                 charge_integer_bits(&value);
                 Self::Constant(-value)
             }
-            Self::Negate(inner) => *inner,
-            value => Self::Negate(Box::new(value)),
+            Self::Negate(inner) => inner.as_ref().clone(),
+            value => Self::Negate(SharedIntegerTerm::intern(value)),
         }
     }
 
@@ -102,7 +346,10 @@ impl IntegerTerm {
         if right.as_const().is_some_and(Zero::is_zero) {
             return left;
         }
-        Self::Add(Box::new(left), Box::new(right))
+        Self::Add(
+            SharedIntegerTerm::intern(left),
+            SharedIntegerTerm::intern(right),
+        )
     }
 
     pub(crate) fn subtract(left: Self, right: Self) -> Self {
@@ -113,7 +360,10 @@ impl IntegerTerm {
         if right.as_const().is_some_and(Zero::is_zero) {
             return left;
         }
-        Self::Subtract(Box::new(left), Box::new(right))
+        Self::Subtract(
+            SharedIntegerTerm::intern(left),
+            SharedIntegerTerm::intern(right),
+        )
     }
 
     pub(crate) fn multiply(left: Self, right: Self) -> Self {
@@ -131,7 +381,10 @@ impl IntegerTerm {
         if right.as_const().is_some_and(One::is_one) {
             return left;
         }
-        Self::Multiply(Box::new(left), Box::new(right))
+        Self::Multiply(
+            SharedIntegerTerm::intern(left),
+            SharedIntegerTerm::intern(right),
+        )
     }
 }
 
@@ -143,15 +396,57 @@ impl From<i64> for IntegerTerm {
 
 impl fmt::Display for IntegerTerm {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Constant(value) => value.fmt(formatter),
-            Self::Variable(variable) => write!(formatter, "i{}", variable.0),
-            Self::Negate(value) => write!(formatter, "(-{value})"),
-            Self::Add(left, right) => write!(formatter, "({left} + {right})"),
-            Self::Subtract(left, right) => write!(formatter, "({left} - {right})"),
-            Self::Multiply(left, right) => write!(formatter, "({left} * {right})"),
+        let mut seen = std::collections::BTreeSet::new();
+        fmt_integer_term(self, formatter, &mut seen)
+    }
+}
+
+fn fmt_integer_term(
+    term: &IntegerTerm,
+    formatter: &mut fmt::Formatter<'_>,
+    seen: &mut std::collections::BTreeSet<u64>,
+) -> fmt::Result {
+    match term {
+        IntegerTerm::Constant(value) => write!(formatter, "{value}"),
+        IntegerTerm::Variable(variable) => write!(formatter, "i{}", variable.0),
+        IntegerTerm::Negate(value) => {
+            write!(formatter, "(-")?;
+            fmt_integer_shared(value, formatter, seen)?;
+            write!(formatter, ")")
+        }
+        IntegerTerm::Add(left, right) => {
+            write!(formatter, "(")?;
+            fmt_integer_shared(left, formatter, seen)?;
+            write!(formatter, " + ")?;
+            fmt_integer_shared(right, formatter, seen)?;
+            write!(formatter, ")")
+        }
+        IntegerTerm::Subtract(left, right) => {
+            write!(formatter, "(")?;
+            fmt_integer_shared(left, formatter, seen)?;
+            write!(formatter, " - ")?;
+            fmt_integer_shared(right, formatter, seen)?;
+            write!(formatter, ")")
+        }
+        IntegerTerm::Multiply(left, right) => {
+            write!(formatter, "(")?;
+            fmt_integer_shared(left, formatter, seen)?;
+            write!(formatter, " * ")?;
+            fmt_integer_shared(right, formatter, seen)?;
+            write!(formatter, ")")
         }
     }
+}
+
+fn fmt_integer_shared(
+    term: &SharedIntegerTerm,
+    formatter: &mut fmt::Formatter<'_>,
+    seen: &mut std::collections::BTreeSet<u64>,
+) -> fmt::Result {
+    if !seen.insert(term.id()) {
+        return write!(formatter, "#{}", term.id());
+    }
+    fmt_integer_term(term.as_ref(), formatter, seen)
 }
 
 impl ConditionTerm {
@@ -161,7 +456,7 @@ impl ConditionTerm {
                 charge_binary_bits(left, right);
                 Self::Constant(left < right)
             }
-            _ => Self::IntegerLessThan(Box::new(left), Box::new(right)),
+            _ => Self::IntegerLessThan(left.into(), right.into()),
         }
     }
 
@@ -171,7 +466,7 @@ impl ConditionTerm {
                 charge_binary_bits(left, right);
                 Self::Constant(left <= right)
             }
-            _ => Self::IntegerLessEqual(Box::new(left), Box::new(right)),
+            _ => Self::IntegerLessEqual(left.into(), right.into()),
         }
     }
 
@@ -181,7 +476,7 @@ impl ConditionTerm {
                 charge_binary_bits(left, right);
                 Self::Constant(left > right)
             }
-            _ => Self::IntegerGreaterThan(Box::new(left), Box::new(right)),
+            _ => Self::IntegerGreaterThan(left.into(), right.into()),
         }
     }
 
@@ -191,7 +486,7 @@ impl ConditionTerm {
                 charge_binary_bits(left, right);
                 Self::Constant(left >= right)
             }
-            _ => Self::IntegerGreaterEqual(Box::new(left), Box::new(right)),
+            _ => Self::IntegerGreaterEqual(left.into(), right.into()),
         }
     }
 
@@ -201,7 +496,7 @@ impl ConditionTerm {
                 charge_binary_bits(left, right);
                 Self::Constant(left == right)
             }
-            _ => Self::IntegerEqual(Box::new(left), Box::new(right)),
+            _ => Self::IntegerEqual(left.into(), right.into()),
         }
     }
 
@@ -211,7 +506,7 @@ impl ConditionTerm {
                 charge_binary_bits(left, right);
                 Self::Constant(left != right)
             }
-            _ => Self::IntegerNotEqual(Box::new(left), Box::new(right)),
+            _ => Self::IntegerNotEqual(left.into(), right.into()),
         }
     }
 }
@@ -219,6 +514,44 @@ impl ConditionTerm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    fn shared_node_count(root: &SharedIntegerTerm) -> usize {
+        let mut pending = vec![root.clone()];
+        let mut seen = BTreeSet::new();
+        while let Some(node) = pending.pop() {
+            if !seen.insert(node.id()) {
+                continue;
+            }
+            match node.as_ref() {
+                IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => {}
+                IntegerTerm::Negate(value) => pending.push(value.clone()),
+                IntegerTerm::Add(left, right)
+                | IntegerTerm::Subtract(left, right)
+                | IntegerTerm::Multiply(left, right) => {
+                    pending.push(left.clone());
+                    pending.push(right.clone());
+                }
+            }
+        }
+        seen.len()
+    }
+
+    #[test]
+    fn doubling_chain_interns_each_logical_level_once() {
+        for depth in [8, 16, 32, 64] {
+            let mut term = IntegerTerm::var(Variable(20_000));
+            for _ in 0..depth {
+                term = IntegerTerm::add(term.clone(), term.clone());
+            }
+            let shared = SharedIntegerTerm::from(term);
+            assert_eq!(shared_node_count(&shared), depth + 1);
+            assert_eq!(
+                shared.id(),
+                SharedIntegerTerm::from(shared.as_ref().clone()).id()
+            );
+        }
+    }
 
     #[test]
     fn arbitrary_precision_constants_and_exact_operations() {

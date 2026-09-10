@@ -143,6 +143,7 @@ pub const FULL_DIAGNOSTICS_ENV: &str = "CLICK_FULL_DIAGNOSTICS";
 pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "abstract",
     "address",
+    "add",
     "aligned",
     "all",
     "and",
@@ -170,6 +171,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "contains",
     "contract",
     "contradiction",
+    "conclusion",
     "count",
     "counted",
     "decreases",
@@ -180,6 +182,8 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "ensuring",
     "executes",
     "entry",
+    "eq_from_bounds",
+    "eq_to_le",
     "enum",
     "enumerate",
     "execute",
@@ -200,6 +204,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "have",
     "if",
     "implies",
+    "integer_certificate",
     "in",
     "induct",
     "initialize",
@@ -229,6 +234,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "owns",
     "predicate",
     "preserve",
+    "premise",
     "produces",
     "read",
     "requirement",
@@ -236,6 +242,8 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "resource",
     "rewrite",
     "right",
+    "reverse",
+    "scale",
     "separate",
     "simp",
     "sizeof",
@@ -246,6 +254,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "struct",
     "summarize",
     "symbolic_execute",
+    "trivial",
     "theorem",
     "then",
     "transport",
@@ -421,6 +430,8 @@ pub enum ClickType {
     /// types when checking theorem declarations, before crossing into Kernel Click.
     Parameter(String),
     C(C0Type),
+    /// An exact, specification-only signed integer with no C representation.
+    Integer,
     Algebraic(AlgebraicTypeApplication),
 }
 
@@ -429,6 +440,7 @@ impl ClickType {
         match self {
             Self::Parameter(_) => None,
             Self::C(c_type) => Some(*c_type),
+            Self::Integer => None,
             Self::Algebraic(_) => None,
         }
     }
@@ -1059,7 +1071,7 @@ fn collect_current_contract_expression_variables(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
-        ContractExpression::ResourceField(_) => {}
+        ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => {}
         ContractExpression::AlgebraicVariable { name, .. } => {
             names.insert(name.clone());
         }
@@ -1109,6 +1121,9 @@ fn collect_current_contract_expression_variables(
         // Explicitly anchored expressions are stable across a local write.
         ContractExpression::Old(_) | ContractExpression::At { .. } => {}
         ContractExpression::BitwiseNot(inner) => {
+            collect_current_contract_expression_variables(inner, names);
+        }
+        ContractExpression::Negate(inner) => {
             collect_current_contract_expression_variables(inner, names);
         }
         ContractExpression::Add(left, right)
@@ -1554,6 +1569,10 @@ impl SurfacePropositionMap {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
+    /// An unsuffixed decimal retained until specification type checking. The
+    /// same source spelling can denote a C literal or an exact Integer when
+    /// its surrounding expression supplies that context.
+    IntegerLiteral(String),
     /// A translation-unit-qualified C object. Retain its spelling for checked
     /// proof expansion while lowering its stable storage identity, not a local.
     QualifiedC {
@@ -1619,6 +1638,7 @@ pub enum ContractExpression {
         selector: SnapshotSelector,
         expression: Box<ContractExpression>,
     },
+    Negate(Box<ContractExpression>),
     Add(Box<ContractExpression>, Box<ContractExpression>),
     Subtract(Box<ContractExpression>, Box<ContractExpression>),
     Multiply(Box<ContractExpression>, Box<ContractExpression>),
@@ -2051,6 +2071,7 @@ struct SpecArrayRef {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecElaborationContext {
     values: BTreeMap<String, SpecExpression>,
+    integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     array_refs: BTreeMap<String, SpecArrayRef>,
     current_memory: SpecMemory,
@@ -2069,6 +2090,7 @@ impl Default for SpecElaborationContext {
     fn default() -> Self {
         Self {
             values: BTreeMap::new(),
+            integer_values: PersistentMap::default(),
             algebraic_values: BTreeMap::new(),
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Current,
@@ -2110,6 +2132,7 @@ impl SpecElaborationContext {
         if self.function_contract {
             return Ok(Self {
                 values: self.values.clone(),
+                integer_values: self.integer_values.clone(),
                 algebraic_values: self.algebraic_values.clone(),
                 array_refs: BTreeMap::new(),
                 current_memory: SpecMemory::FunctionEntry,
@@ -2132,6 +2155,7 @@ impl SpecElaborationContext {
 
         Ok(Self {
             values,
+            integer_values: self.integer_values.clone(),
             algebraic_values: self.algebraic_values.clone(),
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
@@ -2353,6 +2377,7 @@ pub enum ProofTactic {
     },
     Simp,
     SimpUsing(ProofSimpUsing),
+    IntegerCertificate(IntegerCertificate),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2600,6 +2625,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "integer-certificate",
+        syntax: "integer_certificate { premise ...; conclusion N; }",
+        class: "simple",
+    },
+    PublicTacticForm {
         id: "intro",
         syntax: "intro()",
         class: "simple",
@@ -2733,6 +2763,7 @@ pub enum ProofStep {
     Normalize,
     NormalizeUsing(Vec<ClickProposition>),
     ArithmeticUsing(Vec<ClickProposition>),
+    IntegerCertificate(IntegerCertificate),
     Intro,
     Split,
     Left,
@@ -2963,6 +2994,9 @@ impl ProofStep {
             ProofTactic::Normalize => Self::Normalize,
             ProofTactic::NormalizeUsing(premises) => Self::NormalizeUsing(premises.clone()),
             ProofTactic::ArithmeticUsing(premises) => Self::ArithmeticUsing(premises.clone()),
+            ProofTactic::IntegerCertificate(certificate) => {
+                Self::IntegerCertificate(certificate.clone())
+            }
             ProofTactic::Intro => Self::Intro,
             ProofTactic::Split => Self::Split,
             ProofTactic::Left => Self::Left,
@@ -3159,6 +3193,9 @@ impl ProofStep {
             Self::Normalize => ProofTactic::Normalize,
             Self::NormalizeUsing(premises) => ProofTactic::NormalizeUsing(premises.clone()),
             Self::ArithmeticUsing(premises) => ProofTactic::ArithmeticUsing(premises.clone()),
+            Self::IntegerCertificate(certificate) => {
+                ProofTactic::IntegerCertificate(certificate.clone())
+            }
             Self::Intro => ProofTactic::Intro,
             Self::Split => ProofTactic::Split,
             Self::Left => ProofTactic::Left,
@@ -3462,6 +3499,7 @@ impl ProofTactic {
                 TacticClass::Simple(SimpleTactic::Normalize)
             }
             Self::ArithmeticUsing(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
+            Self::IntegerCertificate(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
             Self::Split => TacticClass::Simple(SimpleTactic::Split),
             Self::Left => TacticClass::Simple(SimpleTactic::Left),
@@ -3572,6 +3610,46 @@ pub struct ProofBranch {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofSimpUsing {
     premises: Vec<ClickProposition>,
+}
+
+/// A source printable Integer arithmetic certificate. Every node carries its
+/// source proposition for exact lowering and its claimed normalized result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IntegerCertificate {
+    pub nodes: Vec<IntegerCertificateNode>,
+    pub conclusion: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IntegerCertificateNode {
+    Premise {
+        index: usize,
+        proposition: ClickProposition,
+        result: ClickProposition,
+    },
+    Scale {
+        source: usize,
+        coefficient: ContractExpression,
+        result: ClickProposition,
+    },
+    Add {
+        left: usize,
+        right: usize,
+        result: ClickProposition,
+    },
+    EqualityToLessEqual {
+        source: usize,
+        reverse: bool,
+        result: ClickProposition,
+    },
+    EqualityFromBounds {
+        lower: usize,
+        upper: usize,
+        result: ClickProposition,
+    },
+    Trivial {
+        result: ClickProposition,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4205,6 +4283,7 @@ impl FunctionParameter {
                 panic!("a generic Click parameter has no concrete C type")
             }
             ClickType::C(c_type) => *c_type,
+            ClickType::Integer => panic!("a mathematical Integer parameter has no C type"),
             ClickType::Algebraic(_) => {
                 panic!("an algebraic Click parameter has no C type")
             }
