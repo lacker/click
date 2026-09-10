@@ -6,23 +6,10 @@ impl PureFactContext {
         left: &AlgebraicTerm,
         right: &AlgebraicTerm,
     ) -> Option<bool> {
-        if let Some(value) = self.exact_condition_value(&ConditionTerm::AlgebraicEqual(
+        self.exact_condition_value(&ConditionTerm::AlgebraicEqual(
             Box::new(left.clone()),
             Box::new(right.clone()),
-        )) {
-            return Some(value);
-        }
-        let equality = Proposition::Equal(
-            Term::Algebraic(left.clone()),
-            Term::Algebraic(right.clone()),
-        );
-        if self.proves(&equality) {
-            Some(true)
-        } else if self.proves(&Proposition::Not(Box::new(equality))) {
-            Some(false)
-        } else {
-            None
-        }
+        ))
     }
     fn direct_bitvector_equality_evidence(
         &self,
