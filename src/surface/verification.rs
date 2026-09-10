@@ -1905,6 +1905,7 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
+            | syntax::C0Statement::SequentialStore { .. }
             | syntax::C0Statement::AggregateCopy { .. }
             | syntax::C0Statement::Update { .. }
             | syntax::C0Statement::Assert { .. } => {}
@@ -1952,8 +1953,15 @@ pub(in crate::surface) fn c0_statement_calls(
             }
             | syntax::C0Expression::Not(expression)
             | syntax::C0Expression::BitwiseNot(expression)
-            | syntax::C0Expression::Load(expression) => {
+            | syntax::C0Expression::Load(expression)
+            | syntax::C0Expression::SequentialRead {
+                target: expression, ..
+            } => {
                 collect_function_addresses(expression, names);
+            }
+            syntax::C0Expression::SequentialWrite { target, value, .. } => {
+                collect_function_addresses(target, names);
+                collect_function_addresses(value, names);
             }
             syntax::C0Expression::Conditional {
                 condition,
@@ -2127,6 +2135,12 @@ pub(in crate::surface) fn c0_statement_calls(
             syntax::C0Statement::Store { pointer, value, .. } => {
                 let mut dependencies = BTreeSet::new();
                 collect_function_addresses(pointer, &mut dependencies);
+                collect_function_addresses(value, &mut dependencies);
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::SequentialStore { target, value, .. } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(target, &mut dependencies);
                 collect_function_addresses(value, &mut dependencies);
                 calls.push(dependencies);
             }
@@ -2421,6 +2435,7 @@ pub(in crate::surface) fn parse_c_layouts(
                     CExpression::TypedLoad {
                         pointer: Box::new(CExpression::Value(value)),
                         value_type,
+                        volatile: false,
                     }
                 };
                 objects.insert(
@@ -2539,6 +2554,7 @@ pub(in crate::surface) fn parse_c_layouts(
                         CExpression::TypedLoad {
                             pointer: Box::new(CExpression::Value(value)),
                             value_type,
+                            volatile: false,
                         }
                     };
                     objects.insert(

@@ -874,6 +874,19 @@ pub fn c_typed_load(pointer: CExpression, value_type: CType) -> CExpression {
     CExpression::TypedLoad {
         pointer: Box::new(pointer),
         value_type,
+        volatile: false,
+    }
+}
+
+/// Construct one checked sequential access to the typed cell reached by
+/// `pointer`.  This is the kernel projection used by `READ_ONCE` and the
+/// lvalue side of `WRITE_ONCE`/`rcu_assign_pointer`; it is deliberately an
+/// observable sequential access, not an atomic or release/acquire operation.
+pub fn c_volatile_typed_load(pointer: CExpression, value_type: CType) -> CExpression {
+    CExpression::TypedLoad {
+        pointer: Box::new(pointer),
+        value_type,
+        volatile: true,
     }
 }
 
@@ -1036,6 +1049,24 @@ pub fn c_typed_store(pointer: CExpression, value: CExpression, value_type: CType
         pointer,
         value,
         value_type,
+        volatile: false,
+    }
+}
+
+/// Construct the checked sequential store used by the kernel pointer
+/// publication primitives.  It has ordinary C memory effects plus one
+/// ordered access fact; it does not provide a concurrent-reader or
+/// release/acquire theorem.
+pub fn c_volatile_typed_store(
+    pointer: CExpression,
+    value: CExpression,
+    value_type: CType,
+) -> CStatement {
+    CStatement::TypedStore {
+        pointer,
+        value,
+        value_type,
+        volatile: true,
     }
 }
 

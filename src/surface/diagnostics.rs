@@ -1029,6 +1029,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::TypedLoad {
             pointer,
             value_type,
+            ..
         } => {
             let name = match value_type {
                 CType::Void => "load_void",

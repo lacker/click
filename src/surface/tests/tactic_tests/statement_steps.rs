@@ -282,6 +282,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         pointer: CExpression::Value(CValue::pointer(second)),
         value: CExpression::Value(int32(9)),
         value_type: CType::Int32,
+        volatile: false,
     };
     let mut next_opaque_call = 0;
     let mut next_kernel_variable = 0;

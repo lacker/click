@@ -39,5 +39,5 @@ same provenance-carrying pointer. Negative cases distinguish `T * volatile`,
   regressions, and `scripts/check.sh` pass.
 
 Related: [volatile-objects.md](volatile-objects.md),
-[struct-pointer-indirection.md](struct-pointer-indirection.md), and
-[sequential-kernel-access-primitives.md](sequential-kernel-access-primitives.md).
+[struct-pointer-indirection.md](struct-pointer-indirection.md), and the
+[checked sequential kernel access primitives](../docs/reference/language/c0.md#checked-sequential-kernel-access-primitives).

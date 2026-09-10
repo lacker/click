@@ -500,14 +500,30 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             if let Some(name) = state.locals.name_for_slot(&pointer)
                 && let Some(c_type) = state.locals.scalar_object_type(name)
             {
+                let (object_volatile, object_pointee_volatile, object_pointee_constant) =
+                    match state.locals.binding(name) {
+                        Some(CLocalBinding::Object {
+                            volatile,
+                            pointee_volatile,
+                            pointee_constant,
+                            ..
+                        })
+                        | Some(CLocalBinding::UninitializedObject {
+                            volatile,
+                            pointee_volatile,
+                            pointee_constant,
+                            ..
+                        }) => (*volatile, *pointee_volatile, *pointee_constant),
+                        _ => (false, false, false),
+                    };
                 state.locals.set_typed_with_all_qualifiers(
                     name.to_string(),
                     value.clone(),
                     c_type,
-                    is_volatile,
-                    pointee_volatile,
+                    object_volatile,
+                    object_pointee_volatile,
                     false,
-                    pointee_constant,
+                    object_pointee_constant,
                 );
             }
             if is_volatile {
@@ -2092,11 +2108,13 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             pointer,
             value,
             value_type,
+            volatile,
         } => execute_c_lvalue_assignment_paths(
             state,
             &CExpression::TypedLoad {
                 pointer: Box::new(pointer.clone()),
                 value_type: *value_type,
+                volatile: *volatile,
             },
             value,
             assumptions,

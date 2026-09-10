@@ -151,9 +151,11 @@ fn substitute_c_expression_variables(
         TypedLoad {
             pointer,
             value_type,
+            volatile,
         } => TypedLoad {
             pointer: unary(pointer),
             value_type: *value_type,
+            volatile: *volatile,
         },
         Index(left, right) => {
             let (left, right) = binary(left, right);
@@ -1715,6 +1717,7 @@ fn contains_known_pointer_expression(
         TypedLoad {
             pointer: _,
             value_type,
+            ..
         } => value_type.is_pointer(),
         Load(_) | Index(_, _) => false,
         FloatNegate(expression) | FloatClassification { expression, .. } => {
