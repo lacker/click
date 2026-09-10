@@ -74,7 +74,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (16)
+## P2: after launch (15)
 
 - [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
 
@@ -104,5 +104,4 @@ Proof language and tooling:
 
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
-- [Replace `mutable`, `immutable`, and `frame` with ownership](effect-clauses-to-ownership.md)
 - [Add modules and imports for Click specifications](specification-imports.md)
