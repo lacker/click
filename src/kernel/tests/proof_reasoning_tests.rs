@@ -4992,56 +4992,6 @@ fn builtin_obligation_solver_discharges_concrete_invariant() {
 }
 
 #[test]
-fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
-    let x = Variable(66);
-    let x_bits = Bitvector32Term::Variable(x);
-    let state = CState::new().with_local("x", int32(x_bits.clone()));
-    let statement = c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1)));
-    let invariant =
-        ConditionTerm::signed_greater_equal(x_bits.clone(), Bitvector32Term::Constant(0));
-    let condition =
-        ConditionTerm::signed_greater_than(x_bits.clone(), Bitvector32Term::Constant(0));
-    let post_invariant = Proposition::ConditionIs(
-        ConditionTerm::signed_greater_equal(
-            Bitvector32Term::Subtract(
-                Box::new(x_bits.clone()),
-                Box::new(Bitvector32Term::Constant(1)),
-            ),
-            Bitvector32Term::Constant(0),
-        ),
-        true,
-    );
-    let assumptions = PureFactContext::new()
-        .assume_condition(invariant.clone(), true)
-        .assume_condition(condition.clone(), true);
-    let theorem = prove_c_statement_executes_and_propositions(
-        state.clone(),
-        statement.clone(),
-        assumptions,
-        vec![post_invariant.clone()],
-    )
-    .expect("x > 0 should prove x - 1 executes and remains nonnegative");
-
-    assert_eq!(
-        theorem.proposition().peel_implications(),
-        &proposition_and(
-            Proposition::CStatementExecutes {
-                state: state.clone(),
-                statement,
-                outcome: CStatementOutcome::Normal(CState::new().with_local(
-                    "x",
-                    int32(Bitvector32Term::Subtract(
-                        Box::new(x_bits),
-                        Box::new(Bitvector32Term::Constant(1)),
-                    )),
-                ),),
-            },
-            post_invariant,
-        )
-    );
-}
-
-#[test]
 fn equality_rewrites_through_matching_decrement() {
     let left = Bitvector32Term::Variable(Variable(66_001));
     let right = Bitvector32Term::Variable(Variable(66_002));

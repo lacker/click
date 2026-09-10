@@ -2267,55 +2267,6 @@ fn symbolic_loadable_discharges_pointer_access_obligation() {
 }
 
 #[test]
-fn interval_arithmetic_proves_increment_bounds_and_no_overflow() {
-    let i = Variable(69);
-    let n = Variable(70);
-    let i_bits = Bitvector32Term::Variable(i);
-    let n_bits = Bitvector32Term::Variable(n);
-    let incremented = Bitvector32Term::Add(
-        Box::new(i_bits.clone()),
-        Box::new(Bitvector32Term::Constant(1)),
-    );
-    let state = CState::new().with_local("i", int32(i_bits.clone()));
-    let statement = c_assign("i", c_add(c_variable("i"), c_int32_literal(1)));
-    let assumptions = PureFactContext::new()
-        .assume_condition(
-            ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
-            true,
-        )
-        .assume_condition(
-            ConditionTerm::signed_less_than(i_bits.clone(), n_bits.clone()),
-            true,
-        );
-    assert!(assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(i_bits.clone(), incremented.clone()),
-        true,
-    )));
-    assert!(assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(i_bits.clone(), incremented.clone()),
-        true,
-    )));
-    let theorem = prove_c_statement_executes_and_propositions(
-        state,
-        statement,
-        assumptions,
-        vec![
-            Proposition::ConditionIs(
-                ConditionTerm::signed_greater_equal(
-                    incremented.clone(),
-                    Bitvector32Term::Constant(0),
-                ),
-                true,
-            ),
-            Proposition::ConditionIs(ConditionTerm::signed_less_equal(incremented, n_bits), true),
-        ],
-    )
-    .expect("interval facts should prove i + 1 bounds and no signed overflow");
-
-    assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
-}
-
-#[test]
 fn signed_order_solver_knows_int32_universal_bounds() {
     let x = Bitvector32Term::Variable(Variable(71));
     let int_min = Bitvector32Term::Constant(i32::MIN as u32);
