@@ -128,6 +128,17 @@ pub fn expand_c0_claim_source_by_label(
     claim_label: &str,
 ) -> Result<String, ClickError> {
     let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for theorem in file.theorem_definitions() {
+        for (index, ensure) in theorem.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
+            if label == claim_label {
+                return expand_pure_theorem_source(click_source, c_sources, theorem.name(), index);
+            }
+        }
+    }
     for function in file.function_blocks() {
         let function_name = function.signature().name();
         if claim_label == format!("{function_name}.contract") && function.grouped_proof().is_some()
@@ -166,6 +177,22 @@ pub fn expand_c0_prepared_claim_source_by_label(
 ) -> Result<String, ClickError> {
     let sources = CSourceContext::prepared(imports);
     let file = parse_source_with_c_layouts_context(click_source, &sources)?;
+    for theorem in file.theorem_definitions() {
+        for (index, ensure) in theorem.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
+            if label == claim_label {
+                return expand_pure_theorem_source_context(
+                    click_source,
+                    &sources,
+                    theorem.name(),
+                    index,
+                );
+            }
+        }
+    }
     for function in file.function_blocks() {
         let function_name = function.signature().name();
         if claim_label == format!("{function_name}.contract") && function.grouped_proof().is_some()

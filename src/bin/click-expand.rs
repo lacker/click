@@ -670,6 +670,35 @@ int32 identity(int32 x) {
     }
 
     #[test]
+    fn run_expands_a_pure_theorem_claim_by_label() {
+        let directory = env::temp_dir().join(format!(
+            "click-expand-pure-claim-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let click_path = directory.join("project.click");
+        let click_source = r#"theorem successor(x: int32) {
+    ensures x == x by { simp(); }
+}
+"#;
+        fs::write(&click_path, click_source).unwrap();
+        let arguments = Arguments {
+            click_path,
+            selection: Selection::Claim("successor.ensures_0".to_string()),
+            time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
+            output: None,
+            in_place: false,
+        };
+
+        let expanded = run(&arguments).expect("pure theorem claims should expand by label");
+
+        assert_ne!(expanded, click_source);
+        assert!(!expanded.contains("simp();"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn generated_proof_check_uses_the_command_limit_for_remaining_smart_tactics() {
         let c_source = "int32 identity(int32 x) { return x; }";
         let click_source = r#"verifying "identity.c";
