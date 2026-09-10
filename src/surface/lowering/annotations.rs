@@ -1315,9 +1315,19 @@ pub(in crate::surface) fn lower_integer_certificate_proposition(
             right,
         } => {
             let SpecIntegerExpression::Term(left) =
-                lower_contract_integer_to_spec(left, integer_values)?;
+                lower_contract_integer_to_spec(left, integer_values)?
+            else {
+                return Err(
+                    "machine-backed Integer expressions are not yet certificate atoms".into(),
+                );
+            };
             let SpecIntegerExpression::Term(right) =
-                lower_contract_integer_to_spec(right, integer_values)?;
+                lower_contract_integer_to_spec(right, integer_values)?
+            else {
+                return Err(
+                    "machine-backed Integer expressions are not yet certificate atoms".into(),
+                );
+            };
             check_integer_lowering_work(
                 integer_root_work(&left).saturating_add(integer_root_work(&right)),
             )?;
@@ -1366,13 +1376,20 @@ pub(in crate::surface) fn lower_contract_integer_to_spec(
             let value = integer_values
                 .get(name)
                 .ok_or_else(|| format!("`{name}` is not an Integer binding"))?;
-            let SpecIntegerExpression::Term(term) = value;
+            let SpecIntegerExpression::Term(term) = value else {
+                return Err("machine-backed Integer bindings are not yet certificate atoms".into());
+            };
             check_integer_lowering_work(integer_root_work(term))?;
             Ok(value.clone())
         }
         ContractExpression::Negate(inner) => {
             let SpecIntegerExpression::Term(term) =
-                lower_contract_integer_to_spec(inner, integer_values)?;
+                lower_contract_integer_to_spec(inner, integer_values)?
+            else {
+                return Err(
+                    "machine-backed Integer expressions are not yet certificate atoms".into(),
+                );
+            };
             check_integer_lowering_work(integer_root_work(&term))?;
             Ok(SpecIntegerExpression::Term(IntegerTerm::negate(term)))
         }
@@ -1437,8 +1454,12 @@ fn lower_integer_operation(
     operation: IntegerOperation,
 ) -> Result<crate::kernel::SpecIntegerExpression, String> {
     use crate::kernel::{IntegerTerm, SpecIntegerExpression};
-    let SpecIntegerExpression::Term(left) = left;
-    let SpecIntegerExpression::Term(right) = right;
+    let SpecIntegerExpression::Term(left) = left else {
+        return Err("machine-backed Integer expressions are not yet certificate atoms".into());
+    };
+    let SpecIntegerExpression::Term(right) = right else {
+        return Err("machine-backed Integer expressions are not yet certificate atoms".into());
+    };
     let work = match operation {
         IntegerOperation::Multiply => {
             integer_root_work(&left).saturating_mul(integer_root_work(&right))
