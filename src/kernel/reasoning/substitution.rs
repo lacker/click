@@ -3949,12 +3949,45 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
-        ConditionTerm::IntegerLessThan(_, _)
-        | ConditionTerm::IntegerLessEqual(_, _)
-        | ConditionTerm::IntegerGreaterThan(_, _)
-        | ConditionTerm::IntegerGreaterEqual(_, _)
-        | ConditionTerm::IntegerEqual(_, _)
-        | ConditionTerm::IntegerNotEqual(_, _) => condition.clone(),
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => {
+            let mut memo = std::collections::HashMap::new();
+            let mut rewrite = |term: &IntegerTerm| {
+                substitute_bitvector_variable_in_shared_integer(
+                    &crate::kernel::SharedIntegerTerm::from(term.clone()),
+                    from,
+                    to,
+                    &mut memo,
+                )
+                .as_ref()
+                .clone()
+            };
+            match condition {
+                ConditionTerm::IntegerLessThan(_, _) => {
+                    ConditionTerm::integer_less_than(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerLessEqual(_, _) => {
+                    ConditionTerm::integer_less_equal(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerGreaterThan(_, _) => {
+                    ConditionTerm::integer_greater_than(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerGreaterEqual(_, _) => {
+                    ConditionTerm::integer_greater_equal(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerEqual(_, _) => {
+                    ConditionTerm::integer_equal(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerNotEqual(_, _) => {
+                    ConditionTerm::integer_not_equal(rewrite(left), rewrite(right))
+                }
+                _ => unreachable!(),
+            }
+        }
         ConditionTerm::Float32(CFloatCondition::Comparison {
             operator,
             left,

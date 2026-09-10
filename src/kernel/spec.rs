@@ -4841,4 +4841,108 @@ mod integer_budget_tests {
 
         assert_eq!(result, Err(ExecutionLimit::Deadline));
     }
+
+    #[test]
+    fn from_machine_preserves_c_overflow_path_fact() {
+        let left = Variable(31);
+        let right = Variable(32);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::CExpression(
+            c_add(c_variable("left"), c_variable("right")),
+        )));
+
+        let paths = evaluate_spec_integer_expression_paths(
+            &state,
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("symbolic machine addition should produce paths");
+        let overflow = ConditionTerm::signed_add_overflows(left_bits, right_bits);
+        assert_eq!(paths.len(), 1);
+        assert!(
+            paths[0]
+                .facts
+                .contains(&ExecutionPureFact::condition(overflow, false))
+        );
+        assert_eq!(paths[0].obligations, Vec::<ProofObligation>::new());
+    }
+
+    #[test]
+    fn from_machine_keeps_signed_and_unsigned_values_distinct() {
+        let signed = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(u32::MAX)),
+        )));
+        let unsigned = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+        )));
+        let evaluate = |expression| {
+            evaluate_spec_integer_expression_paths(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &BTreeMap::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap()
+            .pop()
+            .unwrap()
+            .value
+        };
+
+        assert_eq!(evaluate(signed), IntegerTerm::constant_i64(-1));
+        assert_eq!(
+            evaluate(unsigned),
+            IntegerTerm::constant(BigInt::from(u32::MAX))
+        );
+    }
+
+    #[test]
+    fn bitvector_substitution_reaches_machine_integer_proposition() {
+        let variable = Variable(47);
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::integer_equal(
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(variable),
+                )),
+                IntegerTerm::constant_i64(7),
+            ),
+            true,
+        );
+        let substituted = crate::kernel::reasoning::substitute_bitvector_variable_in_proposition(
+            &proposition,
+            variable,
+            &Bitvector32Term::Constant(7),
+        );
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) = substituted
+        else {
+            panic!("machine-backed Integer proposition changed shape");
+        };
+        let IntegerTerm::Machine(machine) = left.as_ref() else {
+            panic!("machine-backed Integer term was not preserved");
+        };
+        assert_eq!(machine.value(), &Bitvector32Term::Constant(7));
+
+        let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(7)),
+        )));
+        let paths = evaluate_spec_integer_expression_paths(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(paths[0].value, IntegerTerm::constant_i64(7));
+    }
 }
