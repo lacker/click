@@ -1,4 +1,7 @@
+#![cfg(not(target_os = "macos"))]
+
 //! Compiler-backed fixtures call the shared verification engine directly.
+//! They require GNU GCC at `/usr/bin/gcc`, which macOS does not provide.
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -535,6 +535,8 @@ int32 write_selected(int32 p[2], int32 flag) {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// macOS `/usr/bin/gcc` is Apple Clang and cannot exercise the GNU import path.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn prepared_audit_reuses_validated_inputs_across_sites() {
     let directory =

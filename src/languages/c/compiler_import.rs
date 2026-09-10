@@ -1624,6 +1624,8 @@ mod tests {
         let _ = fs::remove_file(&outside);
     }
 
+    // macOS `/usr/bin/gcc` is Apple Clang and has no GNU `cc1` executable.
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn real_gcc_round_trip_uses_fixed_c_profile() {
         let root = std::env::temp_dir().join(format!("click-import-test-{}", std::process::id()));
