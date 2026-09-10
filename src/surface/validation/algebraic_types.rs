@@ -1756,7 +1756,9 @@ fn infer_generic_expression_type(
     context: &str,
 ) -> Result<Option<ClickType>, ClickError> {
     match expression {
-        ContractExpression::IntegerLiteral(_) => Ok(None),
+        ContractExpression::IntegerLiteral(_) => {
+            Ok(generics::default_numeral_click_type(expression))
+        }
         ContractExpression::Negate(inner) => {
             infer_generic_expression_type(inner, variables, click_functions, definitions, context)
         }

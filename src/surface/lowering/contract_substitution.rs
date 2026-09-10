@@ -2289,58 +2289,170 @@ pub(in crate::surface) fn substitute_c_fragment_as_contract(
     expression: &CExpression,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
+    substitute_c_fragment_as_contract_with_numerals(expression, substitutions, false)
+}
+
+pub(in crate::surface) fn substitute_c_fragment_as_contract_with_numerals(
+    expression: &CExpression,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    contextual_numerals: bool,
+) -> Result<ContractExpression, String> {
     match expression {
+        CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value)))
+            if contextual_numerals =>
+        {
+            let signed = *value as i32;
+            let literal =
+                ContractExpression::IntegerLiteral(i64::from(signed).unsigned_abs().to_string());
+            Ok(if signed < 0 {
+                ContractExpression::Negate(Box::new(literal))
+            } else {
+                literal
+            })
+        }
         CExpression::Value(_) => Ok(ContractExpression::CFragment(expression.clone())),
         CExpression::Variable(name) => Ok(substitutions
             .get(name)
             .cloned()
             .unwrap_or_else(|| ContractExpression::CFragment(expression.clone()))),
         CExpression::Add(left, right) => Ok(ContractExpression::Add(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::Subtract(left, right) => Ok(ContractExpression::Subtract(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::Multiply(left, right) => Ok(ContractExpression::Multiply(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::Divide(left, right) => Ok(ContractExpression::Divide(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::Remainder(left, right) => Ok(ContractExpression::Remainder(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::ShiftLeft(left, right) => Ok(ContractExpression::ShiftLeft(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::ShiftRight(left, right) => Ok(ContractExpression::ShiftRight(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::BitwiseAnd(left, right) => Ok(ContractExpression::BitwiseAnd(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::BitwiseOr(left, right) => Ok(ContractExpression::BitwiseOr(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::BitwiseXor(left, right) => Ok(ContractExpression::BitwiseXor(
-            Box::new(substitute_c_fragment_as_contract(left, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(right, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                left,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                right,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         CExpression::BitwiseNot(expression) => Ok(ContractExpression::BitwiseNot(Box::new(
-            substitute_c_fragment_as_contract(expression, substitutions)?,
+            substitute_c_fragment_as_contract_with_numerals(
+                expression,
+                substitutions,
+                contextual_numerals,
+            )?,
         ))),
         CExpression::Index(base, index) => Ok(ContractExpression::Index(
-            Box::new(substitute_c_fragment_as_contract(base, substitutions)?),
-            Box::new(substitute_c_fragment_as_contract(index, substitutions)?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                base,
+                substitutions,
+                contextual_numerals,
+            )?),
+            Box::new(substitute_c_fragment_as_contract_with_numerals(
+                index,
+                substitutions,
+                contextual_numerals,
+            )?),
         )),
         _ => Ok(ContractExpression::CFragment(substitute_c_fragment(
             expression,
@@ -2617,8 +2729,10 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
     match expression {
-        ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => None,
-        ContractExpression::Negate(_) => None,
+        ContractExpression::ResourceField(_) => None,
+        ContractExpression::IntegerLiteral(_) | ContractExpression::Negate(_) => {
+            resource_argument_to_c_expression(expression).ok()
+        }
         ContractExpression::AlgebraicVariable { .. }
         | ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicMatch { .. } => None,

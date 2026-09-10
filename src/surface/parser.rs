@@ -5476,15 +5476,6 @@ impl Parser {
             }));
         }
         if self.peek() == Some(&Token::Minus) {
-            if self.current_integer_params.is_empty()
-                && !self.integer_literal_context
-                && let Some(value) = self.peek_next().and_then(negatable_int32_magnitude)
-            {
-                self.position += 2;
-                return Ok(ContractExpression::CFragment(CExpression::Value(int32(
-                    0u32.wrapping_sub(value),
-                ))));
-            }
             self.position += 1;
             return Ok(ContractExpression::Negate(Box::new(
                 self.parse_contract_unary()?,
@@ -6168,38 +6159,17 @@ impl Parser {
                     }
                 }
             }
-            Some(Token::Number(value))
-                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
-            {
+            // Keep unsuffixed specification numerals contextual until typing.
+            // A surrounding conversion or Integer-valued expression may supply
+            // that context even when the enclosing theorem has only C params.
+            Some(Token::Number(value)) => Ok(ContractExpression::IntegerLiteral(value.to_string())),
+            Some(Token::BigNumber(value)) => Ok(ContractExpression::IntegerLiteral(value)),
+            Some(Token::UnsuffixedInt64(value)) => {
                 Ok(ContractExpression::IntegerLiteral(value.to_string()))
             }
-            Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
-                int32(value),
-            ))),
-            Some(Token::BigNumber(value))
-                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
-            {
-                Ok(ContractExpression::IntegerLiteral(value))
-            }
-            Some(Token::BigNumber(_)) => {
-                Err(self.error("arbitrary decimal literals require a mathematical Integer context"))
-            }
-            Some(Token::UnsuffixedInt64(value))
-                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
-            {
+            Some(Token::UnsuffixedUInt64(value)) => {
                 Ok(ContractExpression::IntegerLiteral(value.to_string()))
             }
-            Some(Token::UnsuffixedInt64(value)) => Ok(ContractExpression::CFragment(
-                CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(value))),
-            )),
-            Some(Token::UnsuffixedUInt64(value))
-                if !self.current_integer_params.is_empty() || self.integer_literal_context =>
-            {
-                Ok(ContractExpression::IntegerLiteral(value.to_string()))
-            }
-            Some(Token::UnsuffixedUInt64(value)) => Ok(ContractExpression::CFragment(
-                CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(value))),
-            )),
             Some(Token::UInt8Number(value)) => Ok(ContractExpression::CFragment(
                 CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
             )),

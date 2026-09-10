@@ -421,7 +421,7 @@ impl<'a> Proof<'a> {
 
         let branch = match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => {
-                let original_surface = goal.surface.as_deref().cloned();
+                let mut original_surface = goal.surface.as_deref().cloned();
                 let substitutions = definition
                     .parameters()
                     .iter()
@@ -509,18 +509,22 @@ impl<'a> Proof<'a> {
                             "could not refresh the goal after function `unfold`: {message}"
                         ))
                     })?
-                } else if original_surface.is_none() {
-                    // A nested proof can carry a checked kernel goal without
-                    // retained source syntax. Unfold the selected occurrence
-                    // by the same exact defining equality in that case.
-                    rewrite_proposition_by_exact_equality(
+                } else {
+                    // Contextual numerals and synthesized C constants may have
+                    // different surface nodes but denote the same typed call.
+                    // Use the checked defining equality on the kernel goal and
+                    // discard stale presentation after a successful rewrite.
+                    match rewrite_proposition_by_exact_equality(
                         goal.kernel(),
                         &equality,
                         std::slice::from_ref(&equality),
-                    )
-                    .unwrap_or_else(|_| goal.kernel().clone())
-                } else {
-                    goal.kernel().clone()
+                    ) {
+                        Ok(rewritten) => {
+                            original_surface = None;
+                            rewritten
+                        }
+                        Err(_) => goal.kernel().clone(),
+                    }
                 };
                 let complete = facts.contains(&kernel);
                 (!complete).then(|| {

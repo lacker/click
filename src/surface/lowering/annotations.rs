@@ -3154,6 +3154,9 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<Option<ClickType>, String> {
         match argument {
+            ContractExpression::IntegerLiteral(_) | ContractExpression::Negate(_) => {
+                Ok(generics::default_numeral_click_type(argument))
+            }
             ContractExpression::Old(inner)
             | ContractExpression::At {
                 expression: inner, ..
