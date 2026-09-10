@@ -251,6 +251,9 @@ fn integer_expression_kind(
             }
             body_kind.map(|_| true)
         }
+        ContractExpression::AlgebraicMatch { arms, .. } => arms
+            .first()
+            .and_then(|arm| matches!(arm.body, ContractExpression::Binding(_)).then_some(true)),
         _ => None,
     }
 }

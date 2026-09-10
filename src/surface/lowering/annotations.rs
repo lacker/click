@@ -2090,6 +2090,12 @@ impl AnnotationLowerer<'_> {
                 }
                 let left_is_integer = self.contract_expression_is_integer(left, environment);
                 let right_is_integer = self.contract_expression_is_integer(right, environment);
+                let left_is_integer = left_is_integer
+                    || (right_is_integer
+                        && matches!(left, ContractExpression::AlgebraicMatch { .. }));
+                let right_is_integer = right_is_integer
+                    || (left_is_integer
+                        && matches!(right, ContractExpression::AlgebraicMatch { .. }));
                 if left_is_integer || right_is_integer {
                     if left_is_integer != right_is_integer
                         && !(if left_is_integer {
@@ -2250,7 +2256,6 @@ impl AnnotationLowerer<'_> {
                 .click_function_environment
                 .get(name)
                 .is_some_and(|function| function.return_type() == &ClickType::Integer),
-            ContractExpression::AlgebraicMatch { .. } => true,
             _ => false,
         }
     }
