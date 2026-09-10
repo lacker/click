@@ -313,6 +313,7 @@ impl Names {
                 for field in fields {
                     match field {
                         SpecAlgebraicValue::C(e) => self.expression(e),
+                        SpecAlgebraicValue::Integer(_) => {}
                         SpecAlgebraicValue::Algebraic(e) => self.algebraic(e),
                     }
                 }

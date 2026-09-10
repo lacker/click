@@ -3449,6 +3449,7 @@ pub(super) fn spec_algebraic_expression_is_state_independent(
                 SpecAlgebraicValue::C(expression) => {
                     spec_expression_is_state_independent(expression)
                 }
+                SpecAlgebraicValue::Integer(_) => true,
                 SpecAlgebraicValue::Algebraic(expression) => {
                     spec_algebraic_expression_is_state_independent(expression)
                 }
@@ -3719,6 +3720,7 @@ fn spec_algebraic_expression_reads_current_parameter(
                 SpecAlgebraicValue::C(expression) => {
                     spec_expression_reads_current_parameter(expression, parameter_name)
                 }
+                SpecAlgebraicValue::Integer(_) => false,
                 SpecAlgebraicValue::Algebraic(expression) => {
                     spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
                 }
@@ -4376,6 +4378,7 @@ fn spec_algebraic_expression_current_parameter_accesses(
                             unknown_read,
                         );
                     }
+                    SpecAlgebraicValue::Integer(_) => {}
                     SpecAlgebraicValue::Algebraic(expression) => {
                         spec_algebraic_expression_current_parameter_accesses(
                             expression,
@@ -8429,6 +8432,9 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 AlgebraicValue::C(value) => {
                     let ty = value.c_type();
                     evaluation.locals.set_typed(name.clone(), value, ty);
+                }
+                AlgebraicValue::Integer(_) => {
+                    return Err("Integer algebraic resource fields are not supported here");
                 }
                 AlgebraicValue::Algebraic(value) => {
                     algebraic_bindings.insert(name.clone(), value);

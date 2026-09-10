@@ -391,6 +391,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
             AlgebraicValue::C(value) => {
                 AlgebraicValue::C(rewrite_c_value(value, rewrite_term, rewrite_pointer))
             }
+            AlgebraicValue::Integer(value) => AlgebraicValue::Integer(value.clone()),
             AlgebraicValue::Algebraic(value) => {
                 AlgebraicValue::Algebraic(rewrite_algebraic(value, rewrite_term, rewrite_pointer))
             }

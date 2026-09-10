@@ -903,6 +903,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                                 AlgebraicValue::C(value) => {
                                     body_state.locals.set(binding.clone(), value.clone());
                                 }
+                                AlgebraicValue::Integer(_) => {}
                                 AlgebraicValue::Algebraic(value) => {
                                     body_algebraic_bindings.insert(binding.clone(), value.clone());
                                 }
@@ -983,6 +984,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                             AlgebraicValue::C(field) => {
                                 body_state.locals.set(binding.clone(), field.clone());
                             }
+                            AlgebraicValue::Integer(_) => {}
                             AlgebraicValue::Algebraic(field) => {
                                 body_algebraic_bindings.insert(binding.clone(), field.clone());
                             }
@@ -1163,6 +1165,9 @@ fn symbolic_algebraic_bindings(
                 AlgebraicValueType::C(c_type) => {
                     Ok(AlgebraicValue::C(symbolic_call_result(*c_type, variable)))
                 }
+                AlgebraicValueType::Integer => {
+                    Ok(AlgebraicValue::Integer(IntegerTerm::var(variable)))
+                }
                 AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
                     algebraic_type
                         .resolve_nested_type(value_type)
@@ -1188,6 +1193,14 @@ fn evaluate_spec_algebraic_value_at_state(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecAlgebraicValuePath>> {
     match value {
+        SpecAlgebraicValue::Integer(expression) => {
+            let SpecIntegerExpression::Term(term) = expression;
+            Ok(vec![SpecAlgebraicValuePath {
+                value: AlgebraicValue::Integer(term.clone()),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
         SpecAlgebraicValue::C(expression) => {
             Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -2914,6 +2927,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                                 AlgebraicValue::C(value) => {
                                     body_state.locals.set(binding.clone(), value.clone());
                                 }
+                                AlgebraicValue::Integer(_) => {}
                                 AlgebraicValue::Algebraic(value) => {
                                     body_algebraic_bindings.insert(binding.clone(), value.clone());
                                 }
@@ -3009,6 +3023,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                             AlgebraicValue::C(field) => {
                                 body_state.locals.set(binding.clone(), field.clone());
                             }
+                            AlgebraicValue::Integer(_) => {}
                             AlgebraicValue::Algebraic(field) => {
                                 body_algebraic_bindings.insert(binding.clone(), field.clone());
                             }

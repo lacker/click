@@ -70,6 +70,10 @@ pub(in crate::kernel) fn algebraic_constructor_case_equations(
                         AlgebraicValue::C(symbolic_call_result(*c_type, variable)),
                     )
                 }
+                AlgebraicValueType::Integer => (
+                    Sort::Integer,
+                    AlgebraicValue::Integer(IntegerTerm::var(variable)),
+                ),
                 AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
                     let algebraic_type = value.algebraic_type.resolve_nested_type(field_type)?;
                     if !algebraic_type.has_consistent_root_schema() {

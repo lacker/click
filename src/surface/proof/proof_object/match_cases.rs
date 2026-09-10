@@ -205,6 +205,11 @@ impl<'a> Proof<'a> {
                             },
                         }
                     }
+                    AlgebraicValue::Integer(_) => {
+                        return Err(self.step_error(
+                            "execution `match` does not yet expose Integer constructor fields as proof locals",
+                        ));
+                    }
                 };
                 scope = scope.with_inserted(name.clone(), expression);
             }
