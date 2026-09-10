@@ -1,6 +1,6 @@
 # Bug bash: open tooling failures
 
-Four remaining tooling failures are tracked here. They reject supported inputs
+Three remaining tooling failures are tracked here. They reject supported inputs
 or expose verifier reliability gaps.
 
 This is deliberately a bundle rather than one file per problem, so the set
@@ -24,21 +24,12 @@ change in the tree. Incremental mode builds its source bundle without headers.
 Acceptance: incremental verification of a project with local headers works, and
 a header edit selects the functions whose translation units include it.
 
-## 2. A trivial theorem produces a smart proof with no certificate
-
-`theorem small(x: int32) { requires x < 10; ensures x < 20; }` under the default
-prover fails with `smart proof for small.ensures_0 succeeded but did not
-produce a pure surface certificate`. `ensures x <= 10` works. This is the
-"smart success without a certificate" class that `CLAUDE.md` says blocks
-feature work. Acceptance: the theorem verifies, or the search declines promptly
-with an actionable diagnostic.
-
-## 3. `execute()` emits a certificate the checker rejects
+## 2. `execute()` emits a certificate the checker rejects
 
 This occurs for `break` inside an `if` inside a nested `while`, in the same
-class as item 2.
+class as item 1.
 
-## 4. Panic (`unreachable!`) when a local struct initializer zero-fills a
+## 3. Panic (`unreachable!`) when a local struct initializer zero-fills a
 `float`/`double` field
 
 A crash, not a wrong answer. Acceptance: the initializer is either supported
