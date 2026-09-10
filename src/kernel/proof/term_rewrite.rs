@@ -84,6 +84,7 @@ impl<'a> TermRewrite<'a> {
         match term {
             Term::Algebraic(v) => Term::Algebraic(self.algebraic(v)),
             Term::Bitvector32(v) => Term::Bitvector32(self.bits(v)),
+            Term::Integer(v) => Term::Integer(self.integer(v)),
             Term::CValue(v) => Term::CValue(self.value(v)),
             Term::Condition(v) => Term::Condition(self.condition(v)),
             Term::PointerOffset(v) => Term::PointerOffset(self.offset(v)),
@@ -171,6 +172,22 @@ impl<'a> TermRewrite<'a> {
                 let mut result = v.clone();
                 result.replace_pointer(self.pointer(v.pointer()));
                 CValue::Pointer(result)
+            }
+        }
+    }
+    fn integer(&mut self, v: &IntegerTerm) -> IntegerTerm {
+        self.visit();
+        match v {
+            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => v.clone(),
+            IntegerTerm::Negate(value) => IntegerTerm::negate(self.integer(value)),
+            IntegerTerm::Add(left, right) => {
+                IntegerTerm::add(self.integer(left), self.integer(right))
+            }
+            IntegerTerm::Subtract(left, right) => {
+                IntegerTerm::subtract(self.integer(left), self.integer(right))
+            }
+            IntegerTerm::Multiply(left, right) => {
+                IntegerTerm::multiply(self.integer(left), self.integer(right))
             }
         }
     }
@@ -367,6 +384,24 @@ impl<'a> TermRewrite<'a> {
                 Box::new(self.offset(a)),
                 Box::new(self.offset(b)),
             ),
+            ConditionTerm::IntegerLessThan(a, b) => {
+                ConditionTerm::integer_less_than(self.integer(a), self.integer(b))
+            }
+            ConditionTerm::IntegerLessEqual(a, b) => {
+                ConditionTerm::integer_less_equal(self.integer(a), self.integer(b))
+            }
+            ConditionTerm::IntegerGreaterThan(a, b) => {
+                ConditionTerm::integer_greater_than(self.integer(a), self.integer(b))
+            }
+            ConditionTerm::IntegerGreaterEqual(a, b) => {
+                ConditionTerm::integer_greater_equal(self.integer(a), self.integer(b))
+            }
+            ConditionTerm::IntegerEqual(a, b) => {
+                ConditionTerm::integer_equal(self.integer(a), self.integer(b))
+            }
+            ConditionTerm::IntegerNotEqual(a, b) => {
+                ConditionTerm::integer_not_equal(self.integer(a), self.integer(b))
+            }
         }
     }
     pub(crate) fn bits(&mut self, v: &Bitvector32Term) -> Bitvector32Term {

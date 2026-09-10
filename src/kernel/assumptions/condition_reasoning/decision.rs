@@ -1128,6 +1128,27 @@ impl PureFactContext {
             ConditionTerm::PointerEqual(left, right) => {
                 ConditionTerm::pointer_equal(left.as_ref().clone(), right.as_ref().clone())
             }
+            // Integer arithmetic has no memory loads; assumption-driven
+            // simplification is intentionally limited to its local exact
+            // constructors until the checked arithmetic planner lands.
+            ConditionTerm::IntegerLessThan(left, right) => {
+                ConditionTerm::integer_less_than(left.as_ref().clone(), right.as_ref().clone())
+            }
+            ConditionTerm::IntegerLessEqual(left, right) => {
+                ConditionTerm::integer_less_equal(left.as_ref().clone(), right.as_ref().clone())
+            }
+            ConditionTerm::IntegerGreaterThan(left, right) => {
+                ConditionTerm::integer_greater_than(left.as_ref().clone(), right.as_ref().clone())
+            }
+            ConditionTerm::IntegerGreaterEqual(left, right) => {
+                ConditionTerm::integer_greater_equal(left.as_ref().clone(), right.as_ref().clone())
+            }
+            ConditionTerm::IntegerEqual(left, right) => {
+                ConditionTerm::integer_equal(left.as_ref().clone(), right.as_ref().clone())
+            }
+            ConditionTerm::IntegerNotEqual(left, right) => {
+                ConditionTerm::integer_not_equal(left.as_ref().clone(), right.as_ref().clone())
+            }
         }
     }
 

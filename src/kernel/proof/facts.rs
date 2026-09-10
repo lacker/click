@@ -1026,6 +1026,12 @@ fn collect_condition_bitvector_atoms(
             collect_bitvector_atoms(left, atoms);
             collect_bitvector_atoms(right, atoms);
         }
+        ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => {}
         ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
             float_condition.for_each_bitvector_term(|term| collect_bitvector_atoms(term, atoms));
         }

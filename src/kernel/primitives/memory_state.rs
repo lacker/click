@@ -644,6 +644,14 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                             *right,
                         )
                     }
+                    ConditionTerm::IntegerLessThan(_, _)
+                    | ConditionTerm::IntegerLessEqual(_, _)
+                    | ConditionTerm::IntegerGreaterThan(_, _)
+                    | ConditionTerm::IntegerGreaterEqual(_, _)
+                    | ConditionTerm::IntegerEqual(_, _)
+                    | ConditionTerm::IntegerNotEqual(_, _) => {
+                        let _ = write!(identity, "icond{condition:?};");
+                    }
                     ConditionTerm::Float32(condition) => {
                         tasks.push(HavocIdentityTask::FloatCondition {
                             condition,

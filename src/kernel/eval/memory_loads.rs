@@ -1330,6 +1330,12 @@ pub(crate) fn canonical_condition(condition: &ConditionTerm) -> ConditionTerm {
                 offset: canonical_offset_term(&right.offset),
             }),
         ),
+        ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => condition.clone(),
     }
 }
 
@@ -1626,6 +1632,12 @@ fn substitute_load_variables(
             }
             Task::VisitCondition(condition) => match condition {
                 ConditionTerm::AlgebraicEqual(_, _) => condition_results.push(condition.clone()),
+                ConditionTerm::IntegerLessThan(_, _)
+                | ConditionTerm::IntegerLessEqual(_, _)
+                | ConditionTerm::IntegerGreaterThan(_, _)
+                | ConditionTerm::IntegerGreaterEqual(_, _)
+                | ConditionTerm::IntegerEqual(_, _)
+                | ConditionTerm::IntegerNotEqual(_, _) => condition_results.push(condition.clone()),
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {
                     condition_results.push(condition.clone())
                 }
@@ -2173,6 +2185,12 @@ fn condition_mentions_a_memory_load(condition: &ConditionTerm) -> bool {
             offset_mentions_a_memory_load(&left.offset)
                 || offset_mentions_a_memory_load(&right.offset)
         }
+        ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => false,
     }
 }
 

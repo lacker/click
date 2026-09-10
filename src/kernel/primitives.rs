@@ -15,6 +15,8 @@ use std::sync::{Arc, OnceLock};
 
 mod contracts;
 pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
+mod integer;
+pub use integer::{IntegerComparisonOperator, IntegerTerm};
 mod derivations;
 mod memory_state;
 pub(crate) use memory_state::{
@@ -73,6 +75,7 @@ pub enum Sort {
     Condition,
     Bitvector32,
     Bitvector64,
+    Integer,
     PointerOffset,
     CType,
     CInt32,
@@ -274,6 +277,12 @@ pub enum ConditionTerm {
     Float64(CFloatCondition),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
     PointerEqual(Box<Pointer>, Box<Pointer>),
+    IntegerLessThan(Box<IntegerTerm>, Box<IntegerTerm>),
+    IntegerLessEqual(Box<IntegerTerm>, Box<IntegerTerm>),
+    IntegerGreaterThan(Box<IntegerTerm>, Box<IntegerTerm>),
+    IntegerGreaterEqual(Box<IntegerTerm>, Box<IntegerTerm>),
+    IntegerEqual(Box<IntegerTerm>, Box<IntegerTerm>),
+    IntegerNotEqual(Box<IntegerTerm>, Box<IntegerTerm>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -3455,6 +3464,7 @@ pub enum CResourceSpec {
 pub enum Term {
     Condition(ConditionTerm),
     Bitvector32(Bitvector32Term),
+    Integer(IntegerTerm),
     PointerOffset(PointerOffsetTerm),
     CValue(CValue),
     Sequence(SequenceTerm),

@@ -233,6 +233,7 @@ pub(in crate::kernel) fn collect_term_bitvector_variables(
     match term {
         Term::Condition(condition) => collect_condition_bitvector_variables(condition, variables),
         Term::Bitvector32(bits) => collect_bitvector_variables(bits, variables),
+        Term::Integer(integer) => collect_integer_variables(integer, variables),
         Term::PointerOffset(offset) => {
             collect_pointer_offset_bitvector_variables(offset, variables)
         }
@@ -1102,6 +1103,31 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
         ConditionTerm::PointerEqual(left, right) => {
             collect_pointer_bitvector_variables(left, variables);
             collect_pointer_bitvector_variables(right, variables);
+        }
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => {
+            collect_integer_variables(left, variables);
+            collect_integer_variables(right, variables);
+        }
+    }
+}
+
+fn collect_integer_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+    match term {
+        IntegerTerm::Constant(_) => {}
+        IntegerTerm::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        IntegerTerm::Negate(value) => collect_integer_variables(value, variables),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            collect_integer_variables(left, variables);
+            collect_integer_variables(right, variables);
         }
     }
 }

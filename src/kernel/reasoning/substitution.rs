@@ -675,6 +675,7 @@ fn collect_term_bound_variables(term: &Term, variables: &mut BTreeSet<Variable>)
     match term {
         Term::Condition(condition) => collect_condition_bound_variables(condition, variables),
         Term::Bitvector32(bits) => collect_bitvector_bound_variables(bits, variables),
+        Term::Integer(integer) => collect_integer_bound_variables(integer, variables),
         Term::PointerOffset(offset) => collect_pointer_offset_bound_variables(offset, variables),
         Term::CValue(value) => collect_c_value_bound_variables(value, variables),
         Term::Sequence(sequence) => collect_sequence_bound_variables(sequence, variables),
@@ -1298,6 +1299,15 @@ fn collect_condition_bound_variables(
             collect_bitvector_bound_variables(left, variables);
             collect_bitvector_bound_variables(right, variables);
         }
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => {
+            collect_integer_bound_variables(left, variables);
+            collect_integer_bound_variables(right, variables);
+        }
         ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
             float_condition
                 .for_each_bitvector_term(|term| collect_bitvector_bound_variables(term, variables));
@@ -1340,6 +1350,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
             condition, from, to,
         )),
         Term::Bitvector32(bits) => Term::Bitvector32(substitute_bitvector_variable(bits, from, to)),
+        // Variable identities are shared by all logical sorts, but a
+        // machine substitution must never rewrite an Integer variable with a
+        // machine term. Integer binders use the dedicated function below.
+        Term::Integer(integer) => Term::Integer(integer.clone()),
         Term::PointerOffset(offset) => Term::PointerOffset(
             substitute_bitvector_variable_in_pointer_offset(offset, from, to),
         ),
@@ -1418,6 +1432,380 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
             Term::CState(substitute_bitvector_variable_in_c_state(state, from, to))
         }
     }
+}
+
+fn collect_integer_bound_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+    match term {
+        IntegerTerm::Constant(_) => {}
+        IntegerTerm::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        IntegerTerm::Negate(value) => collect_integer_bound_variables(value, variables),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            collect_integer_bound_variables(left, variables);
+            collect_integer_bound_variables(right, variables);
+        }
+    }
+}
+
+fn substitute_integer_variable_in_bitvector(
+    term: &Bitvector32Term,
+    from: Variable,
+    to: &IntegerTerm,
+) -> Bitvector32Term {
+    macro_rules! binary_terms {
+        ($($variant:ident),+ $(,)?) => {
+            match term {
+                $(Bitvector32Term::$variant(left, right) => Some(Bitvector32Term::$variant(
+                    Box::new(substitute_integer_variable_in_bitvector(left, from, to)),
+                    Box::new(substitute_integer_variable_in_bitvector(right, from, to)),
+                )),)+
+                _ => None,
+            }
+        };
+    }
+    macro_rules! unary_terms {
+        ($($variant:ident),+ $(,)?) => {
+            match term {
+                $(Bitvector32Term::$variant(value) => Some(Bitvector32Term::$variant(
+                    Box::new(substitute_integer_variable_in_bitvector(value, from, to)),
+                )),)+
+                _ => None,
+            }
+        };
+    }
+    if let Some(mapped) = binary_terms!(
+        Add,
+        Subtract,
+        Multiply,
+        Divide,
+        UnsignedDivide,
+        Remainder,
+        UnsignedRemainder,
+        ShiftLeft,
+        ArithmeticShiftRight,
+        LogicalShiftRight,
+        BitwiseAnd,
+        BitwiseOr,
+        BitwiseXor,
+        Int64Add,
+        Int64Subtract,
+        Int64Multiply,
+        Int64Divide,
+        Int64Remainder,
+        Int64ShiftLeft,
+        Int64ArithmeticShiftRight,
+        Int64BitwiseAnd,
+        Int64BitwiseOr,
+        Int64BitwiseXor,
+        UInt64Add,
+        UInt64Subtract,
+        UInt64Multiply,
+        UInt64Divide,
+        UInt64Remainder,
+        UInt64ShiftLeft,
+        UInt64LogicalShiftRight,
+        UInt64BitwiseAnd,
+        UInt64BitwiseOr,
+        UInt64BitwiseXor,
+    ) {
+        return mapped;
+    }
+    if let Some(mapped) = unary_terms!(
+        BitwiseNot,
+        Int64From32,
+        Int64FromUInt32,
+        UInt64From32,
+        UInt32From64,
+        UInt64FromInt32,
+        UInt64FromInt64,
+        Int64BitwiseNot,
+        UInt64BitwiseNot,
+        Float32Negate,
+        Float64Negate,
+    ) {
+        return mapped;
+    }
+    match term {
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PointerAddress(_)
+        | Bitvector32Term::ClickFunctionApplication { .. } => term.clone(),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: Box::new(substitute_integer_variable_in_condition(
+                condition, from, to,
+            )),
+            then_term: Box::new(substitute_integer_variable_in_bitvector(
+                then_term, from, to,
+            )),
+            else_term: Box::new(substitute_integer_variable_in_bitvector(
+                else_term, from, to,
+            )),
+        },
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => Bitvector32Term::RangeFold {
+            start: Box::new(substitute_integer_variable_in_bitvector(start, from, to)),
+            end: Box::new(substitute_integer_variable_in_bitvector(end, from, to)),
+            initial: Box::new(substitute_integer_variable_in_bitvector(initial, from, to)),
+            accumulator: *accumulator,
+            item: *item,
+            body: Box::new(substitute_integer_variable_in_bitvector(body, from, to)),
+        },
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| substitute_integer_variable_in_bitvector(argument, from, to))
+                    .collect(),
+            }
+        }
+        Bitvector32Term::AlgebraicMatch { scrutinee, arms } => Bitvector32Term::AlgebraicMatch {
+            scrutinee: scrutinee.clone(),
+            arms: arms
+                .iter()
+                .map(|arm| AlgebraicBitvectorMatchArm {
+                    variant: arm.variant.clone(),
+                    bindings: arm.bindings.clone(),
+                    body: substitute_integer_variable_in_bitvector(&arm.body, from, to),
+                })
+                .collect(),
+        },
+        Bitvector32Term::Float32Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::Float32Binary {
+            operator: *operator,
+            left: Box::new(substitute_integer_variable_in_bitvector(left, from, to)),
+            right: Box::new(substitute_integer_variable_in_bitvector(right, from, to)),
+        },
+        Bitvector32Term::Float64Binary {
+            operator,
+            left,
+            right,
+        } => Bitvector32Term::Float64Binary {
+            operator: *operator,
+            left: Box::new(substitute_integer_variable_in_bitvector(left, from, to)),
+            right: Box::new(substitute_integer_variable_in_bitvector(right, from, to)),
+        },
+        // All arithmetic and conversion variants are handled by the
+        // exhaustive macro visitors above; this guard is only a compile-time
+        // reminder for a newly added opaque variant.
+        _ => term.clone(),
+    }
+}
+
+pub(in crate::kernel) fn substitute_integer_variable(
+    term: &IntegerTerm,
+    from: Variable,
+    to: &IntegerTerm,
+) -> IntegerTerm {
+    match term {
+        IntegerTerm::Constant(value) => IntegerTerm::Constant(value.clone()),
+        IntegerTerm::Variable(variable) if *variable == from => to.clone(),
+        IntegerTerm::Variable(variable) => IntegerTerm::Variable(*variable),
+        IntegerTerm::Negate(value) => {
+            IntegerTerm::negate(substitute_integer_variable(value, from, to))
+        }
+        IntegerTerm::Add(left, right) => IntegerTerm::add(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        IntegerTerm::Subtract(left, right) => IntegerTerm::subtract(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        IntegerTerm::Multiply(left, right) => IntegerTerm::multiply(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+    }
+}
+
+pub(in crate::kernel) fn substitute_integer_variable_in_term(
+    term: &Term,
+    from: Variable,
+    to: &IntegerTerm,
+) -> Term {
+    match term {
+        Term::Condition(condition) => Term::Condition(substitute_integer_variable_in_condition(
+            condition, from, to,
+        )),
+        Term::Bitvector32(bits) => {
+            Term::Bitvector32(substitute_integer_variable_in_bitvector(bits, from, to))
+        }
+        Term::Integer(integer) => Term::Integer(substitute_integer_variable(integer, from, to)),
+        // Other term sorts have no mathematical scalar fields today and must
+        // remain untouched. Add a dedicated arm here when one is introduced.
+        _ => term.clone(),
+    }
+}
+
+pub(in crate::kernel) fn substitute_integer_variable_in_condition(
+    condition: &ConditionTerm,
+    from: Variable,
+    to: &IntegerTerm,
+) -> ConditionTerm {
+    match condition {
+        ConditionTerm::IntegerLessThan(left, right) => ConditionTerm::integer_less_than(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        ConditionTerm::IntegerLessEqual(left, right) => ConditionTerm::integer_less_equal(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        ConditionTerm::IntegerGreaterThan(left, right) => ConditionTerm::integer_greater_than(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        ConditionTerm::IntegerGreaterEqual(left, right) => ConditionTerm::integer_greater_equal(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        ConditionTerm::IntegerEqual(left, right) => ConditionTerm::integer_equal(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        ConditionTerm::IntegerNotEqual(left, right) => ConditionTerm::integer_not_equal(
+            substitute_integer_variable(left, from, to),
+            substitute_integer_variable(right, from, to),
+        ),
+        _ => condition.clone(),
+    }
+}
+
+/// Sort-aware substitution for the logical fragment that can carry Integer
+/// terms. It intentionally leaves C-state and C-expression propositions
+/// unchanged until those structures gain mathematical scalar fields.
+pub(in crate::kernel) fn substitute_integer_variable_in_proposition(
+    proposition: &Proposition,
+    from: Variable,
+    to: &IntegerTerm,
+) -> Proposition {
+    match proposition {
+        Proposition::Equal(left, right) => Proposition::Equal(
+            substitute_integer_variable_in_term(left, from, to),
+            substitute_integer_variable_in_term(right, from, to),
+        ),
+        Proposition::ConditionIs(condition, value) => Proposition::ConditionIs(
+            substitute_integer_variable_in_condition(condition, from, to),
+            *value,
+        ),
+        Proposition::Predicate { name, arguments } => Proposition::Predicate {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_integer_variable_in_term(argument, from, to))
+                .collect(),
+        },
+        Proposition::And(left, right) => Proposition::And(
+            Box::new(substitute_integer_variable_in_proposition(left, from, to)),
+            Box::new(substitute_integer_variable_in_proposition(right, from, to)),
+        ),
+        Proposition::Or(left, right) => Proposition::Or(
+            Box::new(substitute_integer_variable_in_proposition(left, from, to)),
+            Box::new(substitute_integer_variable_in_proposition(right, from, to)),
+        ),
+        Proposition::Not(body) => Proposition::Not(Box::new(
+            substitute_integer_variable_in_proposition(body, from, to),
+        )),
+        Proposition::Implies(left, right) => Proposition::Implies(
+            Box::new(substitute_integer_variable_in_proposition(left, from, to)),
+            Box::new(substitute_integer_variable_in_proposition(right, from, to)),
+        ),
+        Proposition::ForAll { var, sort, .. } if *var == from && *sort == Sort::Integer => {
+            proposition.clone()
+        }
+        Proposition::Exists { var, sort, .. } if *var == from && *sort == Sort::Integer => {
+            proposition.clone()
+        }
+        Proposition::ForAll { var, sort, body } => {
+            let (var, body) = integer_capture_avoiding_quantifier_body(*var, sort, body, from, to);
+            let body = substitute_integer_variable_in_proposition(&body, from, to);
+            Proposition::ForAll {
+                var,
+                sort: sort.clone(),
+                body: Box::new(body),
+            }
+        }
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => {
+            let (var, body) = integer_capture_avoiding_quantifier_body(*var, sort, body, from, to);
+            let body = substitute_integer_variable_in_proposition(&body, from, to);
+            Proposition::Exists {
+                name: name.clone(),
+                var,
+                sort: sort.clone(),
+                body: Box::new(body),
+            }
+        }
+        // No other current proposition contains an Integer term. Keep this
+        // explicit fallback so adding a new carrier forces a review here.
+        _ => proposition.clone(),
+    }
+}
+
+fn integer_term_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+    match term {
+        IntegerTerm::Constant(_) => {}
+        IntegerTerm::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        IntegerTerm::Negate(value) => integer_term_variables(value, variables),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            integer_term_variables(left, variables);
+            integer_term_variables(right, variables);
+        }
+    }
+}
+
+fn integer_capture_avoiding_quantifier_body(
+    binder: Variable,
+    sort: &Sort,
+    body: &Proposition,
+    from: Variable,
+    replacement: &IntegerTerm,
+) -> (Variable, Proposition) {
+    if !matches!(sort, Sort::Integer) || binder == from {
+        return (binder, body.clone());
+    }
+    let mut replacement_variables = BTreeSet::new();
+    integer_term_variables(replacement, &mut replacement_variables);
+    if !replacement_variables.contains(&binder) {
+        return (binder, body.clone());
+    }
+    let mut reserved = crate::kernel::proposition_variables(body);
+    reserved.insert(from);
+    reserved.extend(replacement_variables);
+    reserved.insert(binder);
+    let fresh = KernelVariableGenerator::fresh_for(0, reserved).next();
+    (
+        fresh,
+        substitute_integer_variable_in_proposition(body, binder, &IntegerTerm::var(fresh)),
+    )
 }
 
 fn substitute_bitvector_variable_in_algebraic_term(
@@ -3170,6 +3558,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
+        ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => condition.clone(),
         ConditionTerm::Float32(CFloatCondition::Comparison {
             operator,
             left,
@@ -4118,7 +4512,7 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::Condition(condition) => Term::Condition(substitute_pointer_variable_in_condition(
             condition, from, to,
         )),
-        Term::Bitvector32(_) | Term::PointerOffset(_) => term.clone(),
+        Term::Bitvector32(_) | Term::Integer(_) | Term::PointerOffset(_) => term.clone(),
         Term::CValue(value) => {
             Term::CValue(substitute_pointer_variable_in_c_value(value, from, to))
         }
@@ -5899,5 +6293,118 @@ mod pointee_const_return_tests {
             )
             .return_pointee_is_constant()
         );
+    }
+
+    #[test]
+    fn integer_substitution_rewrites_integer_terms_inside_condition_terms() {
+        let condition = ConditionTerm::IntegerEqual(
+            Box::new(IntegerTerm::var(Variable(1))),
+            Box::new(IntegerTerm::constant_i64(9)),
+        );
+        let term = Term::Condition(condition);
+        let substituted =
+            substitute_integer_variable_in_term(&term, Variable(1), &IntegerTerm::constant_i64(4));
+        assert_eq!(substituted, Term::Condition(ConditionTerm::Constant(false)));
+    }
+
+    #[test]
+    fn integer_substitution_rewrites_conditions_nested_in_bitvector_if() {
+        let x = Variable(21);
+        let term = Term::Bitvector32(Bitvector32Term::If {
+            condition: Box::new(ConditionTerm::IntegerEqual(
+                Box::new(IntegerTerm::var(x)),
+                Box::new(IntegerTerm::constant_i64(0)),
+            )),
+            then_term: Box::new(Bitvector32Term::Constant(1)),
+            else_term: Box::new(Bitvector32Term::Constant(2)),
+        });
+        let substituted =
+            substitute_integer_variable_in_term(&term, x, &IntegerTerm::constant_i64(0));
+        assert_eq!(
+            substituted,
+            Term::Bitvector32(Bitvector32Term::If {
+                condition: Box::new(ConditionTerm::Constant(true)),
+                then_term: Box::new(Bitvector32Term::Constant(1)),
+                else_term: Box::new(Bitvector32Term::Constant(2)),
+            })
+        );
+    }
+
+    #[test]
+    fn integer_substitution_avoids_capture_across_nested_quantifiers() {
+        let x = Variable(1);
+        let y = Variable(2);
+        let z = Variable(3);
+        let body = Proposition::Exists {
+            name: "z".to_string(),
+            var: z,
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(
+                    Box::new(IntegerTerm::var(x)),
+                    Box::new(IntegerTerm::var(z)),
+                ),
+                true,
+            )),
+        };
+        let proposition = Proposition::ForAll {
+            var: y,
+            sort: Sort::Integer,
+            body: Box::new(body),
+        };
+        let substituted =
+            substitute_integer_variable_in_proposition(&proposition, x, &IntegerTerm::var(z));
+        let Proposition::ForAll {
+            var: outer_var,
+            body,
+            ..
+        } = substituted
+        else {
+            panic!("expected universal proposition")
+        };
+        assert_eq!(outer_var, y);
+        let Proposition::Exists {
+            var: inner_var,
+            body,
+            ..
+        } = *body
+        else {
+            panic!("expected existential proposition")
+        };
+        assert_ne!(inner_var, z);
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) = *body else {
+            panic!("expected integer equality")
+        };
+        assert_eq!(*left, IntegerTerm::var(z));
+        assert_eq!(*right, IntegerTerm::var(inner_var));
+    }
+
+    #[test]
+    fn integer_substitution_renames_a_conflicting_outer_binder() {
+        let x = Variable(11);
+        let y = Variable(12);
+        let proposition = Proposition::ForAll {
+            var: y,
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(
+                    Box::new(IntegerTerm::var(x)),
+                    Box::new(IntegerTerm::var(y)),
+                ),
+                true,
+            )),
+        };
+        let Proposition::ForAll {
+            var: fresh, body, ..
+        } = substitute_integer_variable_in_proposition(&proposition, x, &IntegerTerm::var(y))
+        else {
+            panic!("expected universal proposition")
+        };
+        assert_ne!(fresh, y);
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) = *body else {
+            panic!("expected integer equality")
+        };
+        assert_eq!(*left, IntegerTerm::var(y));
+        assert_eq!(*right, IntegerTerm::var(fresh));
     }
 }

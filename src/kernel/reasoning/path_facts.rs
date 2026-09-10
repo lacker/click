@@ -132,6 +132,7 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
         Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
             algebraic_terms_equal(left, right)
         }
+        Proposition::Equal(Term::Integer(left), Term::Integer(right)) => left == right,
         Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
             sequence_terms_equal_by_elements(left, right)
         }
@@ -184,6 +185,7 @@ fn disprove_builtin_prop(proposition: &Proposition) -> bool {
         Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
             algebraic_terms_definitely_distinct(left, right)
         }
+        Proposition::Equal(Term::Integer(left), Term::Integer(right)) => left != right,
         Proposition::And(left, right) => {
             disprove_builtin_prop(left) || disprove_builtin_prop(right)
         }

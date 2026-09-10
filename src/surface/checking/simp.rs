@@ -1979,6 +1979,16 @@ pub(in crate::surface) fn simp_condition_without_assumptions(
                 .or_else(|| right.uint64_as_const())?;
             Some(left == right)
         }
+        ConditionTerm::IntegerLessThan(left, right) => Some(left.as_const()? < right.as_const()?),
+        ConditionTerm::IntegerLessEqual(left, right) => Some(left.as_const()? <= right.as_const()?),
+        ConditionTerm::IntegerGreaterThan(left, right) => {
+            Some(left.as_const()? > right.as_const()?)
+        }
+        ConditionTerm::IntegerGreaterEqual(left, right) => {
+            Some(left.as_const()? >= right.as_const()?)
+        }
+        ConditionTerm::IntegerEqual(left, right) => Some(left.as_const()? == right.as_const()?),
+        ConditionTerm::IntegerNotEqual(left, right) => Some(left.as_const()? != right.as_const()?),
         ConditionTerm::Variable(_)
         | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
         | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)

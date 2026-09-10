@@ -567,6 +567,12 @@ fn condition_fact_mentions_load_of(
         }
         ConditionTerm::PointerOffsetEqual(_, _)
         | ConditionTerm::PointerEqual(_, _)
+        | ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _)
         | ConditionTerm::Constant(_)
         | ConditionTerm::Variable(_) => {}
     }
@@ -1016,6 +1022,12 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
             }
             ConditionTerm::PointerOffsetEqual(_, _)
             | ConditionTerm::PointerEqual(_, _)
+            | ConditionTerm::IntegerLessThan(_, _)
+            | ConditionTerm::IntegerLessEqual(_, _)
+            | ConditionTerm::IntegerGreaterThan(_, _)
+            | ConditionTerm::IntegerGreaterEqual(_, _)
+            | ConditionTerm::IntegerEqual(_, _)
+            | ConditionTerm::IntegerNotEqual(_, _)
             | ConditionTerm::Constant(_)
             | ConditionTerm::Variable(_) => {}
         }

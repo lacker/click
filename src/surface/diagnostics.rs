@@ -252,6 +252,12 @@ pub(super) fn describe_pure_fact(
                 }
                 ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
                 ConditionTerm::PointerEqual(_, _) => "pointer equality",
+                ConditionTerm::IntegerLessThan(_, _) => "integer less-than",
+                ConditionTerm::IntegerLessEqual(_, _) => "integer less-or-equal",
+                ConditionTerm::IntegerGreaterThan(_, _) => "integer greater-than",
+                ConditionTerm::IntegerGreaterEqual(_, _) => "integer greater-or-equal",
+                ConditionTerm::IntegerEqual(_, _) => "integer equality",
+                ConditionTerm::IntegerNotEqual(_, _) => "integer inequality",
                 ConditionTerm::Constant(_) => "constant condition",
                 ConditionTerm::Variable(_) => "condition variable",
             };
@@ -1852,6 +1858,24 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
                 describe_pointer(left, &[], &[]),
                 describe_pointer(right, &[], &[])
             )
+        }
+        ConditionTerm::IntegerLessThan(left, right) => {
+            format!("{left} < {right}")
+        }
+        ConditionTerm::IntegerLessEqual(left, right) => {
+            format!("{left} <= {right}")
+        }
+        ConditionTerm::IntegerGreaterThan(left, right) => {
+            format!("{left} > {right}")
+        }
+        ConditionTerm::IntegerGreaterEqual(left, right) => {
+            format!("{left} >= {right}")
+        }
+        ConditionTerm::IntegerEqual(left, right) => {
+            format!("{left} == {right}")
+        }
+        ConditionTerm::IntegerNotEqual(left, right) => {
+            format!("{left} != {right}")
         }
     }
 }

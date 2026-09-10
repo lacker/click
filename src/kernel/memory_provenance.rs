@@ -3543,6 +3543,12 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
             Node::Condition(condition, depth) => match condition {
                 ConditionTerm::AlgebraicEqual(_, _) => return false,
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {}
+                ConditionTerm::IntegerLessThan(_, _)
+                | ConditionTerm::IntegerLessEqual(_, _)
+                | ConditionTerm::IntegerGreaterThan(_, _)
+                | ConditionTerm::IntegerGreaterEqual(_, _)
+                | ConditionTerm::IntegerEqual(_, _)
+                | ConditionTerm::IntegerNotEqual(_, _) => return false,
                 ConditionTerm::Bitvector32SignedLessThan(left, right)
                 | ConditionTerm::Bitvector32SignedLessEqual(left, right)
                 | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
@@ -3979,6 +3985,12 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
             }
             AtomicCanonicalizationTask::VisitCondition(condition) => match condition {
                 ConditionTerm::AlgebraicEqual(_, _) => condition_results.push(condition.clone()),
+                ConditionTerm::IntegerLessThan(_, _)
+                | ConditionTerm::IntegerLessEqual(_, _)
+                | ConditionTerm::IntegerGreaterThan(_, _)
+                | ConditionTerm::IntegerGreaterEqual(_, _)
+                | ConditionTerm::IntegerEqual(_, _)
+                | ConditionTerm::IntegerNotEqual(_, _) => condition_results.push(condition.clone()),
                 ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => {
                     condition_results.push(condition.clone())
                 }
@@ -4682,7 +4694,13 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
         }
         ConditionTerm::Constant(_)
         | ConditionTerm::Variable(_)
-        | ConditionTerm::PointerEqual(_, _) => false,
+        | ConditionTerm::PointerEqual(_, _)
+        | ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => false,
     }
 }
 
@@ -4732,7 +4750,13 @@ fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<Shar
         }
         ConditionTerm::Constant(_)
         | ConditionTerm::Variable(_)
-        | ConditionTerm::PointerEqual(_, _) => {}
+        | ConditionTerm::PointerEqual(_, _)
+        | ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => {}
     }
 }
 
@@ -4988,6 +5012,14 @@ fn transport_framed_atomic_condition(
             },
         ),
         ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => return None,
+        // Mathematical integers carry no snapshot-dependent loads, so this
+        // memory transport path has no authority to rewrite them.
+        ConditionTerm::IntegerLessThan(_, _)
+        | ConditionTerm::IntegerLessEqual(_, _)
+        | ConditionTerm::IntegerGreaterThan(_, _)
+        | ConditionTerm::IntegerGreaterEqual(_, _)
+        | ConditionTerm::IntegerEqual(_, _)
+        | ConditionTerm::IntegerNotEqual(_, _) => return None,
     })
 }
 
