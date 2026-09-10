@@ -545,10 +545,9 @@ fn collect_integer_affine_terms(
             IntegerTerm::Multiply(left, right) => {
                 let (child, factor) = if let Some(value) = left.as_const() {
                     (right, value)
-                } else if let Some(value) = right.as_const() {
-                    (left, value)
                 } else {
-                    return None;
+                    let value = right.as_const()?;
+                    (left, value)
                 };
                 if !charge_integer_product(&weight, factor) {
                     return None;

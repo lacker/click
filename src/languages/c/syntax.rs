@@ -3567,7 +3567,6 @@ impl C0Expression {
             Self::Field {
                 pointer,
                 field_type,
-                field_struct_name: _,
                 ..
             } => crate::kernel::c_typed_load(
                 pointer.to_kernel_expression(),
