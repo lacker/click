@@ -786,6 +786,17 @@ mod tests {
             .and_then(|v| v.as_const().cloned()),
             Some(BigInt::from(u64::MAX))
         );
+        assert!(
+            IntegerTerm::from_machine(MachineIntegerType::UInt8, Bitvector32Term::Constant(256))
+                .is_none()
+        );
+        assert!(
+            IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Int64Constant(i64::MAX)
+            )
+            .is_none()
+        );
     }
 
     #[test]
