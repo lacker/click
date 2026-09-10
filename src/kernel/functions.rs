@@ -5455,6 +5455,7 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
             CExpression::TypedLoad {
                 pointer,
                 value_type,
+                ..
             } => {
                 if !matches!(
                     value_type,

@@ -1058,11 +1058,13 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             expression,
             target_type,
             pointee_volatile,
+            pointee_constant,
         } => evaluate_c_cast_paths(
             state,
             expression,
             *target_type,
             *pointee_volatile,
+            *pointee_constant,
             assumptions,
             budget,
         )?,
@@ -1335,6 +1337,7 @@ fn evaluate_c_cast_paths(
     expression: &CExpression,
     target_type: CType,
     pointee_volatile: bool,
+    pointee_constant: bool,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
@@ -1372,9 +1375,18 @@ fn evaluate_c_cast_paths(
                     )
                 };
                 match coerced {
-                    Ok(value) => CExpressionOutcome::Value(
-                        value.with_pointer_pointee_volatile(pointee_volatile),
-                    ),
+                    Ok(value) => {
+                        let pointee_constant = pointee_constant
+                            || matches!(
+                                &value,
+                                CValue::Pointer(pointer) if pointer.pointee_constant()
+                            );
+                        CExpressionOutcome::Value(
+                            value
+                                .with_pointer_pointee_volatile(pointee_volatile)
+                                .with_pointer_pointee_constant(pointee_constant),
+                        )
+                    }
                     Err(error) => CExpressionOutcome::RuntimeError(error),
                 }
             }

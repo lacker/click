@@ -1241,6 +1241,7 @@ fn synthesize_surface_bitvector(
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
                 pointee_volatile: false,
+                pointee_constant: false,
             }))
         }
         Bitvector32Term::MemoryLoad(memory, kernel_pointer) => {
@@ -1412,6 +1413,7 @@ fn synthesize_surface_bitvector(
                 )?),
                 target_type: CType::Int64,
                 pointee_volatile: false,
+                pointee_constant: false,
             }))
         }
         Bitvector32Term::UInt64From32(value)
@@ -1429,6 +1431,7 @@ fn synthesize_surface_bitvector(
                 )?),
                 target_type: CType::UInt64,
                 pointee_volatile: false,
+                pointee_constant: false,
             }))
         }
         Bitvector32Term::UInt32From64(value) => {
@@ -1444,6 +1447,7 @@ fn synthesize_surface_bitvector(
                 )?),
                 target_type: CType::UInt32,
                 pointee_volatile: false,
+                pointee_constant: false,
             }))
         }
         Bitvector32Term::Int64Add(left, right) => {

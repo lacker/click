@@ -822,6 +822,7 @@ impl Parser {
                 expression: Box::new(expression.clone()),
                 target_type,
                 pointee_volatile: false,
+                pointee_constant: false,
             },
             None => expression.clone(),
         }
@@ -5279,6 +5280,7 @@ impl Parser {
                 expression: Box::new(expression),
                 target_type,
                 pointee_volatile: false,
+                pointee_constant: false,
             }));
         }
         if self.peek() == Some(&Token::Minus) {
@@ -5863,6 +5865,7 @@ impl Parser {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
                 pointee_volatile: false,
+                pointee_constant: false,
             }));
         }
 
@@ -6725,6 +6728,7 @@ fn aligned_proposition(pointer: CExpression, alignment: u64) -> ClickProposition
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
                 pointee_volatile: false,
+                pointee_constant: false,
             })),
             Box::new(uint64(alignment - 1)),
         ),

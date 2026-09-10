@@ -42,10 +42,12 @@ fn substitute_c_expression_variables(
             expression: body,
             target_type,
             pointee_volatile,
+            pointee_constant,
         } => Cast {
             expression: unary(body),
             target_type: *target_type,
             pointee_volatile: *pointee_volatile,
+            pointee_constant: *pointee_constant,
         },
         FloatClassification {
             expression: body,
@@ -1856,6 +1858,7 @@ fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpre
             expression: Box::new(spec_expression_to_c_expression(value)?),
             target_type: *target_type,
             pointee_volatile: false,
+            pointee_constant: false,
         }),
         _ => None,
     }

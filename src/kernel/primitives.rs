@@ -598,6 +598,10 @@ pub enum CExpression {
         /// This carries the C qualifier in `T * volatile *` into a following
         /// dereference without confusing it with volatile `T` storage.
         pointee_volatile: bool,
+        /// Whether the cast result points at const-qualified storage. Source
+        /// pointee constness is retained independently when the cast is
+        /// evaluated.
+        pointee_constant: bool,
     },
     Conditional {
         condition: Box<CExpression>,
