@@ -821,7 +821,7 @@ fn substitute_integer_expression(
     substitutions: &BTreeMap<String, IntegerTerm>,
 ) -> SpecIntegerExpression {
     match expression {
-        SpecIntegerExpression::Term(term) => substitute_integer_term(term, substitutions),
+        SpecIntegerExpression::Term(term) => substitute_integer_term(term),
         SpecIntegerExpression::FromMachine(value) => {
             SpecIntegerExpression::FromMachine(value.clone())
         }
@@ -849,27 +849,24 @@ fn substitute_integer_expression(
     }
 }
 
-fn substitute_integer_term(
-    term: &IntegerTerm,
-    substitutions: &BTreeMap<String, IntegerTerm>,
-) -> SpecIntegerExpression {
+fn substitute_integer_term(term: &IntegerTerm) -> SpecIntegerExpression {
     match term {
         IntegerTerm::Variable(_) => SpecIntegerExpression::Term(term.clone()),
         IntegerTerm::Constant(_) => SpecIntegerExpression::Term(term.clone()),
-        IntegerTerm::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
-            substitute_integer_term(inner.as_ref(), substitutions),
-        )),
+        IntegerTerm::Negate(inner) => {
+            SpecIntegerExpression::Negate(Box::new(substitute_integer_term(inner.as_ref())))
+        }
         IntegerTerm::Add(left, right) => SpecIntegerExpression::Add(
-            Box::new(substitute_integer_term(left.as_ref(), substitutions)),
-            Box::new(substitute_integer_term(right.as_ref(), substitutions)),
+            Box::new(substitute_integer_term(left.as_ref())),
+            Box::new(substitute_integer_term(right.as_ref())),
         ),
         IntegerTerm::Subtract(left, right) => SpecIntegerExpression::Subtract(
-            Box::new(substitute_integer_term(left.as_ref(), substitutions)),
-            Box::new(substitute_integer_term(right.as_ref(), substitutions)),
+            Box::new(substitute_integer_term(left.as_ref())),
+            Box::new(substitute_integer_term(right.as_ref())),
         ),
         IntegerTerm::Multiply(left, right) => SpecIntegerExpression::Multiply(
-            Box::new(substitute_integer_term(left.as_ref(), substitutions)),
-            Box::new(substitute_integer_term(right.as_ref(), substitutions)),
+            Box::new(substitute_integer_term(left.as_ref())),
+            Box::new(substitute_integer_term(right.as_ref())),
         ),
         IntegerTerm::Machine(_) => SpecIntegerExpression::Term(term.clone()),
     }

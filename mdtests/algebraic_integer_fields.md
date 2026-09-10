@@ -18,9 +18,9 @@ spec enum Box<T> {
     Wrapped(T),
 }
 
-theorem integer_field_equality(value: Integer) {
-    ensures Box<Integer>::Wrapped(value)
-        == Box<Integer>::Wrapped(value) by simp;
+theorem integer_field_equality() {
+    ensures Box<Integer>::Wrapped(-9223372036854775809)
+        == Box<Integer>::Wrapped(-9223372036854775809) by simp;
 }
 
 theorem integer_field_match(value: Integer) {
