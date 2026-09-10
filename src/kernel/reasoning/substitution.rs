@@ -1442,42 +1442,56 @@ fn substitute_bitvector_variable_in_integer(
     from: Variable,
     to: &Bitvector32Term,
 ) -> IntegerTerm {
-    match term {
+    let mut memo = std::collections::HashMap::new();
+    substitute_bitvector_variable_in_shared_integer(
+        &crate::kernel::SharedIntegerTerm::from(term.clone()),
+        from,
+        to,
+        &mut memo,
+    )
+    .as_ref()
+    .clone()
+}
+
+fn substitute_bitvector_variable_in_shared_integer(
+    term: &crate::kernel::SharedIntegerTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+    memo: &mut std::collections::HashMap<u64, crate::kernel::SharedIntegerTerm>,
+) -> crate::kernel::SharedIntegerTerm {
+    if let Some(result) = memo.get(&term.id()) {
+        return result.clone();
+    }
+    let result = match term.as_ref() {
         IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => term.clone(),
-        IntegerTerm::Machine(source) => {
+        IntegerTerm::Machine(source) => crate::kernel::SharedIntegerTerm::from(
             IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
                 source.ty(),
                 substitute_bitvector_variable(source.value(), from, to),
-            ))
-        }
-        IntegerTerm::Negate(value) => IntegerTerm::Negate(crate::kernel::SharedIntegerTerm::from(
-            substitute_bitvector_variable_in_integer(value, from, to),
-        )),
+            )),
+        ),
+        IntegerTerm::Negate(value) => IntegerTerm::Negate(
+            substitute_bitvector_variable_in_shared_integer(value, from, to, memo),
+        )
+        .into(),
         IntegerTerm::Add(left, right) => IntegerTerm::Add(
-            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
-                left, from, to,
-            )),
-            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
-                right, from, to,
-            )),
-        ),
+            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
+            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
+        )
+        .into(),
         IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
-            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
-                left, from, to,
-            )),
-            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
-                right, from, to,
-            )),
-        ),
+            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
+            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
+        )
+        .into(),
         IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
-            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
-                left, from, to,
-            )),
-            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
-                right, from, to,
-            )),
-        ),
-    }
+            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
+            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
+        )
+        .into(),
+    };
+    memo.insert(term.id(), result.clone());
+    result
 }
 
 fn collect_integer_bound_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
