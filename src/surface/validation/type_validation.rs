@@ -307,8 +307,8 @@ fn validate_comparison_expression_types(
 ) -> Result<(), ClickError> {
     let mut locals = BTreeSet::new();
     let no_integer_parameters = BTreeSet::new();
-    let left_kind = integer_expression_kind(left, &no_integer_parameters, &mut locals);
-    let right_kind = integer_expression_kind(right, &no_integer_parameters, &mut locals);
+    let left_kind = integer_expression_kind(left, &no_integer_parameters, &BTreeMap::new(), &mut locals);
+    let right_kind = integer_expression_kind(right, &no_integer_parameters, &BTreeMap::new(), &mut locals);
     if left_kind == Some(true) || right_kind == Some(true) {
         if left_kind.is_none() || right_kind.is_none() {
             return Err(ClickError::new(format!(
