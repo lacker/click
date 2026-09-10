@@ -227,8 +227,8 @@ serialize the shared graph with local child indices so equality and hashing
 also avoid tree expansion. Certificate lowering borrows the mathematical
 bindings without cloning unrelated C state for each evidence node.
 
-This is a staged implementation, not completion of this issue. Explicit machine
-conversions, source quantifiers, pure functions,
+This is a staged implementation, not completion of this issue. Symbolic reverse
+conversions, checked machine-operation relationships, source quantifiers, pure functions,
 datatype/resource fields, `Nat` relationships, typed folds, and the unchanged C
 summation regression remain to be completed. The user documentation states the
 current scalar boundary; the full acceptance criteria below remain open.
@@ -296,6 +296,33 @@ renaming are likely parts of that fix. Simply skipping validation on a fresh
 binder would be unsound; changing only the fresh-variable search is insufficient.
 This refactor is deferred, not claimed complete, and is not an acceptance blocker
 for the mathematical Integer feature under this user-approved exception.
+
+## Machine conversion and certificate test checkpoint (2026-09-10)
+
+The machine observation backend (`e5d6879b`) and source conversions (`b34a8cc7`)
+are integrated after full `scripts/check.sh` gates. `to_integer` accepts all seven
+supported machine integer types and preserves signedness. Constant reverse
+conversions check each destination's exact bounds. Source regressions cover both
+endpoints and both adjacent invalid values for every destination, wrong carriers,
+arity, implicit mixing, and a reflexive claim whose C argument overflows.
+Symbolic reverse conversions and the checked arithmetic laws relating C operations
+to Integer operations remain under implementation; this checkpoint does not claim
+them complete.
+
+Machine observations are distinct typed opaque atoms for affine checking. Rewriting,
+substitution, variable collection, interface identity, and parameter-read analysis
+must descend into the observed C expression. Regressions cover pointer offsets,
+C-variable substitution, signed/unsigned distinctions, and rejection of an
+unconditional conversion-of-addition identity. Already evaluated machine values
+enter the shared Integer DAG directly; alias chains retain bounded deterministic
+work at depths 8/16/32/64. Conversion proof expansion rechecks independently.
+
+External review identified insufficient shared-machine headroom in the exhaustive
+binary certificate test. Commit `3052b88f` preserves the complete original case
+matrix and independent counterexample oracle, partitioned by seven left-expression
+families and two rules into 14 tests. The full gate measured 1.3–2.2 seconds per
+partition, compared with roughly 22–32 seconds for the original test. The existing
+60-second cutoff and all verifier budgets are unchanged.
 
 ## Implementation and integration sequence
 
