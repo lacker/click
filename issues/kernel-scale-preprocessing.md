@@ -188,6 +188,12 @@ boundary and API ownership. If it needs a fundamental scope change, explain
 that to the user with the concrete offending input. Routine design choices
 within this scope do not require another user permission round.
 
+Stage 0 is a feasibility milestone, not an administrative prerequisite. The
+complete header graph may require substantial new C semantics. Do not estimate
+package 3 as a bounded importer change until the actual retained constructs
+are inventoried. Start discovery with one or two read-only Luna assistants;
+launch implementation workers only after checkpoint A.
+
 ## Manifest and reproduction contract
 
 The first implementation should favor fresh, bounded preprocessing during
@@ -297,7 +303,8 @@ user to manage a separate top-level task for every package. Keep worker
 delegation under the manager; workers do not recursively spawn more agents
 unless the manager explicitly assigns a justified independent subtask.
 
-Begin with two or three Luna medium workers, each in a dedicated worktree.
+Begin implementation with two Luna medium workers, each in a dedicated worktree;
+add a third only when a concrete independent assignment is ready.
 Reuse a worker for related follow-up changes when its context remains useful;
 retire it when its assignment is finished or unrelated new work needs fresh
 context. The manager waits for results between decisions and reviews rather
@@ -346,6 +353,26 @@ commits; multiple workers editing `syntax.rs` indiscriminately is not a useful
 swarm. Package 4 owns shared call-site edits. Start with two or three Luna
 workers and increase only where work is independent and the machine can run
 the builds without resource contention.
+
+Before broad parallel implementation, assign one owner a minimal working route
+from compiler preparation through parsing and independently checked verification
+of the focused fixture. Use that route to validate the prepared-import interface
+and mode selection. It is an intermediate milestone, not evidence that the
+complete pinned Linux translation unit imports successfully.
+
+Packages are dependency groups, not single worker-sized assignments. Split
+package 1 into manifest validation, bounded compiler process ownership, and
+toolchain/input reproduction changes with explicit intermediate contracts.
+Split package 2 into line-marker indexing and downstream provenance propagation.
+Each slice must be reviewable and green independently; keep incomplete wiring
+in the task worktree until its tests establish coherent behavior.
+
+The manager schedules expensive builds and full gates. The existing unit gate
+may occupy every core, so workers must request a gate slot before starting a
+full run; queue those runs instead of allowing competing gates to distort
+timeouts. Focused checks can overlap when resource use is modest. This changes
+scheduling only: every required green-commit gate still runs, including the
+assembled integration gate.
 
 Each worker assignment must state: baseline commit, worktree/branch, owned
 files and symbols, prerequisite interfaces, concrete behavior, forbidden
@@ -489,6 +516,13 @@ suite is necessary but does not replace this semantic review.
   removed. Broader MVR proof completion is not implied by closing this issue.
 
 ## Progress for the receiving coordinator
+
+Execution started on 2026-09-10 from
+`fec5ada408f994369dd2e8c244a575542cc97d30`. The coordinator worktree is
+`/tmp/click-kernel-scale-preprocessing`, branch
+`codex/kernel-scale-preprocessing`. Stage 0 has two Luna medium investigations:
+existing input/capture and provisioning evidence; shared engine/import API and
+diagnostic integration. No compiler-backed implementation is claimed yet.
 
 - [x] Repository inspection and handoff plan written at the baseline above.
 - [ ] Stage 0: concrete pin, reproducible capture, inventory, and checkpoint A.
