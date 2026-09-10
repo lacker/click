@@ -85,7 +85,6 @@ int32 zero_list_pipeline(struct node* first, struct node* second) {
     consumes first->next;
     consumes second->value;
     consumes second->next;
-    mutable first->value, first->next, second->value, second->next;
     produces zero_list(first);
 
     ensures result == 0;
@@ -100,6 +99,5 @@ int32 zero_list_pipeline(struct node* first, struct node* second) {
     step();
     fold(zero_list(first));
     execute();
-    frame();
     simp();
 }

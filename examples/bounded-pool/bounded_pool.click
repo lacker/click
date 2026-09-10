@@ -31,7 +31,6 @@ verifying "pool_resize_pipeline.c";
 void pool_init(struct pool* pool, int32 capacity) {
     requires 0 <= capacity;
     owns object(pool);
-    mutable pool->checked_out, pool->capacity;
     produces capacity of pool_slot(pool);
 
     ensures valid_pool(pool);
@@ -40,14 +39,12 @@ void pool_init(struct pool* pool, int32 capacity) {
     execute();
     if 0 < capacity {
         fold(capacity of pool_slot(pool));
-        frame();
         simp();
     } else {
         apply(int32_ge_and_not_gt_implies_eq(capacity, 0)) using {
             0 <= capacity;
             not (0 < capacity);
         }
-        frame();
         simp();
     }
 }
@@ -56,8 +53,8 @@ void pool_grow(struct pool* pool, int32 amount) {
     requires valid_pool(pool);
     requires 0 <= amount;
     requires defined(pool->capacity + amount);
-    owns object(pool);
-    mutable pool->capacity;
+    views object(pool);
+    owns pool->capacity;
     produces amount of pool_slot(pool);
 
     ensures valid_pool(pool);
@@ -65,7 +62,6 @@ void pool_grow(struct pool* pool, int32 amount) {
 } by {
     unfold(valid_pool);
     execute();
-    frame();
     simp();
 }
 
@@ -157,18 +153,18 @@ void pool_checkout(struct pool* pool, struct object* object) {
 void pool_return(struct pool* pool, struct object* object) {
     requires valid_pool(pool);
     requires count(pool_object(pool, object)) == 1;
-    owns object(pool);
+    views object(pool);
+    owns pool->checked_out;
     consumes pool_object(pool, object);
-    mutable pool->checked_out;
     produces object(object);
     produces pool_slot(pool);
 
     ensures valid_pool(pool);
+    ensures object->value == old(object->value);
 } by {
     unfold(valid_pool);
     unfold(pool_object(pool, object));
     execute();
-    frame();
     simp();
 }
 
@@ -186,7 +182,6 @@ void pool_transfer(
     owns object(destination);
     consumes pool_object(source, object);
     consumes pool_slot(destination);
-    mutable source->checked_out, destination->checked_out;
     produces pool_object(destination, object);
     produces pool_slot(source);
 
@@ -216,7 +211,6 @@ void pool_transfer(
     }
     execute();
     fold(pool_object(destination, object));
-    frame();
     simp();
 }
 

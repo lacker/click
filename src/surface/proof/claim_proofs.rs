@@ -1870,6 +1870,9 @@ pub(super) fn finish_ordered_proof<'a>(
                     // closing an open body must retain its owned resources
                     // until its invariant has been proved.
                     let mut resource_transition_applied = false;
+                    // Why the contract's resource transition did not apply at
+                    // the closing `simp`, reported when a claim then stays open.
+                    let mut pending_resource_transition_error: Option<String> = None;
                     drop(_path_preparation_timing);
                     let _post_execution_timing = crate::instrumentation::OperationTiming::new(
                         function_block.signature().name(),
@@ -3593,6 +3596,47 @@ pub(super) fn finish_ordered_proof<'a>(
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
+                                // Read the outcome's resources through the
+                                // contract's checked transition before closing
+                                // claims against it, so a produced or returned
+                                // resource is visible to a resource ensure with
+                                // no `frame`. The kernel certified this exit
+                                // already; a transition that does not apply yet
+                                // (an open composite still to fold) leaves the
+                                // body's own context in place.
+                                if !resource_transition_applied
+                                    && matches!(outcome, CFunctionOutcome::Return { .. })
+                                {
+                                    let mut transitioned = outcome.clone();
+                                    match apply_checked_contract_resource_transition(
+                                        &mut transitioned,
+                                        pre_state,
+                                        function,
+                                        arguments,
+                                        &path_requirements,
+                                        &path.execution_facts(),
+                                        &proof_label,
+                                        path_index,
+                                    ) {
+                                        Ok(()) => {
+                                            outcome = transitioned;
+                                            resource_transition_applied = true;
+                                            if let Some(evolving) = outcome_proof.take() {
+                                                outcome_proof = Some(
+                                                    evolving
+                                                        .with_outcome_snapshot(&outcome)?
+                                                        .with_checked_outcome_facts(
+                                                            &path_requirements,
+                                                        )?,
+                                                );
+                                            }
+                                        }
+                                        Err(error) => {
+                                            pending_resource_transition_error =
+                                                Some(error.message().to_string());
+                                        }
+                                    }
+                                }
                                 if let Some((claim_index, surface_goal, proof)) =
                                     existence_proof.take()
                                 {
@@ -3983,8 +4027,16 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     .unwrap_or_default(),
                                                     None => String::new(),
                                                 };
+                                                let transition_detail = pending_resource_transition_error
+                                                    .as_ref()
+                                                    .map(|error| {
+                                                        format!(
+                                                            "\nthe contract resource transition did not apply to this outcome: {error}"
+                                                        )
+                                                    })
+                                                    .unwrap_or_default();
                                                 return Err(ClickError::new(format!(
-                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` search did not retain a complete proof for `{claim_label}`{detail}",
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` search did not retain a complete proof for `{claim_label}`{detail}{transition_detail}",
                                                 )));
                                             };
                                             let joined = scope.join()?;
@@ -4206,6 +4258,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     )? {
                                         reasons.push(reason);
                                     }
+                                }
+                                if let Some(error) = &pending_resource_transition_error {
+                                    reasons.push(format!(
+                                        "the contract resource transition did not apply to this outcome: {error}"
+                                    ));
                                 }
                                 let detail = if reasons.is_empty() {
                                     String::new()

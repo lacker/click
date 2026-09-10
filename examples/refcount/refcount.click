@@ -38,12 +38,10 @@ void object_retain_many(struct object* obj, int32 amount) {
     requires defined(1 + amount);
     owns object_ref(obj);
     produces amount of object_ref(obj);
-    mutable obj->refs;
 } by {
     open(object_ref(obj)) {
         have 1 == obj->refs by simp;
         execute();
-        frame();
     }
     have 1 <= 1 + amount by {
         apply(int32_add_nonnegative_right_is_at_least_left(1, amount)) using {
