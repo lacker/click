@@ -64,6 +64,7 @@ struct SharedIntegerApplicationNode {
 impl SharedIntegerApplication {
     pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
         static INTERNER: OnceLock<Mutex<HashMap<u64, Vec<(String, Vec<PureFunctionArgument>, Weak<SharedIntegerApplicationNode>)>>>> = OnceLock::new();
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut hasher = DefaultHasher::new();
         name.hash(&mut hasher);
         arguments.hash(&mut hasher);
@@ -77,7 +78,7 @@ impl SharedIntegerApplication {
                 }
             }
         }
-        let id = interner.values().map(Vec::len).sum::<usize>() as u64;
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let node = Arc::new(SharedIntegerApplicationNode { id, name: name.clone(), arguments: arguments.clone() });
         interner.entry(key).or_default().push((name, arguments, Arc::downgrade(&node)));
         Self(node)
