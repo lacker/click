@@ -707,6 +707,11 @@ pub struct StructuralClause {
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
     items: Vec<StructuralItem>,
+    /// Resource clauses declared beside the invariants. They give the region
+    /// the write and read authority of a callee contract: the body executes
+    /// owning exactly these resources, and the loop's write footprint is the
+    /// memory they own.
+    resources: Vec<ResourceClause>,
     initialize_proof: Option<SourceProof>,
     preserve_proof: Option<SourceProof>,
 }
@@ -2821,6 +2826,7 @@ pub struct CertificateStructuralClause {
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
     items: Vec<CertificateStructuralItem>,
+    resources: Vec<ResourceClause>,
     initialize_proof: Option<Box<ProofCertificate>>,
     preserve_proof: Option<Box<ProofCertificate>>,
 }
@@ -3103,6 +3109,7 @@ impl ProofStep {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
+                resources: clause.resources.clone(),
                 items: clause
                     .items
                     .iter()
@@ -3276,6 +3283,7 @@ impl ProofStep {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
+                resources: clause.resources.clone(),
                 items: clause
                     .items
                     .iter()
@@ -4389,6 +4397,11 @@ impl StructuralClause {
 
     pub fn items(&self) -> &[StructuralItem] {
         &self.items
+    }
+
+    /// The region's declared resource clauses, in source order.
+    pub fn resources(&self) -> &[ResourceClause] {
+        &self.resources
     }
 
     pub fn initialize_proof(&self) -> Option<&SourceProof> {

@@ -342,6 +342,11 @@ fn expand_declared_resource_structural_clause(
         .into_iter()
         .map(|item| expand_declared_resource_structural_item(item, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
+    clause.resources = clause
+        .resources
+        .into_iter()
+        .map(|resource| expand_declared_resource_clause(resource, resource_definitions))
+        .collect::<Result<Vec<_>, _>>()?;
     clause.initialize_proof = clause
         .initialize_proof
         .take()

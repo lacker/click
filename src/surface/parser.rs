@@ -3567,10 +3567,28 @@ impl Parser {
             };
             self.expect(Token::LBrace)?;
             let mut items = Vec::new();
+            let mut resources = Vec::new();
             let mut decreases = None;
             let mut initialize_proof = None;
             let mut preserve_proof = None;
             while self.peek() != Some(&Token::RBrace) {
+                // A loop declares resources exactly as a contract does. They
+                // bound the body's authority and the loop's write footprint,
+                // so they are region declarations rather than proof items.
+                if self.peek_ident() == Some("owns") {
+                    self.position += 1;
+                    let resource = self.parse_owned_resource_target()?;
+                    self.expect(Token::Semicolon)?;
+                    resources.push(resource);
+                    continue;
+                }
+                if self.peek_ident() == Some("views") {
+                    self.position += 1;
+                    let resource = self.parse_resource_target(ResourceAccessMode::View)?;
+                    self.expect(Token::Semicolon)?;
+                    resources.push(resource);
+                    continue;
+                }
                 if self.peek_ident() == Some("decreases") {
                     self.position += 1;
                     if decreases.is_some() {
@@ -3602,7 +3620,7 @@ impl Parser {
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            if items.is_empty() && decreases.is_none() {
+            if items.is_empty() && decreases.is_none() && resources.is_empty() {
                 return Err(self
                     .error("`loop` block must contain at least one item or a `decreases` clause"));
             }
@@ -3613,6 +3631,7 @@ impl Parser {
                 label,
                 decreases,
                 items,
+                resources,
                 initialize_proof,
                 preserve_proof,
             }));

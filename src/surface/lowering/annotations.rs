@@ -246,6 +246,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
@@ -317,6 +318,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
@@ -443,6 +445,7 @@ pub(in crate::surface) fn annotated_function(
             &[]
         },
         implicit_contract_mutable_segments,
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: resource_derived_mutable_frame,
         predicate_environment,
         click_function_environment,
@@ -476,6 +479,16 @@ pub(in crate::surface) fn annotated_function(
         snapshots: None,
         count_assumptions: None,
     };
+    // Loop-level resource declarations are lowered once, before the body, so
+    // every loop reaches its footprint and its body resource context without
+    // re-walking the contract.
+    let loop_resources = loop_resource_declarations(
+        function_block,
+        parsed_function,
+        resource_environment,
+        &mut lowerer,
+    )?;
+    lowerer.loop_resources = loop_resources;
     let body = lowerer.lower_statement(parsed_function.body())?;
     let parsed_kernel_function = parsed_function.to_kernel_function();
     let source_body = parsed_kernel_function.body().clone();
@@ -575,6 +588,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
@@ -646,6 +660,7 @@ fn fixed_state_elaboration<'a>(
         next_quantifier_variable: 2_000_000,
         branch_join_target: None,
         implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
         snapshots: Some(snapshots),
         count_assumptions: Some(assumptions),
@@ -781,6 +796,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
@@ -827,6 +843,7 @@ pub(in crate::surface) fn function_contract_summary(
         structural_clauses: function_block.structural_clauses(),
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
@@ -1064,6 +1081,45 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
     }
 }
 
+/// Lowers each loop's `owns` and `views` clauses once for the function.
+///
+/// A loop declaration is the same contract shape as a callee's: the owned
+/// memory is the loop's checked write footprint, and the declarations together
+/// are the resource context its body executes with.
+fn loop_resource_declarations(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    resource_environment: &ResourceEnvironment,
+    lowerer: &mut AnnotationLowerer<'_>,
+) -> Result<BTreeMap<usize, LoopResourceDeclaration>, ClickError> {
+    let mut declarations: BTreeMap<usize, LoopResourceDeclaration> = BTreeMap::new();
+    for clause in function_block.structural_clauses() {
+        let CodeRegion::Loop(loop_index) = clause.region() else {
+            continue;
+        };
+        if clause.resources().is_empty() {
+            continue;
+        }
+        let declaration = declarations.entry(*loop_index).or_default();
+        for resource in clause.resources() {
+            collect_owned_resource_memory_segments(
+                resource,
+                resource_environment,
+                parsed_function.parameters(),
+                lowerer,
+                &mut declaration.owned_segments,
+            )?;
+            append_entry_resource_specs(
+                resource,
+                parsed_function.parameters(),
+                resource_environment,
+                &mut declaration.specs,
+            )?;
+        }
+    }
+    Ok(declarations)
+}
+
 fn collect_owned_resource_memory_segments(
     resource: &ResourceClause,
     resource_environment: &ResourceEnvironment,
@@ -1204,10 +1260,25 @@ fn collect_owned_resource_memory_segments_inner(
     }
 }
 
+/// A loop's declared resources, lowered once for the enclosing function.
+#[derive(Clone, Debug, Default)]
+struct LoopResourceDeclaration {
+    /// The memory the loop owns, used as its checked whole-loop footprint.
+    owned_segments: Vec<CMemorySegment>,
+    /// The loop's declarations as kernel resource specs, evaluated at loop
+    /// entry to build the body's resource context.
+    specs: Vec<CResourceSpec>,
+}
+
 struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
     function_effects: &'a [EffectClause],
     implicit_contract_mutable_segments: &'a [CMemorySegment],
+    /// Resources declared by each loop, keyed by loop index. A loop with a
+    /// declaration has the shape of a callee contract: its body executes
+    /// owning exactly these resources, and its write footprint is the memory
+    /// they own rather than everything the function owns.
+    loop_resources: BTreeMap<usize, LoopResourceDeclaration>,
     /// Whether this function's write footprint comes from its resources
     /// rather than an effect clause. A loop in such a function inherits that
     /// footprint, so an empty one is an inherited empty footprint rather than
@@ -1257,6 +1328,7 @@ impl AnnotationLowerer<'_> {
                 let lowered_body = self.lower_statement(body)?;
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_effect_checks(loop_index, body)?;
+                let resource_specs = self.loop_resource_specs(loop_index);
                 if matches!(statement, syntax::C0Statement::DoWhile { .. }) {
                     c_do_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1264,6 +1336,7 @@ impl AnnotationLowerer<'_> {
                         effect_checks,
                         lowered_body,
                     )
+                    .with_loop_resource_specs(resource_specs)
                 } else {
                     c_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1272,6 +1345,7 @@ impl AnnotationLowerer<'_> {
                         effect_checks,
                         lowered_body,
                     )
+                    .with_loop_resource_specs(resource_specs)
                 }
             }
             syntax::C0Statement::For {
@@ -1288,6 +1362,7 @@ impl AnnotationLowerer<'_> {
                 let effect_body = syntax::C0Statement::Seq(body.clone(), step.clone());
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_effect_checks(loop_index, &effect_body)?;
+                let resource_specs = self.loop_resource_specs(loop_index);
                 c_seq(
                     lowered_initializer,
                     c_while_with_invariant_and_effect_checks(
@@ -1296,7 +1371,8 @@ impl AnnotationLowerer<'_> {
                         invariant_checks,
                         effect_checks,
                         crate::kernel::c_for_body_with_step(lowered_body, lowered_step),
-                    ),
+                    )
+                    .with_loop_resource_specs(resource_specs),
                 )
             }
             syntax::C0Statement::If {
@@ -1322,6 +1398,15 @@ impl AnnotationLowerer<'_> {
         let index = self.statement_index;
         self.statement_index += 1;
         index
+    }
+
+    /// The loop's declared resources as kernel specs. An empty list means the
+    /// loop declared none and inherits the function's own resource context.
+    fn loop_resource_specs(&self, loop_index: usize) -> Vec<CResourceSpec> {
+        self.loop_resources
+            .get(&loop_index)
+            .map(|declaration| declaration.specs.clone())
+            .unwrap_or_default()
     }
 
     fn next_loop_index(&mut self) -> usize {
@@ -3703,7 +3788,18 @@ impl AnnotationLowerer<'_> {
         // write any of the memory it can reach, so every viewed cell is framed
         // across it. The inherited claim stays checked at every back edge, so
         // a body that does write outside the footprint fails there.
-        if self.function_effects.is_empty()
+        if let Some(declaration) = self.loop_resources.get(&loop_index) {
+            // A loop that declares its own resources has the shape of a
+            // callee: its footprint is the memory it owns, not everything the
+            // function owns. The claim stays checked at every back edge.
+            if !has_explicit_whole_effect {
+                checks.push(CLoopEffectCheck::new_with_span(
+                    CLoopEffect::Mutable(declaration.owned_segments.clone()),
+                    CLoopEffectSpan::Whole,
+                    Some(format!("loop {loop_index} declared owned resource frame")),
+                ));
+            }
+        } else if self.function_effects.is_empty()
             && !has_explicit_whole_effect
             && (self.inherits_resource_derived_frame
                 || !self.implicit_contract_mutable_segments.is_empty())

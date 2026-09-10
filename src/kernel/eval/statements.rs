@@ -2173,6 +2173,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             invariant,
             invariant_checks: _,
             effect_checks: _,
+            resource_specs: _,
             do_while,
             body,
         } => execute_c_while_paths(
