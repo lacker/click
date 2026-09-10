@@ -69,6 +69,12 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 definition.name()
             )));
         }
+        if is_integer_conversion(definition.name()) {
+            return Err(ClickError::new(format!(
+                "`{}` is a built-in Integer conversion name",
+                definition.name()
+            )));
+        }
         if click_functions
             .insert(definition.name().to_string(), definition.parameters().len())
             .is_some()

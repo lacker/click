@@ -2252,6 +2252,7 @@ impl AnnotationLowerer<'_> {
                 click_type: Some(ClickType::Integer),
                 ..
             } => true,
+            ContractExpression::Call { name, .. } if name == "to_integer" => true,
             ContractExpression::Call { name, .. } => self
                 .click_function_environment
                 .get(name)
@@ -2265,6 +2266,8 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<crate::kernel::SpecIntegerExpression, String> {
+        use crate::kernel::SpecIntegerExpression;
+        check_integer_lowering_work(1)?;
         if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
             let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
             if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =
@@ -2303,7 +2306,103 @@ impl AnnotationLowerer<'_> {
             }
             return Err("symbolic Integer-valued datatype matches are not supported yet".into());
         }
-        lower_contract_integer_to_spec(expression, &environment.integer_values)
+        match expression {
+            ContractExpression::Binding(name) => {
+                let value = environment
+                    .integer_values
+                    .get(name)
+                    .ok_or_else(|| format!("`{name}` is not an Integer binding"))?;
+                if let SpecIntegerExpression::Term(term) = value {
+                    check_integer_lowering_work(integer_root_work(term))?;
+                }
+                Ok(value.clone())
+            }
+            ContractExpression::Call { name, arguments } if name == "to_integer" => {
+                let argument = integer_conversion_argument(name, arguments)?;
+                let argument = self.lower_contract_expression_to_spec(argument, environment)?;
+                if let SpecExpression::Value(value) = &argument {
+                    let destination = crate::kernel::MachineIntegerType::from_c_type(
+                        value.c_type(),
+                    )
+                    .ok_or_else(|| {
+                        "to_integer expects a signed or unsigned machine integer".to_string()
+                    })?;
+                    let (CValue::Int16(bits)
+                    | CValue::Int32(bits)
+                    | CValue::UInt8(bits)
+                    | CValue::UInt16(bits)
+                    | CValue::UInt32(bits)
+                    | CValue::Int64(bits)
+                    | CValue::UInt64(bits)) = value
+                    else {
+                        return Err(
+                            "to_integer expects a signed or unsigned machine integer".into()
+                        );
+                    };
+                    // An already evaluated value carries no evaluation effects.
+                    // Keep its observation in the shared Integer DAG so aliases
+                    // do not duplicate a deferred conversion tree.
+                    return crate::kernel::IntegerTerm::from_machine(destination, bits.clone())
+                        .map(SpecIntegerExpression::Term)
+                        .ok_or_else(|| "invalid machine integer representation".to_string());
+                }
+                Ok(SpecIntegerExpression::FromMachine(Box::new(argument)))
+            }
+            ContractExpression::Negate(inner) => {
+                let inner = self.lower_contract_integer_to_spec(inner, environment)?;
+                match inner {
+                    SpecIntegerExpression::Term(term) => {
+                        check_integer_lowering_work(integer_root_work(&term))?;
+                        Ok(SpecIntegerExpression::Term(
+                            crate::kernel::IntegerTerm::negate(term),
+                        ))
+                    }
+                    inner => Ok(SpecIntegerExpression::Negate(Box::new(inner))),
+                }
+            }
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right) => {
+                let left = self.lower_contract_integer_to_spec(left, environment)?;
+                let right = self.lower_contract_integer_to_spec(right, environment)?;
+                let operation = match expression {
+                    ContractExpression::Add(..) => IntegerOperation::Add,
+                    ContractExpression::Subtract(..) => IntegerOperation::Subtract,
+                    _ => IntegerOperation::Multiply,
+                };
+                match (&left, &right) {
+                    (SpecIntegerExpression::Term(_), SpecIntegerExpression::Term(_)) => {
+                        lower_integer_operation(left, right, operation)
+                    }
+                    _ => Ok(match operation {
+                        IntegerOperation::Add => {
+                            SpecIntegerExpression::Add(Box::new(left), Box::new(right))
+                        }
+                        IntegerOperation::Subtract => {
+                            SpecIntegerExpression::Subtract(Box::new(left), Box::new(right))
+                        }
+                        IntegerOperation::Multiply => {
+                            SpecIntegerExpression::Multiply(Box::new(left), Box::new(right))
+                        }
+                    }),
+                }
+            }
+            ContractExpression::Let {
+                name,
+                click_type: Some(ClickType::Integer),
+                value,
+                body,
+            } => {
+                let value = self.lower_contract_integer_to_spec(value, environment)?;
+                let mut body_environment = environment.clone();
+                body_environment.values.remove(name);
+                body_environment.algebraic_values.remove(name);
+                body_environment.array_refs.remove(name);
+                body_environment.integer_values.insert(name.clone(), value);
+                self.lower_contract_integer_to_spec(body, &body_environment)
+            }
+            _ => lower_contract_integer_to_spec(expression, &environment.integer_values),
+        }
     }
 
     fn lower_contract_expression_to_spec(
@@ -2312,6 +2411,19 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
+            ContractExpression::Call { name, arguments }
+                if integer_conversion_target(name).is_some() =>
+            {
+                let argument = integer_conversion_argument(name, arguments)?;
+                let destination = crate::kernel::MachineIntegerType::from_c_type(
+                    integer_conversion_target(name).unwrap().to_kernel_type(),
+                )
+                .expect("conversion target is an integral machine type");
+                Ok(SpecExpression::IntegerToMachine {
+                    value: Box::new(self.lower_contract_integer_to_spec(argument, environment)?),
+                    destination,
+                })
+            }
             ContractExpression::IntegerLiteral(value) => {
                 let value = value.parse::<u64>().map_err(|_| {
                     "an arbitrary Integer literal requires Integer context".to_string()
