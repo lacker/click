@@ -191,6 +191,12 @@ impl<'a> TermRewrite<'a> {
         self.visit();
         let result = match shared.as_ref() {
             IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => shared.as_ref().clone(),
+            IntegerTerm::Machine(value) => {
+                IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
+                    value.ty(),
+                    self.bits(value.value()),
+                ))
+            }
             // Rewriting preserves the symbolic DAG. In particular, it must
             // not fold a repeated symbolic expression into a giant literal.
             IntegerTerm::Negate(value) => IntegerTerm::Negate(self.integer_shared(value).into()),
