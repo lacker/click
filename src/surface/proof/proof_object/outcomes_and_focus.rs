@@ -134,6 +134,7 @@ impl<'a> Proof<'a> {
             .replace_focused_obligation(obligation)
             .map_err(|_| self.step_error("outcome goal is no longer open"))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: self.node.clone(),
@@ -185,6 +186,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|_| self.step_error("outcome goal is no longer open"))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: self.node.clone(),
@@ -344,6 +346,7 @@ impl<'a> Proof<'a> {
             .replace_focused_with_checked_branches(goals)
             .map_err(|_| self.step_error("outcome goals require an open execution frontier"))?;
         let successor = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             // A structural marker records the derivation; the certificate

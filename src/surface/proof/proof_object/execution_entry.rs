@@ -79,6 +79,7 @@ impl<'a> Proof<'a> {
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
         Self {
+            site: ProofStepSite::default(),
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
                 claim_label,
                 tactic_index,
@@ -141,6 +142,7 @@ impl<'a> Proof<'a> {
         });
         execution.presentation.surface_record = SurfaceRecord::default();
         Ok(Proof {
+            site: ProofStepSite::default(),
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
                 claim_label,
                 tactic_index: 0,
@@ -178,11 +180,16 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Starts one source tactic on a threaded execution Proof by clearing the
-    /// checked and newly added facts reported for the preceding step.
-    pub(in crate::surface::proof) fn start_source_tactic(self) -> Result<Self, ClickError> {
+    /// Starts the `source_index`th source tactic on a threaded execution
+    /// Proof by clearing the checked and newly added facts reported for the
+    /// preceding step, and by addressing this occurrence in diagnostics so
+    /// every scope it opens reports where the user wrote it.
+    pub(in crate::surface::proof) fn start_source_tactic(
+        self,
+        source_index: usize,
+    ) -> Result<Self, ClickError> {
         let state = self.state.with_fact_deltas(Vec::new(), Vec::new());
-        Ok(self.with_kernel_state(state))
+        Ok(self.at_source_tactic(source_index).with_kernel_state(state))
     }
 
     /// Edits only the focused execution frontier's opaque Surface metadata.
@@ -196,6 +203,7 @@ impl<'a> Proof<'a> {
             context,
             state,
             node,
+            site,
         } = self;
         let (state, result) = state.edit_frontier_presentation(edit).map_err(|error| {
             let message = match error {
@@ -219,6 +227,7 @@ impl<'a> Proof<'a> {
                 context,
                 state,
                 node,
+                site,
             },
             result,
         ))
@@ -345,6 +354,7 @@ impl<'a> Proof<'a> {
             context,
             state,
             node,
+            site,
         } = self.clone();
         let (state, ()) = state
             .edit_frontier_presentation(|presentation| {
@@ -370,6 +380,7 @@ impl<'a> Proof<'a> {
             context,
             state,
             node,
+            site,
         })
     }
 

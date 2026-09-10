@@ -482,6 +482,7 @@ impl<'a> ProofScope<'a> {
                 }
             })?;
         Ok(Proof {
+            site: outer.root.site.clone(),
             context: outer.root.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -632,6 +633,7 @@ impl<'a> ProofScope<'a> {
                 ),
             })?;
         Ok(Proof {
+            site: body.site.clone(),
             context: body.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -667,6 +669,7 @@ impl<'a> ProofScope<'a> {
                 }
             })?;
         Ok(Proof {
+            site: body.site.clone(),
             context: body.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -1067,6 +1070,7 @@ impl<'a> ProofScope<'a> {
                     )
                     .map_err(|_| self.root.step_error("`have` scope goal is no longer open"))?;
                 Ok(Proof {
+                    site: self.root.site.clone(),
                     context: self.root.context.clone(),
                     state,
                     node: Arc::new(ProofNode {
@@ -1181,6 +1185,7 @@ impl<'a> ProofScope<'a> {
                 // cursor may have moved through a decided branch.
                 let focused_branch = self.body.focused_branch_id();
                 Ok(Proof {
+                    site: self.root.site.clone(),
                     context: self.root.context.clone(),
                     state,
                     node: Arc::new(ProofNode {

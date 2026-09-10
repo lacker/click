@@ -32,6 +32,7 @@ impl<'a> Proof<'a> {
             .into_parts();
         Ok((
             Self {
+                site: self.site.clone(),
                 context: self.context.clone(),
                 state,
                 node: Arc::new(ProofNode {
@@ -95,6 +96,7 @@ impl<'a> Proof<'a> {
             .into_parts();
         Ok((
             Self {
+                site: self.site.clone(),
                 context: self.context.clone(),
                 state,
                 // The marker records the split instance in provenance; its
@@ -143,6 +145,7 @@ impl<'a> Proof<'a> {
             .into_parts();
         Ok((
             Self {
+                site: self.site.clone(),
                 context: self.context.clone(),
                 state,
                 node: Arc::new(ProofNode {
@@ -295,6 +298,7 @@ impl<'a> Proof<'a> {
             .clone()
             .expect("a kernel frontier split retains else execution");
         let successor = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -358,6 +362,7 @@ impl<'a> Proof<'a> {
             })?
             .into_parts_with_facts();
         let successor = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -544,6 +549,7 @@ impl<'a> Proof<'a> {
             self.step_error("cannot join `cases`: the split marker lost its root")
         })?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -709,6 +715,7 @@ impl<'a> Proof<'a> {
             .map_err(|error| self.execution_update_error("outcome `if`", error))?;
         let (state, split, ids, _) = published.into_parts_with_facts();
         let successor = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -875,6 +882,7 @@ impl<'a> Proof<'a> {
             .map_err(|_| self.step_error("cannot join outcome `if`: invalid branch lineage"))?;
         let [then_certificate, else_certificate] = arm_certificates;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -1087,6 +1095,7 @@ impl<'a> Proof<'a> {
             body.surface_bindings = parent.surface_bindings.clone();
         }
         let body = Proof {
+            site: self.site.nested(ProofStepBlock::Have),
             context: self.context.clone(),
             state: KernelProofObject::root(self.state().locals().clone(), body_goal),
             node: Arc::new(ProofNode {
@@ -1170,6 +1179,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|error| self.execution_update_error("`open`", error))?;
         let body = Proof {
+            site: self.site.nested(ProofStepBlock::Open),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {

@@ -77,6 +77,24 @@ or inserting irrelevant proof bookkeeping. See
 [Performance Tools](performance-tools.md) and
 [Testing Click](../internals/testing.md) for the operational workflow.
 
+## Reading a step failure's location
+
+A failing proof step names where it was written:
+
+```text
+`allocated_vector_push.ensures_0` proof step source tactic 1 > have body tactic 2: ...
+```
+
+`source tactic 1` is the claim's source tactic occurrence, numbered exactly as
+`click expand` and `click profile` address it, so the same number selects the
+tactic for expansion. Each further segment descends into a block the user
+wrote: `have body tactic 2` is the second tactic of that `have`'s `by { ... }`
+block, and `open body tactic 2` is the second tactic of an `open` body. A
+failure whose driver attributed no source occurrence — a planner-generated or
+searched script — reports `checked step N` instead, counting the checked steps
+of the block it is proving. Do not bisect a long proof with sentinel steps
+before reading this location.
+
 ## Classifying smart versus simple tactics
 
 Classify tactics by whether they select or plan proof operations, not by whether

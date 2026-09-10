@@ -153,6 +153,9 @@ pub(super) struct Proof<'a> {
     pub(in crate::surface::proof) context: Arc<ProofContext<'a>>,
     state: KernelProofHandle,
     node: Arc<ProofNode>,
+    /// Diagnostic addressing for the step being checked: which source tactic,
+    /// and inside which `have`/`open` blocks. This never affects checking.
+    site: ProofStepSite,
 }
 
 /// Feasible arms of one checked C `if` frontier.
@@ -1327,6 +1330,7 @@ pub(in crate::surface::proof) fn old_reflexive_transport_source(
 impl<'a> Proof<'a> {
     fn with_kernel_state(&self, state: KernelProofHandle) -> Self {
         Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: self.node.clone(),
@@ -1616,6 +1620,7 @@ impl<'a> Proof<'a> {
         // projection an exact fact for the ordinary `Assumption` step.
         let facts = self.facts().with_selected_resource_separation(&goal);
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state: KernelProofObject::root(self.state().locals().clone(), {
                 let context = BranchState {
@@ -1854,13 +1859,54 @@ impl<'a> Proof<'a> {
             .is_some_and(|goal| goal.closed)
     }
 
+    /// Names the failing step by where the user wrote it: the source tactic
+    /// occurrence, then each enclosing `have`/`open` block's own position.
+    /// When no driver attributed a source position (a planner-generated or
+    /// searched script), it names the failing step's place in the checked
+    /// lineage of the current block instead. The proof-tree depth is never
+    /// reported as if it were a step number.
     pub(in crate::surface::proof) fn step_error(&self, message: impl Into<String>) -> ClickError {
+        let location = self
+            .site
+            .path()
+            .unwrap_or_else(|| format!("checked step {}", self.node.depth + 1));
         ClickError::new(format!(
             "`{}` proof step {}: {}",
             self.context.claim_label(),
-            self.node.depth,
+            location,
             message.into()
         ))
+    }
+
+    /// The step position this proof's diagnostics report.
+    pub(in crate::surface::proof) fn site(&self) -> &ProofStepSite {
+        &self.site
+    }
+
+    /// The same proof, attributing its next step to the claim's `index`th
+    /// source tactic occurrence. This is diagnostic addressing only: no goal,
+    /// fact, execution state, or provenance node changes.
+    pub(in crate::surface::proof) fn at_source_tactic(&self, index: usize) -> Self {
+        if self.site.addresses_source_tactic(index) {
+            return self.clone();
+        }
+        Self {
+            site: self.site.at_source_tactic(index),
+            ..self.clone()
+        }
+    }
+
+    /// The same proof, attributing its next step to the `index`th tactic
+    /// written in the block currently being checked (a `have` or `open` body,
+    /// or the claim's own script).
+    pub(in crate::surface::proof) fn at_block_position(&self, index: usize) -> Self {
+        if self.site.addresses_block_position(index) {
+            return self.clone();
+        }
+        Self {
+            site: self.site.at_block_position(index),
+            ..self.clone()
+        }
     }
 
     #[cfg(test)]
@@ -1915,7 +1961,8 @@ mod fixed_state_steps;
 mod outcomes_and_focus;
 mod provenance;
 pub(in crate::surface::proof) use provenance::ProofCheckpoint;
-use provenance::{ProofNode, ProofStepOrigin};
+pub(in crate::surface::proof) use provenance::ProofStepSite;
+use provenance::{ProofNode, ProofStepBlock, ProofStepOrigin};
 mod resource_steps;
 mod scope;
 mod splits_and_scopes;

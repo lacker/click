@@ -2012,6 +2012,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|_| self.step_error("cannot join `branch`: invalid branch lineage"))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -2546,6 +2547,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|error| self.execution_update_error("continue branch arm", error))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: self.node.clone(),
@@ -2673,6 +2675,7 @@ impl<'a> Proof<'a> {
             .publish_checked_partial_frontier_split(arms, path_facts.clone())
             .map_err(|error| self.execution_update_error("`branch`", error))?;
         let successor = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {

@@ -55,6 +55,7 @@ impl ExecutionMatchPlan {
 impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn begin_execution_match(&self) -> Self {
         Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state: self.state.clone(),
             node: Arc::new(ProofNode {
@@ -373,6 +374,7 @@ impl<'a> Proof<'a> {
             })
             .collect();
         Ok(Self {
+            site: self.site.clone(),
             context: marker.context.clone(),
             state: self.state.clone(),
             node: Arc::new(ProofNode {
@@ -405,6 +407,7 @@ impl<'a> Proof<'a> {
             .map_err(|_| self.step_error("match requires an execution frontier"))?
             .into_parts_with_facts();
         let successor = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {

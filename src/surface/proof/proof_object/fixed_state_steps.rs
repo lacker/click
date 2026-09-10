@@ -1181,6 +1181,7 @@ impl<'a> Proof<'a> {
             Vec::new(),
         );
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state: self.publish_checked_transition(transition)?,
             node: self.node.clone(),

@@ -124,6 +124,7 @@ impl<'a> Proof<'a> {
             )
             .map_err(|error| self.execution_update_error("`step`", error))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -199,6 +200,7 @@ impl<'a> Proof<'a> {
             })
             .map_err(|message| self.step_error(message))?;
         let root = Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -218,6 +220,7 @@ impl<'a> Proof<'a> {
             .retain_invariant_body(scope, &completed.state)
             .map_err(|message| self.step_error(message))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -523,6 +526,7 @@ impl<'a> Proof<'a> {
                     .map_err(|error| self.execution_update_error("proof `if`", error))?;
                 let (state, _, ids, _) = split.into_parts_with_facts();
                 let successor = Self {
+                    site: self.site.clone(),
                     context: self.context.clone(),
                     state,
                     node: Arc::new(ProofNode {
@@ -549,6 +553,7 @@ impl<'a> Proof<'a> {
                     .publish_checked_frontier_transition(facts, execution, added, Vec::new(), false)
                     .map_err(|error| self.execution_update_error("proof `if`", error))?;
                 let successor = Self {
+                    site: self.site.clone(),
                     context: self.context.clone(),
                     state,
                     node: self.node.clone(),
@@ -1037,6 +1042,7 @@ impl<'a> Proof<'a> {
             .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new(), false)
             .map_err(|error| self.execution_update_error("`have`", error))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {
@@ -1179,6 +1185,7 @@ impl<'a> Proof<'a> {
             .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new(), false)
             .map_err(|error| self.execution_update_error("`loop`", error))?;
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state,
             node: Arc::new(ProofNode {

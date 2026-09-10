@@ -37,6 +37,15 @@ impl<'a> Proof<'a> {
         origin: Option<ProofStepOrigin>,
         retain_closed_loop_effect_goal: bool,
     ) -> Result<Self, ClickError> {
+        // Diagnostics from this step, and from every scope it opens, name the
+        // source occurrence the driver is checking rather than a tree depth.
+        if let Some(origin) = origin
+            && !self.site().addresses_source_tactic(origin.source_index)
+        {
+            return self
+                .at_source_tactic(origin.source_index)
+                .apply_step_with_origin_mode(step, Some(origin), retain_closed_loop_effect_goal);
+        }
         if self.focused_discharged() {
             return Err(self.step_error(format!(
                 "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
@@ -83,6 +92,7 @@ impl<'a> Proof<'a> {
         };
         if let Some(successor) = checked_proposition_successor {
             return Ok(Self {
+                site: self.site.clone(),
                 context: self.context.clone(),
                 state: successor?,
                 node: Arc::new(ProofNode {
@@ -161,6 +171,7 @@ impl<'a> Proof<'a> {
         }?;
 
         Ok(Self {
+            site: self.site.clone(),
             context: self.context.clone(),
             state: self.publish_checked_transition(transition)?,
             node: Arc::new(ProofNode {

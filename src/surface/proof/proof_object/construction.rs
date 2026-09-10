@@ -57,6 +57,7 @@ impl<'a> Proof<'a> {
             return Ok(self.clone());
         }
         Ok(Self {
+            site: self.site.clone(),
             context: Arc::new(ProofContext::Execution(
                 context.with_tactic_index(tactic_index),
             )),
@@ -93,6 +94,7 @@ impl<'a> Proof<'a> {
                 .step_error("execution tactic attribution can only be restored from an ancestor"));
         }
         Ok(Self {
+            site: self.site.clone(),
             context: ancestor.context.clone(),
             state: self.state.clone(),
             node: self.node.clone(),
@@ -236,6 +238,7 @@ impl<'a> Proof<'a> {
     ) -> Self {
         let facts = ProofFacts::from_ordered(requires);
         Self {
+            site: ProofStepSite::default(),
             context: Arc::new(ProofContext::Pure(PureProofContext {
                 claim_label,
                 theorem_context,
@@ -612,6 +615,7 @@ impl<'a> Proof<'a> {
             Obligation::Frontier(_) | Obligation::FunctionOutcome(_) => goal.clone(),
         };
         Self {
+            site: ProofStepSite::default(),
             context: Arc::new(ProofContext::FixedState(FixedStateProofContext {
                 claim_label,
                 tactic_index,

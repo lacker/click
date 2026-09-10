@@ -3567,6 +3567,10 @@ impl<'a> Proof<'a> {
 
         let mut proof = self.clone();
         for (index, tactic) in tactics.iter().enumerate() {
+            // Address this tactic's diagnostics by its position in the block
+            // the user wrote, so a failure inside one `have` body is
+            // distinguishable from the same failure inside another.
+            proof = proof.at_block_position(index);
             if proof.focused_discharged() {
                 // A final `assumption` after a step that already discharged
                 // the goal (a `transport` whose target is the goal, an exact
