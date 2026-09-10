@@ -233,6 +233,51 @@ datatype/resource fields, `Nat` relationships, typed folds, and the unchanged C
 summation regression remain to be completed. The user documentation states the
 current scalar boundary; the full acceptance criteria below remain open.
 
+## Quantifier review checkpoint (2026-09-10)
+
+The reviewed theorem-application stage is integrated at `c34239af`. It includes
+simultaneous argument binding (callee parameter names cannot change later caller
+arguments), exact explicit-premise checks, rejection of missing or altered
+guards and implicit C/Integer mixing, and expansion followed by re-verification.
+The full gate passed on the current integration base: 2,135 unit/binary tests
+and 14 integration gates.
+
+The next source-quantifier stage remains isolated and is not part of the supported
+language yet. Review established these additional implementation requirements:
+
+- Introduction must freshen mathematical binders in the Integer carrier. An
+  ambient fact about a same-numbered variable must never prove a universal claim.
+  C and Integer source bindings must shadow each other in both directions.
+- Reserve variable identities from the captured Integer arguments actually
+  referenced by a proposition. A fixed allocator starting at `2_000_000` can
+  capture an introduced or applied argument. Cache a maximum variable identity
+  per shared Integer node so finding that bound does not traverse a shared DAG.
+- An existential body's evaluation guards cannot be turned into an implication
+  under the existential. That would allow an irrelevant witness with a false
+  guard to prove the claim. The first lowering implementation must reject
+  non-total or branching existential bodies unless it proves a sound treatment
+  of guards and definedness for the same witness.
+- A goal carries its complete persistent Integer binding environment. Initialize
+  it once and update only the introduced name; do not merge or copy an entire
+  binding overlay on every tactic.
+
+Review found a blocker in repeated universal introduction: each step validates,
+substitutes, and copies the remaining boxed proposition body. A proof with `n`
+nested binders and `n` explicit `intro()` steps therefore performs quadratic work.
+Sharing binding environments fixes unrelated-context copying but does not fix
+this suffix traversal. Feature work must not route around it with a smart tactic
+or larger budget.
+
+The required regression constructs nested Integer universal goals at depths
+8/16/32/64, introduces all binders with simple steps, and measures the complete
+checked path. Include both empty assumptions and an ambient quantified premise
+with overlapping binder identities, plus the negative same-variable ambient-fact
+case. The fix must preserve carrier checks and capture avoidance while making
+work approximately linear in the statement and certificate. It likely needs a
+shared or scoped proposition representation and reusable checked binder metadata;
+changing only the fresh-variable search is insufficient. This is a verifier
+representation change, not a change to `Integer` semantics or C execution.
+
 ## Implementation and integration sequence
 
 1. Land this design record, then agree on the minimal shared kernel/surface
