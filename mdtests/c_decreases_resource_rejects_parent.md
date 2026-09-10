@@ -33,12 +33,10 @@ int32 repeat_node(struct node* node) {
     decreases resource zero_list(node);
     requires node != 0;
     views zero_list(node);
-    immutable;
 
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

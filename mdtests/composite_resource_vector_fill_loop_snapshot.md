@@ -43,15 +43,15 @@ int32 composite_resource_vector_fill_loop_snapshot(
     struct vector* owner,
     int32 value
 ) {
-    owns vector(owner);
-    mutable owner->data[0..owner->len];
+    views vector(owner);
+    owns owner->data[0..owner->len];
     ensures result == owner->len;
 } by {
     step();
     step();
     loop as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        mutable owner->data[0..owner->len] by frame;
+        owns owner->data[0..owner->len];
 
         initialize by simp;
         preserve by {
@@ -74,7 +74,6 @@ int32 composite_resource_vector_fill_loop_snapshot(
         }
     }
     step();
-    frame();
     have result == owner->len by {
         normalize();
     }

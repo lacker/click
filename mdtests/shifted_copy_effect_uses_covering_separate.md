@@ -1,6 +1,6 @@
 # shifted copy effect uses covering separate facts
 
-This checks that a shifted loop effect summary can use a broader separation
+This checks that a shifted loop write footprint can use a broader separation
 requirement. The loop only mutates `dst[1..n]`, stated as
 `(dst + 1)[0..n - 1]`, while the requirement states that the whole
 `dst[0..n]` range is separate from `src[0..n]`.
@@ -38,7 +38,7 @@ int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32
     loop {
         invariant i >= 1;
         invariant i <= n;
-        mutable (dst + 1)[0..n - 1] by frame;
+        owns (dst + 1)[0..n - 1];
     }
     step();
     simp();

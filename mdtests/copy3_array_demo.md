@@ -37,17 +37,6 @@ int32 copy3(int32 dst[3], int32 src[3]) {
         invariant i >= 0 and i <= 3;
         invariant forall (k: int32) { 0 <= k and k < 3 implies src[k] == old(src[k]) };
         invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
-        mutable dst[0..3] by {
-            frame() using {
-                at(statement(3).entry, i) < at(statement(3).entry, 3);
-                at(statement(3).entry, i) <= at(statement(3).entry, 3);
-                at(statement(3).entry, i) >= at(statement(3).entry, 0);
-                loadable(dst[0..3]);
-                loadable(src[0..3]);
-                separate(memory(dst[0..3]), memory(src[0..3]));
-                forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
-            }
-        }
         initialize by {
             have i >= 0 and i <= 3 by {
                 both {

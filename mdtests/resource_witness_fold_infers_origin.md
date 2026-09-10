@@ -27,11 +27,10 @@ void link(struct node* node, struct node* tail) {
     requires node != 0;
     requires aligned(tail, 8);
     consumes object(node);
-    mutable node->word;
     produces packed(node);
+    owns node->word;
 } by {
     execute();
-    frame();
     fold(packed(node));
     simp();
 }

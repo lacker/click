@@ -48,7 +48,8 @@ verifying "reader.c";
 
 int32 bump_counters() {
     requires zero_counter < 1000 and initialized_counter < 1000;
-    mutable &zero_counter[0..1], &initialized_counter[0..1] by auto;
+    owns &zero_counter[0..1];
+    owns &initialized_counter[0..1];
     ensures result == old(initialized_counter) + 1 by auto;
     ensures zero_counter == old(zero_counter) + 1 by auto;
     ensures initialized_counter == old(initialized_counter) + 1 by auto;
@@ -63,7 +64,6 @@ int32 run() {
     owns &zero_counter[0..1];
     owns &initialized_counter[0..1];
     requires zero_counter == 0 and zero_counter < 1000 and initialized_counter == 7 and initialized_counter < 1000;
-    mutable &zero_counter[0..1], &initialized_counter[0..1] by auto;
     ensures result == old(initialized_counter) + 1 by auto;
 }
 ```

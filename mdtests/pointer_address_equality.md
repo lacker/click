@@ -32,11 +32,9 @@ verifying "pointer_address_equality.c";
 int32 self_after_clear(struct node* node) {
     requires node != 0;
     owns node->word;
-    mutable node->word;
     ensures result == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -44,22 +42,18 @@ int32 other_after_link(struct node* node, struct node* other) {
     requires node != 0;
     requires other != node;
     owns node->word;
-    mutable node->word;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 null_word_is_zero(struct node* node) {
     requires node != 0;
     owns node->word;
-    mutable node->word;
     ensures result == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

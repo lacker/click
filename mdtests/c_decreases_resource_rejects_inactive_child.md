@@ -26,12 +26,10 @@ verifying "c_decreases_resource_rejects_inactive_child.c";
 int32 empty_repeat(int32 active) {
     decreases resource guarded(active);
     views guarded(active);
-    immutable;
 
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

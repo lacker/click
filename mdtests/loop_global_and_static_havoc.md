@@ -34,7 +34,7 @@ verifying "loop_global_and_static_havoc.c";
 
 int32 loop_global_havoc(int32 n) {
     requires n >= 0 and n <= 100;
-    mutable &global_counter[0..1];
+    owns &global_counter[0..1];
     ensures result == n;
 } by {
     step();
@@ -45,13 +45,12 @@ int32 loop_global_havoc(int32 n) {
         invariant global_counter == i;
     }
     step();
-    frame();
     simp();
 }
 
 int32 loop_static_havoc(int32 n) {
     requires n >= 0 and n <= 100;
-    mutable &static_counter[0..1];
+    owns &static_counter[0..1];
     ensures result == n;
 } by {
     step();
@@ -63,7 +62,6 @@ int32 loop_static_havoc(int32 n) {
         invariant static_counter == i;
     }
     step();
-    frame();
     simp();
 }
 ```

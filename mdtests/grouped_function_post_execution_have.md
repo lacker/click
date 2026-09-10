@@ -34,7 +34,6 @@ verifying "grouped_current_have.c";
 
 int32 identity(int32 x) {
     requires has_k: exists (k: int32) { k == x };
-    immutable;
     ensures result == x;
     ensures result_witness: exists (j: int32) { j == result };
     ensures chosen_witness: exists (j: int32) { j == x };
@@ -49,7 +48,6 @@ int32 identity(int32 x) {
         witness(j = k);
         simp();
     }
-    frame();
     simp();
 }
 

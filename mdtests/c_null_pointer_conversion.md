@@ -93,13 +93,11 @@ uint8* return_byte_null() {
 
 int32 clear_pointer(struct holder* owner) {
     owns owner->data;
-    mutable owner->data;
 
     ensures result == 1;
     ensures owner->data == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 

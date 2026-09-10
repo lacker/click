@@ -1,8 +1,8 @@
-# Pure refinement does not widen a callback's resource or effect interface
+# Pure refinement does not widen a callback's ownership interface
 
-The implementation writes a second cell that the named contract neither owns
-nor lists as mutable. Stronger pure postconditions cannot compensate for that
-larger effect, so the function address does not satisfy the named contract.
+The implementation owns, and writes, a second cell that the named contract does
+not own. Stronger pure postconditions cannot compensate for that wider
+ownership, so the function address does not satisfy the named contract.
 
 ```c filename=extra_effect_step.c
 int32 store_with_scratch(int32 value, int32* output) {
@@ -29,17 +29,14 @@ verifying "extra_effect_step.c";
 
 contract int32 Store(int32 value, int32* output) {
     owns output[0..1];
-    mutable output[0..1];
     ensures result == value;
 }
 
 int32 store_with_scratch(int32 value, int32* output) {
     owns output[0..2];
-    mutable output[0..2];
     ensures result == value;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -50,13 +47,11 @@ int32 apply_store(
 ) {
     requires Store(callback);
     owns output[0..1];
-    mutable output[0..1];
     ensures result == value by auto;
 }
 
 int32 extra_effect_caller(int32* output) {
     owns output[0..2];
-    mutable output[0..2];
     ensures result == 42 by auto;
 }
 ```

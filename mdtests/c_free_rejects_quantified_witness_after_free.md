@@ -32,11 +32,9 @@ verifying "uaf_local.c";
 
 int32 zero_one(int32 p[]) {
     owns p[0..1];
-    mutable p[0..1];
     ensures forall (k: int32) { 0 <= k and k < 1 implies p[k] == 0 };
 } by {
     execute();
-    frame();
     simp();
 }
 

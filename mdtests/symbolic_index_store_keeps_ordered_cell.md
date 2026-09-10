@@ -34,7 +34,6 @@ int32 set_then_read_end(int32* data, int32 index, int32 len, int32 cap) {
     requires 0 <= index;
     requires index < len;
     owns zero_terminated(data, len, cap);
-    mutable data[index..index + 1];
     ensures result == 0;
 } by {
     unfold(zero_terminated(data, len, cap));
@@ -55,7 +54,6 @@ int32 set_then_read_end(int32* data, int32 index, int32 len, int32 cap) {
     step();
     fold(zero_terminated(data, len, cap));
     step();
-    frame();
     simp();
 }
 ```

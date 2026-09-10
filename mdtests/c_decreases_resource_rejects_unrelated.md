@@ -34,12 +34,10 @@ int32 swap_repeat(struct node* node, struct node* other) {
     requires node != other;
     views zero_list(node);
     views zero_list(other);
-    immutable;
 
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

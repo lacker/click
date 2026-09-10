@@ -38,14 +38,12 @@ verifying "initialize_two_boxes.c";
 
 int32 initialize_box(struct box* owner, int32 value) {
     consumes object(owner);
-    mutable object(owner);
     produces box(owner);
     ensures result == value;
     ensures owner->value == value;
 } by {
     execute();
     fold(box(owner));
-    frame();
     simp();
 }
 
@@ -53,7 +51,6 @@ int32 initialize_two_boxes(struct box* left, struct box* right, int32 value) {
     requires separate(memory(object(left)), memory(object(right)));
     consumes object(left);
     consumes object(right);
-    mutable object(left), object(right);
     produces box(left);
     produces box(right);
     ensures left->value == value;
@@ -63,7 +60,6 @@ int32 initialize_two_boxes(struct box* left, struct box* right, int32 value) {
     execute_until(statement(2));
     step();
     execute();
-    frame();
     simp();
 }
 ```

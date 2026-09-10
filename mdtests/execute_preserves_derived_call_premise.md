@@ -37,11 +37,9 @@ int32 execute_preserves_derived_call_premise(struct owner* owner) {
     requires owner->length <= owner->capacity;
     requires owner->capacity < 2147483647;
     views object(owner);
-    immutable;
     ensures result == owner->length;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

@@ -38,7 +38,6 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
             have i >= 0 and i <= 3 by simp;
             close_invariants by { intro(); simp(); }
         }
-        immutable by frame;
     }
     step();
     unfold(permutation);

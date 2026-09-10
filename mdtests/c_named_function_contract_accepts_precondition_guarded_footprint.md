@@ -1,8 +1,8 @@
-# A named precondition can establish a mutable guard
+# A named precondition can establish an ownership guard
 
 The named contract is callable only while its conditional cell is active. In
 that domain the named guarded footprint is always enabled, so a concrete
-function may state the same range as unconditionally mutable.
+function may own the same range unconditionally.
 
 ```c filename=precondition_guarded_callback.c
 int32 active_effect(int32 active, int32* cell) {
@@ -40,11 +40,9 @@ contract int32 ActiveEffect(int32 active, int32* cell) {
 int32 active_effect(int32 active, int32* cell) {
     requires active != 0;
     owns maybe_cell(active, cell);
-    mutable cell[0..1];
     ensures result == active;
 } by {
     execute();
-    frame();
     simp();
 }
 

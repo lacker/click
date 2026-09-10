@@ -42,7 +42,6 @@ verifying "advance_composite_old_memory_interface.c";
 
 int32 read_first(struct buffer* owner) {
     views buffer(owner);
-    immutable;
 
     ensures result == owner->data[0] by auto;
 }

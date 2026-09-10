@@ -62,8 +62,8 @@ void unwrap_object(struct object* obj) {
 }
 
 void write_through_wrapper(struct object* obj) {
-    owns object(obj);
-    mutable obj->field;
+    views object(obj);
+    owns obj->field;
 } by {
     step();
     open(wrapper(obj)) {
@@ -71,7 +71,6 @@ void write_through_wrapper(struct object* obj) {
     }
     step();
     execute();
-    frame();
     simp();
 }
 ```

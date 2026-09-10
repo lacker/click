@@ -1,6 +1,6 @@
 # loop havoc carries a checked write set
 
-This checks that a whole-loop mutable effect summary is carried through the
+This checks that a whole-loop owned write footprint is carried through the
 loop-havoc memory-DAG edge. The post-loop load of `p[0]` is not materialized at
 loop entry, so the proof must transport it across the verified footprint rather
 than rely on copy-back of an entry cell.
@@ -32,7 +32,7 @@ int32 loop_havoc_write_set(int32 p[], int32 n) {
     loop {
         invariant i >= 1;
         invariant i <= n;
-        mutable (p + 1)[0..n - 1] by frame;
+        owns (p + 1)[0..n - 1];
     }
     step();
     simp();

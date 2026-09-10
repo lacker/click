@@ -30,9 +30,8 @@ verifying "leaf_flag.c";
 
 int32 leaf_flag(struct pair* p) {
     requires p != 0;
-    owns p->left;
-    owns p->right;
-    immutable;
+    views p->left;
+    views p->right;
 
     ensures result == 1 implies p->left == 0;
     ensures result == 1 implies p->right == 0;
@@ -41,7 +40,6 @@ int32 leaf_flag(struct pair* p) {
     ensures result == 0 or result == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

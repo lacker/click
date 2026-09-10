@@ -15,7 +15,7 @@ void invoke(void (*callback)(int32*), int32* cell) {
     requires First(callback);
     requires Second(callback);
     owns cell[0..1];
-} by { execute(); frame(); }
+} by { execute(); }
 ```
 
 ```expect

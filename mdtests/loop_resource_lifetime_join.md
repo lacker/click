@@ -32,7 +32,6 @@ int32 take(int32* p) {
 
 int32 loop_resource_lifetime_join(int32* p) {
     owns p[0..1];
-    mutable p[0..1];
     ensures p[0] == 7;
 } by {
     step();
@@ -42,11 +41,10 @@ int32 loop_resource_lifetime_join(int32* p) {
     loop {
         invariant i >= 0;
         invariant i <= 1;
-        mutable p[0..1] by frame;
+        owns p[0..1];
     }
     step();
     step();
-    frame();
     simp();
 }
 ```

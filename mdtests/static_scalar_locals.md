@@ -27,7 +27,6 @@ verifying "static_scalar_locals.c" as static_local;
 int32 increment_twice() {
     owns &calls[0..1];
     requires calls < 1000;
-    mutable &calls[0..1] by auto;
     ensures result == old(calls) + 2 by auto;
     ensures calls == old(calls) + 2 by auto;
 }

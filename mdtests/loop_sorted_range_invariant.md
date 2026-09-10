@@ -48,7 +48,6 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
     loop as carry_sorted {
         invariant i >= 0 and i <= 3;
         invariant sorted(old(p), 3);
-        immutable by frame;
 
         initialize by {
             unfold(sorted);

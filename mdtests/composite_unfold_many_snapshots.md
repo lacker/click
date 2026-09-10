@@ -1,6 +1,6 @@
 # Composite unfold ignores unrelated snapshots
 
-Unfolding a small composite resource is a simple tactic. Earlier immutable
+Unfolding a small composite resource is a simple tactic. Earlier read-only
 calls may leave useful program points in the proof, but they must not make the
 resource projection repeatedly normalize the complete snapshot history.
 
@@ -78,7 +78,6 @@ verifying "read_after_calls.c";
 
 int32 inspect_buffer(struct buffer* owner) {
     views buffer_storage(owner);
-    immutable;
     ensures result == owner->len;
     ensures forall (k: int32) {
         0 <= k and k < owner->len implies
@@ -87,13 +86,11 @@ int32 inspect_buffer(struct buffer* owner) {
 } by {
     observe(buffer_storage(owner));
     execute();
-    frame();
     simp();
 }
 
 int32 read_after_calls(struct buffer* owner) {
     owns allocated_buffer(owner);
-    immutable;
     ensures result == owner->len;
 } by {
     unfold(allocated_buffer(owner));
@@ -116,7 +113,6 @@ int32 read_after_calls(struct buffer* owner) {
     have 1 <= owner->cap by simp;
     have owner->cap <= 536870911 by simp;
     execute();
-    frame();
     fold(allocated_buffer(owner));
     simp();
 }

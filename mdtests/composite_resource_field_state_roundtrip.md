@@ -2,7 +2,7 @@
 
 Verified opaque calls may change a metadata fact while preserving the same
 nested, field-dependent storage resource. Certification must process each
-call's effect summary before checking its postconditions against earlier state
+call's write footprint before checking its postconditions against earlier state
 facts.
 
 ```c filename=composite_resource_field_state_roundtrip.c
@@ -69,7 +69,6 @@ verifying "composite_resource_field_state_roundtrip_pipeline.c";
 
 int32 set_one(struct state_owner* owner) {
     consumes zero_state(owner);
-    mutable owner->state;
     produces one_state(owner);
 
     ensures result == 1;
@@ -79,13 +78,11 @@ int32 set_one(struct state_owner* owner) {
     unfold(zero_state(owner));
     execute();
     fold(one_state(owner));
-    frame();
     simp();
 }
 
 int32 set_zero(struct state_owner* owner) {
     consumes one_state(owner);
-    mutable owner->state;
     produces zero_state(owner);
 
     ensures result == 0;
@@ -95,13 +92,11 @@ int32 set_zero(struct state_owner* owner) {
     unfold(one_state(owner));
     execute();
     fold(zero_state(owner));
-    frame();
     simp();
 }
 
 int32 field_state_roundtrip(struct state_owner* owner) {
     consumes zero_state(owner);
-    mutable owner->state;
     produces zero_state(owner);
 
     ensures result == 1;
@@ -109,7 +104,6 @@ int32 field_state_roundtrip(struct state_owner* owner) {
     ensures owner->data == old(owner->data);
 } by {
     execute();
-    frame();
     simp();
 }
 ```

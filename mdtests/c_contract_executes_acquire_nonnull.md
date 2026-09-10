@@ -8,12 +8,10 @@ resource MaybeCell(p: int32*) {
 }
 resource Cell(p: int32*) { owns p[0..1]; fact p[0] == 7; }
 contract int32* Raw() {
-    immutable;
     ensures result != 0;
     produces MaybeCell(result);
 }
 contract int32* Boxed() {
-    immutable;
     ensures result != 0;
     ensures result[0] == 7;
     produces Cell(result);
@@ -24,7 +22,7 @@ theorem lift(acquire: int32* (*)()) executes acquire() {
         step(Raw);
         unfold(MaybeCell(result));
         fold(Cell(result));
-        frame(); simp();
+        simp();
     }
 }
 ```

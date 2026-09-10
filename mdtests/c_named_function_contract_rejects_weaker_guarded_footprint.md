@@ -1,8 +1,8 @@
-# Callback refinement rejects a weaker mutable guard
+# Callback refinement rejects wider unguarded ownership
 
-The named contract permits mutation only while the conditional cell is active.
-The concrete function declares that cell mutable unconditionally, so it cannot
-be used through the narrower named contract.
+The named contract owns the cell only while it is active. The concrete function
+owns that cell unconditionally, which is more than the interface owns, so it
+cannot be used through the narrower named contract.
 
 ```c filename=weaker_guarded_callback.c
 int32 overly_general_effect(int32 active, int32* cell) {
@@ -37,12 +37,10 @@ contract int32 GuardedEffect(int32 active, int32* cell) {
 }
 
 int32 overly_general_effect(int32 active, int32* cell) {
-    owns maybe_cell(active, cell);
-    mutable cell[0..1];
+    owns cell[0..1];
     ensures result == active;
 } by {
     execute();
-    frame();
     simp();
 }
 

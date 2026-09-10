@@ -28,7 +28,7 @@ verifying "global_entry_initializer_rejected.c";
 
 int32 increment_counter() {
     requires counter < 1000;
-    mutable &counter[0..1];
+    owns &counter[0..1];
     ensures result == old(counter) + 1;
     ensures counter == old(counter) + 1;
 }
@@ -38,7 +38,7 @@ int32 read_counter() {
 }
 
 int32 run() {
-    mutable &counter[0..1];
+    owns &counter[0..1];
     ensures stale_initializer: result == 3;
 }
 ```

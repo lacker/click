@@ -11,9 +11,9 @@ theorem zero_successor(value: int32, returned: int32) {
     ensures value == 1;
 }
 resource Cell(p: int32*) { owns p[0..1]; }
-contract int32 First(int32* p) { owns p[0..1]; mutable p[0..1]; ensures result == 0; }
-contract int32 Second(int32* p) { owns p[0..1]; mutable p[0..1]; ensures p[0] == result + 1; }
-contract int32 Target(int32* p) { owns Cell(p); mutable p[0..1]; ensures result == 0; ensures p[0] == 1; }
+contract int32 First(int32* p) { owns p[0..1]; ensures result == 0; }
+contract int32 Second(int32* p) { owns p[0..1]; ensures p[0] == result + 1; }
+contract int32 Target(int32* p) { owns Cell(p); ensures result == 0; ensures p[0] == 1; }
 theorem lift(callback: int32 (*)(int32*)) executes callback(int32* cell) {
     requires First(callback);
     requires Second(callback);
@@ -25,7 +25,7 @@ theorem lift(callback: int32 (*)(int32*)) executes callback(int32* cell) {
             extract(cell[0] == result + 1); assumption();
         }
         apply(zero_successor(cell[0], result));
-        fold(Cell(cell)); frame(); simp();
+        fold(Cell(cell)); simp();
     }
 }
 ```

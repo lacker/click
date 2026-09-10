@@ -27,7 +27,6 @@ int32 loop_old_count_invariant(int32 p[3]) {
     loop {
         invariant i >= 0 and i <= 3;
         invariant old(count(p, 0, 3, p[0])) == old(count(p, 0, 3, p[0]));
-        immutable by frame;
         preserve by {
             step();
             have i >= 0 and i <= 3 by simp;

@@ -19,10 +19,8 @@ verifying "decrement_min_bound_certificate.c";
 void decrement(struct counter* counter) {
     requires -2147483648 < counter->value;
     owns counter->value;
-    mutable counter->value;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

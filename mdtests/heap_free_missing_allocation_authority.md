@@ -26,7 +26,6 @@ verifying "heap_free_missing_allocation_authority.c";
 
 void free_second_without_authority(struct two_buffers* buffers) {
     consumes first_buffer_owned(buffers);
-    mutable buffers->second;
 } by {
     unfold(first_buffer_owned(buffers));
     execute();

@@ -32,12 +32,10 @@ int32 tag_round_trip(struct node* node, struct node* next) {
     requires aligned(next, 8);
     owns node->word;
     views next->value;
-    mutable node->word;
     ensures result == next->value;
     ensures node->word == address(next) + 3;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

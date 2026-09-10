@@ -32,26 +32,22 @@ verifying "call_set_pointer.c";
 
 int32 set_pointer(struct holder* owner, int32* data) {
     consumes owner[0..2];
-    mutable owner[0..2];
     produces owner[0..2];
     ensures result == 0;
     ensures owner->data == data;
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 call_set_pointer(struct holder* owner, int32* data) {
     consumes owner[0..2];
-    mutable owner[0..2];
     produces owner[0..2];
     ensures result == 1;
 } by {
     execute_until(statement(2));
     have owner->data == data by simp;
     execute();
-    frame();
     simp();
 }
 ```

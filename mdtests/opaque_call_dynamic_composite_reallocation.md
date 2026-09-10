@@ -57,7 +57,6 @@ verifying "replace_after_dynamic_open.c";
 
 int32 replace_dynamic_cell(struct cell_owner* owner) {
     consumes allocated_dynamic_cell(owner);
-    mutable owner->cap, owner->data, owner->data[0..owner->cap];
     produces allocated_dynamic_cell(owner);
 
     ensures result == 0 or result == 1;
@@ -68,13 +67,11 @@ int32 replace_dynamic_cell(struct cell_owner* owner) {
     unfold(allocated_dynamic_cell(owner));
     execute();
     fold(allocated_dynamic_cell(owner));
-    frame();
     simp();
 }
 
 int32 replace_after_dynamic_open(struct cell_owner* owner) {
     consumes allocated_dynamic_cell(owner);
-    mutable owner->cap, owner->data, owner->data[0..owner->cap];
     produces allocated_dynamic_cell(owner);
 
     ensures result == 0 or result == 1;
@@ -82,7 +79,6 @@ int32 replace_after_dynamic_open(struct cell_owner* owner) {
     open(allocated_dynamic_cell(owner)) {
     }
     execute();
-    frame();
     simp();
 }
 ```

@@ -1,6 +1,6 @@
-# aggregate array static writes require an authorized field effect
+# aggregate array static writes require authorized field ownership
 
-A function-local static array of structs is external memory for effect
+A function-local static array of structs is external memory for ownership
 certification. Writing one indexed field without authorizing that field
 remains an error.
 
@@ -21,7 +21,6 @@ verifying "aggregate_array_static_effect.c";
 
 int32 increment() {
     requires entries[1].value < 1000;
-    immutable;
     ensures result == old(entries[1].value) + 1 by auto;
 }
 ```

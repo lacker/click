@@ -1,6 +1,6 @@
-# Named function contracts transfer resources and effects
+# Named function contracts transfer resources and write footprints
 
-An indirect call applies the same resource transition and mutable footprint as
+An indirect call applies the same resource transition and owned footprint as
 an ordinary verified call. Here the callback consumes one token and mutates
 exactly one integer cell.
 
@@ -32,7 +32,6 @@ verifying "invoke_consumer.c";
 contract int32 Consumer(int32 token, int32* output) {
     consumes available(token);
     consumes output[0..1];
-    mutable output[0..1];
     ensures result == 0;
     ensures output[0] == token;
 }
@@ -40,12 +39,10 @@ contract int32 Consumer(int32 token, int32* output) {
 int32 consume_and_store(int32 token, int32* output) {
     consumes available(token);
     consumes output[0..1];
-    mutable output[0..1];
     ensures result == 0;
     ensures output[0] == token;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -57,12 +54,10 @@ int32 invoke_consumer(
     requires Consumer(callback);
     consumes available(token);
     consumes output[0..1];
-    mutable output[0..1];
     ensures result == 0;
     ensures output[0] == token;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

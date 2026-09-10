@@ -47,11 +47,9 @@ int32 apply_read(int32 (*read)(int32*), int32* cells) {
 
 void borrow_then_write(int32* cells) {
     owns cells[0..2];
-    mutable cells[0..2];
     ensures cells[1] == 7;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

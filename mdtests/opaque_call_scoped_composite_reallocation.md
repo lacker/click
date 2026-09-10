@@ -51,7 +51,6 @@ verifying "replace_after_scoped_open.c";
 
 int32 replace_allocated_cell(struct cell_owner* owner) {
     consumes allocated_cell(owner);
-    mutable owner->data, owner->data[0..1];
     produces allocated_cell(owner);
 
     ensures result == 0 or result == 1;
@@ -60,13 +59,11 @@ int32 replace_allocated_cell(struct cell_owner* owner) {
     unfold(allocated_cell(owner));
     execute();
     fold(allocated_cell(owner));
-    frame();
     simp();
 }
 
 int32 replace_after_scoped_open(struct cell_owner* owner) {
     consumes allocated_cell(owner);
-    mutable owner->data, owner->data[0..1];
     produces allocated_cell(owner);
 
     ensures result == 0 or result == 1;
@@ -74,7 +71,6 @@ int32 replace_after_scoped_open(struct cell_owner* owner) {
     open(allocated_cell(owner)) {
     }
     execute();
-    frame();
     simp();
 }
 ```

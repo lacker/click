@@ -18,17 +18,14 @@ predicate IsZero(cell: int32[]) {
 
 contract void SetsZero(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsZero(cell);
 }
 
 void clear_cell(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures cell[0] == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 

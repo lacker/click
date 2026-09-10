@@ -28,12 +28,10 @@ resource maybe_initialized_int32(data: int32*) {
 verifying "fresh_allocation_writes_are_internal_effects.c";
 
 int32* fresh_allocation_writes_are_internal_effects() {
-    immutable;
     produces maybe_initialized_int32(result);
 } by {
     execute();
     fold(maybe_initialized_int32(result));
-    frame();
     simp();
 }
 ```

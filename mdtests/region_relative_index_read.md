@@ -30,7 +30,6 @@ int32 region_read(struct region* region, int32 index) {
     requires defined(region->start + index) and
         region->start + index < region->end;
     views live_region(region);
-    immutable;
     ensures result == region->data[region->start + index];
 } by {
     unfold(live_region(region));
@@ -67,7 +66,6 @@ int32 region_read(struct region* region, int32 index) {
         }
     }
     step();
-    frame();
     simp();
 }
 ```

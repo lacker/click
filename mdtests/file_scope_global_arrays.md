@@ -2,7 +2,7 @@
 
 Fixed-size scalar arrays at file scope use one stable memory block. Indexed
 reads see the literal or zero-filled initializer, and indexed writes require a
-matching mutable footprint.
+matching owned footprint.
 
 ```c filename=table.c
 int32 table[3] = {2, 4};
@@ -27,7 +27,7 @@ int32 read_middle() {
 
 int32 increment_middle() {
     requires table[1] < 1000;
-    mutable table[0..3] by auto;
+    owns table[0..3];
     ensures result == old(table[1]) + 1 by auto;
     ensures table[1] == old(table[1]) + 1 by auto;
 }

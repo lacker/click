@@ -34,15 +34,12 @@ verifying "list_zero.c";
 
 int32 list_zero(struct node* node) {
     requires node != 0;
-    owns list(node);
-    immutable;
+    views list(node);
 
     ensures result == 0;
 } by {
     unfold(list(node));
     execute();
-    fold(list(node));
-    frame();
     simp();
 }
 ```

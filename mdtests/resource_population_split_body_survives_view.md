@@ -70,28 +70,23 @@ void wrap_pair(struct pair* pair) {
 
 void set_left(struct pair* pair) {
     owns wrapper(pair);
-    mutable pair->left;
 } by {
     open(wrapper(pair)) {
         execute();
-        frame();
         simp();
     }
 }
 
 int32 read_right(struct pair* pair) {
     views wrapper(pair);
-    immutable;
 
     ensures result == pair->right by auto;
 }
 
 void split_body_pipeline(struct pair* pair) {
     owns object(pair);
-    mutable object(pair);
 } by {
     execute();
-    frame();
     simp();
 }
 ```

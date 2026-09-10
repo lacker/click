@@ -38,11 +38,9 @@ verifying "heap_free_matching_allocation_authority.c";
 
 void free_second_then_first(struct two_buffers* buffers) {
     consumes two_buffers_owned(buffers);
-    mutable buffers->first, buffers->second;
 } by {
     unfold(two_buffers_owned(buffers));
     execute();
-    frame();
     simp();
 }
 ```

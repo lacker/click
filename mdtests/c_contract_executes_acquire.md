@@ -28,11 +28,9 @@ resource MaybeCell(p: int32*) {
     if p != 0 { owns Cell(p); }
 }
 contract int32* Raw() {
-    immutable;
     produces MaybeRaw(result);
 }
 contract int32* Boxed() {
-    immutable;
     produces MaybeCell(result);
 }
 theorem lift(acquire: int32* (*)()) executes acquire() {
@@ -43,11 +41,11 @@ theorem lift(acquire: int32* (*)()) executes acquire() {
             unfold(MaybeRaw(result));
             fold(Cell(result));
             fold(MaybeCell(result));
-            frame(); simp();
+            simp();
         } else {
             unfold(MaybeRaw(result));
             fold(MaybeCell(result));
-            frame(); simp();
+            simp();
         }
     }
 }
@@ -55,7 +53,6 @@ verifying "acquire.c";
 int32* read_acquired(int32* (*acquire)(), int32* value) {
     requires Raw(acquire);
     owns value[0..1];
-    mutable value[0..1];
     produces MaybeCell(result);
     ensures result != 0 implies value[0] == result[0];
     ensures result == 0 implies value[0] == old(value[0]);
@@ -69,12 +66,12 @@ int32* read_acquired(int32* (*acquire)(), int32* value) {
         execute();
         fold(Cell(result));
         fold(MaybeCell(result));
-        frame(); simp();
+        simp();
     } else {
         unfold(MaybeCell(c(cell)));
         execute();
         fold(MaybeCell(result));
-        frame(); simp();
+        simp();
     }
 }
 ```

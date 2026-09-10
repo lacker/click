@@ -37,18 +37,15 @@ int32 leftmost_zero(struct node* node) {
     decreases resource zero_tree(node);
     requires node != 0;
     views zero_tree(node);
-    immutable;
 
     ensures result == 0;
 } by {
     observe(zero_tree(node));
     if node->left == 0 {
         execute();
-        frame();
         simp();
     } else {
         execute();
-        frame();
         simp();
     }
 }

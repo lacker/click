@@ -56,37 +56,31 @@ verifying "store_then_touch.c";
 
 int32 store_first(int32 data[], int32 length, int32 value) {
     owns backing(data, length);
-    mutable data[0..1];
     ensures result == value;
     ensures data[0] == value;
 } by {
     unfold(backing(data, length));
     execute();
     fold(backing(data, length));
-    frame();
     simp();
 }
 
 int32 touch_box(struct box* owner) {
     owns box(owner);
-    mutable owner->value;
     ensures result == 0;
 } by {
     unfold(box(owner));
     execute();
     fold(box(owner));
-    frame();
     simp();
 }
 
 int32 store_then_touch(struct box* owner, int32 data[], int32 length, int32 value) {
     owns backing(data, length);
     owns box(owner);
-    mutable owner->value, data[0..1];
     ensures result == value;
 } by {
     execute();
-    frame();
     have data[0] == value by {
         assumption();
     }

@@ -20,18 +20,15 @@ predicate Increased(before: int32, after: int32) {
 contract void MakesProgress(int32* cell) {
     requires cell[0] < 100;
     owns cell[0..1];
-    mutable cell[0..1];
     ensures Increased(old(cell[0]), cell[0]);
 }
 
 void increment_cell(int32* cell) {
     requires cell[0] < 1000;
     owns cell[0..1];
-    mutable cell[0..1];
     ensures cell[0] == old(cell[0]) + 1;
 } by {
     execute();
-    frame();
     simp();
 }
 

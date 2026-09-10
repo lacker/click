@@ -38,23 +38,21 @@ verifying "produce_population_pipeline.c";
 
 void produce_population(struct owner* owner, int32 amount) {
     requires 0 <= amount;
-    owns object(owner);
-    mutable owner->capacity;
+    views object(owner);
     produces amount of slot(owner);
+    owns owner->capacity;
 
     ensures valid_capacity(owner);
 } by {
     execute();
     if 0 < amount {
         fold(amount of slot(owner));
-        frame();
         simp();
     } else {
         apply(int32_ge_and_not_gt_implies_eq(amount, 0)) using {
             0 <= amount;
             not (0 < amount);
         }
-        frame();
         simp();
     }
 }

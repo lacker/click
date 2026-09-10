@@ -1,7 +1,7 @@
-# local array loop frame verifies stack array effects
+# local array loop framing verifies stack array writes
 
-This checks that a loop can state an explicit per-step mutable footprint over a
-local array object.
+This checks that a loop writing a local array object frames by the memory the
+function owns, with no ownership clause.
 
 ```c filename=local_array_loop_frame.c
 int32 local_array_loop_frame() {
@@ -28,9 +28,6 @@ int32 local_array_loop_frame() {
     loop {
         invariant i >= 0;
         invariant i <= 3;
-        step {
-            mutable a[i..i + 1] by frame;
-        }
     }
     step();
     simp();

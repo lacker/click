@@ -53,7 +53,6 @@ resource zero_box(box: struct box*) {
 
 int32 make_zero(struct box* box) {
     consumes object(box);
-    mutable object(box);
     produces zero_box(box);
 
     ensures result == 0;
@@ -61,32 +60,27 @@ int32 make_zero(struct box* box) {
 } by {
     execute();
     fold(zero_box(box));
-    frame();
     simp();
 }
 
 int32 read_zero(struct box* box) {
     views zero_box(box);
-    immutable;
 
     ensures result == 0;
 } by {
     observe(zero_box(box));
     execute();
-    frame();
     simp();
 }
 
 int32 zero_pipeline(struct box* box) {
     consumes object(box);
-    mutable object(box);
     produces zero_box(box);
 
     ensures result == 0;
     ensures box->value == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

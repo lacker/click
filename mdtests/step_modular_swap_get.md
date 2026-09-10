@@ -2,7 +2,7 @@
 
 This checks that separate `step()` calls assign distinct opaque call
 identities and preserve an explicitly established `old(...)` fact across a
-later immutable modular call.
+later read-only modular call.
 
 ```c filename=swap_pair.c
 int32 swap_pair(int32 data[]) {
@@ -36,29 +36,24 @@ verifying "swap_get.c";
 
 int32 swap_pair(int32 data[]) {
     owns data[0..2];
-    mutable data[0..2];
     ensures result == old(data[1]);
     ensures data[0] == old(data[1]);
     ensures data[1] == old(data[0]);
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 get_first(int32 data[]) {
     views data[0..1];
-    immutable;
     ensures result == data[0];
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 swap_get(int32 data[]) {
     owns data[0..2];
-    mutable data[0..2];
     ensures result == old(data[1]);
 } by {
     step();
@@ -66,7 +61,6 @@ int32 swap_get(int32 data[]) {
     have data[0] == old(data[1]) by simp;
     step();
     step();
-    frame();
     simp();
 }
 ```

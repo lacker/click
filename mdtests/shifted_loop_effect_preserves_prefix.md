@@ -1,6 +1,6 @@
-# shifted loop effect preserves prefix
+# shifted loop ownership preserves prefix
 
-This checks that a shifted loop effect summary can prove an old-memory
+This checks that a shifted loop write footprint can prove an old-memory
 postcondition. The loop writes `p[1..n]`, so `p[0]` remains equal to its
 entry-state value without a handwritten unchanged-memory invariant.
 
@@ -32,7 +32,7 @@ int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
     loop {
         invariant i >= 1;
         invariant i <= n;
-        mutable (p + 1)[0..n - 1] by frame;
+        owns (p + 1)[0..n - 1];
     }
     step();
     simp();

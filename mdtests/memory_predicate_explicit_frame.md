@@ -35,7 +35,6 @@ int32 set_before_terminator(
     requires length < 2147483647;
     requires terminated(data, length);
     consumes data[0..length + 1];
-    mutable data[index..index + 1];
 
     produces data[0..length + 1];
     ensures terminated(data, length);
@@ -50,7 +49,6 @@ int32 set_before_terminator(
     }
     step();
     have index < index + 1 by simp;
-    frame();
     simp();
 }
 ```

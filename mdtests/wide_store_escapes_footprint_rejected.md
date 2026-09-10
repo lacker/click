@@ -19,22 +19,20 @@ uint8 caller(uint8* b) {
 verifying "wide_store_escapes_footprint_rejected.c";
 
 int32 wide_store(uint8* b) {
-    owns b[0..8];
-    mutable b[0..5];
+    views b[0..8];
+    owns b[0..5];
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
 uint8 caller(uint8* b) {
-    owns b[0..8];
-    mutable b[0..5];
+    views b[0..8];
+    owns b[0..5];
     ensures result == old(b[7]);
 } by {
     execute();
-    frame();
     simp();
 }
 ```

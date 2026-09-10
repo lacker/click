@@ -28,12 +28,10 @@ verifying "pointer_address_round_trip.c";
 struct node* stash_and_recover(struct node* node, struct node* next) {
     requires node != 0;
     owns node->word;
-    mutable node->word;
     ensures result == next;
     ensures node->word == address(next);
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -42,11 +40,9 @@ int32 read_through_word(struct node* node, struct node* next) {
     requires next != 0;
     owns node->word;
     views next->value;
-    mutable node->word;
     ensures result == next->value;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

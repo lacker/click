@@ -28,11 +28,9 @@ void object_finish_one(struct object* finished, struct object* kept) {
     requires count(object_ref(finished)) == 1;
     consumes object_ref(finished);
     owns object_ref(kept);
-    mutable finished->refs;
 } by {
     unfold(object_ref(finished));
     execute();
-    frame();
     simp();
 }
 ```

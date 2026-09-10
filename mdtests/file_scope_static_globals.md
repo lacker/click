@@ -51,7 +51,6 @@ verifying "runner.c";
 int32 increment_alpha() {
     owns &counter[0..1];
     requires counter < 1000;
-    mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
     ensures result == counter by auto;
@@ -60,7 +59,6 @@ int32 increment_alpha() {
 int32 increment_alpha_again() {
     owns &counter[0..1];
     requires counter < 1000;
-    mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
     ensures result == counter by auto;
@@ -69,7 +67,6 @@ int32 increment_alpha_again() {
 int32 increment_beta() {
     owns &counter[0..1];
     requires counter < 1000;
-    mutable &counter[0..1] by auto;
     ensures result == old(counter) + 1 by auto;
     ensures counter == old(counter) + 1 by auto;
     ensures result == counter by auto;

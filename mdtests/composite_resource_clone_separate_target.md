@@ -44,7 +44,6 @@ int32 clone_cursor(struct cursor* target, struct cursor* source) {
     );
     consumes target[0..4];
     views owned_cursor(source);
-    mutable target[0..4];
     produces owned_cursor(target);
     ensures result == source->pos;
     ensures target->pos == source->pos;
@@ -54,7 +53,6 @@ int32 clone_cursor(struct cursor* target, struct cursor* source) {
     observe(owned_cursor(source));
     execute();
     fold(owned_cursor(target));
-    frame();
     simp();
 }
 ```

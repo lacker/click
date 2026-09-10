@@ -50,37 +50,31 @@ verifying "result_box_pipeline.c";
 
 int32 result_box_read(struct result_box* owner) {
     views result_box(owner);
-    immutable;
     ensures result == owner->value;
 } by {
     observe(result_box(owner));
     execute();
-    frame();
     simp();
 }
 
 int32 result_box_write(struct result_box* owner, int32 value) {
     owns result_box(owner);
-    mutable owner->value;
     ensures result == value;
     ensures owner->value == value;
 } by {
     unfold(result_box(owner));
     execute();
-    frame();
     fold(result_box(owner));
     simp();
 }
 
 int32 result_box_pipeline(struct result_box* owner) {
     owns result_box(owner);
-    mutable owner->value;
     ensures result == old(owner->value);
     ensures owner->value == result;
 } by {
     execute();
     have at(statement(4).entry, c(result)) == old(owner->value) by simp;
-    frame();
     simp();
 }
 ```

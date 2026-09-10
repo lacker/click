@@ -38,18 +38,15 @@ int32 zero_walk(struct node* node) {
     decreases resource zero_list(node);
     requires node != 0;
     views zero_list(node);
-    immutable;
 
     ensures result == 0;
 } by {
     observe(zero_list(node));
     if node->next == 0 {
         execute();
-        frame();
         simp();
     } else {
         execute();
-        frame();
         simp();
     }
 }

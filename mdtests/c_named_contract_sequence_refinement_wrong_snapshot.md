@@ -3,13 +3,11 @@
 ```click
 contract void Source(int32* cells) {
     owns cells[0..2];
-    mutable cells[0..2];
     ensures [cells[0], cells[1]] == old([cells[1], cells[0]]);
 }
 
 contract void Target(int32* cells) {
     owns cells[0..2];
-    mutable cells[0..2];
     ensures [cells[0], cells[1]] == [cells[1], cells[0]];
 }
 

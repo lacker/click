@@ -56,7 +56,7 @@ int32 read_values() {
 
 int32 update_values() {
     requires values[0][1] == 2;
-    mutable values[1][0..1] by auto;
+    owns values[1][0..1];
     ensures result == 2 by auto;
     ensures values[1][0] == 2 by auto;
 }

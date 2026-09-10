@@ -15,13 +15,11 @@ predicate IsNonnegative(cell: int32[]) {
 
 contract void ProducesZero(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsZero(cell);
 }
 
 contract void ProducesNonnegative(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsNonnegative(cell);
 }
 

@@ -46,7 +46,6 @@ verifying "calloc_zeroed_reading_after_calls.c";
 
 void fill(int32* p) {
     owns p[0..1];
-    mutable p[0..1];
     ensures p[0] == 5;
 }
 

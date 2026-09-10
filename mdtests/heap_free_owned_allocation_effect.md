@@ -1,7 +1,7 @@
 # owned allocation authorizes a direct free effect
 
 Deallocation is a heap-lifetime transition, not an ordinary write to the
-function's mutable byte footprint. A function may directly free a symbolic,
+function's owned byte footprint. A function may directly free a symbolic,
 runtime-sized allocation that it owns while mutating an unrelated surviving
 object.
 
@@ -27,12 +27,10 @@ int32 heap_free_owned_allocation_effect(int32 data[], int32 count, int32 flag[])
     requires count <= 536870911;
     consumes allocated_int32s(data, count);
     owns flag[0..1];
-    mutable flag[0..1];
     ensures result == 9;
 } by {
     unfold(allocated_int32s(data, count));
     execute();
-    frame();
     simp();
 }
 ```

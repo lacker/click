@@ -68,14 +68,16 @@ verifying "runner.c";
 
 int32 bump_shared() {
     requires shared_table[1].value < 1000;
-    mutable shared_table[1].value[0..1] by auto;
+    owns shared_table[1].value[0..1];
     ensures result == old(shared_table[1].value) + 1 by auto;
     ensures shared_table[1].value == old(shared_table[1].value) + 1 by auto;
 }
 
 int32 increment_private() {
     requires private_table[1].value > -1000 and private_table[1].value < 1000 and local.value > -1000 and local.value < 1000 and local_table[1].value > -1000 and local_table[1].value < 1000;
-    mutable private_table[1].value[0..1], local.value[0..1], local_table[1].value[0..1] by auto;
+    owns private_table[1].value[0..1];
+    owns local.value[0..1];
+    owns local_table[1].value[0..1];
     ensures result == old(private_table[1].value) + old(local.value)
         + old(local_table[1].value) + 3 by auto;
     ensures private_table[1].value == old(private_table[1].value) + 1 by auto;

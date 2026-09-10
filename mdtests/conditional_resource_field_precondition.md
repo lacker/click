@@ -25,13 +25,11 @@ verifying "conditional_resource_field_precondition.c";
 int32 known_nonempty_next(struct link* node) {
     requires node != 0;
     requires node->next != 0;
-    owns maybe_link(node);
-    immutable;
+    views maybe_link(node);
 
     ensures result == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

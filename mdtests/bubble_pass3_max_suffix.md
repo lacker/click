@@ -48,7 +48,7 @@ int32 bubble_pass3(int32 p[3]) {
         preserve by {
             unfold(all_le_range);
         }
-        mutable p[0..3] by frame;
+        owns p[0..3];
     }
     step();
     unfold(all_le_range);

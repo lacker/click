@@ -13,13 +13,12 @@ int32* read_wrong(int32* (*acquire)(), int32* value, int32* other) {
 ```click
 resource Cell(p: int32*) { owns p[0..1]; }
 resource MaybeCell(p: int32*) { if p != 0 { owns Cell(p); } }
-contract int32* Boxed() { immutable; produces MaybeCell(result); }
+contract int32* Boxed() { produces MaybeCell(result); }
 
 verifying "wrong_pointer.c";
 int32* read_wrong(int32* (*acquire)(), int32* value, int32* other) {
     requires Boxed(acquire);
     owns value[0..1];
-    mutable value[0..1];
     produces MaybeCell(result);
 } by {
     step(); step(Boxed);
@@ -27,11 +26,11 @@ int32* read_wrong(int32* (*acquire)(), int32* value, int32* other) {
         unfold(MaybeCell(c(cell)));
         unfold(Cell(c(cell)));
         execute();
-        fold(Cell(result)); fold(MaybeCell(result)); frame(); simp();
+        fold(Cell(result)); fold(MaybeCell(result)); simp();
     } else {
         unfold(MaybeCell(c(cell)));
         execute();
-        fold(MaybeCell(result)); frame(); simp();
+        fold(MaybeCell(result)); simp();
     }
 }
 ```

@@ -17,7 +17,7 @@ verifying "static_entry_initializer_rejected.c";
 
 int32 twice() {
     requires calls < 1000;
-    mutable &calls[0..1];
+    owns &calls[0..1];
     ensures result == old(calls) + 2;
     ensures stale_initializer: result == 2;
 }

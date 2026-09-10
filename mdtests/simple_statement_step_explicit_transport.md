@@ -21,7 +21,6 @@ predicate first_is_seven(p: int32[]) {
 int32 set_second_return_first(int32 p[2]) {
     requires first_is_seven(p);
     consumes p[0..2];
-    mutable p[1..2];
 
     produces p[0..2];
     ensures result == 7;
@@ -30,7 +29,6 @@ int32 set_second_return_first(int32 p[2]) {
     step();
     transport(old(p[0]) == 7, p[0] == 7);
     step();
-    frame();
     simp();
 }
 ```

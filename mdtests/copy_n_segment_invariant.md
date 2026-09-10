@@ -2,7 +2,7 @@
 
 This checks that a symbolic pointer-copy loop can prove a quantified copied
 segment. The destination prefix invariant says what has been copied so far; the
-whole-loop mutable clause plus the separated source/destination requirement lets
+whole-loop `owns` clause plus the separated source/destination requirement lets
 the prover derive that the source segment still equals its function-entry
 contents.
 
@@ -51,7 +51,7 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
         invariant forall (k: int32) {
             0 <= k and k < i implies dst[k] == old(src[k])
         };
-        mutable dst[0..n] by frame;
+        owns dst[0..n];
     }
     step();
     apply(int32_le_antisymmetric(

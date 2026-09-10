@@ -1,6 +1,6 @@
-# a write outside the named static field's footprint is rejected
+# a write outside the owned static field is rejected
 
-The negative half of `static_struct_field_footprint.md`: a footprint naming
+The negative half of `static_struct_field_footprint.md`: owning
 `shared.second` does not authorize a write to `shared.first`, which lives at a
 different ABI offset in the same object.
 
@@ -22,11 +22,11 @@ int32 static_struct_field_footprint_rejected() {
 verifying "static_struct_field_footprint_rejected.c";
 
 int32 static_struct_field_footprint_rejected() {
-    mutable &shared.second;
+    owns &shared.second;
     ensures result == 0;
 }
 ```
 
 ```expect
-fail: outside the mutable footprint
+fail: outside the owned footprint
 ```

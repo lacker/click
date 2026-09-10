@@ -26,7 +26,6 @@ verifying "static_local_arrays.c" as static_local;
 int32 increment_twice() {
     owns values[0..3];
     requires values[0][0] > -1000 and values[0][0] < 1000 and values[0][1] > -1000 and values[0][1] < 1000 and values[0][2] > -1000 and values[0][2] < 1000;
-    mutable values[0..3] by auto;
     ensures result == old(values[0][0]) + old(values[0][1]) + old(values[0][2]) + 2 by auto;
     ensures values[0][0] == old(values[0][0]) + 2 by auto;
     ensures values[0][1] == old(values[0][1]) by auto;

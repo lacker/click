@@ -37,7 +37,6 @@ void zero_walk_loop(struct node* node) {
     decreases resource zero_list(node);
     requires node != 0;
     views zero_list(node);
-    immutable;
 
 } by {
     observe(zero_list(node));
@@ -47,7 +46,6 @@ void zero_walk_loop(struct node* node) {
         decreases 1 - i;
         invariant i >= 0;
         invariant i <= 1;
-        immutable by frame;
         initialize by simp;
         preserve by {
             if node->next != 0 {
@@ -64,7 +62,7 @@ void zero_walk_loop(struct node* node) {
         }
     }
     step();
-    frame();
+    simp();
 }
 ```
 

@@ -24,18 +24,16 @@ verifying "extra_callback_resource_requirement.c";
 contract void Progress(int32* cells) {
     requires cells[0] < 100;
     owns cells[0..1];
-    mutable cells[0..1];
     ensures old(cells[0]) < cells[0];
 }
 
 void needs_two_cells(int32* state) {
     requires state[0] < 100;
-    owns state[0..2];
-    mutable state[0..1];
+    views state[0..2];
+    owns state[0..1];
     ensures state[0] == old(state[0]) + 1;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -43,22 +41,18 @@ void apply_step(void (*step)(int32*), int32* cells) {
     requires Progress(step);
     requires cells[0] < 100;
     owns cells[0..1];
-    mutable cells[0..1];
     ensures old(cells[0]) < cells[0];
 } by {
     execute();
-    frame();
     simp();
 }
 
 void extra_resource_caller(int32* cells) {
     requires cells[0] < 100;
     owns cells[0..1];
-    mutable cells[0..1];
     ensures old(cells[0]) < cells[0];
 } by {
     execute();
-    frame();
     simp();
 }
 ```

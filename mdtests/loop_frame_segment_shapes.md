@@ -1,8 +1,8 @@
-# loop effects support several segment shapes
+# loop framing supports several segment shapes
 
-This checks loop-level effect clauses beyond the whole-loop `p[0..n]`
-pattern: explicit step-relative growing prefixes, stable whole-loop shifted
-suffixes, and step-relative multi-segment mutable footprints.
+This checks loop framing beyond the whole-loop `p[0..n]` pattern: a growing
+prefix and a multi-segment body framed by the default footprint the function
+owns, and a stable whole-loop shifted suffix declared as loop-level `owns`.
 
 ```c filename=fill_prefix.c
 int32 fill_prefix(int32 p[], int32 n) {
@@ -58,9 +58,6 @@ int32 fill_prefix(int32 p[], int32 n) {
     loop {
         invariant i >= 0;
         invariant i <= n;
-        step {
-            mutable p[0..i + 1] by frame;
-        }
     }
     step();
     simp();
@@ -78,7 +75,7 @@ int32 fill_tail(int32 p[], int32 n) {
     loop {
         invariant i >= 1;
         invariant i <= n;
-        mutable p[1..n] by frame;
+        owns p[1..n];
     }
     step();
     simp();
@@ -98,9 +95,6 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
     loop {
         invariant i >= 0;
         invariant i <= n;
-        step {
-            mutable p[i..i + 1], q[i..i + 1] by frame;
-        }
     }
     step();
     simp();

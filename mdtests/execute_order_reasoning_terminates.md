@@ -34,7 +34,6 @@ verifying "increment_bounded_counter.c";
 
 int32 increment(struct counter* owner) {
     consumes bounded_counter(owner);
-    mutable owner[0..1], owner->data[0..1];
     ensures result == owner->value;
 } by {
     unfold(bounded_counter(owner));
@@ -42,7 +41,6 @@ int32 increment(struct counter* owner) {
     have 0 <= owner->value by simp;
     have owner->value < 1 by simp;
     execute();
-    frame();
     simp();
 }
 ```

@@ -3,14 +3,14 @@
 ```click
 contract void Source(int32* cells) {
     requires [cells[0], cells[1]] == [0, 1];
-    owns cells[0..3];
-    mutable cells[0..2];
+    views cells[0..3];
+    owns cells[0..2];
     ensures [cells[0], cells[1]] == old([cells[1], cells[0]]);
 }
 contract void Target(int32* cells) {
     requires 0 == 0;
-    owns cells[0..3];
-    mutable cells[0..2];
+    views cells[0..3];
+    owns cells[0..2];
     ensures [cells[0], cells[1]] == old([cells[1], cells[0]]);
 }
 theorem transport(callback: void (*)(int32*)) {

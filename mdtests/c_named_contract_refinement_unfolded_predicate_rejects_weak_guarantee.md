@@ -19,17 +19,14 @@ predicate IsPositive(cell: int32[]) {
 
 contract void ProducesPositive(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsPositive(cell);
 }
 
 void choose_nonnegative(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures cell[0] >= 0;
 } by {
     execute();
-    frame();
     simp();
 }
 

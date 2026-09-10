@@ -38,7 +38,6 @@ verifying "heap_scoped_borrow_then_free.c";
 
 int32 read_item(struct item* item) {
     views object(item);
-    immutable;
 
     ensures result == item->value by auto;
 }

@@ -1,18 +1,17 @@
-# Contract-to-contract refinement rejects an extra mutable effect
+# Contract-to-contract refinement rejects wider ownership
 
-The source contract may write either cell, while the target permits writes
-only to the first. A theorem cannot erase that extra effect merely because
-both callbacks carry the same resource and C signature.
+The source contract owns both cells, while the target views both and owns only
+the first. A theorem cannot narrow that ownership merely because both callbacks
+carry the same C signature.
 
 ```click
 contract void WideEffect(int32* cells) {
     owns cells[0..2];
-    mutable cells[0..2];
 }
 
 contract void FirstCellEffect(int32* cells) {
-    owns cells[0..2];
-    mutable cells[0..1];
+    views cells[0..2];
+    owns cells[0..1];
 }
 
 theorem wide_effect_is_first_cell_effect(

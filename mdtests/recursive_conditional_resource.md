@@ -39,29 +39,23 @@ verifying "recursive_conditional_empty.c";
 
 int32 list_head(struct node* node) {
     requires node != 0;
-    owns list(node);
-    immutable;
+    views list(node);
 
     ensures result == node->value;
 } by {
     unfold(list(node));
     execute();
-    fold(list(node));
-    frame();
     simp();
 }
 
 int32 empty_list_value(struct node* node) {
     requires node == 0;
-    owns list(node);
-    immutable;
+    views list(node);
 
     ensures result == 0;
 } by {
     unfold(list(node));
     execute();
-    fold(list(node));
-    frame();
     simp();
 }
 ```

@@ -47,7 +47,8 @@ verifying "reader.c";
 
 int32 bump_tables() {
     requires zero_table[1] < 1000 and initialized_table[1] < 1000;
-    mutable zero_table[0..3], initialized_table[0..3] by auto;
+    owns zero_table[0..3];
+    owns initialized_table[0..3];
     ensures result == old(initialized_table[1]) + 1 by auto;
     ensures zero_table[1] == old(zero_table[1]) + 1 by auto;
     ensures initialized_table[1] == old(initialized_table[1]) + 1 by auto;
@@ -62,7 +63,6 @@ int32 run() {
     owns zero_table[0..3];
     owns initialized_table[0..3];
     requires zero_table[0] == 0 and zero_table[1] < 1000 and initialized_table[1] == 5 and initialized_table[1] < 1000;
-    mutable zero_table[0..3], initialized_table[0..3] by auto;
     ensures result == old(initialized_table[1]) + 1 by auto;
 }
 ```

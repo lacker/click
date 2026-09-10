@@ -27,34 +27,28 @@ predicate IsZero(cell: int32[]) {
 
 contract void SetsZero(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsZero(cell);
 }
 
 void clear_cell(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures cell[0] == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
 void invoke_clear(void (*callback)(int32*), int32* cell) {
     requires SetsZero(callback);
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsZero(cell);
 } by {
     execute();
-    frame();
     simp();
 }
 
 void direct_predicate_caller(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures IsZero(cell);
 } by auto;
 ```

@@ -1,7 +1,7 @@
-# static scalar writes require an authorized effect
+# static scalar writes require authorized ownership
 
-Static storage is an external memory object for effect certification. A
-function that mutates it must declare the corresponding mutable footprint.
+Static storage is an external memory object for ownership certification. A
+function that mutates it must declare the corresponding owned footprint.
 
 ```c filename=static_scalar_local_effect.c
 int32 increment() {
@@ -16,7 +16,6 @@ verifying "static_scalar_local_effect.c";
 
 int32 increment() {
     requires calls < 1000;
-    immutable;
     ensures result == old(calls) + 1 by auto;
 }
 ```

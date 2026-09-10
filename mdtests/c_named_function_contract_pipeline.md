@@ -80,8 +80,8 @@ contract int32 Store(
     struct accumulator* accumulator,
     int32 value
 ) {
-    owns accumulator_cell(accumulator);
-    mutable accumulator->value;
+    views accumulator_cell(accumulator);
+    owns accumulator->value;
     ensures result == 0;
     ensures accumulator->value == value;
 }
@@ -131,15 +131,14 @@ int32 store_accumulator(
     int32 value
 ) {
     views callback_suite(table);
-    owns accumulator_cell(accumulator);
+    views accumulator_cell(accumulator);
+    owns accumulator->value;
     requires separate(memory(object(table)), memory(object(accumulator)));
-    mutable accumulator->value;
     ensures result == 0;
     ensures accumulator->value == value;
 } by {
     open(callback_suite(table)) {
         execute();
-        frame();
         simp();
     }
 }
@@ -151,12 +150,12 @@ int32 run_pipeline(
     int32 right
 ) {
     views callback_suite(table);
-    owns accumulator_cell(accumulator);
+    views accumulator_cell(accumulator);
+    owns accumulator->value;
     requires separate(memory(object(table)), memory(object(accumulator)));
     requires defined(left + right);
     requires defined(left - right);
     requires defined((left + right) + (left - right));
-    mutable accumulator->value;
     ensures result == (left + right) + (left - right);
     ensures accumulator->value == result;
 } by {
@@ -174,7 +173,6 @@ int32 run_pipeline(
         assumption();
     }
     execute();
-    frame();
     simp();
 }
 

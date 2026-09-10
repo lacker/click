@@ -133,11 +133,9 @@ void set_parent(struct rb_node* node, struct rb_node* parent) {
     requires node != 0;
     requires aligned(parent, 8);
     owns node->__rb_parent_color;
-    mutable node->__rb_parent_color;
     ensures node->__rb_parent_color == address(parent) + (old(node->__rb_parent_color) & 1);
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -145,23 +143,19 @@ void set_black_parent(struct rb_node* node, struct rb_node* parent) {
     requires node != 0;
     requires aligned(parent, 8);
     owns node->__rb_parent_color;
-    mutable node->__rb_parent_color;
     ensures node->__rb_parent_color == address(parent) + 1;
 } by {
     execute();
-    frame();
     simp();
 }
 
 struct rb_node* detach_black(struct rb_node* node) {
     requires node != 0;
     owns node->__rb_parent_color;
-    mutable node->__rb_parent_color;
     ensures node->__rb_parent_color == 1;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -180,11 +174,9 @@ struct rb_node* red_parent_of(struct rb_node* red) {
 int32 cleared_is_empty(struct rb_node* node) {
     requires node != 0;
     owns node->__rb_parent_color;
-    mutable node->__rb_parent_color;
     ensures result == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -194,11 +186,9 @@ int32 relinked_is_empty(struct rb_node* node, struct rb_node* parent) {
     requires aligned(parent, 8);
     requires parent != node;
     owns node->__rb_parent_color;
-    mutable node->__rb_parent_color;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -208,14 +198,12 @@ void link_node(struct rb_node* node, struct rb_node* parent, struct rb_node** rb
     owns node->rb_left;
     owns node->rb_right;
     owns rb_link[0..1];
-    mutable node->__rb_parent_color, node->rb_left, node->rb_right, rb_link[0..1];
     ensures node->__rb_parent_color == address(parent);
     ensures node->rb_left == 0;
     ensures node->rb_right == 0;
     ensures rb_link[0] == node;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

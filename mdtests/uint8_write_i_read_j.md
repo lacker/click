@@ -21,7 +21,6 @@ uint8 write_i_read_j(uint8 buf[], int32 j, int32 k, int32 n) {
     consumes buf[j..j + 1];
     views buf[k..k + 1];
     requires separate(memory(buf[j..j + 1]), memory(buf[k..k + 1]));
-    mutable buf[j..j + 1] by auto;
     ensures keeps_k: result == old(buf[k]) by auto;
 }
 ```

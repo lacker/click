@@ -1,7 +1,7 @@
 # a call that may write a zeroed allocation ends its zeroed reading
 
-`calloc` storage reads as zero only until something writes it. A callee whose
-mutable footprint covers the allocation may have written it, so the caller
+`calloc` storage reads as zero only until something writes it. A callee that
+owns the allocation may have written it, so the caller
 cannot keep reading the cells as zero afterwards; that is a claim about the
 allocation's contents, invalidated exactly as a stored cell is.
 
@@ -30,7 +30,6 @@ verifying "calloc_zeroed_reading_survives_call_rejected.c";
 
 void fill(int32* p) {
     owns p[0..1];
-    mutable p[0..1];
 }
 
 int32 calloc_zeroed_reading_survives_call_rejected() {

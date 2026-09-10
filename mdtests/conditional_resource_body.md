@@ -30,28 +30,24 @@ verifying "conditional_resource_empty.c";
 int32 set_if_present(int32* p) {
     requires p != 0;
     owns maybe_cell(p);
-    mutable p[0..1];
 
     ensures result == 7;
 } by {
     unfold(maybe_cell(p));
     execute();
     fold(maybe_cell(p));
-    frame();
     simp();
 }
 
 int32 empty_value(int32* p) {
     requires p == 0;
-    owns maybe_cell(p);
-    immutable;
+    views maybe_cell(p);
 
     ensures result == 0;
 } by {
     unfold(maybe_cell(p));
     execute();
     fold(maybe_cell(p));
-    frame();
     simp();
 }
 ```

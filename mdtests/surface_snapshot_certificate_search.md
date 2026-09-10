@@ -36,20 +36,17 @@ verifying "peek_many.c";
 
 int32 peek_first(int32 data[]) {
     views data[0..1];
-    immutable;
     ensures result == data[0];
     ensures forall (k: int32) {
         0 <= k and k < 1 implies data[k] == old(data[k])
     };
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 peek_many(int32 data[]) {
     views data[0..1];
-    immutable;
     ensures forall (k: int32) {
         0 <= k and k < 1 implies data[k] == old(data[k])
     };
@@ -67,7 +64,6 @@ int32 peek_many(int32 data[]) {
     step();
     step();
     execute();
-    frame();
     simp();
 }
 ```

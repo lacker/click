@@ -33,11 +33,9 @@ verifying "tagged_pointer_equality.c";
 int32 self_with_tag(struct node* node) {
     requires node != 0;
     owns node->word;
-    mutable node->word;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -47,22 +45,18 @@ int32 other_with_tag(struct node* node, struct node* other) {
     requires aligned(node, 8);
     requires aligned(other, 8);
     owns node->word;
-    mutable node->word;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 same_word(struct node* node, struct node* other) {
     requires node != 0;
     owns node->word;
-    mutable node->word;
     ensures result == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

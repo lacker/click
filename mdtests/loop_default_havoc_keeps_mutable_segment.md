@@ -1,9 +1,8 @@
-# A clause-free loop still havocs a declared mutable segment
+# A clause-free loop still havocs a separately owned segment
 
-The function declares `mutable &g[0..1]` and does not own `g`, so the segment
-is part of what the loop body may write. Bounding the default loop havoc by
-ownership must not drop it: a post-loop claim that `g` still holds its
-pre-loop value has to fail.
+The function owns `&g[0..1]`, so the segment is part of what the loop body may
+write. Bounding the default loop havoc by ownership must not drop it: a
+post-loop claim that `g` still holds its pre-loop value has to fail.
 
 ```c filename=loop_default_havoc_keeps_mutable_segment.c
 int32 g = 0;
@@ -23,7 +22,7 @@ verifying "loop_default_havoc_keeps_mutable_segment.c";
 
 void loop_default_havoc_keeps_mutable_segment(int32 n) {
     requires n >= 0 and n <= 100;
-    mutable &g[0..1];
+    owns &g[0..1];
     ensures stale: g == old(g);
 } by {
     step();
@@ -32,7 +31,6 @@ void loop_default_havoc_keeps_mutable_segment(int32 n) {
         invariant i >= 0 and i <= n;
     }
     step();
-    frame();
     simp();
 }
 ```

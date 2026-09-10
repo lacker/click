@@ -1,7 +1,7 @@
-# static array writes require an authorized effect
+# static array writes require authorized ownership
 
-Static array storage is an external memory object for effect certification. A
-function that mutates it must declare the corresponding mutable footprint.
+Static array storage is an external memory object for ownership certification. A
+function that mutates it must declare the corresponding owned footprint.
 
 ```c filename=static_array_local_effect.c
 int32 increment() {
@@ -16,7 +16,6 @@ verifying "static_array_local_effect.c";
 
 int32 increment() {
     requires values[0] < 1000;
-    immutable;
     ensures result == old(values[0]) + 1 by auto;
 }
 ```

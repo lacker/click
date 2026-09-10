@@ -1,8 +1,8 @@
-# Smart frame ignores irrelevant snapshots
+# Ownership framing ignores irrelevant snapshots
 
-A contextual `frame()` should plan from the facts needed to cover the actual
-write. Immutable calls can leave useful snapshots in the proof, but those
-snapshots are not frame-certificate premises merely because they are ambient.
+Framing a narrow write should use the facts needed to cover the actual write.
+Read-only calls can leave useful snapshots in the proof, but those snapshots
+are not framing premises merely because they are ambient.
 
 ```c filename=inspect_buffer.c
 struct buffer {
@@ -62,12 +62,10 @@ verifying "write_after_calls.c";
 
 int32 inspect_buffer(struct buffer* owner) {
     views buffer_storage(owner);
-    immutable;
     ensures result == owner->len;
 } by {
     observe(buffer_storage(owner));
     execute();
-    frame();
     simp();
 }
 
@@ -75,7 +73,6 @@ int32 write_after_calls(struct buffer* owner, int32 index) {
     requires 0 <= index;
     requires index < owner->len;
     owns buffer_storage(owner);
-    mutable owner->data[index..index + 1];
     ensures result == owner->len;
 } by {
     step();
@@ -93,7 +90,6 @@ int32 write_after_calls(struct buffer* owner, int32 index) {
     unfold(buffer_storage(owner));
     step();
     execute();
-    frame();
     fold(buffer_storage(owner));
     simp();
 }

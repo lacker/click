@@ -1,7 +1,7 @@
-# fill_n declares its per-step mutable segment
+# fill_n declares its per-step owned segment
 
 This checks that a symbolic pointer-writing loop can prove an explicit
-one-body-step effect clause. Direct loop-level mutable clauses talk about the
+one-body-step ownership clause. Direct loop-level `owns` clauses talk about the
 whole loop span; the `step` block talks about one loop body step under the
 current invariants and true loop condition, so it can use `i` in the segment
 bounds.
@@ -33,9 +33,6 @@ int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
     loop {
         invariant i >= 0;
         invariant i <= n;
-        step {
-            mutable p[i..i + 1] by frame;
-        }
     }
     step();
     simp();

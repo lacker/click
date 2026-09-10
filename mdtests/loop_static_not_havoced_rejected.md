@@ -24,7 +24,7 @@ verifying "loop_static_not_havoced_rejected.c";
 
 int32 loop_static_not_havoced_rejected(int32 n) {
     requires n >= 0 and n <= 100;
-    mutable &g[0..1];
+    owns &g[0..1];
     ensures stale: result == 0;
 } by {
     step();
@@ -35,7 +35,6 @@ int32 loop_static_not_havoced_rejected(int32 n) {
         invariant i >= 0 and i <= n;
     }
     step();
-    frame();
     simp();
 }
 ```

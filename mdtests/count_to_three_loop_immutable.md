@@ -1,8 +1,8 @@
-# count_to_three loop body is externally immutable
+# count_to_three loop body writes nothing externally visible
 
-This checks that frontier-loop `immutable` permits stack-local loop updates while
-still proving that the whole loop span does not mutate externally visible
-memory.
+This checks that a frontier loop in a function that owns nothing permits
+stack-local loop updates while still proving that the whole loop span does not
+mutate externally visible memory.
 
 ```c filename=count_to_three_loop_immutable.c
 int32 count_to_three_loop_immutable() {
@@ -26,7 +26,6 @@ int32 count_to_three_loop_immutable() {
     loop {
         invariant i >= 0;
         invariant i <= 3;
-        immutable by frame;
     }
     step();
     simp();

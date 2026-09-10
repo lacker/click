@@ -66,34 +66,31 @@ verifying "require_one.c";
 verifying "post_call_chain.c";
 
 void set_one(struct cell* cell) {
-    owns object(cell);
-    mutable cell->value;
+    views object(cell);
+    owns cell->value;
     ensures cell->value == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 
 void set_two(struct cell* cell) {
     requires cell->value == 1;
-    owns object(cell);
-    mutable cell->value;
+    views object(cell);
+    owns cell->value;
     ensures cell->value == 2;
 } by {
     execute();
-    frame();
     simp();
 }
 
 void restore_one(struct cell* cell) {
     requires cell->value == 2;
-    owns object(cell);
-    mutable cell->value;
+    views object(cell);
+    owns cell->value;
     ensures cell->value == 1;
 } by {
     execute();
-    frame();
     simp();
 }
 
@@ -106,12 +103,11 @@ void require_one(struct cell* cell) {
 }
 
 int32 post_call_chain(struct cell* cell) {
-    owns object(cell);
-    mutable cell->value;
+    views object(cell);
+    owns cell->value;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 ```

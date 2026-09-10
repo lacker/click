@@ -29,13 +29,11 @@ contract int32* Acquire(int32* pool) {
     consumes Available(pool);
     produces Acquisition(pool, result);
     produces Unavailable(pool, result);
-    immutable;
 }
 contract void Release(int32* pool, int32* cell) {
     consumes Lease(pool, cell);
     consumes cell[0..1];
     produces Available(pool);
-    immutable;
 }
 verifying "cycle.c";
 void cycle(int32* (*acquire)(int32*), void (*release)(int32*, int32*), int32* pool, int32* other) {
@@ -43,7 +41,6 @@ void cycle(int32* (*acquire)(int32*), void (*release)(int32*, int32*), int32* po
     requires Acquire(acquire);
     requires Release(release);
     owns Available(pool);
-    mutable pool[0..1];
 } by {
     step();
     step(Acquire);
@@ -53,11 +50,11 @@ void cycle(int32* (*acquire)(int32*), void (*release)(int32*, int32*), int32* po
         step();
         step();
         step(Release);
-        execute(); frame(); simp();
+        execute(); simp();
     } else {
         unfold(Acquisition(pool, c(cell)));
         unfold(Unavailable(pool, c(cell)));
-        execute(); frame(); simp();
+        execute(); simp();
     }
 }
 ```

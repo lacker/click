@@ -26,7 +26,6 @@ int32 replace_left(struct node* root, struct node* replacement) {
     requires loadable(replacement->key);
     consumes root->left;
     consumes replacement->key;
-    mutable root->left;
 
     ensures result == replacement->key;
     ensures root->left == replacement;

@@ -1,8 +1,8 @@
 # opaque calls preserve a separated field
 
-Two opaque helpers mutate one struct field. The adjacent field is outside both
-mutable footprints, so its load remains equal to the caller-entry load without
-any save-and-restore assignment in C.
+Two opaque helpers mutate one struct field. The adjacent field is outside the
+memory either helper owns, so its load remains equal to the caller-entry load
+without any save-and-restore assignment in C.
 
 ```c filename=increment_changed.c
 struct owner {
@@ -48,31 +48,26 @@ verifying "opaque_calls_preserve_separated_field.c";
 
 int32 increment_changed(struct owner* owner) {
     owns owner->changed;
-    mutable owner->changed;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 clear_changed(struct owner* owner) {
     owns owner->changed;
-    mutable owner->changed;
     ensures result == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 
 int32 opaque_calls_preserve_separated_field(struct owner* owner) {
-    owns object(owner);
-    mutable owner->changed;
+    views object(owner);
+    owns owner->changed;
     ensures result == old(owner->stable);
 } by {
     execute();
-    frame();
     simp();
 }
 ```

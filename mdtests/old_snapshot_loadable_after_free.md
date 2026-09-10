@@ -53,7 +53,6 @@ int32 read_old_element(int32 data[], int32 length, int32 index) {
     requires 0 <= index;
     requires index < length;
     views data[0..length];
-    immutable;
     ensures result == data[index] by auto;
 }
 

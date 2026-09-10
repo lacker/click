@@ -21,7 +21,7 @@ resource wrapper(obj: struct object*) {
 verifying "resource_population_body_access_requires_authority.c";
 
 void unauthorized_write(struct object* obj) {
-    mutable obj->field;
+    views wrapper(obj);
 } by {
     execute();
 }
