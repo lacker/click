@@ -18,7 +18,6 @@ int32 vector_push(struct vector* owner, int32 value) {
     consumes owner->cap;
     consumes owner->data;
     consumes owner->data[0..owner->cap];
-    mutable owner->len, owner->data[owner->len..owner->len + 1];
     produces nonempty_vector(owner);
     ensures result == old(owner->len) + 1;
     ensures owner->len == old(owner->len) + 1;
@@ -60,20 +59,6 @@ int32 vector_push(struct vector* owner, int32 value) {
     }
     have 0 == 0 by {
         normalize();
-    }
-    frame() using {
-        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-        loadable(owner[0..1]);
-        loadable((owner + 1)[0..1]);
-        loadable((owner + 2)[0..2]);
-        loadable(old(owner->data[0..load_int32(byte_offset(owner, 4))]));
-        0 <= owner->len;
-        owner->len <= owner->len;
-        owner->len < (owner->len + 1);
-        owner->len < owner->cap;
-        at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->len);
-        at(statement(5).entry, owner->len) < at(statement(5).entry, (owner->len + 1));
-        0 == 0;
     }
     have result == (old(owner->len) + 1) by {
         normalize();

@@ -76,14 +76,12 @@ void pool_shrink(struct pool* pool, int32 amount) {
     requires defined(pool->capacity - amount);
     owns object(pool);
     consumes amount of pool_slot(pool);
-    mutable pool->capacity;
 
     ensures valid_pool(pool);
     ensures pool->capacity == old(pool->capacity) - amount;
 } by {
     unfold(valid_pool);
     execute();
-    frame();
     simp();
 }
 
@@ -92,7 +90,6 @@ void pool_checkout(struct pool* pool, struct object* object) {
     owns object(pool);
     consumes object(object);
     consumes pool_slot(pool);
-    mutable pool->checked_out;
     produces pool_object(pool, object);
 
     ensures valid_pool(pool);
@@ -118,7 +115,6 @@ void pool_checkout(struct pool* pool, struct object* object) {
     }
     execute();
     fold(pool_object(pool, object));
-    frame();
     have count(pool_slot(pool)) ==
         at(statement(0).entry, count(pool_slot(pool))) - 1 by {
         simp();
@@ -221,7 +217,6 @@ void pool_destroy(struct pool* pool) {
     requires pool->checked_out == 0;
     owns object(pool);
     consumes pool->capacity of pool_slot(pool);
-    mutable pool->capacity;
 
     ensures valid_pool(pool);
     ensures pool->capacity == 0;
@@ -246,13 +241,11 @@ void pool_destroy(struct pool* pool) {
     }
     observe(pool->capacity of pool_slot(pool));
     execute();
-    frame();
     simp();
 }
 
 void pool_zero_pipeline(struct pool* pool) {
     owns object(pool);
-    mutable pool->checked_out, pool->capacity;
 
     ensures valid_pool(pool);
     ensures pool->checked_out == 0;
@@ -261,13 +254,11 @@ void pool_zero_pipeline(struct pool* pool) {
     step();
     step();
     execute();
-    frame();
     simp();
 }
 
 void pool_resize_pipeline(struct pool* pool) {
     owns object(pool);
-    mutable pool->checked_out, pool->capacity;
 
     ensures valid_pool(pool);
     ensures pool->checked_out == 0;
@@ -282,7 +273,6 @@ void pool_resize_pipeline(struct pool* pool) {
     }
     step();
     execute();
-    frame();
     simp();
 }
 
@@ -294,7 +284,6 @@ void pool_pipeline(
     owns object(pool);
     owns object(first);
     owns object(second);
-    mutable pool->checked_out, pool->capacity, first->value, second->value;
 
     ensures valid_pool(pool);
     ensures pool->checked_out == 0;
@@ -356,7 +345,6 @@ void pool_pipeline(
     }
     step();
     step();
-    frame();
     have pool->capacity == 0 by {
         assumption();
     }
@@ -379,8 +367,6 @@ void pool_transfer_pipeline(
     owns object(source);
     owns object(destination);
     owns object(object);
-    mutable source->checked_out, source->capacity,
-        destination->checked_out, destination->capacity;
     produces pool_object(destination, object);
     produces pool_slot(source);
 
@@ -409,6 +395,5 @@ void pool_transfer_pipeline(
     );
     step();
     step();
-    frame();
     simp();
 }

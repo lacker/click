@@ -15,7 +15,6 @@ verifying "service_run.c";
 int32 service_init(struct service* owner, int32 cell[]) {
     consumes object(owner);
     consumes cell[0..1];
-    mutable owner->phase, owner->cell, cell[0..1];
     produces service(owner);
 
     ensures result == 0;
@@ -25,7 +24,6 @@ int32 service_init(struct service* owner, int32 cell[]) {
 } by {
     execute();
     fold(service(owner));
-    frame();
     simp();
 }
 
@@ -73,12 +71,6 @@ int32 service_run(struct service* owner) {
     loop {
         invariant 0 <= owner->phase;
         invariant owner->phase <= 1;
-        mutable owner->phase, owner->cell[0..1] by {
-            frame() using {
-                separate(memory(object(owner)), memory(owner->cell[0..1]));
-            }
-        }
-
         initialize by simp;
         preserve by {
             step();

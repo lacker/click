@@ -27,8 +27,9 @@ the source cursor while producing independently owned target metadata.
 same backing input, advances only the left cursor, and proves that the right
 cursor still reads the original first element through verified function
 contracts. The separate `input_cursor_clone` operation remains covered for
-programs that actually clone cursor state. The pipeline's mutable footprint
-contains only the two cursor structs; the shared input remains viewed.
+programs that actually clone cursor state. The pipeline owns only the two
+cursor structs, so that is its whole write footprint; the shared input remains
+viewed.
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
 the small `by auto;` accessors first. The longer `step()`, `rewrite`,

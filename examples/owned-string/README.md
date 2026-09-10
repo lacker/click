@@ -30,9 +30,10 @@ Indexed replacement explicitly unfolds and re-establishes the terminator
 predicate after its separate store. Push and pop move the terminator and
 therefore establish the new predicate explicitly.
 
-Push declares only the metadata length and the two cells beginning at the old
-end as mutable. Its field-derived backing pointer remains identifiable after
-the metadata write. `owned_string_push_preserves_first` calls push through its
+Push owns the string resource and writes only the metadata length and the two
+cells beginning at the old end; ownership bounds those writes with no effect
+clause. Its field-derived backing pointer remains identifiable after the
+metadata write. `owned_string_push_preserves_first` calls push through its
 verified contract and proves that an earlier cell is unchanged, demonstrating
 that the precise footprint is useful to modular callers. Its contract-level
 `data` binding captures the entry backing pointer without adding a proof-only C

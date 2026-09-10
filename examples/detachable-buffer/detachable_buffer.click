@@ -39,7 +39,6 @@ int32 detachable_buffer_init(
     requires 1 <= length;
     consumes object(owner);
     consumes data[0..length];
-    mutable owner->len, owner->data;
     produces attached_buffer(owner);
 
     ensures result == length;
@@ -48,7 +47,6 @@ int32 detachable_buffer_init(
 } by {
     execute();
     fold(attached_buffer(owner));
-    frame();
     simp();
 }
 
@@ -60,7 +58,6 @@ int32 detachable_buffer_detach(
     requires owner->data == data;
     requires owner->len == length;
     consumes attached_buffer(owner);
-    mutable owner->len, owner->data;
     produces detached_buffer(owner);
     produces detached_backing(data, length);
 
@@ -72,7 +69,6 @@ int32 detachable_buffer_detach(
     execute();
     fold(detached_backing(data, length));
     fold(detached_buffer(owner));
-    frame();
     simp();
 }
 
@@ -83,7 +79,6 @@ int32 detachable_buffer_set_first(
 ) {
     requires 1 <= length;
     owns detached_backing(data, length);
-    mutable data[0..1];
 
     ensures result == value;
     ensures data[0] == value;
@@ -91,7 +86,6 @@ int32 detachable_buffer_set_first(
     unfold(detached_backing(data, length));
     execute();
     fold(detached_backing(data, length));
-    frame();
     simp();
 }
 
@@ -138,7 +132,6 @@ int32 detachable_buffer_pipeline(
     requires 1 <= length;
     consumes object(owner);
     consumes data[0..length];
-    mutable object(owner), data[0..1];
     produces attached_buffer(owner);
 
     ensures result == replacement;
@@ -147,7 +140,6 @@ int32 detachable_buffer_pipeline(
     ensures data[0] == replacement;
 } by {
     execute();
-    frame();
     have result == replacement by {
         assumption();
     }

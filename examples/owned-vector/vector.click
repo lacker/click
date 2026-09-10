@@ -83,7 +83,6 @@ int32 vector_copy(
     owns dst[0..dst_capacity];
     views src[0..src_capacity];
     requires separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
-    mutable dst[0..length];
     ensures result == length;
     ensures forall (k: int32) {
         0 <= k and k < length implies src[k] == old(src[k])
@@ -98,7 +97,7 @@ int32 vector_copy(
         invariant 0 <= i;
         invariant i <= length;
         invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
-        mutable dst[0..length] by frame;
+        owns dst[0..length];
         initialize by {
             have 0 <= i by {
                 normalize();
@@ -133,8 +132,6 @@ int32 vector_copy(
         assumption();
     }
     step();
-    frame() using {
-    }
     have result == length by {
         assumption();
     }
@@ -494,8 +491,6 @@ int32 vector_push(struct vector* owner, int32 value) {
 int32 allocated_vector_push(struct vector* owner, int32 value) {
     requires owner->cap <= 536870910;
     consumes allocated_vector(owner);
-    mutable owner->len, owner->cap, owner->data,
-        owner->data[0..owner->cap];
     produces allocated_vector(owner);
     ensures result == 0 or result == 1;
     ensures result == 0 implies owner->len == old(owner->len);
@@ -526,8 +521,6 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             have not old(owner->len) < old(owner->cap) by {
                 rewrite(at(function.entry, owner->len == owner->cap));
                 normalize();
-            }
-            frame() using {
             }
             have result == 0 by {
                 normalize();
@@ -643,8 +636,6 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             }
             fold(allocated_vector(owner));
             step();
-            frame() using {
-            }
             have not old(owner->len) < old(owner->cap) by {
                 rewrite(at(function.entry, owner->len == owner->cap));
                 normalize();
@@ -789,39 +780,6 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             }
             assumption();
         }
-        frame() using {
-            at(statement(8).entry, owner->len) < at(statement(8).entry, owner->cap);
-            not owner->len == owner->cap;
-            at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
-            at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
-            at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
-            at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
-            at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
-            at(statement(0).entry, loadable(owner->len));
-            at(statement(0).entry, loadable(owner->cap));
-            at(statement(0).entry, loadable(owner->data));
-            at(statement(0).entry, loadable(owner->data[0..owner->cap]));
-            at(statement(0).entry, loadable(owner->data[0..owner->len]));
-            at(statement(0).entry, owner->cap) <= at(statement(0).entry, 536870910);
-            separate(memory(owner->len), memory(owner->data[0..owner->cap]));
-            separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
-            separate(memory(owner->data), memory(owner->data[0..owner->cap]));
-            contains(allocated_vector(owner), memory(owner->len));
-            contains(allocated_vector(owner), memory(owner->cap));
-            contains(allocated_vector(owner), memory(owner->data));
-            contains(allocated_vector(owner), allocation(owner->data, (owner->cap * 4)));
-            contains(allocated_vector(owner), memory(owner->data[0..owner->cap]));
-            at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
-            at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
-            at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap);
-            at(statement(0).entry, owner->cap) <= at(statement(0).entry, 536870911);
-            0 == 0;
-            at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
-            at(statement(0).entry, (owner->len + 1)) <= at(statement(0).entry, owner->cap);
-        }
         have result == 1 by {
             normalize();
         }
@@ -887,7 +845,6 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
     consumes object(owner);
     consumes data[0..capacity];
-    mutable owner->len, owner->cap, owner->data;
     produces empty_vector(owner);
     ensures result == 0;
     ensures owner->len == 0;
@@ -899,8 +856,6 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     step();
     step();
     fold(empty_vector(owner));
-    frame() using {
-    }
     have result == 0 by {
         normalize();
     }
@@ -922,11 +877,6 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
 
 int32 vector_len(struct vector* owner) {
     views nonempty_vector(owner);
-    immutable by {
-        step();
-        frame() using {
-        }
-    }
 
     ensures result == owner->len by {
         step();
@@ -961,7 +911,6 @@ int32 vector_get(struct vector* owner, int32 index) {
 int32 vector_set(struct vector* owner, int32 index, int32 value) {
     requires 0 <= index;
     requires index < owner->len;
-    mutable owner->data[index..index + 1];
     owns nonempty_vector(owner);
     ensures result == value;
     ensures owner->data[index] == value;
@@ -990,12 +939,6 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
         }
         assumption();
     }
-    frame() using {
-        at(statement(3).entry, 0) <= at(statement(3).entry, index);
-        at(statement(3).entry, index) < at(statement(3).entry, owner->len);
-        index <= index;
-        index < (index + 1);
-    }
     have result == value by {
         normalize();
     }
@@ -1021,7 +964,6 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
 
 int32 vector_fill(struct vector* owner, int32 value) {
     owns nonempty_vector(owner);
-    mutable owner->data[0..owner->len];
     ensures result == owner->len;
 } by {
     unfold(nonempty_vector(owner));
@@ -1062,7 +1004,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
     }
     loop as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        mutable owner->data[0..owner->len] by frame;
+        owns owner->data[0..owner->len];
         initialize by {
             have i >= 0 and i <= owner->len by {
                 have i >= 0 by {
@@ -1102,8 +1044,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
         }
     }
     step();
-    frame() using {
-    }
     fold(nonempty_vector(owner));
     assumption();
     have result == owner->len by {
@@ -1121,7 +1061,6 @@ int32 vector_replace_if(
     requires 0 <= index;
     requires index < owner->len;
     owns nonempty_vector(owner);
-    mutable owner->data[index..index + 1];
 
     ensures replace != 0 implies result == replacement;
 } by {
@@ -1174,8 +1113,6 @@ int32 vector_replace_if(
     have index < (index + 1) by {
         assumption();
     }
-    frame() using {
-    }
     have replace != 0 implies result == replacement by {
         assumption();
     }
@@ -1185,7 +1122,6 @@ int32 vector_replace_if(
 
 int32 vector_clear(struct vector* owner) {
     consumes nonempty_vector(owner);
-    mutable owner->len;
     produces empty_vector(owner);
     ensures result == 0;
     ensures owner->len == 0;
@@ -1208,8 +1144,6 @@ int32 vector_clear(struct vector* owner) {
         assumption();
     }
     fold(empty_vector(owner));
-    frame() using {
-    }
     have owner->len == 0 by {
         normalize();
     }

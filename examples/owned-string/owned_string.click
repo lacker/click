@@ -106,7 +106,6 @@ int32 owned_string_init(
     requires 1 <= capacity;
     consumes object(owner);
     consumes data[0..capacity];
-    mutable object(owner), data[0..1];
     produces owned_string(owner);
     ensures result == 0;
     ensures owner->len == 0;
@@ -136,7 +135,6 @@ int32 owned_string_init(
         }
     }
     fold(owned_string(owner));
-    frame();
     have result == 0 by {
         normalize();
     }
@@ -162,11 +160,6 @@ int32 owned_string_init(
 
 int32 owned_string_len(struct owned_string* owner) {
     views owned_string(owner);
-    immutable by {
-        step();
-        frame() using {
-        }
-    }
 
     ensures result == owner->len by {
         step();
@@ -181,11 +174,6 @@ int32 owned_string_get(struct owned_string* owner, int32 index) {
     requires 0 <= index;
     requires index < owner->len;
     views owned_string(owner);
-    immutable by {
-        step();
-        frame() using {
-        }
-    }
 
     ensures result == owner->data[index] by {
         step();
@@ -204,7 +192,6 @@ int32 owned_string_set(
     requires 0 <= index;
     requires index < owner->len;
     owns owned_string(owner);
-    mutable owner->data[index..index + 1];
 
     ensures result == value;
     ensures owner->data[index] == value;
@@ -241,32 +228,6 @@ int32 owned_string_set(
         }
         assumption();
     }
-    frame() using {
-        0 <= index;
-        loadable(owner->len);
-        loadable(owner->cap);
-        loadable(owner->data);
-        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-        index < owner->len;
-        index < owner->cap;
-        0 <= owner->len;
-        owner->len < owner->cap;
-        separate(memory(owner->len), memory(owner->cap));
-        separate(memory(owner->len), memory(owner->data));
-        separate(memory(owner->cap), memory(owner->data));
-        loadable(owner->data[0..owner->cap]);
-        at(statement(0).entry, owner->data[owner->len]) == at(statement(0).entry, 0);
-        terminated_at(at(statement(0).entry, owner->data), at(statement(0).entry, owner->len));
-        separate(memory(owner->len), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->data), memory(owner->data[0..owner->cap]));
-        contains(owned_string(owner), memory(owner->len));
-        contains(owned_string(owner), memory(owner->cap));
-        contains(owned_string(owner), memory(owner->data));
-        contains(owned_string(owner), memory(owner->data[0..owner->cap]));
-        index <= index;
-        index < (index + 1);
-    }
     have result == value by {
         normalize();
     }
@@ -281,7 +242,6 @@ int32 owned_string_set(
 int32 owned_string_push(struct owned_string* owner, int32 value) {
     requires owner->len + 1 < owner->cap;
     owns owned_string(owner);
-    mutable owner->len, (owner->data + owner->len)[0..2];
     ensures result == old(owner->len) + 1;
     ensures owner->len == old(owner->len) + 1;
     ensures owner->cap == old(owner->cap);
@@ -443,8 +403,6 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         assumption();
     }
     fold(owned_string(owner));
-    frame() using {
-    }
     have at(statement(3).entry, index) == old(owner->len) by {
         normalize();
     }
@@ -499,7 +457,6 @@ int32 owned_string_push_preserves_first(
     requires 1 <= owner->len;
     requires owner->len + 1 < owner->cap;
     owns owned_string(owner);
-    mutable owner->len, (owner->data + owner->len)[0..2];
 
     ensures result == old(owner->len) + 1;
     ensures data[0] == old(data[0]);
@@ -512,8 +469,6 @@ int32 owned_string_push_preserves_first(
     }
     have 0 == 0 by {
         normalize();
-    }
-    frame() using {
     }
     have result == (old(owner->len) + 1) by {
         assumption();
@@ -529,7 +484,6 @@ int32 owned_string_push_preserves_first(
 int32 owned_string_pop(struct owned_string* owner) {
     requires 1 <= owner->len;
     owns owned_string(owner);
-    mutable owner->len, (owner->data + (owner->len - 1))[0..1];
     ensures result == old(owner->data[owner->len - 1]);
     ensures owner->len == old(owner->len) - 1;
     ensures owner->cap == old(owner->cap);
@@ -586,8 +540,6 @@ int32 owned_string_pop(struct owned_string* owner) {
         assumption();
     }
     fold(owned_string(owner));
-    frame() using {
-    }
     have loadable(old((owner->data + (owner->len - 1))[0..1])) by {
         transport(at(statement(6).entry, loadable(old(owner->data[0..owner->cap]))), loadable(old((owner->data + (owner->len - 1))[0..1]))) using {
             at(statement(6).exit, index) < old(owner->len);
@@ -625,7 +577,6 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
 
     requires 2 <= owner->len;
     owns owned_string(owner);
-    mutable owner->len, (owner->data + (owner->len - 1))[0..1];
 
     ensures result == old(owner->data[owner->len - 1]);
     ensures data[0] == old(data[0]);
@@ -635,30 +586,6 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
     step();
     have 0 == 0 by {
         normalize();
-    }
-    frame() using {
-        owner->len < owner->cap;
-        2 <= owner->len;
-        loadable(owner->cap);
-        loadable(owner->data);
-        loadable(owner->len);
-        owner->cap == at(statement(0).entry, owner->cap);
-        owner->data == at(statement(0).entry, owner->data);
-        separate(memory(owner->len), memory(owner->cap));
-        separate(memory(owner->len), memory(owner->data));
-        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->cap), memory(owner->data));
-        loadable(owner->data[0..owner->cap]);
-        0 <= owner->len;
-        separate(memory(owner->len), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->data), memory(owner->data[0..owner->cap]));
-        contains(owned_string(owner), memory(owner->len));
-        contains(owned_string(owner), memory(owner->cap));
-        contains(owned_string(owner), memory(owner->data));
-        contains(owned_string(owner), memory(owner->data[0..owner->cap]));
-        terminated_at(owner->data, owner->len);
-        0 == 0;
     }
     have result == old(owner->data[(owner->len - 1)]) by {
         assumption();
@@ -673,7 +600,6 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
 
 int32 owned_string_clear(struct owned_string* owner) {
     owns owned_string(owner);
-    mutable owner->len, owner->data[0..1];
     ensures result == 0;
     ensures owner->len == 0;
     ensures owner->data[0] == 0;
@@ -701,7 +627,6 @@ int32 owned_string_clear(struct owned_string* owner) {
         simp();
     }
     fold(owned_string(owner));
-    frame();
     have result == 0 by {
         normalize();
     }

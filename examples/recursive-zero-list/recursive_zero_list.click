@@ -28,7 +28,6 @@ int32 zero_list_push(struct node* node, struct node* tail) {
     consumes node->value;
     consumes node->next;
     consumes zero_list(tail);
-    mutable node->value, node->next;
     produces zero_list(node);
 
     ensures result == 0;
@@ -37,7 +36,6 @@ int32 zero_list_push(struct node* node, struct node* tail) {
 } by {
     execute();
     fold(zero_list(node));
-    frame();
     simp();
 }
 

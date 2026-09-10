@@ -10,7 +10,9 @@ int32 record_alpha() {
     requires calls < 1000;
     requires batches[0][0] > -1000;
     requires batches[0][0] < 1000;
-    mutable counters[0].value[0..1], &calls[0..1], batches[0..2] by auto;
+    owns counters[0].value[0..1];
+    owns &calls[0..1];
+    owns batches[0..2];
     ensures counters[0].value == old(counters[0].value) + 1 by auto;
     ensures calls == old(calls) + 1 by auto;
     ensures batches[0][0] == old(batches[0][0]) + 1 by auto;
@@ -25,7 +27,9 @@ int32 record_beta() {
     requires calls < 1000;
     requires batches[0].value > -1000;
     requires batches[0].value < 1000;
-    mutable counters[1].value[0..1], &calls[0..1], batches[0].value[0..1] by auto;
+    owns counters[1].value[0..1];
+    owns &calls[0..1];
+    owns batches[0].value[0..1];
     ensures counters[1].value == old(counters[1].value) + 1 by auto;
     ensures calls == old(calls) + 1 by auto;
     ensures batches[0].value == old(batches[0].value) + 1 by auto;
@@ -60,6 +64,8 @@ int32 registry_run() {
     requires alpha::record_alpha::batches[0][0] < 1000;
     requires beta::record_beta::batches[0].value > -1000;
     requires beta::record_beta::batches[0].value < 1000;
+    owns counters[0].value[0..1];
+    owns counters[1].value[0..1];
     owns &alpha::calls[0..1];
     owns &beta::calls[0..1];
     owns alpha::record_alpha::batches[0..2];

@@ -25,8 +25,8 @@ The current support is intentionally narrow:
 - pointer-to-struct parameters
 - `->` field loads and stores for that first field
 - `loadable(obj->ref_count)` as the field-loadability precondition
-- `views obj[0..1]` or `owns obj[0..1]` as the memory access resource
-- `mutable obj->ref_count` for field writes
+- `views obj[0..1]` or `consumes obj[0..1]` as the memory access resource
+  (ownership bounds the field writes; no effect clause)
 
 Keep this pilot narrow. Add the smallest C0, memory-model, and proof features
 needed by this fixture before broadening to heap allocation or ownership

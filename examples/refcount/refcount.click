@@ -15,12 +15,10 @@ verifying "refcount_pipeline.c";
 void object_init(struct object* obj) {
     consumes allocation(obj, sizeof(struct object));
     consumes object(obj);
-    mutable obj->refs;
     produces object_ref(obj);
 } by {
     execute();
     fold(object_ref(obj));
-    frame();
     simp();
 }
 
@@ -28,11 +26,9 @@ void object_retain(struct object* obj) {
     requires obj->refs < 2147483647;
     owns object_ref(obj);
     produces object_ref(obj);
-    mutable obj->refs;
 } by {
     open(object_ref(obj)) {
         execute();
-        frame();
     }
     simp();
 }
@@ -67,11 +63,9 @@ void object_release_nonfinal(struct object* obj) {
     requires 1 < obj->refs;
     owns object_ref(obj);
     consumes object_ref(obj);
-    mutable obj->refs;
 } by {
     open(object_ref(obj)) {
         execute();
-        frame();
     }
     simp();
 }
@@ -82,7 +76,6 @@ void object_release_many_nonfinal(struct object* obj, int32 amount) {
     requires defined(1 + amount);
     owns object_ref(obj);
     consumes amount of object_ref(obj);
-    mutable obj->refs;
 } by {
     open(object_ref(obj)) {
         have amount <= obj->refs by {
@@ -106,7 +99,6 @@ void object_release_many_nonfinal(struct object* obj, int32 amount) {
             }
         }
         execute();
-        frame();
     }
     simp();
 }
@@ -114,11 +106,9 @@ void object_release_many_nonfinal(struct object* obj, int32 amount) {
 void object_release_final(struct object* obj) {
     requires obj->refs == 1;
     consumes object_ref(obj);
-    mutable obj->refs;
 } by {
     unfold(object_ref(obj));
     execute();
-    frame();
     simp();
 }
 

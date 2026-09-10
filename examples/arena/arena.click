@@ -117,7 +117,6 @@ void arena_write(struct region* region, int32 index, int32 value) {
     requires defined(region->start + index) and
         region->start + index < region->end;
     owns arena_region(region);
-    mutable region->arena->data[region->start + index..region->start + index + 1];
 
     ensures region->arena->data[region->start + index] == value;
 } by {
@@ -158,7 +157,6 @@ void arena_write(struct region* region, int32 index, int32 value) {
                 }
             }
             execute();
-            frame();
             simp();
         }
     }
@@ -170,8 +168,6 @@ void arena_free(struct region* region) {
     requires region->end <= region->arena->capacity;
     requires 1 <= region->arena->live_regions;
     consumes arena_region(region);
-    mutable region->arena->occupied[region->start..region->end],
-        region->arena->live_regions;
     produces object(region);
     produces arena_metadata(region->arena);
     produces arena_available(region);
@@ -184,7 +180,7 @@ void arena_free(struct region* region) {
     step();
     loop as clear_occupied {
         invariant region->start <= i and i <= region->end;
-        mutable region->arena->occupied[region->start..region->end] by frame;
+        owns region->arena->occupied[region->start..region->end];
         initialize by {
             have region->start <= i and i <= region->end by {
                 have i == region->start by {
@@ -252,6 +248,5 @@ void arena_free(struct region* region) {
     step();
     fold(arena_available(region));
     fold(arena_metadata(region->arena));
-    frame();
     simp();
 }

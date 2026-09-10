@@ -60,7 +60,6 @@ int32 borrowed_slice_buffer_init(
     requires 1 <= length;
     consumes object(owner);
     consumes data[0..length];
-    mutable owner->len, owner->data;
     produces owned_borrowable_buffer(owner, data, length);
 
     ensures result == length;
@@ -69,7 +68,6 @@ int32 borrowed_slice_buffer_init(
 } by {
     execute();
     fold(owned_borrowable_buffer(owner, data, length));
-    frame();
     simp();
 }
 
@@ -87,7 +85,6 @@ int32 borrowed_slice_buffer_borrow(
     requires end <= length;
     requires 1 <= length;
     consumes owned_borrowable_buffer(owner, data, length);
-    mutable owner->len, owner->data;
     produces buffer_without_slice(owner, data, length, start, end);
     produces owned_slice(data, start, end);
 
@@ -99,7 +96,6 @@ int32 borrowed_slice_buffer_borrow(
     execute();
     fold(owned_slice(data, start, end));
     fold(buffer_without_slice(owner, data, length, start, end));
-    frame();
     simp();
 }
 
@@ -113,7 +109,6 @@ int32 borrowed_slice_set(
     requires start <= index;
     requires index < end;
     owns owned_slice(data, start, end);
-    mutable data[index..index + 1];
 
     ensures result == value;
     ensures data[index] == value;
@@ -121,7 +116,6 @@ int32 borrowed_slice_set(
     unfold(owned_slice(data, start, end));
     execute();
     fold(owned_slice(data, start, end));
-    frame();
     simp();
 }
 
@@ -176,7 +170,6 @@ int32 borrowed_slice_buffer_pipeline(
     requires 1 <= length;
     consumes object(owner);
     consumes data[0..length];
-    mutable object(owner), data[start..start + 1];
     produces owned_borrowable_buffer(owner, data, length);
 
     ensures result == replacement;
@@ -185,6 +178,5 @@ int32 borrowed_slice_buffer_pipeline(
     ensures data[start] == replacement;
 } by {
     execute();
-    frame();
     simp();
 }

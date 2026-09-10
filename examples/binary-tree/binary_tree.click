@@ -30,19 +30,15 @@ struct node* tree_empty() {
 
 int32 tree_root(struct node* node) {
     requires node != 0;
-    owns tree(node);
-    immutable;
+    views tree(node);
 
     ensures result == node->value;
 } by {
-    unfold(tree(node));
+    observe(tree(node));
     step();
-    fold(tree(node));
-    frame();
     have result == node->value by {
         normalize();
     }
-    assumption();
     assumption();
 }
 
@@ -58,7 +54,6 @@ int32 tree_make_root(
     consumes node->right;
     consumes tree(left);
     consumes tree(right);
-    mutable node->value, node->left, node->right;
     produces tree(node);
 
     ensures result == value;
@@ -71,7 +66,6 @@ int32 tree_make_root(
     step();
     step();
     fold(tree(node));
-    frame();
     have result == value by {
         normalize();
     }
@@ -134,7 +128,6 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
     consumes node->value;
     consumes node->left;
     consumes node->right;
-    mutable node->value, node->left, node->right;
     produces tree(node);
 
     ensures result == value;
@@ -174,8 +167,6 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
         assumption();
     }
     step();
-    frame() using {
-    }
     have result == value by {
         rewrite(at(statement(10).entry, observed) == at(statement(10).entry, node->value));
         assumption();
@@ -345,7 +336,6 @@ struct node* tree_rotate_left(struct node* node) {
     requires node != 0;
     requires node->right != 0;
     consumes tree(node);
-    mutable node->right, node->right->left;
     produces tree(result);
 
     ensures result == old(node->right);
@@ -362,8 +352,6 @@ struct node* tree_rotate_left(struct node* node) {
     step();
     fold(tree(node));
     fold(tree(result));
-    frame() using {
-    }
     have result == old(node->right) by {
         normalize();
     }

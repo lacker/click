@@ -84,15 +84,15 @@ int32 input_cursor_peek(struct input_cursor* owner) {
 
 int32 input_cursor_take(struct input_cursor* owner) {
     requires owner->pos < owner->len;
-    owns input_cursor(owner);
-    mutable owner->pos;
+    views input_cursor(owner);
+    owns owner->pos;
 
     ensures result == old(owner->data[owner->pos]);
     ensures owner->pos == old(owner->pos) + 1;
     ensures owner->len == old(owner->len);
     ensures owner->data == old(owner->data);
 } by {
-    unfold(input_cursor(owner));
+    observe(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
     step();
     step();
@@ -128,8 +128,6 @@ int32 input_cursor_take(struct input_cursor* owner) {
     ) by {
         simp();
     }
-    fold(input_cursor(owner));
-    frame();
     have loadable(old((load_int32_pointer(byte_offset(owner, 8)) + load_int32(owner))[0..1])) by {
         simp() using {
             at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
@@ -207,7 +205,6 @@ int32 input_cursor_shared_pipeline(
     consumes object(left);
     consumes object(right);
     views readable_input(data, length);
-    mutable object(left), object(right);
     produces input_cursor(left);
     produces input_cursor(right);
     ensures left->pos == 1;
@@ -312,6 +309,6 @@ int32 input_cursor_shared_pipeline(
         right->data[right->pos] == data[0];
     }
     step();
-    frame();
+    fold(input_cursor(left));
     simp();
 }

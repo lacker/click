@@ -24,15 +24,12 @@ struct node* list_empty() {
 
 int32 list_head(struct node* node) {
     requires node != 0;
-    owns list(node);
-    immutable;
+    views list(node);
 
     ensures result == node->value;
 } by {
-    unfold(list(node));
+    observe(list(node));
     execute();
-    fold(list(node));
-    frame();
     simp();
 }
 
@@ -45,7 +42,6 @@ int32 list_push_front(
     consumes node->value;
     consumes node->next;
     consumes list(tail);
-    mutable node->value, node->next;
     produces list(node);
 
     ensures result == value;
@@ -54,7 +50,6 @@ int32 list_push_front(
 } by {
     execute();
     fold(list(node));
-    frame();
     simp();
 }
 
@@ -85,7 +80,6 @@ int32 list_roundtrip(
     consumes node->value;
     consumes node->next;
     owns list(tail);
-    mutable node->value, node->next;
     produces node->value;
     produces node->next;
 
@@ -93,6 +87,5 @@ int32 list_roundtrip(
     ensures node->next == tail;
 } by {
     execute();
-    frame();
     simp();
 }

@@ -49,7 +49,6 @@ int32 owned_split_buffer_init(
     requires split <= length;
     consumes object(owner);
     consumes data[0..length];
-    mutable object(owner);
     produces owned_split_buffer(owner);
     ensures result == split;
     ensures owner->split == split;
@@ -58,7 +57,6 @@ int32 owned_split_buffer_init(
 } by {
     execute();
     fold(owned_split_buffer(owner));
-    frame();
     simp();
 }
 

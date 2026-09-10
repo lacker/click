@@ -42,7 +42,6 @@ int32 owned_segmented_buffer_init(
     consumes object(owner);
     consumes first_data[0..first_len];
     consumes second_data[0..second_len];
-    mutable object(owner);
     produces owned_segmented_buffer(owner);
     ensures result == first_len;
     ensures owner->first_len == first_len;
@@ -78,8 +77,6 @@ int32 owned_segmented_buffer_init(
         assumption();
     }
     fold(owned_segmented_buffer(owner));
-    frame() using {
-    }
     have result == first_len by {
         normalize();
     }
@@ -296,7 +293,6 @@ int32 owned_segmented_buffer_set_second(
 
 int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
     owns owned_segmented_buffer(owner);
-    mutable object(owner);
     ensures result == old(owner->second_len);
     ensures owner->first_len == old(owner->second_len);
     ensures owner->second_len == old(owner->first_len);
@@ -322,8 +318,6 @@ int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
         assumption();
     }
     fold(owned_segmented_buffer(owner));
-    frame() using {
-    }
     have result == old(owner->second_len) by {
         normalize();
     }
