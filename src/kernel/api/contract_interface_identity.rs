@@ -74,6 +74,39 @@ mod tests {
     }
 
     #[test]
+    fn integer_conversions_preserve_lexical_interface_identity() {
+        let interface = |parameter: &str, referenced: &str| {
+            let observation =
+                SpecIntegerExpression::FromMachine(Box::new(SpecExpression::IntegerToMachine {
+                    value: Box::new(SpecIntegerExpression::FromMachine(Box::new(
+                        SpecExpression::CExpression(c_variable(referenced)),
+                    ))),
+                    destination: MachineIntegerType::Int32,
+                }));
+            c_function(
+                CType::Void,
+                "interface",
+                vec![c_parameter(parameter, CType::Int32)],
+                CStatement::Skip,
+            )
+            .with_contract(
+                vec![],
+                vec![SpecProposition::IntegerComparison {
+                    left: observation,
+                    operator: IntegerComparisonOperator::Equal,
+                    right: SpecIntegerExpression::Term(IntegerTerm::constant_i64(0)),
+                }],
+                vec![],
+                vec![],
+                true,
+            )
+        };
+        let target = CFunctionContract::new("Target", interface("x", "x")).unwrap();
+        assert!(same_interface(&target, &interface("y", "y")));
+        assert!(!same_interface(&target, &interface("y", "x")));
+    }
+
+    #[test]
     fn interface_visits_scale_with_explicit_specification_nodes() {
         for size in [1, 16, 64, 256] {
             let mut names = Names::default();
@@ -389,7 +422,10 @@ impl Names {
         self.visit();
         use SpecProposition::*;
         match proposition {
-            IntegerComparison { .. } => {}
+            IntegerComparison { left, right, .. } => {
+                self.integer(left);
+                self.integer(right);
+            }
             AlgebraicComparison { left, right, .. } => {
                 self.algebraic(left);
                 self.algebraic(right);
