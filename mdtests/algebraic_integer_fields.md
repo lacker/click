@@ -23,6 +23,7 @@ theorem integer_field_equality(value: Integer) {
         == Box<Integer>::Wrapped(value) by simp;
 }
 
+
 ```
 
 ```expect

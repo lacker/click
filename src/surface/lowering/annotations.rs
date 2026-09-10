@@ -2306,16 +2306,22 @@ impl AnnotationLowerer<'_> {
                     for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
                         match field {
                             SpecAlgebraicValue::C(field) => {
+                                body_environment.integer_values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
                                 body_environment
                                     .values
                                     .insert(binding.clone(), field.clone());
                             }
                             SpecAlgebraicValue::Algebraic(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.integer_values.remove(binding);
                                 body_environment
                                     .algebraic_values
                                     .insert(binding.clone(), field.clone());
                             }
                             SpecAlgebraicValue::Integer(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
                                 body_environment
                                     .integer_values
                                     .insert(binding.clone(), field.clone());
@@ -2359,21 +2365,13 @@ impl AnnotationLowerer<'_> {
                                 AlgebraicValueType::Integer => {
                                     body_environment.values.remove(binding);
                                     body_environment.algebraic_values.remove(binding);
+                                    let variable =
+                                        crate::kernel::Variable(self.next_quantifier_variable);
+                                    self.next_quantifier_variable += 1;
                                     body_environment.integer_values.insert(
                                         binding.clone(),
                                         crate::kernel::SpecIntegerExpression::Term(
-                                            crate::kernel::IntegerTerm::var(
-                                                crate::kernel::Variable(
-                                                    9_000_000_000
-                                                        + binding.as_bytes().iter().fold(
-                                                            0u64,
-                                                            |a, b| {
-                                                                a.wrapping_mul(257)
-                                                                    .wrapping_add(*b as u64)
-                                                            },
-                                                        ),
-                                                ),
-                                            ),
+                                            crate::kernel::IntegerTerm::var(variable),
                                         ),
                                     );
                                 }
@@ -2804,16 +2802,22 @@ impl AnnotationLowerer<'_> {
                     for (binding, field) in arm.bindings.iter().zip(fields.iter()) {
                         match field {
                             SpecAlgebraicValue::C(field) => {
+                                body_environment.integer_values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
                                 body_environment
                                     .values
                                     .insert(binding.clone(), field.clone());
                             }
                             SpecAlgebraicValue::Algebraic(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.integer_values.remove(binding);
                                 body_environment
                                     .algebraic_values
                                     .insert(binding.clone(), field.clone());
                             }
                             SpecAlgebraicValue::Integer(field) => {
+                                body_environment.values.remove(binding);
+                                body_environment.algebraic_values.remove(binding);
                                 body_environment
                                     .integer_values
                                     .insert(binding.clone(), field.clone());
@@ -2855,15 +2859,13 @@ impl AnnotationLowerer<'_> {
                             AlgebraicValueType::Integer => {
                                 body_environment.values.remove(binding);
                                 body_environment.algebraic_values.remove(binding);
+                                let variable =
+                                    crate::kernel::Variable(self.next_quantifier_variable);
+                                self.next_quantifier_variable += 1;
                                 body_environment.integer_values.insert(
                                     binding.clone(),
                                     crate::kernel::SpecIntegerExpression::Term(
-                                        crate::kernel::IntegerTerm::var(crate::kernel::Variable(
-                                            9_000_000_000
-                                                + binding.as_bytes().iter().fold(0u64, |a, b| {
-                                                    a.wrapping_mul(257).wrapping_add(*b as u64)
-                                                }),
-                                        )),
+                                        crate::kernel::IntegerTerm::var(variable),
                                     ),
                                 );
                             }
