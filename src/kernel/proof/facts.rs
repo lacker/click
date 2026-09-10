@@ -647,24 +647,22 @@ impl ProofFacts {
     }
 
     pub(crate) fn matching_quantified_fact(&self, required: &Proposition) -> Option<Proposition> {
-        self.matching_quantified_facts(required).into_iter().next()
+        self.quantified_matches(required).next().cloned()
     }
 
     pub(crate) fn matching_quantified_facts(&self, required: &Proposition) -> Vec<Proposition> {
+        self.quantified_matches(required).cloned().collect()
+    }
+
+    fn quantified_matches<'a>(
+        &'a self,
+        required: &'a Proposition,
+    ) -> impl Iterator<Item = &'a Proposition> {
         quantified_equivalence_index_key(required)
             .and_then(|key| self.by_quantified_equivalence.get(&key))
             .into_iter()
             .flat_map(PersistentSequence::iter)
-            .filter(|candidate| {
-                quantified_binder_equivalent(required, candidate)
-                    || quantified_equivalent_available_fact(
-                        required,
-                        std::slice::from_ref(candidate),
-                    )
-                    .is_some()
-            })
-            .cloned()
-            .collect()
+            .filter(move |candidate| quantified_binder_equivalent(required, candidate))
     }
 
     pub(crate) fn quantified_fact_available(&self, required: &Proposition) -> bool {

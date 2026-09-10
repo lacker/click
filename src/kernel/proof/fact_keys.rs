@@ -602,34 +602,52 @@ enum AlphaConditionKey {
     PointerEqual(AlphaPointerKey, AlphaPointerKey),
 }
 
-fn alpha_variable_key(
+fn alpha_variable_key<const ALLOW_LOADS: bool>(
     variable: Variable,
     bindings: &BTreeMap<Variable, usize>,
-) -> AlphaVariableKey {
-    bindings
-        .get(&variable)
-        .copied()
-        .map(AlphaVariableKey::Bound)
-        .unwrap_or(AlphaVariableKey::Free(variable))
+) -> Option<AlphaVariableKey> {
+    if !ALLOW_LOADS && crate::kernel::is_load_variable(&variable) {
+        return None;
+    }
+    Some(
+        bindings
+            .get(&variable)
+            .copied()
+            .map(AlphaVariableKey::Bound)
+            .unwrap_or(AlphaVariableKey::Free(variable)),
+    )
 }
 
-fn alpha_pointer_offset_key(
+fn alpha_pointer_offset_key<const ALLOW_LOADS: bool>(
     offset: &PointerOffsetTerm,
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaPointerOffsetKey> {
+    crate::instrumentation::record_deterministic_work(1);
     Some(match offset {
         PointerOffsetTerm::Constant(value) => AlphaPointerOffsetKey::Constant(*value),
         PointerOffsetTerm::Variable(variable) => {
-            AlphaPointerOffsetKey::Variable(alpha_variable_key(*variable, bindings))
+            AlphaPointerOffsetKey::Variable(alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?)
         }
         PointerOffsetTerm::Add(left, right) => AlphaPointerOffsetKey::Add(
-            Box::new(alpha_pointer_offset_key(left, bindings, next_binder)?),
-            Box::new(alpha_pointer_offset_key(right, bindings, next_binder)?),
+            Box::new(alpha_pointer_offset_key::<ALLOW_LOADS>(
+                left,
+                bindings,
+                next_binder,
+            )?),
+            Box::new(alpha_pointer_offset_key::<ALLOW_LOADS>(
+                right,
+                bindings,
+                next_binder,
+            )?),
         ),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             AlphaPointerOffsetKey::Int32Scaled {
-                value: Box::new(alpha_bitvector_key(value, bindings, next_binder)?),
+                value: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                    value,
+                    bindings,
+                    next_binder,
+                )?),
                 byte_width: *byte_width,
             }
         }
@@ -638,18 +656,23 @@ fn alpha_pointer_offset_key(
             byte_width,
             unsigned,
         } => AlphaPointerOffsetKey::Int64Scaled {
-            value: Box::new(alpha_bitvector_key(value, bindings, next_binder)?),
+            value: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                value,
+                bindings,
+                next_binder,
+            )?),
             byte_width: *byte_width,
             unsigned: *unsigned,
         },
     })
 }
 
-fn alpha_pointer_key(
+fn alpha_pointer_key<const ALLOW_LOADS: bool>(
     pointer: &Pointer,
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaPointerKey> {
+    crate::instrumentation::record_deterministic_work(1);
     let block = match &pointer.block {
         PointerBlock::Concrete(name) => AlphaPointerBlockKey::Concrete(name.clone()),
         PointerBlock::StringLiteral { identity, bytes } => AlphaPointerBlockKey::StringLiteral {
@@ -657,32 +680,49 @@ fn alpha_pointer_key(
             bytes: bytes.clone(),
         },
         PointerBlock::Function(name) => AlphaPointerBlockKey::Function(name.clone()),
-        PointerBlock::FunctionSymbolic(variable) => {
-            AlphaPointerBlockKey::FunctionSymbolic(alpha_variable_key(*variable, bindings))
-        }
+        PointerBlock::FunctionSymbolic(variable) => AlphaPointerBlockKey::FunctionSymbolic(
+            alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?,
+        ),
         PointerBlock::ExternalArgument => AlphaPointerBlockKey::ExternalArgument,
         PointerBlock::Symbolic(variable) => {
-            AlphaPointerBlockKey::Symbolic(alpha_variable_key(*variable, bindings))
+            AlphaPointerBlockKey::Symbolic(alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?)
         }
         PointerBlock::Heap(identity) => AlphaPointerBlockKey::Heap(*identity),
     };
     Some(AlphaPointerKey {
         block,
-        offset: alpha_pointer_offset_key(&pointer.offset, bindings, next_binder)?,
+        offset: alpha_pointer_offset_key::<ALLOW_LOADS>(&pointer.offset, bindings, next_binder)?,
     })
 }
 
-fn alpha_bitvector_key(
+fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
     term: &Bitvector32Term,
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaBitvectorKey> {
+    crate::instrumentation::record_deterministic_work(1);
+    // Load variables hide snapshots too: their binders cannot be treated as
+    // opaque free variables by the memory-free structural authority.
+    if !ALLOW_LOADS
+        && (matches!(term, Bitvector32Term::MemoryLoad(..))
+            || matches!(term, Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable)))
+    {
+        return None;
+    }
     let mut binary =
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaBitvectorKey> {
             Some(AlphaBitvectorKey::Binary(
                 operator,
-                Box::new(alpha_bitvector_key(left, bindings, next_binder)?),
-                Box::new(alpha_bitvector_key(right, bindings, next_binder)?),
+                Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                    left,
+                    bindings,
+                    next_binder,
+                )?),
+                Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                    right,
+                    bindings,
+                    next_binder,
+                )?),
             ))
         };
     Some(match term {
@@ -694,12 +734,16 @@ fn alpha_bitvector_key(
                 .then(|| crate::kernel::registered_load_for_variable(variable))
                 .flatten()
             {
-                Some((_, pointer)) => AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(
-                    &pointer,
-                    bindings,
-                    next_binder,
-                )?)),
-                None => AlphaBitvectorKey::Variable(alpha_variable_key(*variable, bindings)),
+                Some((_, pointer)) => {
+                    AlphaBitvectorKey::Load(Box::new(alpha_pointer_key::<ALLOW_LOADS>(
+                        &pointer,
+                        bindings,
+                        next_binder,
+                    )?))
+                }
+                None => AlphaBitvectorKey::Variable(alpha_variable_key::<ALLOW_LOADS>(
+                    *variable, bindings,
+                )?),
             }
         }
         Bitvector32Term::Add(left, right) => binary(AlphaBitvectorBinaryOp::Add, left, right)?,
@@ -812,28 +856,40 @@ fn alpha_bitvector_key(
             right,
         } => binary(AlphaBitvectorBinaryOp::Float64(*operator), left, right)?,
         Bitvector32Term::BitwiseNot(body) => AlphaBitvectorKey::BitwiseNot(Box::new(
-            alpha_bitvector_key(body, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
         )),
         Bitvector32Term::Int64BitwiseNot(body) => AlphaBitvectorKey::Int64BitwiseNot(Box::new(
-            alpha_bitvector_key(body, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64BitwiseNot(body) => AlphaBitvectorKey::UInt64BitwiseNot(Box::new(
-            alpha_bitvector_key(body, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
         )),
         Bitvector32Term::Float32Negate(body) => AlphaBitvectorKey::Float32Negate(Box::new(
-            alpha_bitvector_key(body, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
         )),
         Bitvector32Term::Float64Negate(body) => AlphaBitvectorKey::Float64Negate(Box::new(
-            alpha_bitvector_key(body, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
         )),
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => AlphaBitvectorKey::If {
-            condition: Box::new(alpha_condition_key(condition, bindings, next_binder)?),
-            then_term: Box::new(alpha_bitvector_key(then_term, bindings, next_binder)?),
-            else_term: Box::new(alpha_bitvector_key(else_term, bindings, next_binder)?),
+            condition: Box::new(alpha_condition_key::<ALLOW_LOADS>(
+                condition,
+                bindings,
+                next_binder,
+            )?),
+            then_term: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                then_term,
+                bindings,
+                next_binder,
+            )?),
+            else_term: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                else_term,
+                bindings,
+                next_binder,
+            )?),
         },
         Bitvector32Term::RangeFold {
             start,
@@ -843,9 +899,21 @@ fn alpha_bitvector_key(
             item,
             body,
         } => {
-            let start = Box::new(alpha_bitvector_key(start, bindings, next_binder)?);
-            let end = Box::new(alpha_bitvector_key(end, bindings, next_binder)?);
-            let initial = Box::new(alpha_bitvector_key(initial, bindings, next_binder)?);
+            let start = Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                start,
+                bindings,
+                next_binder,
+            )?);
+            let end = Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                end,
+                bindings,
+                next_binder,
+            )?);
+            let initial = Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                initial,
+                bindings,
+                next_binder,
+            )?);
 
             // Range-fold accumulator and item variables are binders just like
             // proposition quantifiers. Canonicalize their body under fresh
@@ -857,7 +925,7 @@ fn alpha_bitvector_key(
             let item_ordinal = *next_binder;
             *next_binder += 1;
             let previous_item = bindings.insert(*item, item_ordinal);
-            let body = alpha_bitvector_key(body, bindings, next_binder);
+            let body = alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder);
             if let Some(previous) = previous_item {
                 bindings.insert(*item, previous);
             } else {
@@ -881,56 +949,59 @@ fn alpha_bitvector_key(
                 name: name.clone(),
                 arguments: arguments
                     .iter()
-                    .map(|argument| alpha_bitvector_key(argument, bindings, next_binder))
+                    .map(|argument| {
+                        alpha_bitvector_key::<ALLOW_LOADS>(argument, bindings, next_binder)
+                    })
                     .collect::<Option<Vec<_>>>()?,
             }
         }
         Bitvector32Term::ClickFunctionApplication { .. }
         | Bitvector32Term::AlgebraicMatch { .. } => return None,
-        Bitvector32Term::MemoryLoad(_, pointer) => {
-            AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings, next_binder)?))
-        }
-        Bitvector32Term::PointerAddress(pointer) => {
-            AlphaBitvectorKey::Address(Box::new(alpha_pointer_key(pointer, bindings, next_binder)?))
-        }
+        Bitvector32Term::MemoryLoad(_, pointer) => AlphaBitvectorKey::Load(Box::new(
+            alpha_pointer_key::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
+        )),
+        Bitvector32Term::PointerAddress(pointer) => AlphaBitvectorKey::Address(Box::new(
+            alpha_pointer_key::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
+        )),
         Bitvector32Term::Int64From32(value) => AlphaBitvectorKey::Int64From32(Box::new(
-            alpha_bitvector_key(value, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64From32(value) => AlphaBitvectorKey::UInt64From32(Box::new(
-            alpha_bitvector_key(value, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt32From64(value) => AlphaBitvectorKey::UInt32From64(Box::new(
-            alpha_bitvector_key(value, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
         Bitvector32Term::Int64FromUInt32(value) => AlphaBitvectorKey::Int64FromUInt32(Box::new(
-            alpha_bitvector_key(value, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64FromInt32(value) => AlphaBitvectorKey::UInt64FromInt32(Box::new(
-            alpha_bitvector_key(value, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
         Bitvector32Term::UInt64FromInt64(value) => AlphaBitvectorKey::UInt64FromInt64(Box::new(
-            alpha_bitvector_key(value, bindings, next_binder)?,
+            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
     })
 }
 
-fn alpha_condition_key(
+fn alpha_condition_key<const ALLOW_LOADS: bool>(
     condition: &ConditionTerm,
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaConditionKey> {
+    crate::instrumentation::record_deterministic_work(1);
     let mut binary =
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaConditionKey> {
             Some(AlphaConditionKey::Binary(
                 operator,
-                alpha_bitvector_key(left, bindings, next_binder)?,
-                alpha_bitvector_key(right, bindings, next_binder)?,
+                alpha_bitvector_key::<ALLOW_LOADS>(left, bindings, next_binder)?,
+                alpha_bitvector_key::<ALLOW_LOADS>(right, bindings, next_binder)?,
             ))
         };
     Some(match condition {
         ConditionTerm::Constant(value) => AlphaConditionKey::Constant(*value),
         ConditionTerm::Variable(variable) => {
-            AlphaConditionKey::Variable(alpha_variable_key(*variable, bindings))
+            AlphaConditionKey::Variable(alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?)
         }
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             binary(AlphaConditionBinaryOp::SignedLessThan, left, right)?
@@ -963,22 +1034,23 @@ fn alpha_condition_key(
             binary(AlphaConditionBinaryOp::ShiftLeftOverflows, left, right)?
         }
         ConditionTerm::PointerOffsetEqual(left, right) => AlphaConditionKey::PointerOffsetEqual(
-            alpha_pointer_offset_key(left, bindings, next_binder)?,
-            alpha_pointer_offset_key(right, bindings, next_binder)?,
+            alpha_pointer_offset_key::<ALLOW_LOADS>(left, bindings, next_binder)?,
+            alpha_pointer_offset_key::<ALLOW_LOADS>(right, bindings, next_binder)?,
         ),
         ConditionTerm::PointerEqual(left, right) => AlphaConditionKey::PointerEqual(
-            alpha_pointer_key(left, bindings, next_binder)?,
-            alpha_pointer_key(right, bindings, next_binder)?,
+            alpha_pointer_key::<ALLOW_LOADS>(left, bindings, next_binder)?,
+            alpha_pointer_key::<ALLOW_LOADS>(right, bindings, next_binder)?,
         ),
         _ => return None,
     })
 }
 
-fn alpha_proposition_key(
+fn alpha_proposition_key<const ALLOW_LOADS: bool>(
     proposition: &Proposition,
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaPropositionKey> {
+    crate::instrumentation::record_deterministic_work(1);
     #[cfg(test)]
     ALPHA_PROPOSITION_KEY_VISITS.with(|visits| visits.set(visits.get() + 1));
 
@@ -987,13 +1059,21 @@ fn alpha_proposition_key(
                   bindings: &mut BTreeMap<Variable, usize>,
                   next_binder: &mut usize|
      -> Option<(Box<AlphaPropositionKey>, Box<AlphaPropositionKey>)> {
-        let left = Box::new(alpha_proposition_key(left, bindings, next_binder)?);
-        let right = Box::new(alpha_proposition_key(right, bindings, next_binder)?);
+        let left = Box::new(alpha_proposition_key::<ALLOW_LOADS>(
+            left,
+            bindings,
+            next_binder,
+        )?);
+        let right = Box::new(alpha_proposition_key::<ALLOW_LOADS>(
+            right,
+            bindings,
+            next_binder,
+        )?);
         Some((left, right))
     };
     Some(match proposition {
         Proposition::ConditionIs(condition, value) => AlphaPropositionKey::Condition(
-            alpha_condition_key(condition, bindings, next_binder)?,
+            alpha_condition_key::<ALLOW_LOADS>(condition, bindings, next_binder)?,
             *value,
         ),
         Proposition::And(left, right) => {
@@ -1008,16 +1088,18 @@ fn alpha_proposition_key(
             let (left, right) = binary(left, right, bindings, next_binder)?;
             AlphaPropositionKey::Implies(left, right)
         }
-        Proposition::Not(body) => AlphaPropositionKey::Not(Box::new(alpha_proposition_key(
-            body,
-            bindings,
-            next_binder,
-        )?)),
+        Proposition::Not(body) => {
+            AlphaPropositionKey::Not(Box::new(alpha_proposition_key::<ALLOW_LOADS>(
+                body,
+                bindings,
+                next_binder,
+            )?))
+        }
         Proposition::ForAll { var, sort, body } => {
             let ordinal = *next_binder;
             *next_binder += 1;
             let prior = bindings.insert(*var, ordinal);
-            let body = alpha_proposition_key(body, bindings, next_binder);
+            let body = alpha_proposition_key::<ALLOW_LOADS>(body, bindings, next_binder);
             if let Some(prior) = prior {
                 bindings.insert(*var, prior);
             } else {
@@ -1031,7 +1113,7 @@ fn alpha_proposition_key(
             let ordinal = *next_binder;
             *next_binder += 1;
             let prior = bindings.insert(*var, ordinal);
-            let body = alpha_proposition_key(body, bindings, next_binder);
+            let body = alpha_proposition_key::<ALLOW_LOADS>(body, bindings, next_binder);
             if let Some(prior) = prior {
                 bindings.insert(*var, prior);
             } else {
@@ -1052,5 +1134,22 @@ pub(crate) fn quantified_equivalence_index_key(
     ) {
         return None;
     }
-    alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedEquivalenceKey)
+    alpha_proposition_key::<true>(proposition, &mut BTreeMap::new(), &mut 0)
+        .map(QuantifiedEquivalenceKey)
+}
+
+/// Exact alpha identity for the memory-free logical fragment. Unlike the
+/// snapshot-blind selection key, this refuses all explicit and registered
+/// loads; no snapshot contents or memory relations are inspected.
+pub(crate) fn memory_free_quantified_key(
+    proposition: &Proposition,
+) -> Option<QuantifiedEquivalenceKey> {
+    if !matches!(
+        proposition,
+        Proposition::ForAll { .. } | Proposition::Exists { .. }
+    ) {
+        return None;
+    }
+    alpha_proposition_key::<false>(proposition, &mut BTreeMap::new(), &mut 0)
+        .map(QuantifiedEquivalenceKey)
 }

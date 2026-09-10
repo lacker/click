@@ -385,16 +385,12 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
     }
     for recorded in view.surface_propositions.kernel_facts() {
         check_verification_deadline()?;
-        // The quantifier-shape test is checked first on purpose: it is the
-        // weaker of the two conditions, so whenever it holds the mutual
-        // `derive_simp_proposition` search below is redundant — and on nested
-        // quantified predicate bodies that search costs minutes.
-        if (matches!(
+        // Universal source forms are candidates, not proof authority. The
+        // selected form must still pass `matches_kernel` and `check`.
+        if matches!(
             (kernel, recorded),
             (Proposition::ForAll { .. }, Proposition::ForAll { .. })
-        ) || quantified_equivalent_available_fact(kernel, std::slice::from_ref(recorded))
-            .is_some())
-            && let Ok(surface) = view.surface_propositions.surface(recorded)
+        ) && let Ok(surface) = view.surface_propositions.surface(recorded)
             && !bases.contains(surface)
         {
             bases.push(surface.clone());

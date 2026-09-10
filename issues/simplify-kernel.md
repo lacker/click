@@ -280,7 +280,7 @@ while still violating the search/checking boundary.
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
 | Proof-object events: `proof/execution.rs` resource rewrite/observation `check` | Pure resource deltas now use exact availability or retained local proofs. Branch-interface judgments retain completed local proofs, including load-definition and exported-resource read evidence. General fallbacks for theorem premises, common successor facts, and split obligations are also removed. | Complete for these pure-delta fallbacks; broader resource matching/ownership and definition instantiation still need their own migration. |
-| Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
+| Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | Mutual simp is removed. Memory-free nested binders match structurally; memory-bearing/unsupported fragments retain the existing one-binder substitution check. Single-match queries stop at the first match. | Complete for this proof-search fallback. The existing memory-aware structural scan remains a separate scalability concern; nontrivial conversions require explicit proofs. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
 | Calls, refinement, and resources: `functions.rs`, `primitives/resource_algebra.rs`, `primitives/contracts.rs::applicable_verified_loop_rule` | Proves guarded requirements, footprint guards, refinement obligations/conclusions, quantity relations, population transitions, resource facts, and loop-rule prerequisites. Results affect accepted calls, resources, or selected rules. | Split by consumer; retain guard, quantity, and refinement evidence. Do not replace every call with an exact lookup in one large completeness-breaking change. |
@@ -549,7 +549,7 @@ expansions recheck. The `perpetual-service` frame round-trip also exposed and fi
 printing population patterns with a `view` qualifier, which is not count syntax.
 
 The pure resource observation/rewrite deltas above are now migrated as well.
-**Next:** quantified conversion and context-free normalization, followed by the
+**Next:** context-free normalization, followed by the
 other authority consumers in the inventory. Broader resource matching/ownership
 and definition-evaluation rules remain separate work.
 
@@ -628,7 +628,7 @@ probe nor denial switch is retained. These results concern ordinary fixture
 verification and existing unit/expansion tests, not an exhaustive corpus audit
 of all smart expansion sites or quarantined examples.
 
-Recommended implementation order:
+Original proposed implementation order (superseded by the narrower migration below):
 
 1. Add a search-free, capture-safe structural alpha matcher covering nested
    quantifiers and range-fold binders, while preserving exact snapshot/load
@@ -647,6 +647,35 @@ Recommended implementation order:
    needed, construct it with explicit introductions, instantiation, rewrites,
    or transport and retain that proof; do not restore a boolean simp fallback.
    Then proceed to the separate context-free-normalization census.
+
+**Narrow migration complete:** the shared helper and indexed fact matcher no
+longer invoke simp. The alpha-key visitor has a separate memory-free mode:
+nested universal/existential and range-fold binders use structural ordinals,
+free identities remain exact, and shadowed bindings are restored on scope exit.
+Explicit loads and registered load variables are rejected by that mode, even
+when nested in another term. A supported structural mismatch is final, not a
+reason to attempt a logical conversion. The snapshot-blind index remains only
+a selector, never a proof of memory-bearing equivalence. Single-match queries
+no longer construct the complete list of matching facts.
+
+The narrower boundary is deliberate: a binder can occur inside the stored
+values of a snapshot, not just in the loaded pointer or surrounding formula.
+Even identical snapshot IDs therefore do not alone prove capture-safe alpha
+equivalence. Memory-bearing and unsupported fragments retain the existing
+one-binder substitution/equality check, including its snapshot inspection cost.
+No snapshot dependency metadata or broader memory-representation redesign was
+introduced. This removes proof search here, not every structural scalability
+problem in this consumer.
+
+Regressions cover nested renaming, free-variable capture, shadowing/sibling
+scope restoration, sort and quantifier-kind mismatches, rejection of merely
+logical equivalence, raw/registered loads at changed snapshots, and the
+existing bound occurrence inside snapshot storage. Four-size deterministic
+curves cover nested-binder depth, unrelated indexed facts, and first-match
+queries over a growing same-alpha bucket. The existing range-fold renaming
+regression now succeeds without simp. Ordinary verification and all eight
+smart expansion sites pass for the three census fixtures (copy: 3, fill: 2,
+sorted: 3), without changing their C or proof bodies.
 
 ### Pointer-offset effect-equality census (2026-09-09)
 

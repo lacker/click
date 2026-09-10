@@ -1836,26 +1836,25 @@ pub(crate) fn quantified_equivalent_available_fact(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<Proposition> {
-    let required = required.clone();
     if !matches!(required, Proposition::ForAll { .. }) {
         return None;
     }
-    available.iter().find_map(|fact| {
-        let fact = fact.clone();
-        if !matches!(fact, Proposition::ForAll { .. }) {
-            return None;
-        }
-        let forward = assumptions_from_propositions(std::slice::from_ref(&fact))
-            .derive_simp_proposition(&required)
-            .is_some();
-        let reverse = assumptions_from_propositions(std::slice::from_ref(&required))
-            .derive_simp_proposition(&fact)
-            .is_some();
-        (forward && reverse).then_some(fact)
-    })
+    available
+        .iter()
+        .find(|fact| quantified_binder_equivalent(required, fact))
+        .cloned()
 }
 
 pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    // A supported structural mismatch is definitive; do not substitute or
+    // search to turn it into an equivalence. Loads and unsupported fragments
+    // retain the existing one-binder, memory-aware structural check below.
+    if let (Some(left), Some(right)) = (
+        super::fact_keys::memory_free_quantified_key(left),
+        super::fact_keys::memory_free_quantified_key(right),
+    ) {
+        return left == right;
+    }
     match (left, right) {
         (
             Proposition::ForAll {
@@ -2088,6 +2087,218 @@ mod tests {
         CMemory, CMemoryRange, CResource, CValue, Pointer, PointerBlock, PointerOffsetTerm,
         Variable, intern_c_memory, load_variable_for_cell_with_origin,
     };
+
+    #[test]
+    fn quantified_structural_matching_preserves_scope_and_rejects_logic() {
+        let eq = |a, b| {
+            Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(Variable(a)),
+                    Bitvector32Term::Variable(Variable(b)),
+                ),
+                true,
+            )
+        };
+        let forall = |v, body| Proposition::ForAll {
+            var: Variable(v),
+            sort: Sort::CInt32,
+            body: Box::new(body),
+        };
+        let nested = forall(1, forall(2, eq(1, 2)));
+        assert!(quantified_binder_equivalent(
+            &nested,
+            &forall(3, forall(4, eq(3, 4)))
+        ));
+        assert!(!quantified_binder_equivalent(
+            &nested,
+            &forall(3, forall(3, eq(3, 3)))
+        ));
+        assert!(!quantified_binder_equivalent(
+            &forall(1, eq(1, 3)),
+            &forall(3, eq(3, 3))
+        ));
+        assert!(!quantified_binder_equivalent(
+            &forall(1, eq(1, 7)),
+            &forall(2, eq(2, 8))
+        ));
+        // A shadowing binder must not change the binding of its sibling.
+        let left = forall(
+            1,
+            Proposition::And(Box::new(forall(1, eq(1, 1))), Box::new(eq(1, 7))),
+        );
+        let right = forall(
+            2,
+            Proposition::And(Box::new(forall(3, eq(3, 3))), Box::new(eq(2, 7))),
+        );
+        assert!(quantified_binder_equivalent(&left, &right));
+        let exists = Proposition::Exists {
+            name: "witness".into(),
+            var: Variable(2),
+            sort: Sort::CInt32,
+            body: Box::new(eq(2, 2)),
+        };
+        assert!(!quantified_binder_equivalent(&forall(1, eq(1, 1)), &exists));
+        let reflexive = forall(1, eq(1, 1));
+        let wrong_sort = Proposition::ForAll {
+            var: Variable(1),
+            sort: Sort::CInt64,
+            body: Box::new(eq(1, 1)),
+        };
+        assert!(!quantified_binder_equivalent(&reflexive, &wrong_sort));
+        let tautology = forall(
+            2,
+            Proposition::ConditionIs(ConditionTerm::Constant(true), true),
+        );
+        assert!(
+            quantified_equivalent_available_fact(&tautology, &[reflexive]).is_none(),
+            "logical equivalence is not binder renaming"
+        );
+    }
+
+    #[test]
+    fn quantified_single_match_does_not_check_the_whole_alpha_bucket() {
+        let quantified = |name: String| Proposition::ForAll {
+            var: Variable(1),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Exists {
+                name,
+                var: Variable(2),
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(Variable(1)),
+                        Bitvector32Term::Variable(Variable(2)),
+                    ),
+                    true,
+                )),
+            }),
+        };
+        let goal = quantified("goal".into());
+        let mut curve = Vec::new();
+        for size in [8, 16, 32, 64] {
+            let facts = ProofFacts::from_ordered(
+                &(0..size)
+                    .map(|i| quantified(format!("witness{i}")))
+                    .collect::<Vec<_>>(),
+            );
+            assert_eq!(
+                facts.quantified_bucket_len(&quantified_equivalence_index_key(&goal).unwrap()),
+                Some(size)
+            );
+            let (matched, work) = crate::instrumentation::measure_deterministic_work(|| {
+                facts.matching_quantified_fact(&goal)
+            });
+            assert!(matched.is_some());
+            curve.push(work);
+        }
+        assert!(curve[0] > 0);
+        assert!(
+            curve.iter().all(|work| *work == curve[0]),
+            "single-match bucket work: {curve:?}"
+        );
+    }
+
+    #[test]
+    fn quantified_memory_free_key_rejects_raw_and_registered_loads() {
+        let pointer = Pointer {
+            block: "p".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = intern_c_memory(CMemory::new().with_block("p", 4));
+        let after = intern_c_memory(
+            before
+                .as_ref()
+                .clone()
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(9))),
+        );
+        let quantified = |memory: SharedCMemory, named: bool| {
+            let load = if named {
+                Bitvector32Term::Variable(load_variable_for_cell_with_origin(
+                    &memory, &pointer, &memory,
+                ))
+            } else {
+                Bitvector32Term::MemoryLoad(memory, Box::new(pointer.clone()))
+            };
+            Proposition::ForAll {
+                var: Variable(1),
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(load, Bitvector32Term::Variable(Variable(1))),
+                    true,
+                )),
+            }
+        };
+        for named in [false, true] {
+            let left = quantified(before.clone(), named);
+            let right = quantified(after.clone(), named);
+            assert!(super::super::fact_keys::memory_free_quantified_key(&left).is_none());
+            assert_eq!(
+                quantified_equivalence_index_key(&left),
+                quantified_equivalence_index_key(&right)
+            );
+            assert!(!quantified_binder_equivalent(&left, &right));
+        }
+    }
+
+    #[test]
+    fn quantified_nested_matching_work_is_linear_and_context_indexed() {
+        let nested = |depth: usize, base: u64| {
+            let mut p = Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(Variable(base)),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            );
+            for index in (0..depth).rev() {
+                p = Proposition::ForAll {
+                    var: Variable(base + index as u64),
+                    sort: Sort::CInt32,
+                    body: Box::new(p),
+                };
+            }
+            p
+        };
+        let mut depths = Vec::new();
+        let mut contexts = Vec::new();
+        for size in [8, 16, 32, 64] {
+            let left = nested(size, 100);
+            let right = nested(size, 1000);
+            let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
+                quantified_binder_equivalent(&left, &right)
+            });
+            assert!(matches);
+            depths.push(work);
+            let mut facts = ProofFacts::from_ordered(&[nested(2, 100)]);
+            for index in 0..size {
+                facts = facts.with_fact(Proposition::ForAll {
+                    var: Variable(9000),
+                    sort: Sort::CInt32,
+                    body: Box::new(Proposition::ConditionIs(
+                        ConditionTerm::equal(
+                            Bitvector32Term::Variable(Variable(9000)),
+                            Bitvector32Term::Constant(index as u32 + 1),
+                        ),
+                        true,
+                    )),
+                });
+            }
+            let goal = nested(2, 1000);
+            let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
+                facts.matching_quantified_fact(&goal).is_some()
+            });
+            assert!(matches);
+            contexts.push(work);
+        }
+        assert!(depths[0] > 0);
+        for pair in depths.windows(2) {
+            assert!(pair[1] <= pair[0] * 2, "binder work: {depths:?}");
+        }
+        assert!(
+            contexts.iter().all(|work| *work == contexts[0]),
+            "unrelated context work: {contexts:?}"
+        );
+    }
 
     #[test]
     fn quantified_binder_comparison_respects_occurrences_inside_snapshots() {
