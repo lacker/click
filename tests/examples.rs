@@ -383,7 +383,7 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     padded.extend_from_slice(&bit_length.to_be_bytes());
 
     let mut state = INITIAL;
-    for chunk in padded.chunks_exact(64) {
+    for chunk in padded.as_chunks::<64>().0 {
         let mut schedule = [0u32; 64];
         for (index, word) in schedule[..16].iter_mut().enumerate() {
             let start = index * 4;
