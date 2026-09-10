@@ -699,11 +699,16 @@ fn evaluate_spec_integer_expression_paths(
 ) -> ExecutionResult<Vec<SpecIntegerPath>> {
     budget.consume_expression_step()?;
     match expression {
-        SpecIntegerExpression::Term(term) => Ok(vec![SpecIntegerPath {
-            value: term.clone(),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }]),
+        SpecIntegerExpression::Term(term) => {
+            if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(term)) {
+                return Err(ExecutionLimit::Deadline);
+            }
+            Ok(vec![SpecIntegerPath {
+                value: term.clone(),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -735,14 +740,18 @@ fn evaluate_spec_integer_expression_paths(
             algebraic_bindings,
             budget,
         )
-        .map(|paths| {
-            paths
-                .into_iter()
-                .map(|mut path| {
-                    path.value = IntegerTerm::negate(path.value);
-                    path
-                })
-                .collect()
+        .and_then(|paths| {
+            let mut result = Vec::new();
+            for mut path in paths {
+                if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(
+                    &path.value,
+                )) {
+                    return Err(ExecutionLimit::Deadline);
+                }
+                path.value = IntegerTerm::negate(path.value);
+                result.push(path);
+            }
+            Ok(result)
         }),
         SpecIntegerExpression::Add(left, right) => evaluate_integer_binary_paths(
             state,
@@ -752,7 +761,7 @@ fn evaluate_spec_integer_expression_paths(
             assumptions,
             algebraic_bindings,
             budget,
-            IntegerTerm::add,
+            IntegerBinaryOperation::Add,
         ),
         SpecIntegerExpression::Subtract(left, right) => evaluate_integer_binary_paths(
             state,
@@ -762,7 +771,7 @@ fn evaluate_spec_integer_expression_paths(
             assumptions,
             algebraic_bindings,
             budget,
-            IntegerTerm::subtract,
+            IntegerBinaryOperation::Subtract,
         ),
         SpecIntegerExpression::Multiply(left, right) => evaluate_integer_binary_paths(
             state,
@@ -772,7 +781,7 @@ fn evaluate_spec_integer_expression_paths(
             assumptions,
             algebraic_bindings,
             budget,
-            IntegerTerm::multiply,
+            IntegerBinaryOperation::Multiply,
         ),
     }
 }
@@ -785,7 +794,7 @@ fn evaluate_integer_binary_paths(
     assumptions: &PureFactContext,
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
-    combine: fn(IntegerTerm, IntegerTerm) -> IntegerTerm,
+    operation: IntegerBinaryOperation,
 ) -> ExecutionResult<Vec<SpecIntegerPath>> {
     let left_paths = evaluate_spec_integer_expression_paths(
         state,
@@ -816,14 +825,50 @@ fn evaluate_integer_binary_paths(
             ) else {
                 continue;
             };
+            let left_bits = integer_term_bits(&left_path.value);
+            let right_bits = integer_term_bits(&right_path.value);
+            let work = match operation {
+                IntegerBinaryOperation::Multiply => left_bits.saturating_mul(right_bits),
+                IntegerBinaryOperation::Add | IntegerBinaryOperation::Subtract => {
+                    left_bits.saturating_add(right_bits)
+                }
+            };
+            if crate::instrumentation::numeric_operation_work_exceeded(work) {
+                return Err(ExecutionLimit::Deadline);
+            }
+            let value = match operation {
+                IntegerBinaryOperation::Add => {
+                    IntegerTerm::add(left_path.value.clone(), right_path.value)
+                }
+                IntegerBinaryOperation::Subtract => {
+                    IntegerTerm::subtract(left_path.value.clone(), right_path.value)
+                }
+                IntegerBinaryOperation::Multiply => {
+                    IntegerTerm::multiply(left_path.value.clone(), right_path.value)
+                }
+            };
             result.push(SpecIntegerPath {
-                value: combine(left_path.value.clone(), right_path.value),
+                value,
                 facts,
                 obligations,
             });
         }
     }
     Ok(result)
+}
+
+#[derive(Clone, Copy)]
+enum IntegerBinaryOperation {
+    Add,
+    Subtract,
+    Multiply,
+}
+
+fn integer_term_bits(term: &IntegerTerm) -> usize {
+    term.as_const()
+        .and_then(|value| usize::try_from(value.bits()).ok())
+        .unwrap_or(1)
+        .saturating_add(1)
 }
 
 #[allow(clippy::too_many_arguments)]
