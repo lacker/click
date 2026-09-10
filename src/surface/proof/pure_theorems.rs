@@ -2090,6 +2090,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::ArithmeticUsing(_)
         | ProofStep::IntegerCertificate(_)
         | ProofStep::Intro
+        | ProofStep::Witness(_)
         | ProofStep::Induct { .. }
         | ProofStep::ApplyInduction { .. }
         | ProofStep::Split
@@ -2178,6 +2179,7 @@ fn check_pure_script_with_proof(
             ProofTactic::ArithmeticUsing(_)
                 | ProofTactic::NormalizeUsing(_)
                 | ProofTactic::IntegerCertificate(_)
+                | ProofTactic::Witness(_)
         )
     }) {
         root.try_authoritative_linear_script(tactics)?
