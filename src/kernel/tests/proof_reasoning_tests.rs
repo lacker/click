@@ -4110,6 +4110,49 @@ fn forall_integer_application_rejects_unsupported_carriers_and_nested_sorts() {
         prove_forall_integer_application(&nested_machine_sort, IntegerTerm::constant_i64(1), &[])
             .is_none()
     );
+
+    let true_body = Proposition::ForAll {
+        var: binder,
+        sort: Sort::Integer,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true,
+        )),
+    };
+    assert!(
+        prove_forall_integer_application(&true_body, IntegerTerm::constant_i64(1), &[]).is_some()
+    );
+}
+
+#[test]
+fn forall_integer_application_emits_no_theorem_after_work_exhaustion() {
+    let quantified = nested_integer_forall(16, false);
+    let limits = crate::instrumentation::TacticWorkLimits {
+        simple: 4,
+        smart: 4,
+        control: 4,
+    };
+    crate::instrumentation::with_tactic_work_limits(limits, || {
+        let tactic = crate::instrumentation::TacticEvent {
+            claim: "integer.quantifier".into(),
+            tactic_index: 0,
+            tactic_name: "integer_forall".into(),
+            class: "simple".into(),
+            statement_index: 0,
+            source_index: 0,
+        };
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticStarted(
+            tactic.clone(),
+        ));
+        let theorem =
+            prove_forall_integer_application(&quantified, IntegerTerm::constant_i64(7), &[]);
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticFinished {
+            tactic,
+            elapsed: std::time::Duration::ZERO,
+            work: 0,
+        });
+        assert!(theorem.is_none(), "work exhaustion must not emit a theorem");
+    });
 }
 
 fn nested_integer_forall(depth: usize, capture: bool) -> Proposition {

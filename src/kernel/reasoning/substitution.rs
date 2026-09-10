@@ -1490,6 +1490,7 @@ pub(crate) enum IntegerPureSubstitutionError {
     UnsupportedCarrier,
     UnsupportedSort,
     FreshVariableExhausted,
+    WorkLimitExceeded,
 }
 
 /// Capture-avoiding substitution for the complete pure Integer proposition
@@ -1502,6 +1503,8 @@ pub(crate) fn substitute_integer_variable_in_pure_proposition(
     to: &IntegerTerm,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
     let mut reserved = BTreeSet::new();
+    let replacement_work = integer_term_weight(to);
+    integer_work(replacement_work)?;
     validate_integer_pure_proposition(proposition, &mut reserved)?;
     let mut replacement_variables = BTreeSet::new();
     collect_integer_bound_variables(to, &mut replacement_variables);
@@ -1522,18 +1525,40 @@ pub(crate) fn substitute_integer_variable_in_pure_proposition(
         &mut next,
         false,
         &mut renamings,
+        replacement_work,
     )
+}
+
+fn integer_work(units: usize) -> Result<(), IntegerPureSubstitutionError> {
+    if crate::instrumentation::deadline_exceeded_with_work(units) {
+        Err(IntegerPureSubstitutionError::WorkLimitExceeded)
+    } else {
+        Ok(())
+    }
+}
+
+fn integer_term_weight(term: &IntegerTerm) -> usize {
+    match term {
+        IntegerTerm::Constant(value) => value.bits() as usize + 2,
+        IntegerTerm::Variable(_) => 1,
+        IntegerTerm::Negate(value) => 1usize.saturating_add(integer_term_weight(value)),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => 1usize
+            .saturating_add(integer_term_weight(left))
+            .saturating_add(integer_term_weight(right)),
+    }
 }
 
 fn validate_integer_pure_proposition(
     proposition: &Proposition,
     variables: &mut BTreeSet<Variable>,
 ) -> Result<(), IntegerPureSubstitutionError> {
-    crate::instrumentation::record_deterministic_work(1);
+    integer_work(1)?;
     match proposition {
         Proposition::Equal(Term::Integer(left), Term::Integer(right)) => {
-            collect_integer_bound_variables(left, variables);
-            collect_integer_bound_variables(right, variables);
+            validate_integer_pure_term(left, variables)?;
+            validate_integer_pure_term(right, variables)?;
             Ok(())
         }
         Proposition::Equal(_, _) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
@@ -1571,6 +1596,9 @@ fn validate_integer_pure_condition(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
 ) -> Result<(), IntegerPureSubstitutionError> {
+    if let ConditionTerm::Constant(_) = condition {
+        return integer_work(1);
+    }
     let (left, right) = match condition {
         ConditionTerm::IntegerLessThan(left, right)
         | ConditionTerm::IntegerLessEqual(left, right)
@@ -1580,9 +1608,29 @@ fn validate_integer_pure_condition(
         | ConditionTerm::IntegerNotEqual(left, right) => (left, right),
         _ => return Err(IntegerPureSubstitutionError::UnsupportedCarrier),
     };
-    collect_integer_bound_variables(left, variables);
-    collect_integer_bound_variables(right, variables);
-    Ok(())
+    validate_integer_pure_term(left, variables)?;
+    validate_integer_pure_term(right, variables)
+}
+
+fn validate_integer_pure_term(
+    term: &IntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+) -> Result<(), IntegerPureSubstitutionError> {
+    integer_work(1)?;
+    match term {
+        IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
+        IntegerTerm::Variable(variable) => {
+            variables.insert(*variable);
+            Ok(())
+        }
+        IntegerTerm::Negate(value) => validate_integer_pure_term(value, variables),
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            validate_integer_pure_term(left, variables)?;
+            validate_integer_pure_term(right, variables)
+        }
+    }
 }
 
 fn fresh_integer_variable(
@@ -1612,19 +1660,37 @@ fn substitute_integer_pure_proposition(
     next: &mut u64,
     shadowed: bool,
     renamings: &mut BTreeMap<Variable, Variable>,
+    replacement_work: usize,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
-    crate::instrumentation::record_deterministic_work(1);
+    integer_work(1)?;
     match proposition {
         Proposition::Equal(Term::Integer(left), Term::Integer(right)) => Ok(Proposition::Equal(
             Term::Integer(substitute_integer_pure_term(
-                left, from, to, shadowed, renamings,
-            )),
+                left,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
             Term::Integer(substitute_integer_pure_term(
-                right, from, to, shadowed, renamings,
-            )),
+                right,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
         )),
         Proposition::ConditionIs(condition, value) => Ok(Proposition::ConditionIs(
-            substitute_integer_pure_condition(condition, from, to, shadowed, renamings),
+            substitute_integer_pure_condition(
+                condition,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?,
             *value,
         )),
         Proposition::And(left, right) => Ok(Proposition::And(
@@ -1637,6 +1703,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?),
             Box::new(substitute_integer_pure_proposition(
                 right,
@@ -1647,6 +1714,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?),
         )),
         Proposition::Or(left, right) => Ok(Proposition::Or(
@@ -1659,6 +1727,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?),
             Box::new(substitute_integer_pure_proposition(
                 right,
@@ -1669,6 +1738,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?),
         )),
         Proposition::Not(body) => Ok(Proposition::Not(Box::new(
@@ -1681,6 +1751,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?,
         ))),
         Proposition::Implies(left, right) => Ok(Proposition::Implies(
@@ -1693,6 +1764,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?),
             Box::new(substitute_integer_pure_proposition(
                 right,
@@ -1703,6 +1775,7 @@ fn substitute_integer_pure_proposition(
                 next,
                 shadowed,
                 renamings,
+                replacement_work,
             )?),
         )),
         Proposition::ForAll { var, sort, body } => substitute_integer_quantifier(
@@ -1718,6 +1791,7 @@ fn substitute_integer_pure_proposition(
             next,
             shadowed,
             renamings,
+            replacement_work,
         ),
         Proposition::Exists {
             name,
@@ -1737,6 +1811,7 @@ fn substitute_integer_pure_proposition(
             next,
             shadowed,
             renamings,
+            replacement_work,
         ),
         _ => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
     }
@@ -1756,6 +1831,7 @@ fn substitute_integer_quantifier(
     next: &mut u64,
     shadowed: bool,
     renamings: &mut BTreeMap<Variable, Variable>,
+    replacement_work: usize,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
     if *sort != Sort::Integer {
         return Err(IntegerPureSubstitutionError::UnsupportedSort);
@@ -1776,6 +1852,7 @@ fn substitute_integer_quantifier(
         next,
         shadowed || var == from,
         renamings,
+        replacement_work,
     );
     match previous {
         Some(previous) => {
@@ -1808,7 +1885,8 @@ fn substitute_integer_pure_condition(
     to: &IntegerTerm,
     shadowed: bool,
     renamings: &BTreeMap<Variable, Variable>,
-) -> ConditionTerm {
+    replacement_work: usize,
+) -> Result<ConditionTerm, IntegerPureSubstitutionError> {
     let (operator, left, right) = match condition {
         ConditionTerm::IntegerLessThan(left, right) => (0, left, right),
         ConditionTerm::IntegerLessEqual(left, right) => (1, left, right),
@@ -1816,22 +1894,33 @@ fn substitute_integer_pure_condition(
         ConditionTerm::IntegerGreaterEqual(left, right) => (3, left, right),
         ConditionTerm::IntegerEqual(left, right) => (4, left, right),
         ConditionTerm::IntegerNotEqual(left, right) => (5, left, right),
+        ConditionTerm::Constant(value) => return Ok(ConditionTerm::Constant(*value)),
         _ => unreachable!("pure Integer validation precedes substitution"),
     };
     let left = Box::new(substitute_integer_pure_term(
-        left, from, to, shadowed, renamings,
-    ));
+        left,
+        from,
+        to,
+        shadowed,
+        renamings,
+        replacement_work,
+    )?);
     let right = Box::new(substitute_integer_pure_term(
-        right, from, to, shadowed, renamings,
-    ));
-    match operator {
+        right,
+        from,
+        to,
+        shadowed,
+        renamings,
+        replacement_work,
+    )?);
+    Ok(match operator {
         0 => ConditionTerm::IntegerLessThan(left, right),
         1 => ConditionTerm::IntegerLessEqual(left, right),
         2 => ConditionTerm::IntegerGreaterThan(left, right),
         3 => ConditionTerm::IntegerGreaterEqual(left, right),
         4 => ConditionTerm::IntegerEqual(left, right),
         _ => ConditionTerm::IntegerNotEqual(left, right),
-    }
+    })
 }
 
 fn substitute_integer_pure_term(
@@ -1840,34 +1929,81 @@ fn substitute_integer_pure_term(
     to: &IntegerTerm,
     shadowed: bool,
     renamings: &BTreeMap<Variable, Variable>,
-) -> IntegerTerm {
-    crate::instrumentation::record_deterministic_work(1);
+    replacement_work: usize,
+) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
+    integer_work(1)?;
     match term {
-        IntegerTerm::Constant(value) => IntegerTerm::Constant(value.clone()),
+        IntegerTerm::Constant(value) => {
+            integer_work(value.bits() as usize + 1)?;
+            Ok(IntegerTerm::Constant(value.clone()))
+        }
         IntegerTerm::Variable(variable) => {
             if let Some(renamed) = renamings.get(variable) {
-                IntegerTerm::Variable(*renamed)
+                Ok(IntegerTerm::Variable(*renamed))
             } else if !shadowed && *variable == from {
-                to.clone()
+                integer_work(replacement_work)?;
+                Ok(to.clone())
             } else {
-                IntegerTerm::Variable(*variable)
+                Ok(IntegerTerm::Variable(*variable))
             }
         }
-        IntegerTerm::Negate(value) => IntegerTerm::negate(substitute_integer_pure_term(
-            value, from, to, shadowed, renamings,
+        IntegerTerm::Negate(value) => Ok(IntegerTerm::Negate(Box::new(
+            substitute_integer_pure_term(value, from, to, shadowed, renamings, replacement_work)?,
+        ))),
+        IntegerTerm::Add(left, right) => Ok(IntegerTerm::Add(
+            Box::new(substitute_integer_pure_term(
+                left,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
+            Box::new(substitute_integer_pure_term(
+                right,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
         )),
-        IntegerTerm::Add(left, right) => IntegerTerm::add(
-            substitute_integer_pure_term(left, from, to, shadowed, renamings),
-            substitute_integer_pure_term(right, from, to, shadowed, renamings),
-        ),
-        IntegerTerm::Subtract(left, right) => IntegerTerm::subtract(
-            substitute_integer_pure_term(left, from, to, shadowed, renamings),
-            substitute_integer_pure_term(right, from, to, shadowed, renamings),
-        ),
-        IntegerTerm::Multiply(left, right) => IntegerTerm::multiply(
-            substitute_integer_pure_term(left, from, to, shadowed, renamings),
-            substitute_integer_pure_term(right, from, to, shadowed, renamings),
-        ),
+        IntegerTerm::Subtract(left, right) => Ok(IntegerTerm::Subtract(
+            Box::new(substitute_integer_pure_term(
+                left,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
+            Box::new(substitute_integer_pure_term(
+                right,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
+        )),
+        IntegerTerm::Multiply(left, right) => Ok(IntegerTerm::Multiply(
+            Box::new(substitute_integer_pure_term(
+                left,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
+            Box::new(substitute_integer_pure_term(
+                right,
+                from,
+                to,
+                shadowed,
+                renamings,
+                replacement_work,
+            )?),
+        )),
     }
 }
 
