@@ -319,7 +319,8 @@ fn collect_signed_affine_terms(
                     terms,
                     constant,
                 )?;
-            } else if let Some(value) = right.as_const() {
+            } else {
+                let value = right.as_const()?;
                 let value = i64::from(value as i32);
                 collect_signed_affine_terms(
                     left,
@@ -327,8 +328,6 @@ fn collect_signed_affine_terms(
                     terms,
                     constant,
                 )?;
-            } else {
-                return None;
             }
         }
         Bitvector32Term::Variable(_)
