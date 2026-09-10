@@ -1,6 +1,6 @@
 # Preserve initialization requirements across resource transfers
 
-P1 soundness bug, split from bug bash #8. Confirmed at `7bdfaaa5` on 2026-09-08: the following expected rejection instead verifies.
+P1 soundness bug, split from the bug bash. Confirmed at `7bdfaaa5` on 2026-09-08: the following expected rejection instead verifies.
 
 Invariant: permission to read or own storage does not establish that its contents have been initialized. Passing a never-written local through a verified contract must not manufacture initialized values.
 
