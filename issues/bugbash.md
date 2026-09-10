@@ -1,6 +1,6 @@
 # Bug bash: open tooling failures
 
-Three remaining tooling failures are tracked here. They reject supported inputs
+Two remaining tooling failures are tracked here. They reject supported inputs
 or expose verifier reliability gaps.
 
 This is deliberately a bundle rather than one file per problem, so the set
@@ -28,12 +28,6 @@ a header edit selects the functions whose translation units include it.
 
 This occurs for `break` inside an `if` inside a nested `while`, in the same
 class as item 1.
-
-## 3. Panic (`unreachable!`) when a local struct initializer zero-fills a
-`float`/`double` field
-
-A crash, not a wrong answer. Acceptance: the initializer is either supported
-or rejected with a source-positioned diagnostic.
 
 ---
 

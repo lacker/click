@@ -4387,6 +4387,8 @@ fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)
 
 fn zero_initializer_value(c_type: C0Type) -> C0Expression {
     match c_type {
+        C0Type::Float32 => C0Expression::Float32Literal(0),
+        C0Type::Float64 => C0Expression::Float64Literal(0),
         C0Type::Char => C0Expression::UInt8Literal(0),
         C0Type::UInt8 => C0Expression::UInt8Literal(0),
         C0Type::UInt32 => C0Expression::UInt32Literal(0),
