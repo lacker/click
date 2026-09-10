@@ -3442,15 +3442,14 @@ fn collect_affine_bitvector_terms(
                     terms,
                     constant,
                 )?;
-            } else if let Some(value) = right.as_const() {
+            } else {
+                let value = right.as_const()?;
                 collect_affine_bitvector_terms(
                     left,
                     coefficient.checked_mul(i64::from(value as i32))?,
                     terms,
                     constant,
                 )?;
-            } else {
-                return None;
             }
         }
         atom => {
