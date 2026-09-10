@@ -158,7 +158,6 @@ int32 borrowed_slice_buffer_get(
     requires 0 <= index;
     requires index < length;
     views owned_borrowable_buffer(owner, data, length);
-    immutable;
 
     ensures result == data[index] by auto;
 }

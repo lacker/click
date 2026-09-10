@@ -33,12 +33,10 @@ int32 record_beta() {
 }
 
 int32 alpha_calls() {
-    immutable;
     ensures result == old(calls) by auto;
 }
 
 int32 beta_calls() {
-    immutable;
     ensures result == old(calls) by auto;
 }
 

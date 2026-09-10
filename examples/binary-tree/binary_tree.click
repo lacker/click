@@ -203,7 +203,6 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
 int32 tree_is_leaf(struct node* node) {
     requires node != 0;
     views tree(node);
-    immutable;
 
     ensures result == 1 implies node->left == 0;
     ensures result == 1 implies node->right == 0;
@@ -228,7 +227,6 @@ int32 tree_is_leaf(struct node* node) {
             step();
         }
     }
-    frame();
     if at(function.entry, node->left) != at(function.entry, 0) {
         have result == 1 implies node->left == 0 by {
             normalize();
@@ -328,7 +326,6 @@ int32 tree_sum_root_and_children(struct node* node) {
     requires 0 <= node->right->value;
     requires node->right->value <= 715827882;
     views tree(node);
-    immutable;
 
     ensures result == node->value + node->left->value + node->right->value;
 } by {
@@ -338,8 +335,6 @@ int32 tree_sum_root_and_children(struct node* node) {
     step();
     step();
     step();
-    frame() using {
-    }
     have result == ((node->value + node->left->value) + node->right->value) by {
         normalize();
     }
@@ -384,7 +379,6 @@ int32 tree_walk(struct node* node) {
     decreases resource tree(node);
     requires node != 0;
     views tree(node);
-    immutable;
 
     ensures result == node->value;
 } by {
@@ -403,8 +397,6 @@ int32 tree_walk(struct node* node) {
             step();
             step();
             step();
-            frame() using {
-            }
             have result == node->value by {
                 normalize();
             }
@@ -425,8 +417,6 @@ int32 tree_walk(struct node* node) {
                 assumption();
             }
             step();
-            frame() using {
-            }
             have result == node->value by {
                 normalize();
             }
@@ -449,8 +439,6 @@ int32 tree_walk(struct node* node) {
             step();
             step();
             step();
-            frame() using {
-            }
             have result == node->value by {
                 normalize();
             }
@@ -474,8 +462,6 @@ int32 tree_walk(struct node* node) {
                 assumption();
             }
             step();
-            frame() using {
-            }
             have result == node->value by {
                 normalize();
             }

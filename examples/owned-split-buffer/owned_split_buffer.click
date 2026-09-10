@@ -141,7 +141,7 @@ int32 owned_split_buffer_get_left(
     requires 0 <= index;
     requires index < owner->split;
     views owned_split_buffer(owner);
-    immutable;
+
     ensures result == owner->data[index] by auto;
 }
 

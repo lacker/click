@@ -60,27 +60,23 @@ void list_mark(struct node* node) {
 int32 list_is_marked(struct node* node) {
     requires node != 0;
     views marked_list(node);
-    immutable;
 
     ensures result == 0 or result == 1;
 } by {
     observe(marked_list(node));
     execute();
-    frame();
     simp();
 }
 
 struct node* list_next(struct node* node) {
     requires node != 0;
     views marked_list(node);
-    immutable;
 
     ensures address(result) == (node->word & ~1);
     ensures aligned(result, 8);
 } by {
     observe(marked_list(node));
     execute();
-    frame();
     simp();
 }
 

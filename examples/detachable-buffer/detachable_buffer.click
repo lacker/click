@@ -125,7 +125,6 @@ int32 detachable_buffer_get(
     requires 0 <= index;
     requires index < owner->len;
     views attached_buffer(owner);
-    immutable;
 
     ensures result == owner->data[index] by auto;
 }

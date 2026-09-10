@@ -52,7 +52,7 @@ int32 input_cursor_init(
     requires separate(memory(object(owner)), memory(data[0..length]));
     consumes object(owner);
     views readable_input(data, length);
-    mutable object(owner);
+
     produces input_cursor(owner);
     ensures result == 0;
     ensures owner->pos == 0;
@@ -61,13 +61,11 @@ int32 input_cursor_init(
 } by {
     execute();
     fold(input_cursor(owner));
-    frame();
     simp();
 }
 
 int32 input_cursor_remaining(struct input_cursor* owner) {
     views input_cursor(owner);
-    immutable;
 
     ensures result == owner->len - owner->pos by auto;
 }
@@ -75,14 +73,12 @@ int32 input_cursor_remaining(struct input_cursor* owner) {
 int32 input_cursor_peek(struct input_cursor* owner) {
     requires owner->pos < owner->len;
     views input_cursor(owner);
-    immutable;
 
     ensures result == owner->data[owner->pos];
 } by {
     observe(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
     execute();
-    frame();
     simp();
 }
 
@@ -183,7 +179,7 @@ int32 input_cursor_clone(
     );
     consumes object(target);
     views input_cursor(source);
-    mutable object(target);
+
     produces input_cursor(target);
     ensures result == source->pos;
     ensures target->pos == source->pos;
@@ -196,7 +192,6 @@ int32 input_cursor_clone(
     step();
     step();
     fold(input_cursor(target));
-    frame();
     simp();
 }
 

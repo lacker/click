@@ -1614,6 +1614,12 @@ memory across a read-only callee without a synthesized `immutable` clause.
 Memory frames derived from transferred owned resources are checked by the
 resource transition instead.
 
+A `mutable` clause that lists exactly the memory the contract owns adds
+nothing: callers frame the same ranges from the owned resources, and the
+resource transition checks the writes. Likewise `immutable;` on a function
+that owns no memory restates the empty footprint an omitted clause already
+means. Both spellings remain accepted; the examples omit them.
+
 File-scope and static storage is not caller memory, so a contract that
 declares resources but no effect clause may store into such storage only
 inside the cells it owns: a `views` clause, or ownership of a neighboring

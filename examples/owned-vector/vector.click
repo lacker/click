@@ -941,7 +941,6 @@ int32 vector_get(struct vector* owner, int32 index) {
     requires 0 <= index;
     requires index < owner->len;
     views nonempty_vector(owner);
-    immutable;
 
     ensures result == owner->data[index];
     ensures result == old(owner->data[index]);
@@ -949,8 +948,6 @@ int32 vector_get(struct vector* owner, int32 index) {
     step();
     step();
     step();
-    frame() using {
-    }
     have result == owner->data[index] by {
         normalize();
     }

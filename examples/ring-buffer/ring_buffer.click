@@ -81,14 +81,12 @@ int32 ring_buffer_wrapped_tail(
     struct ring_buffer* owner
 ) {
     views wrapped_ring(owner);
-    immutable;
 
     ensures result == owner->data[0];
 } by {
     observe(wrapped_ring(owner));
     observe(owned_ring_storage(owner->data));
     execute();
-    frame();
     simp();
 }
 

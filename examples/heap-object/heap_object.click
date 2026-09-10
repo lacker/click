@@ -22,12 +22,10 @@ struct item* item_create(int32 value) {
 int32 item_read(struct item* item) {
     requires item != 0;
     views owned_item(item);
-    immutable;
 
     ensures result == item->value;
 } by {
     execute();
-    frame();
     simp();
 }
 
