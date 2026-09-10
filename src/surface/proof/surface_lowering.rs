@@ -74,13 +74,14 @@ impl<'a> Proof<'a> {
                             .then_some(&goal.integer_values)
                     })
                     .unwrap_or(&context.theorem_context.integer_values);
-                let cache_has_same_bindings = self.proposition_obligation().is_none_or(|goal| {
-                    goal.surface_bindings.is_empty()
-                        && (!goal.integer_values_initialized
-                            || goal
-                                .integer_values
-                                .shares_root_with(&context.theorem_context.integer_values))
-                });
+                let cache_has_same_bindings =
+                    self.proposition_obligation().is_none_or(|goal| {
+                        goal.surface_bindings.is_empty()
+                            && (!goal.integer_values_initialized
+                                || goal
+                                    .integer_values
+                                    .shares_root_with(&context.theorem_context.integer_values))
+                    }) && !proposition_uses_integer(surface, integer_values);
                 if cache_has_same_bindings
                     && let Some(recorded) = context
                         .theorem_context

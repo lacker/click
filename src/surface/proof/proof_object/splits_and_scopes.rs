@@ -736,6 +736,8 @@ impl<'a> Proof<'a> {
             (self.focused_obligation(), &mut body_goal.obligation)
         {
             body.surface_bindings = parent.surface_bindings.clone();
+            body.integer_values = parent.integer_values.clone();
+            body.integer_values_initialized = parent.integer_values_initialized;
         }
         let body = Proof {
             site: self.site.nested(ProofStepBlock::Have),
