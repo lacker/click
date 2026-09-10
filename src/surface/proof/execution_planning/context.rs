@@ -681,7 +681,7 @@ pub(in crate::surface::proof) fn append_condition_transition_certificate(
 
 pub(in crate::surface::proof) fn surface_c_condition(condition: &CExpression) -> ClickProposition {
     pub(in crate::surface::proof) fn expression(expression: &CExpression) -> ContractExpression {
-        substitute_c_fragment_as_contract(expression, &BTreeMap::new())
+        substitute_c_fragment_as_contract_with_numerals(expression, &BTreeMap::new(), true)
             .expect("converting a C expression without substitutions cannot fail")
     }
 

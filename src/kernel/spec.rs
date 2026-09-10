@@ -3977,15 +3977,11 @@ fn integer_constant_to_machine(
     match destination {
         MachineIntegerType::Int16 => {
             let value = i16::try_from(value.to_i64()?).ok()?;
-            Some(CValue::Int16(Bitvector32Term::Constant(
-                value as i32 as u32,
-            )))
+            Some(CValue::Int16(Bitvector32Term::Constant(value as u32)))
         }
         MachineIntegerType::Int32 => {
             let value = i32::try_from(value.to_i64()?).ok()?;
-            Some(CValue::Int32(Bitvector32Term::Constant(
-                value as i32 as u32,
-            )))
+            Some(CValue::Int32(Bitvector32Term::Constant(value as u32)))
         }
         MachineIntegerType::UInt8 => {
             let value = u8::try_from(value.to_u64()?).ok()?;

@@ -4958,7 +4958,11 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::Condition(condition) => Term::Condition(substitute_pointer_variable_in_condition(
             condition, from, to,
         )),
-        Term::Bitvector32(_) | Term::Integer(_) | Term::PointerOffset(_) => term.clone(),
+        Term::Integer(_) => {
+            crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
+                .term(term)
+        }
+        Term::Bitvector32(_) | Term::PointerOffset(_) => term.clone(),
         Term::CValue(value) => {
             Term::CValue(substitute_pointer_variable_in_c_value(value, from, to))
         }
@@ -5114,6 +5118,15 @@ fn substitute_pointer_variable_in_condition(
     to: &Pointer,
 ) -> ConditionTerm {
     match condition {
+        ConditionTerm::IntegerLessThan(..)
+        | ConditionTerm::IntegerLessEqual(..)
+        | ConditionTerm::IntegerGreaterThan(..)
+        | ConditionTerm::IntegerGreaterEqual(..)
+        | ConditionTerm::IntegerEqual(..)
+        | ConditionTerm::IntegerNotEqual(..) => {
+            crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
+                .condition(condition)
+        }
         ConditionTerm::AlgebraicEqual(left, right) => ConditionTerm::AlgebraicEqual(
             Box::new(substitute_pointer_variable_in_algebraic_term(
                 left, from, to,
@@ -5131,25 +5144,13 @@ fn substitute_pointer_variable_in_condition(
 }
 
 fn substitute_pointer_variable_in_c_value(value: &CValue, from: Variable, to: &Pointer) -> CValue {
-    match value {
-        CValue::Pointer(pointer) => CValue::typed_pointer(
-            substitute_pointer_variable_in_pointer(pointer.pointer(), from, to),
-            pointer.c_type(),
-        )
-        .with_pointer_pointee_volatile(pointer.pointee_volatile())
-        .with_pointer_pointee_constant(pointer.pointee_constant()),
-        CValue::Void
-        | CValue::Bool(_)
-        | CValue::Int16(_)
-        | CValue::Int32(_)
-        | CValue::UInt8(_)
-        | CValue::UInt16(_)
-        | CValue::UInt32(_)
-        | CValue::Int64(_)
-        | CValue::UInt64(_)
-        | CValue::Float32(_)
-        | CValue::Float64(_) => value.clone(),
-    }
+    let Term::CValue(value) =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
+            .term(&Term::CValue(value.clone()))
+    else {
+        unreachable!("C value rewriting preserves its carrier")
+    };
+    value
 }
 
 fn substitute_pointer_variable_in_pointer(
@@ -6251,6 +6252,42 @@ fn substitute_pointer_variable_in_spec_function_argument(
     }
 }
 
+fn substitute_pointer_variable_in_spec_integer(
+    expression: &SpecIntegerExpression,
+    from: Variable,
+    to: &Pointer,
+) -> SpecIntegerExpression {
+    match expression {
+        SpecIntegerExpression::Term(term) => {
+            let Term::Integer(term) =
+                crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
+                    .term(&Term::Integer(term.clone()))
+            else {
+                unreachable!()
+            };
+            SpecIntegerExpression::Term(term)
+        }
+        SpecIntegerExpression::FromMachine(value) => SpecIntegerExpression::FromMachine(Box::new(
+            substitute_pointer_variable_in_spec_expression(value, from, to),
+        )),
+        SpecIntegerExpression::Negate(value) => SpecIntegerExpression::Negate(Box::new(
+            substitute_pointer_variable_in_spec_integer(value, from, to),
+        )),
+        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
+            Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
+            Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
+        ),
+        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
+            Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
+            Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
+        ),
+        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
+            Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
+            Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
+        ),
+    }
+}
+
 fn substitute_pointer_variable_in_spec_proposition(
     proposition: &SpecProposition,
     from: Variable,
@@ -6262,9 +6299,9 @@ fn substitute_pointer_variable_in_spec_proposition(
             operator,
             right,
         } => SpecProposition::IntegerComparison {
-            left: left.clone(),
+            left: substitute_pointer_variable_in_spec_integer(left, from, to),
             operator: *operator,
-            right: right.clone(),
+            right: substitute_pointer_variable_in_spec_integer(right, from, to),
         },
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             SpecProposition::AlgebraicComparison {
@@ -6830,5 +6867,70 @@ mod integer_to_machine_substitution_tests {
             panic!("substitution changed the carrier shape")
         };
         assert_eq!(value.id(), payload.id());
+    }
+}
+
+#[cfg(test)]
+mod machine_integer_pointer_substitution_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_substitution_reaches_integer_observations_and_composes_offsets() {
+        let binder = Variable(610);
+        let source = Pointer {
+            block: PointerBlock::Symbolic(binder),
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let replacement = Pointer {
+            block: PointerBlock::Symbolic(Variable(611)),
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let expected = Pointer {
+            block: replacement.block.clone(),
+            offset: PointerOffsetTerm::Constant(12),
+        };
+        let bits = Bitvector32Term::PointerAddress(Box::new(source));
+        let term =
+            IntegerTerm::from_machine(crate::kernel::MachineIntegerType::UInt64, bits.clone())
+                .unwrap();
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::integer_equal(term, IntegerTerm::constant_i64(0)),
+            true,
+        );
+        let rewritten =
+            substitute_pointer_variable_in_proposition(&proposition, binder, &replacement);
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) = rewritten else {
+            panic!("unexpected proposition")
+        };
+        let IntegerTerm::Machine(observation) = left.as_ref() else {
+            panic!("missing observation")
+        };
+        assert_eq!(
+            observation.value(),
+            &Bitvector32Term::PointerAddress(Box::new(expected.clone()))
+        );
+
+        let spec = SpecProposition::IntegerComparison {
+            left: SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+                CValue::UInt64(bits),
+            ))),
+            operator: IntegerComparisonOperator::Equal,
+            right: SpecIntegerExpression::Term(IntegerTerm::constant_i64(0)),
+        };
+        let rewritten =
+            substitute_pointer_variable_in_spec_proposition(&spec, binder, &replacement);
+        let SpecProposition::IntegerComparison {
+            left: SpecIntegerExpression::FromMachine(value),
+            ..
+        } = rewritten
+        else {
+            panic!("unexpected spec proposition")
+        };
+        assert_eq!(
+            *value,
+            SpecExpression::Value(CValue::UInt64(Bitvector32Term::PointerAddress(Box::new(
+                expected
+            ))))
+        );
     }
 }
