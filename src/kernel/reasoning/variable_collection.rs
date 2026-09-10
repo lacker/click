@@ -283,7 +283,9 @@ fn collect_algebraic_term_bitvector_variables(
                     PureFunctionArgument::Algebraic(value) => {
                         collect_algebraic_term_bitvector_variables(value, variables)
                     }
-                    PureFunctionArgument::Integer(value) => collect_integer_variables(value, variables),
+                    PureFunctionArgument::Integer(value) => {
+                        collect_integer_variables(value, variables)
+                    }
                     PureFunctionArgument::ArrayRef {
                         memory, pointer, ..
                     } => {

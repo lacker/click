@@ -155,8 +155,10 @@ pub(super) fn validate_theorem_proposition_expression_types(
             right,
         } => {
             let mut locals = BTreeSet::new();
-            let left_kind = integer_expression_kind(left, integer_bindings, click_functions, &mut locals);
-            let right_kind = integer_expression_kind(right, integer_bindings, click_functions, &mut locals);
+            let left_kind =
+                integer_expression_kind(left, integer_bindings, click_functions, &mut locals);
+            let right_kind =
+                integer_expression_kind(right, integer_bindings, click_functions, &mut locals);
             if left_kind == Some(true) || right_kind == Some(true) {
                 if left_kind.is_none() || right_kind.is_none() {
                     return Err(ClickError::new(format!(
@@ -249,7 +251,8 @@ fn integer_expression_kind(
         } => {
             integer_expression_kind(value, integer_bindings, click_functions, locals)?;
             let inserted = locals.insert(name.clone());
-            let body_kind = integer_expression_kind(body, integer_bindings, click_functions, locals);
+            let body_kind =
+                integer_expression_kind(body, integer_bindings, click_functions, locals);
             if inserted {
                 locals.remove(name);
             }
@@ -307,8 +310,10 @@ fn validate_comparison_expression_types(
 ) -> Result<(), ClickError> {
     let mut locals = BTreeSet::new();
     let no_integer_parameters = BTreeSet::new();
-    let left_kind = integer_expression_kind(left, &no_integer_parameters, &BTreeMap::new(), &mut locals);
-    let right_kind = integer_expression_kind(right, &no_integer_parameters, &BTreeMap::new(), &mut locals);
+    let left_kind =
+        integer_expression_kind(left, &no_integer_parameters, &BTreeMap::new(), &mut locals);
+    let right_kind =
+        integer_expression_kind(right, &no_integer_parameters, &BTreeMap::new(), &mut locals);
     if left_kind == Some(true) || right_kind == Some(true) {
         if left_kind.is_none() || right_kind.is_none() {
             return Err(ClickError::new(format!(

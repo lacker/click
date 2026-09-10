@@ -1466,7 +1466,9 @@ fn substitute_bitvector_variable_in_shared_integer(
         return result.clone();
     }
     let result = match term.as_ref() {
-        IntegerTerm::Constant(_) | IntegerTerm::Variable(_) | IntegerTerm::PureFunctionApplication(_) => term.clone(),
+        IntegerTerm::Constant(_)
+        | IntegerTerm::Variable(_)
+        | IntegerTerm::PureFunctionApplication(_) => term.clone(),
         IntegerTerm::Machine(source) => crate::kernel::SharedIntegerTerm::from(
             IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
                 source.ty(),
@@ -1508,7 +1510,9 @@ fn collect_integer_bound_variables_seen(
     seen: &mut BTreeSet<u64>,
 ) {
     match term {
-        IntegerTerm::Constant(_) | IntegerTerm::Machine(_) | IntegerTerm::PureFunctionApplication(_) => {}
+        IntegerTerm::Constant(_)
+        | IntegerTerm::Machine(_)
+        | IntegerTerm::PureFunctionApplication(_) => {}
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1670,7 +1674,9 @@ fn validate_integer_pure_term_seen(
     integer_work(1)?;
     match term {
         IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
-        IntegerTerm::Machine(_) | IntegerTerm::PureFunctionApplication(_) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+        IntegerTerm::Machine(_) | IntegerTerm::PureFunctionApplication(_) => {
+            Err(IntegerPureSubstitutionError::UnsupportedCarrier)
+        }
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
             Ok(())
@@ -2952,7 +2958,9 @@ fn substitute_bitvector_variable_in_spec_function_argument(
     to: &Bitvector32Term,
 ) -> SpecPureFunctionArgument {
     match argument {
-        SpecPureFunctionArgument::Integer(value) => SpecPureFunctionArgument::Integer(value.clone()),
+        SpecPureFunctionArgument::Integer(value) => {
+            SpecPureFunctionArgument::Integer(value.clone())
+        }
         SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
             substitute_bitvector_variable_in_spec_expression(expression, from, to),
         ),
@@ -6205,7 +6213,9 @@ fn substitute_pointer_variable_in_spec_function_argument(
     to: &Pointer,
 ) -> SpecPureFunctionArgument {
     match argument {
-        SpecPureFunctionArgument::Integer(value) => SpecPureFunctionArgument::Integer(value.clone()),
+        SpecPureFunctionArgument::Integer(value) => {
+            SpecPureFunctionArgument::Integer(value.clone())
+        }
         SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
             substitute_pointer_variable_in_spec_expression(expression, from, to),
         ),

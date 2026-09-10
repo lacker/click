@@ -334,7 +334,10 @@ impl<'a> Proof<'a> {
         values: BTreeMap<String, CValue>,
         array_refs: ClickArrayRefs,
         algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
-        integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+        integer_values: &crate::persistent::PersistentMap<
+            String,
+            crate::kernel::SpecIntegerExpression,
+        >,
         pre_state: &CState,
         state: &CState,
         result: Option<&CValue>,
