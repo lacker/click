@@ -49,11 +49,6 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 collect_applied_theorems(&proof_branch.else_tactics, names);
             }
             ProofTactic::Loop(clause) => {
-                for item in &clause.items {
-                    if let SourceProof::Script(tactics) = &item.proof {
-                        collect_applied_theorems(tactics, names);
-                    }
-                }
                 for proof in [
                     clause.initialize_proof.as_ref(),
                     clause.preserve_proof.as_ref(),
@@ -84,13 +79,7 @@ fn collect_function_theorem_dependencies(function: &FunctionBlock, names: &mut B
     for clause in function.ensures() {
         collect_applied_theorems_from_proof(&clause.proof, names);
     }
-    for clause in function.effects() {
-        collect_applied_theorems_from_proof(&clause.proof, names);
-    }
     for clause in function.structural_clauses() {
-        for item in &clause.items {
-            collect_applied_theorems_from_proof(&item.proof, names);
-        }
         for proof in [
             clause.initialize_proof.as_ref(),
             clause.preserve_proof.as_ref(),
@@ -337,9 +326,6 @@ pub(in crate::surface) fn proof_unit_erased_click_file(
         for ensure in &mut function.ensures {
             ensure.proof = SourceProof::Default;
         }
-        for effect in &mut function.effects {
-            effect.proof = SourceProof::Default;
-        }
         for clause in &mut function.structural_clauses {
             // Omitted loop-phase proofs and explicit default/expanded proofs
             // are all syntax for the selected function's proof unit.  Erase
@@ -347,9 +333,6 @@ pub(in crate::surface) fn proof_unit_erased_click_file(
             // omitted phase does not look like an interface change.
             clause.initialize_proof = None;
             clause.preserve_proof = None;
-            for item in &mut clause.items {
-                item.proof = SourceProof::Default;
-            }
         }
     }
     file
@@ -1090,8 +1073,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     &theorem_environment,
                     tactics,
                 )?,
-                SourceProof::Default
-                | SourceProof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
+                SourceProof::Default | SourceProof::Tactic(SmartTactic::Simp) => {
                     return Err(ClickError::new(format!(
                         "grouped proof for `{}` must use `by auto;` or an explicit `by {{ ... }}` proof script",
                         function_block.signature().name()
@@ -1123,19 +1105,6 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                             &theorem_environment,
                         )?
                     }
-                    SourceProof::Tactic(SmartTactic::Frame) => prove_claim_by_frame(
-                        expansion_capture.as_deref_mut(),
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                    )?,
                     SourceProof::Tactic(SmartTactic::Simp) => prove_claim_by_simp(
                         expansion_capture.as_deref_mut(),
                         source_path,
@@ -1254,7 +1223,6 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
-            !has_frontier_loop_rules,
         )?;
         // A resource-bearing contract without an effect clause frames caller
         // memory through the resource transition at each store, but file-scope
@@ -1262,9 +1230,8 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         // the owned footprint (startup resources, owned ranges, and composite
         // bodies). Otherwise a view, or ownership of a neighboring cell, would
         // authorize a store into storage the contract does not own.
-        if function_block.effects().is_empty()
-            && (!contract_function.contract_mutable().is_empty()
-                || contract_function.resource_derived_mutable_frame())
+        if !contract_function.contract_mutable().is_empty()
+            || contract_function.resource_derived_mutable_frame()
         {
             for verified in &function_verified {
                 for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
@@ -1319,8 +1286,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         // `immutable` clause. Resource-derived frames are checked by their
         // resource transition and, for storage, by the owned-footprint check
         // above; they intentionally do not enter this path.
-        if function_block.effects().is_empty()
-            && contract_function.contract_mutable().is_empty()
+        if contract_function.contract_mutable().is_empty()
             && !contract_function.resource_derived_mutable_frame()
         {
             if function_verified.is_empty() {
@@ -1350,12 +1316,11 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     let mut available_pure_facts = certification_facts.clone();
                     available_pure_facts
                         .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-                    prove_effect_clause_exact(
+                    prove_empty_write_footprint(
                         &format!("{}.implicit_effect", function_block.signature.name()),
                         path_index,
                         path.effect_facts(),
                         &available_pure_facts,
-                        &Effect::Immutable,
                         parsed_function.parameters(),
                         &certification_arguments,
                         &certification_state,
@@ -1558,9 +1523,6 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                             VerifiedClaim::Ensure { index, .. } => {
                                 CFunctionContractClaimKey::Ensure(*index)
                             }
-                            VerifiedClaim::Effect { index, .. } => {
-                                CFunctionContractClaimKey::Effect(*index)
-                            }
                         }
                     } else {
                         CFunctionContractClaimKey::BodySafety
@@ -1657,10 +1619,6 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             .and_then(SourceProof::tactics),
         CProofClaim::Ensure(index) => function_block
             .ensures()
-            .get(index)
-            .and_then(|clause| clause.proof().tactics()),
-        CProofClaim::Effect(index) => function_block
-            .effects()
             .get(index)
             .and_then(|clause| clause.proof().tactics()),
     }
@@ -3474,7 +3432,6 @@ pub(in crate::surface) fn build_function_environment(
             predicate_environment,
             click_function_environment,
             resource_environment,
-            false,
         )
         .map_err(|error| {
             ClickError::new(format!(
@@ -3527,11 +3484,11 @@ pub(in crate::surface) fn build_function_environment(
                     click_function_environment,
                     resource_environment,
                 )?;
-                let resource_derived_mutable_frame = function_block.effects().is_empty()
-                    && (!contract_mutable.is_empty()
-                        || function_block.requires().iter().any(|requirement| {
-                            matches!(requirement.inner(), Requirement::Resource(_))
-                        }));
+                let resource_derived_mutable_frame = !contract_mutable.is_empty()
+                    || function_block
+                        .requires()
+                        .iter()
+                        .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
@@ -3581,7 +3538,6 @@ pub(in crate::surface) fn build_function_environment(
             predicate_environment,
             click_function_environment,
             resource_environment,
-            false,
         )?;
         let rule = crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
             ClickError::new(format!(
@@ -4116,10 +4072,6 @@ pub(in crate::surface) fn function_claim_label(
             Some(name) => format!("{function_name}.{name}"),
             None => format!("{function_name}.ensures_{index}"),
         },
-        FunctionClaimRef::Effect(index, effect) => match effect.effect() {
-            Effect::Immutable => format!("{function_name}.immutable_{index}"),
-            Effect::Mutable(_) => format!("{function_name}.mutable_{index}"),
-        },
     }
 }
 
@@ -4235,40 +4187,8 @@ pub(in crate::surface) fn validate_region_proof_clauses(
             CodeRegion::Loop(_) => {}
         }
 
-        for (phase, proof) in [
-            ("initialize", region_proof_clause.initialize_proof()),
-            ("preserve", region_proof_clause.preserve_proof()),
-        ] {
-            let Some(proof) = proof else {
-                continue;
-            };
-            if proof.is_frame_tactic() {
-                return Err(ClickError::new(format!(
-                    "`{phase}` must use `auto`, `simp`, or an explicit proof script"
-                )));
-            }
-        }
-
         validate_loop_phase_proof("initialize", region_proof_clause.initialize_proof())?;
         validate_loop_phase_proof("preserve", region_proof_clause.preserve_proof())?;
-
-        for item in region_proof_clause.items() {
-            if item.is_effect_kind() {
-                if !item.proof().is_auto_or_frame_tactic()
-                    && !matches!(
-                        item.proof(),
-                        SourceProof::Script(tactics)
-                            if ProofCertificate::from_proof_tactics(tactics).is_ok()
-                    )
-                {
-                    return Err(ClickError::new(
-                        "`immutable` and `mutable` region proof clauses must use the default prover, `by auto;`, `by frame;`, or a surface certificate",
-                    ));
-                }
-            } else {
-                debug_assert!(item.proof().is_auto_tactic());
-            }
-        }
     }
     Ok(())
 }

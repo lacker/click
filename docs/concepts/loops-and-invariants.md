@@ -57,9 +57,8 @@ edge. The loop guard is used when proving the recursive argument is
 nonnegative. The numeric function-level measure must remain unchanged by the
 loop body; calls whose descent depends on a changing lexicographic caller
 measure remain unsupported. A read-only structural-resource call inside a
-ranked loop is supported when the parent resource is observed before the loop
-and the loop effect is declared `immutable by frame`; the call must still
-receive a direct contained child. Pointer-valued branch guards are not scalar
+ranked loop is supported when the parent resource is observed before the loop;
+the call must still receive a direct contained child. Pointer-valued branch guards are not scalar
 ranking facts, so the ranking checker checks the scalar measure on every path
 without importing those pointer comparisons. Resource-consuming or mutating
 structural calls across a loop back edge remain tracked in the hard-bucket
@@ -167,24 +166,21 @@ Pointer-writing loops often need both arithmetic invariants and memory facts:
 <!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 loop {
+    owns p[0..n];
     invariant i >= 0;
     invariant i <= n;
-    mutable p[0..n] by frame;
-
-    step {
-        mutable p[i..i + 1] by frame;
-    }
 }
 ```
 
-The arithmetic invariants prove access bounds. The frame clauses summarize what
-memory the loop may write.
+The arithmetic invariants prove access bounds. The loop's owned resources
+summarize what memory the loop may write; with no clause of its own it may
+write exactly what the function owns.
 
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or
 produces a resource, must leave the heap lifetime and resource context
 unchanged on a continuing loop path. Click checks this in the kernel alongside
-the ordinary invariant and effect obligations; a state change is rejected
+the ordinary invariant and frame obligations; a state change is rejected
 rather than silently restored from the loop head. This prevents a later
 iteration from using a block or ownership permission that a previous
 iteration removed. When the post-body condition is provably false, the checked
@@ -220,15 +216,13 @@ Click appends the closer implicitly after the last written tactic. The
 expanded proof contains an explicit `close_invariants` leaf either way, so it
 always appears in an expanded proof.
 
-Successful initialization, preservation, and effect proofs certify and apply a
+Successful initialization and preservation proofs certify and apply a
 verified loop rule. The enclosing proof is already at the loop exit when the
 `loop` tactic returns; there is no later `summarize(loop(N))` step and no need
 to reconstruct a path from function entry.
 
-A loop effect clause may use contextual `by frame` when its exact bounds should
-be derived automatically. Explicit phase and effect tactics keep their own
-source locations for profiling and expansion. Omitted phase and effect
-automation is attributed to the `loop` keyword.
+Explicit phase tactics keep their own source locations for profiling and
+expansion. Omitted phase automation is attributed to the `loop` keyword.
 
 Most simple proofs avoid these details. Larger proofs need them whenever
 the loop summary is the central part of the proof.

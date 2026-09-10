@@ -55,8 +55,8 @@ the one execution transition that fails.
 | `execute()` | smart | From a live frontier, execute to function exit, following verified loop summaries and planning explicit branch alternatives. | A path that needs an unavailable rule or proof makes the tactic fail without a partial result. Click checks the complete planned execution; expansion emits explicit execution steps, and profiling attributes the smart plan and leaves. | [`tactic_execute.md`](https://github.com/lacker/click/blob/master/mdtests/tactic_execute.md) |
 | `execute_until(statement(N))` | smart | From a live frontier, execute forward to the selected statement entry without creating a proof interface. | A backward, unreachable, branch-hidden, or function-exit target fails. Click checks every crossed transition; expansion prints those steps, and profiling reports the selected site. | [`execute_until_current_frontier.md`](https://github.com/lacker/click/blob/master/mdtests/execute_until_current_frontier.md) |
 | `branch { [ensuring { ... }] then { ... } else { ... } }` | control | At a C `if` frontier, prove every feasible arm and join nonreturning arms into one continuation. The optional interface exports changed facts and resources. | A non-`if` frontier, overshot arm, unproved interface item, or nondeterministic join fails. Click follows the spelled arms and interface; expansion recurses into smart descendants, and profiling classifies those descendants. | [`frontier_branch.md`](https://github.com/lacker/click/blob/master/mdtests/frontier_branch.md) |
-| `loop [as name] { ... }` | control | At a C loop frontier, prove initialization and one arbitrary iteration, construct the loop rule, and advance to its abstract exit. | A non-loop frontier or failed invariant, effect, or decrease obligation fails. Click checks the structural rule; expansion materializes omitted phase proofs, and profiling reports smart descendants and simple leaves. | [`count_to_n_loop_invariant.md`](https://github.com/lacker/click/blob/master/mdtests/count_to_n_loop_invariant.md) |
-| `step(Contract)` | simple | At a function-pointer call frontier, select an established named contract's ownership transition and mutable footprint for this call only. | Missing membership, unmet preconditions, or a non-call frontier fails without fallback. Other applicable resource-independent guarantees constrain the same result and memory. Expansion preserves the selection. | [`c_step_contract_buffered.md`](https://github.com/lacker/click/blob/master/mdtests/c_step_contract_buffered.md) |
+| `loop [as name] { ... }` | control | At a C loop frontier, prove initialization and one arbitrary iteration, construct the loop rule, and advance to its abstract exit. | A non-loop frontier or failed invariant, frame, or decrease obligation fails. Click checks the structural rule; expansion materializes omitted phase proofs, and profiling reports smart descendants and simple leaves. | [`count_to_n_loop_invariant.md`](https://github.com/lacker/click/blob/master/mdtests/count_to_n_loop_invariant.md) |
+| `step(Contract)` | simple | At a function-pointer call frontier, select an established named contract's ownership transition and owned footprint for this call only. | Missing membership, unmet preconditions, or a non-call frontier fails without fallback. Other applicable resource-independent guarantees constrain the same result and memory. Expansion preserves the selection. | [`c_step_contract_buffered.md`](https://github.com/lacker/click/blob/master/mdtests/c_step_contract_buffered.md) |
 | `step(Contract(...))` | simple | Explicitly apply a named contract with its declared proof arguments. | Opaque resource arguments are checked for arity, ownership, family, C argument agreement, and duplicate identities. Returned fields are constrained only by the contract. No defaults or inferred arguments. | [`contract_resource_call_transport.md`](https://github.com/lacker/click/blob/master/mdtests/contract_resource_call_transport.md) |
 
 The boundaries are intentional: `step` is one concrete transition, `branch`
@@ -160,7 +160,7 @@ questions. `have` is always a control container because it owns a nested goal.
 Its selectable source site is an expandable-automation site for a supported
 smart body, a simple-operation site for a nonempty entirely simple body, and a
 control-container site otherwise. A `loop` is likewise intrinsically control;
-when a phase or effect proof is omitted, the `loop` keyword is the source site
+when a phase proof is omitted, the `loop` keyword is the source site
 that owns the generated automation. Profiling renders those site kinds as
 SMART, SIMPLE, and CONTROL, while smart-site discovery and expansion select
 only expandable-automation sites.
@@ -178,12 +178,10 @@ current surface form with an explicit `transport`; simple `rewrite` checking
 never searches for an equivalent equality. Expansion and audit verify the
 complete rewritten surface proof through the ordinary entry point.
 
-## Effects, resources, and snapshots
+## Resources and snapshots
 
 | Surface form | Class | Valid state and transition | Failure, checking, and tools | Verified success |
 | --- | --- | --- | --- | --- |
-| `frame()` / `frame(region)` | smart | On an effect or frame goal, select current range and effect premises and close the applicable condition. | A bounded premise-selection miss or real write outside the frame fails. Click checks the selected frame operations; expansion adds `using`, and profiling reports search and leaves. | [`fill_n_mutable_segment.md`](https://github.com/lacker/click/blob/master/mdtests/fill_n_mutable_segment.md) |
-| `frame() using { P; ... }` | simple | Check the current frame condition from exactly the listed premises. The region form and an empty block are valid. | Missing coverage or separation evidence fails. Click performs no search; expansion is unchanged, and profiling charges the explicit region and premises. | [`conditional_ensure_modus_ponens.md`](https://github.com/lacker/click/blob/master/mdtests/conditional_ensure_modus_ponens.md) |
 | `transport(P, Q)` | smart | When exact source `P` is available, derive target `Q` at another certified snapshot by selecting frame evidence. | Unrelated propositions, unsafe writes, or a bounded evidence miss fail. Click checks the chosen transport; expansion adds `using`, and profiling reports search and leaves. | [`simple_statement_step_explicit_transport.md`](https://github.com/lacker/click/blob/master/mdtests/simple_statement_step_explicit_transport.md) |
 | `transport(P, Q) using { R; ... }` | simple | Derive target proposition `Q` from exact source `P` using only the listed snapshot and frame evidence. | An absent source, mismatched target, or insufficient evidence fails. Click checks that transport only; expansion is unchanged, and profiling charges the named evidence. | [`field_derived_precise_effect_after_metadata_write.md`](https://github.com/lacker/click/blob/master/mdtests/field_derived_precise_effect_after_metadata_write.md) |
 | `unfold(name)` | simple | Replace an exact predicate fact, or a current predicate goal, with one definition-body layer. | An unknown predicate, absent fact, or inapplicable goal fails. Click opens exactly the named predicate layer; expansion is unchanged, and profiling charges the produced proposition. | [`sorted_predicate.md`](https://github.com/lacker/click/blob/master/mdtests/sorted_predicate.md) |
@@ -197,10 +195,6 @@ complete rewritten surface proof through the ordinary entry point.
 Predicate calls are opaque to framing until their definitions are unfolded.
 To carry such a fact across C execution, run `unfold(name)` before the relevant
 steps and transport the unfolded definition.
-
-`by frame;` is sugar for the same bare smart `frame()` at the same frontier. It
-does not execute C. A whole-function explicit proof normally writes
-`execute(); frame();`; `by auto;` may orchestrate both operations.
 
 ## Expansion, profiling, and audit
 

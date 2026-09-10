@@ -961,10 +961,6 @@ pub(super) fn lower_certified_frame_path_tactics(
                     }));
                 }
             }
-            tactics.push(ProofTactic::FrameUsing {
-                region: None,
-                premises,
-            });
             Ok(tactics)
         })
         .collect()
@@ -1442,12 +1438,7 @@ pub(super) fn append_proof_step_for_operation(
                     }
                 }
                 let mut invariants = Vec::new();
-                for invariant in loop_clause
-                    .items()
-                    .iter()
-                    .filter(|item| item.kind() == StructuralItemKind::Invariant)
-                    .filter_map(StructuralItem::proposition)
-                {
+                for invariant in loop_clause.items().iter().map(StructuralItem::proposition) {
                     append_surface_conjuncts(invariant, &mut invariants);
                 }
                 for invariant in invariants {
@@ -1995,7 +1986,6 @@ fn have_proof_is_smart_simp(proof: &SourceProof) -> bool {
             tactics.as_slice(),
             [ProofTactic::Simp] | [ProofTactic::SimpUsing(_)]
         ),
-        SourceProof::Tactic(SmartTactic::Frame) => false,
     }
 }
 

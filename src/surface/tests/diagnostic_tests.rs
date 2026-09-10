@@ -81,7 +81,6 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
         int32 push(struct vector* owner, int32 value) {
             requires owner->len < owner->cap;
             owns storage(owner);
-            mutable owner->len, owner->data[owner->len..owner->len + 1];
             ensures result == old(owner->len) + 1;
             ensures owner->len == old(owner->len) + 1;
             ensures 1 <= owner->len;
@@ -91,14 +90,12 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
             unfold(storage(owner));
             execute();
             fold(storage(owner));
-            frame();
             simp();
         }
 
         int32 caller(struct vector* owner, int32 value) {
             requires owner->len < owner->cap;
             consumes allocated(owner);
-            mutable owner->len, owner->data[owner->len..owner->len + 1];
             produces allocated(owner);
             ensures result == old(owner->len) + 1;
             ensures result == old(owner->len) + 1 or result == 0;
@@ -111,7 +108,6 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
             have 1 <= owner->cap by simp;
             fold(allocated(owner));
             execute();
-            frame();
             simp();
         }
     "#;

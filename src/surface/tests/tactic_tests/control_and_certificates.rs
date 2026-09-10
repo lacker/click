@@ -704,32 +704,12 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::FoldResource)
     ));
     assert!(matches!(
-        ProofTactic::FrameUsing {
-            region: None,
-            premises: Vec::new(),
-        }
-        .class(),
-        TacticClass::Simple(SimpleTactic::Frame)
-    ));
-    assert!(matches!(
-        ProofTactic::FrameUsing {
-            region: None,
-            premises: Vec::new(),
-        }
-        .class(),
-        TacticClass::Simple(SimpleTactic::Frame)
-    ));
-    assert!(matches!(
         ProofTactic::CloseInvariants.class(),
         TacticClass::Smart(SmartTacticKind::CloseInvariants)
     ));
     assert!(matches!(
         ProofTactic::Mark("before_write".to_string()).class(),
         TacticClass::Simple(SimpleTactic::Mark)
-    ));
-    assert!(matches!(
-        ProofTactic::SmartFrame(None).class(),
-        TacticClass::Smart(SmartTacticKind::Frame)
     ));
     assert!(matches!(
         ProofTactic::Step.class(),
@@ -1028,7 +1008,6 @@ const ORDERED_PAIR_CLICK: &str = r#"
     void set_pair(struct pair* pair, int32 bound) {
         requires 0 <= bound;
         owns object(pair);
-        mutable pair->low, pair->high;
 
         ensures ordered_pair(pair);
     } by {
@@ -1037,7 +1016,6 @@ const ORDERED_PAIR_CLICK: &str = r#"
             unfold(ordered_pair);
             simp();
         }
-        frame();
         simp();
     }
 "#;
@@ -1093,18 +1071,15 @@ fn fixed_state_have_certifies_a_post_call_fact_across_a_later_store() {
 
         void reset(struct pair* pair) {
             owns object(pair);
-            mutable pair->low;
 
             ensures pair->low == 0;
         } by {
             execute();
-            frame();
             simp();
         }
 
         void touch(struct pair* pair) {
             owns object(pair);
-            mutable pair->low, pair->high;
 
             ensures pair->low == 0;
         } by {
@@ -1112,7 +1087,6 @@ fn fixed_state_have_certifies_a_post_call_fact_across_a_later_store() {
             step();
             have pair->low == 0 by simp;
             step();
-            frame();
             simp();
         }
     "#;
@@ -1156,13 +1130,11 @@ fn grouped_outcome_simp_splits_an_unfold_active_conjunction_ensure() {
             requires ordered_pair(pair);
             requires pair->low < pair->high;
             owns object(pair);
-            mutable pair->low;
 
             ensures ordered_pair(pair);
         } by {
             unfold(ordered_pair);
             execute();
-            frame();
             simp();
         }
     "#;

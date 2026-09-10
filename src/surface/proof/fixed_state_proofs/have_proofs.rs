@@ -1112,11 +1112,6 @@ pub(in crate::surface::proof) fn prove_pure_proposition_in_state(
             }],
             true,
         ),
-        SourceProof::Tactic(SmartTactic::Frame) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `frame` is not available in a pure proof"
-            )));
-        }
     };
     let mut proven_fact = None;
     for proof_case in proof_cases {

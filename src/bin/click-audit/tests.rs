@@ -465,16 +465,13 @@ fn branched_expansion_reaches_the_audit_fixed_point() {
     let click_source = r#"verifying "write_selected.c";
 int32 write_selected(int32 p[2], int32 flag) {
     consumes p[0..2];
-    mutable p[0..2];
     ensures result == 0 or result == 1;
 } by {
     execute();
     if result == 0 {
         have result + 1 == 1 by simp;
-        frame();
     } else {
         have result - 1 == 0 by simp;
-        frame();
     }
     simp();
 }

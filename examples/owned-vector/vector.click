@@ -184,7 +184,6 @@ int32 vector_grow(struct vector* owner) {
 
     requires owner->cap <= 536870910;
     consumes allocated_vector(owner);
-    mutable owner->data, owner->cap;
     produces allocated_vector(owner);
     ensures result == 0 or result == 1;
     ensures owner->len == entry_length;
@@ -331,8 +330,6 @@ int32 vector_grow(struct vector* owner) {
             assumption();
         }
         fold(allocated_vector(owner));
-        frame() using {
-        }
         have result == 0 by {
             normalize();
         }
@@ -400,8 +397,6 @@ int32 vector_grow(struct vector* owner) {
             assumption();
         }
         fold(allocated_vector(owner));
-        frame() using {
-        }
         have result == 1 by {
             normalize();
         }
@@ -433,7 +428,6 @@ int32 vector_grow(struct vector* owner) {
 int32 vector_push(struct vector* owner, int32 value) {
     requires owner->len < owner->cap;
     owns vector_storage(owner);
-    mutable owner->len, owner->data[owner->len..owner->len + 1];
     ensures result == old(owner->len) + 1;
     ensures owner->len == old(owner->len) + 1;
     ensures owner->data[old(owner->len)] == value;
@@ -461,11 +455,6 @@ int32 vector_push(struct vector* owner, int32 value) {
             at(function.entry, owner->len) < at(function.entry, owner->cap);
         }
         assumption();
-    }
-    frame() using {
-        at(statement(5).entry, owner->len) < at(statement(5).entry, owner->cap);
-        at(function.entry, owner->len) <= at(function.entry, owner->len);
-        at(function.entry, owner->len) < at(function.entry, (owner->len + 1));
     }
     have result == (old(owner->len) + 1) by {
         normalize();
@@ -625,6 +614,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 at(function.entry, owner->cap) < 2147483647;
             }
             have owner->len < owner->cap by {
+                rewrite(owner->len == old(owner->len));
                 rewrite(owner->cap == (old(owner->cap) + 1));
                 rewrite(at(function.entry, owner->len == owner->cap));
                 assumption();
@@ -641,12 +631,21 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             have owner->len <= owner->cap by {
                 assumption();
             }
+            have owner->cap == at(statement(8).entry, owner->cap) by {
+                assumption();
+            }
+            have 1 <= at(statement(8).entry, owner->cap) by {
+                assumption();
+            }
+            have at(statement(8).entry, owner->cap) <= 536870911 by {
+                assumption();
+            }
             have 1 <= owner->cap by {
-                rewrite(owner->cap == at(statement(6).exit, owner->cap));
+                rewrite(owner->cap == at(statement(8).entry, owner->cap));
                 assumption();
             }
             have owner->cap <= 536870911 by {
-                rewrite(owner->cap == at(statement(6).exit, owner->cap));
+                rewrite(owner->cap == at(statement(8).entry, owner->cap));
                 assumption();
             }
             fold(allocated_vector(owner));
@@ -667,6 +666,14 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             }
             have result == 0 implies owner->data == old(owner->data) by {
                 simp();
+            }
+            have at(statement(8).entry, owner->len) == old(owner->len) by {
+                assumption();
+            }
+            have owner->len == (old(owner->len) + 1) by {
+                rewrite(owner->len == (at(statement(8).entry, owner->len) + 1));
+                rewrite(at(statement(8).entry, owner->len) == old(owner->len));
+                normalize();
             }
             have result == 1 implies owner->len == (old(owner->len) + 1) by {
                 intro();
@@ -690,6 +697,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 assumption();
             }
             have owner->data[old(owner->len)] == value by {
+                rewrite(old(owner->len) == at(statement(8).entry, owner->len));
                 assumption();
             }
             have result == 1 implies owner->data[old(owner->len)] == value by {

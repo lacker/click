@@ -159,7 +159,6 @@ impl<S> DerefMut for OutcomeProofState<S> {
 pub(crate) struct FunctionOutcomeObligation<S> {
     pub(crate) path_index: usize,
     pub(crate) selection: EffectGoalSelection,
-    pub(crate) checked_effects: Arc<Vec<usize>>,
     pub(crate) data: S,
 }
 
@@ -168,7 +167,6 @@ impl<S> FunctionOutcomeObligation<S> {
         Self {
             path_index,
             selection,
-            checked_effects: Arc::new(Vec::new()),
             data,
         }
     }
@@ -183,38 +181,4 @@ pub(crate) enum ProofObligation<P, O> {
     Proposition(PropositionObligation<P, O>),
     Frontier(FrontierObligation),
     FunctionOutcome(FunctionOutcomeObligation<O>),
-}
-
-/// Private authority that ordered outcome finalization may consume without
-/// proving the same function effect a second time.
-///
-/// Only checked proof frame operations construct this value, after checking
-/// every selected effect against the outcome or outcomes they own.
-#[derive(Clone)]
-pub(crate) struct CheckedFrameAuthority {
-    effect_indices: Arc<Vec<usize>>,
-}
-
-impl CheckedFrameAuthority {
-    pub(crate) fn new(effect_indices: Vec<usize>) -> Self {
-        Self {
-            effect_indices: Arc::new(effect_indices),
-        }
-    }
-
-    pub(crate) fn contains(&self, effect_index: usize) -> bool {
-        self.effect_indices.binary_search(&effect_index).is_ok()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.effect_indices.is_empty()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.effect_indices.len()
-    }
-
-    pub(crate) fn matches(&self, effect_indices: &[usize]) -> bool {
-        self.effect_indices.as_slice() == effect_indices
-    }
 }

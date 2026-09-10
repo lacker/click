@@ -83,10 +83,11 @@ allocation/resource composition rather than capacity-policy arithmetic. It is
 not a geometric-growth performance example. `allocated_vector_push` requires
 `cap <= 536870910`, matching the helper's checked one-slot growth boundary.
 
-Functions with several effects, produced resources, and pure postconditions
-use one trailing grouped proof. Click executes each function body once and
+Functions with several produced resources and pure postconditions use one
+trailing grouped proof. Click executes each function body once and
 checks every contract claim from that shared proof state.
 
-The leaf-operation contracts state precise mutation footprints and memory
-postconditions. The pipeline can therefore rely on a setter's result without
-seeing its implementation, while unrelated vector metadata remains framed.
+The leaf-operation contracts state their write footprint as ownership and back
+it with memory postconditions. The pipeline can therefore rely on a setter's
+result without seeing its implementation, while unrelated vector metadata
+remains framed.

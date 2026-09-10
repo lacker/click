@@ -186,11 +186,6 @@ fn expand_declared_resources_in_function_block(
         .drain(..)
         .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
-    function.effects = function
-        .effects
-        .drain(..)
-        .map(|clause| expand_declared_resource_effect_clause(clause, &resource_definitions))
-        .collect::<Result<Vec<_>, _>>()?;
     function.constructs = function
         .constructs
         .drain(..)
@@ -325,14 +320,6 @@ fn expand_declared_resource_ensure_clause(
     Ok(clause)
 }
 
-fn expand_declared_resource_effect_clause(
-    mut clause: EffectClause,
-    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
-) -> Result<EffectClause, ClickError> {
-    clause.proof = expand_declared_resource_proof(clause.proof, resource_definitions)?;
-    Ok(clause)
-}
-
 fn expand_declared_resource_structural_clause(
     mut clause: StructuralClause,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
@@ -364,13 +351,7 @@ fn expand_declared_resource_structural_item(
     mut item: StructuralItem,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<StructuralItem, ClickError> {
-    item.claim = match item.claim {
-        StructuralItemClaim::Proposition(proposition) => StructuralItemClaim::Proposition(
-            expand_declared_resource_proposition(proposition, resource_definitions)?,
-        ),
-        StructuralItemClaim::Effect(effect) => StructuralItemClaim::Effect(effect),
-    };
-    item.proof = expand_declared_resource_proof(item.proof, resource_definitions)?;
+    item.claim = expand_declared_resource_proposition(item.claim, resource_definitions)?;
     Ok(item)
 }
 
@@ -409,7 +390,6 @@ fn expand_declared_resource_tactic(
             expand_declared_resource_tactic_with_expressions(tactic, resource_definitions)
         }
         tactic @ (ProofTactic::ArithmeticUsing(_)
-        | ProofTactic::FrameUsing { .. }
         | ProofTactic::Contradiction(_)
         | ProofTactic::Extract(_)
         | ProofTactic::Rewrite(_)
@@ -548,13 +528,6 @@ fn expand_declared_resource_tactic_with_propositions(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<_, _>>()?,
         )),
-        ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
-            region,
-            premises: premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
         ProofTactic::Contradiction(proposition) => Ok(ProofTactic::Contradiction(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),

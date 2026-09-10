@@ -300,14 +300,6 @@ mod source_execution_layout_tests {
     }
 }
 
-pub(in crate::surface) fn c0_loop_modified_locals(
-    statement: &syntax::C0Statement,
-) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    collect_c0_loop_modified_locals(statement, &mut names);
-    names
-}
-
 pub(in crate::surface) fn collect_c0_loop_modified_locals(
     statement: &syntax::C0Statement,
     names: &mut BTreeSet<String>,

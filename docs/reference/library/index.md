@@ -1495,7 +1495,6 @@ extern uint8* memcpy(uint8 destination[], uint8 source[], int32 bytes) {
     requires loadable(source[0..bytes]);
     owns destination[0..bytes];
     requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
-    mutable destination[0..bytes];
     ensures result == destination;
     ensures bytes_equal(destination, 0, old(source), 0, bytes);
 }
@@ -1515,7 +1514,6 @@ extern int32 memcmp(uint8 left[], uint8 right[], int32 bytes) {
     requires 0 <= bytes;
     requires loadable(left[0..bytes]);
     requires loadable(right[0..bytes]);
-    immutable;
     ensures result == 0 implies bytes_equal(left, 0, right, 0, bytes);
     ensures result != 0 implies not bytes_equal(left, 0, right, 0, bytes);
 }
@@ -1536,7 +1534,6 @@ extern uint8* memset(uint8 destination[], int32 value, int32 bytes) {
     requires value <= 255;
     requires 0 <= bytes;
     owns destination[0..bytes];
-    mutable destination[0..bytes];
     ensures result == destination;
     ensures (0..bytes).all(|k| {
         destination[k] == value
@@ -1556,7 +1553,6 @@ value and returns the destination pointer.
 ```click
 extern int32 strlen(uint8 bytes[]) {
     requires cstr_readable(bytes);
-    immutable;
     ensures 0 <= result;
     ensures loadable(bytes[0..result + 1]);
     ensures forall (k: int32) {

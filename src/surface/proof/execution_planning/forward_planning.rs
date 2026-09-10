@@ -120,7 +120,6 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             let mut iteration_contexts = Vec::new();
             let mut initialization_path_certificates = Vec::new();
             let mut preservation_path_certificates = Vec::new();
-            let mut effect_path_certificates = BTreeMap::<usize, Vec<PathCertificate>>::new();
             let mut final_exit_candidates_by_context = Vec::with_capacity(contexts.len());
             for context in &contexts {
                 let mut final_exit_candidates = Vec::new();
@@ -216,7 +215,6 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             &preservation,
                             &pure_facts,
                             invariant_checks,
-                            effect_checks,
                             condition,
                             body,
                             *do_while,
@@ -229,16 +227,6 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             case_offsets: None,
                             certificate: result.certificate,
                         });
-                        for (item_index, certificate) in result.effect_certificates {
-                            effect_path_certificates
-                                .entry(item_index)
-                                .or_default()
-                                .push(PathCertificate {
-                                    case_path: context.case_path.clone(),
-                                    case_offsets: None,
-                                    certificate,
-                                });
-                        }
                     }
                     iteration_contexts.push(PlanningExecutionContext {
                         state: preservation.state().clone(),
@@ -362,57 +350,6 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     );
                 }
             }
-            for (item_index, paths) in effect_path_certificates {
-                let site = ProofSite::StructuralItem {
-                    function_name: environment.function_block.signature().name().to_string(),
-                    region: CodeRegion::Loop(loop_index),
-                    item_index,
-                    kind: environment
-                        .function_block
-                        .structural_clauses()
-                        .iter()
-                        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-                        .and_then(|clause| clause.items().get(item_index))
-                        .map(StructuralItem::kind)
-                        .ok_or_else(|| {
-                            ClickError::new(format!(
-                                "`{}.loop({loop_index})`: certified an effect for item {item_index}, which the loop region does not declare",
-                                environment.function_block.signature().name()
-                            ))
-                        })?,
-                };
-                let certificate = merge_path_aligned_certificates(&site.description(), paths)?;
-                if let Some(certificates) = environment.frontier_loop_certificates {
-                    certificates
-                        .borrow_mut()
-                        .effects
-                        .insert(item_index, certificate.clone());
-                }
-                if let Some(source) = environment.frontier_loop_source {
-                    let capture_site = source.proof_site.as_ref().unwrap_or(&site);
-                    let source_index = source
-                        .effect_source_indices
-                        .get(&item_index)
-                        .copied()
-                        .unwrap_or(source.loop_source_index);
-                    if selected_tactic_index_for_site(expansion_capture.as_deref(), capture_site)
-                        == Some(source_index)
-                    {
-                        record_proof_site_tactic_expansion(
-                            expansion_capture.as_deref_mut(),
-                            capture_site,
-                            source_index,
-                            &certificate.to_proof_tactics(),
-                        );
-                    }
-                }
-                finish_proof_site_expansion_capture(
-                    expansion_capture.as_deref_mut(),
-                    &site,
-                    &certificate,
-                );
-            }
-
             *next_statement_index = source_region.continuation_node;
 
             advance_execution_proof_statement(
@@ -593,7 +530,6 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
                 root.try_simp_closure()?
             }
             SourceProof::Script(tactics) => root.try_linear_script(tactics)?,
-            SourceProof::Tactic(SmartTactic::Frame) => None,
         };
         if let Some(checked) = checked {
             if !checked.is_complete() {
@@ -759,22 +695,6 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
             "`{claim_label}` produced an invalid fixed-state/pure certificate: {error:?}"
         ))
     })?;
-    if matches!(proof_site, ProofSite::StructuralItem { .. })
-        && let SourceProof::Script(source_tactics) = proof
-    {
-        let source_index = selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site);
-        if let Some(source_index) = source_index
-            && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
-            && source_index <= certificate.to_proof_tactics().len()
-        {
-            record_proof_site_tactic_expansion(
-                expansion_capture.as_deref_mut(),
-                proof_site,
-                source_index,
-                &certificate.to_proof_tactics()[source_index..],
-            );
-        }
-    }
     Ok(PlannedPointPureGoal {
         fact,
         certificate,
@@ -941,12 +861,7 @@ fn advance_execution_proof_statement(
                                         | Proposition::CHeapAllocationFreed { .. }
                                 )
                         });
-                        for surface in loop_clause
-                            .items()
-                            .iter()
-                            .filter(|item| item.kind() == StructuralItemKind::Invariant)
-                            .filter_map(StructuralItem::proposition)
-                        {
+                        for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
                             let target = invariant_targets.next().ok_or_else(|| {
                                 ClickError::new(format!(
                                     "execution proof traversal loop({loop_index}) omitted an exported fact for an invariant"

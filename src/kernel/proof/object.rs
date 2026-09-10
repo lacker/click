@@ -1288,14 +1288,6 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             .execution
             .as_deref()
             .ok_or(ExecutionUpdateError::MissingExecution)?;
-        if execution
-            .core
-            .loop_effect_goal
-            .as_ref()
-            .is_some_and(|goal| goal.closed)
-        {
-            return Err(ExecutionUpdateError::ClosedLoopEffect);
-        }
         Ok((branch, execution))
     }
 
@@ -1451,18 +1443,8 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
             return Err(ExecutionUpdateError::NotFrontier);
         }
-        let execution = branch
-            .state
-            .execution
-            .as_deref()
-            .ok_or(ExecutionUpdateError::MissingExecution)?;
-        if !execution
-            .core
-            .loop_effect_goal
-            .as_ref()
-            .is_some_and(|goal| goal.closed)
-        {
-            return Err(ExecutionUpdateError::LoopEffectNotClosed);
+        if branch.state.execution.is_none() {
+            return Err(ExecutionUpdateError::MissingExecution);
         }
         Ok(Self::new(
             ProofState {
@@ -1498,15 +1480,6 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         }
         if branch.state.execution.is_none() {
             return Err(ExecutionUpdateError::MissingExecution);
-        }
-        if discharge_closed_loop_effect
-            && !execution
-                .core
-                .loop_effect_goal
-                .as_ref()
-                .is_some_and(|goal| goal.closed)
-        {
-            return Err(ExecutionUpdateError::LoopEffectNotClosed);
         }
         let mut open_branches =
             self.state

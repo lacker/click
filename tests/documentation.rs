@@ -690,8 +690,6 @@ fn tactic_form_inventory_is_bidirectional() {
         .collect::<Vec<_>>();
     for form in PUBLIC_TACTIC_FORMS {
         let matches_surface = |surface: &str| match form.id {
-            "frame" => surface == "`frame()` / `frame(region)`",
-            "frame-using" => surface == "`frame() using { P; ... }`",
             "apply-induction" => surface == "`apply(ih(m))`",
             "apply-induction-using" => surface == "`apply(ih(m)) using { P; ... }`",
             "apply-theorem" => surface == "`apply(theorem(args))`",

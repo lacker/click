@@ -247,41 +247,6 @@ impl<'a> ProofScope<'a> {
         self.body.certificate_since(checkpoint)
     }
 
-    /// Applies an already-expanded branch-shaped contextual frame through the
-    /// same typed outcome-partition plan used by smart frame search. The
-    /// source driver supplies only Surface operations; no certificate is
-    /// constructed or interpreted at this compatibility boundary.
-    pub(in crate::surface::proof) fn apply_contextual_frame_tactics_at(
-        &self,
-        condition: ClickProposition,
-        then_tactics: Vec<ProofTactic>,
-        else_tactics: Vec<ProofTactic>,
-        tactic_index: usize,
-        source_index: usize,
-    ) -> Result<Option<Self>, ClickError> {
-        let Ok(then_leaf) = ContextualFrameLeafPlan::from_surface_tactics(then_tactics) else {
-            return Ok(None);
-        };
-        let Ok(else_leaf) = ContextualFrameLeafPlan::from_surface_tactics(else_tactics) else {
-            return Ok(None);
-        };
-        let plan = ContextualFramePlan::If {
-            condition,
-            then_plan: Box::new(ContextualFramePlan::Leaf(then_leaf)),
-            else_plan: Box::new(ContextualFramePlan::Leaf(else_leaf)),
-        };
-        let body = self.body.apply_contextual_frame_plan(
-            &plan,
-            Some(ProofStepOrigin {
-                tactic_index,
-                source_index,
-            }),
-        )?;
-        let mut next = self.clone();
-        next.body = body;
-        Ok(Some(next))
-    }
-
     /// Applies a source-owned proof step inside the scope. Terminal steps use
     /// the site only to schedule already-checked ordered outcome work.
     pub(in crate::surface::proof) fn apply_step_at(
@@ -679,53 +644,6 @@ impl<'a> ProofScope<'a> {
                 depth: body.node.depth,
             }),
         })
-    }
-
-    /// Reports whether a terminal frame step can use the checked Proof-owned
-    /// operation. Unsupported forms leave this scope untouched so a larger
-    /// transactional Proof attempt can decline without observing a partial
-    /// transition.
-    pub(in crate::surface::proof) fn supports_checked_frame_using(
-        &self,
-        region: Option<&CodeRegionRef>,
-        premises: &[ClickProposition],
-    ) -> Result<bool, ClickError> {
-        self.body
-            .supports_checked_execution_frame_using(region, premises)
-    }
-
-    /// Searches for a frame certificate and submits the selected candidate to
-    /// the owned Proof exactly once. The cheap exact-empty candidate goes
-    /// first; a miss invokes contextual derivation search, which may add
-    /// explicit checked `have` steps before the terminal `FrameUsing`.
-    pub(in crate::surface::proof) fn try_smart_frame_at(
-        &self,
-        region: Option<&CodeRegionRef>,
-        tactic_index: usize,
-        source_index: usize,
-    ) -> Result<Option<Self>, ClickError> {
-        let checkpoint = self.body.checkpoint();
-        let Some(body) = self
-            .body
-            .try_smart_frame_at(region, tactic_index, source_index)?
-        else {
-            return Ok(None);
-        };
-        let candidate = body.certificate_since(&checkpoint)?;
-        let mut next = self.clone();
-        for step in candidate.steps() {
-            if let ProofStep::Have { proposition, .. } = step {
-                let fact = body.lower_surface_proposition(
-                    proposition,
-                    "smart frame intermediate proposition",
-                )?;
-                if !next.introduced_facts.contains(&fact) {
-                    next.introduced_facts.push(fact);
-                }
-            }
-        }
-        next.body = body;
-        Ok(Some(next))
     }
 
     /// Runs the narrow linear `execute` search inside this scope.

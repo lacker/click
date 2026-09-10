@@ -221,7 +221,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
         int32 example(int32 owner[], int32 data[]) {
             ensures result == 0;
         } by {
-            frame() using {
+            simp() using {
                 loadable(old(owner[0..6]));
                 load_int32_pointer((owner + 2)) == data;
                 separate(
@@ -238,9 +238,10 @@ fn parses_expanded_typed_loads_and_old_loadability() {
     else {
         panic!("expected a proof script");
     };
-    let ProofTactic::FrameUsing { premises, .. } = &tactics[0] else {
-        panic!("expected a frame() using tactic");
+    let ProofTactic::SimpUsing(simp_using) = &tactics[0] else {
+        panic!("expected a simp() using tactic");
     };
+    let premises = &simp_using.premises;
     assert!(matches!(
         &premises[0],
         ClickProposition::Loadable { segment }
@@ -2072,7 +2073,6 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
             int32 json_object_get_ref_count(struct json_object* obj) {
                 requires loadable(obj->ref_count);
                 ensures returns_ref_count: result == obj->ref_count by auto;
-                immutable by frame;
             }
         "#;
     let file = parse(source).expect("pilot struct pointer signature should parse");
@@ -2202,11 +2202,9 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
         int32 write_nested(struct node* root) {
             views root->child;
             consumes root->child->value;
-            mutable root->child->value;
             ensures result == 7;
         } by {
             execute();
-            frame();
             simp();
         }
     "#;
@@ -2217,11 +2215,7 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
     else {
         panic!("expected a nested owned field requirement")
     };
-    let Effect::Mutable(segments) = file.function_blocks()[0].effects()[0].effect() else {
-        panic!("expected a nested mutable field effect")
-    };
-
-    for segment in [required, &segments[0]] {
+    for segment in [required] {
         assert_eq!(segment.start, CExpression::Value(int32(1)));
         assert_eq!(segment.end, CExpression::Value(int32(2)));
         assert!(matches!(
@@ -2341,22 +2335,25 @@ fn aggregate_resource_places_expand_to_typed_nested_leaf_segments() {
 }
 
 #[test]
-fn parses_pilot_struct_field_mutable_effect() {
+fn parses_pilot_struct_field_owned_segment() {
     let source = r#"
             verifying "json_object_set_ref_count.c";
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
                 requires loadable(obj->ref_count);
-                mutable obj->ref_count by frame;
+                owns obj->ref_count;
                 ensures returns_count: result == count by auto;
             }
         "#;
-    let file = parse(source).expect("pilot struct field effect should parse");
+    let file = parse(source).expect("pilot struct field ownership should parse");
     let function = &file.function_blocks()[0];
 
+    let Requirement::Resource(ResourceClause::OwnMemory(segment)) = &function.requires()[1] else {
+        panic!("expected an owned struct-field segment")
+    };
     assert_eq!(
-        function.effects()[0].effect(),
-        &Effect::Mutable(vec![ContractSegment {
+        segment,
+        &ContractSegment {
             state: ContractSegmentState::Current,
             base: CExpression::Variable("obj".to_string()),
             start: CExpression::Value(int32(0)),
@@ -2366,7 +2363,7 @@ fn parses_pilot_struct_field_mutable_effect() {
                 element_width: None,
                 element_type: None,
             },
-        }])
+        }
     );
 }
 
@@ -2376,7 +2373,7 @@ fn rejects_legacy_mutable_field_effect_spelling() {
             verifying "json_object_set_ref_count.c";
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
-                mutable_field(obj->ref_count) by frame;
+                mutable_field(obj->ref_count);
                 ensures returns_count: result == count by auto;
             }
         "#;

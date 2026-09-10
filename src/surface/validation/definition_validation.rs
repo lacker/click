@@ -421,12 +421,9 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
 
         for structural_clause in function.structural_clauses() {
             for item in structural_clause.items() {
-                if let Some(proposition) = item.proposition() {
-                    let context = format!(
-                        "{:?} clause in `{}`",
-                        item.kind(),
-                        function.signature().name()
-                    );
+                {
+                    let proposition = item.proposition();
+                    let context = format!("invariant clause in `{}`", function.signature().name());
                     validate_predicate_calls_in_proposition(
                         proposition,
                         &proposition_calls,
@@ -483,14 +480,13 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         }
 
         if function.ensures().is_empty()
-            && function.effects().is_empty()
             && !function
                 .requires()
                 .iter()
                 .any(requirement_contains_resource)
         {
             return Err(ClickError::new(format!(
-                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, or resource-consuming `requires` clause",
+                "`{}` must contain at least one `ensures` or resource-consuming `requires` clause",
                 function.signature().name()
             )));
         }

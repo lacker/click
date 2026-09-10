@@ -310,7 +310,6 @@ int32 box_init(struct box* owner, int32 data[], int32 value) {
     requires separate(memory(object(owner)), memory(data[0..1]));
     consumes object(owner);
     consumes data[0..1];
-    mutable object(owner), data[0..1];
     produces owned_box(owner);
     ensures owner->data == data;
     ensures owner->value == 0;
@@ -318,20 +317,17 @@ int32 box_init(struct box* owner, int32 data[], int32 value) {
     execute();
     have separate(memory(object(owner)), memory(owner->data[0..1])) by simp;
     fold(owned_box(owner));
-    frame();
     simp();
 }
 
 int32 box_read(struct box* owner) {
     views owned_box(owner);
-    immutable;
     ensures result == owner->data[0] by auto;
 }
 
 int32 box_set(struct box* owner, int32 value) {
     requires owner->value == 0;
     owns owned_box(owner);
-    mutable owner->value, (owner->data + owner->value)[0..1];
     ensures result == old(owner->value) + 1;
     ensures owner->value == old(owner->value) + 1;
     ensures owner->data[old(owner->value)] == value;
@@ -341,7 +337,6 @@ int32 box_set(struct box* owner, int32 value) {
     execute();
     have separate(memory(object(owner)), memory(owner->data[0..1])) by simp;
     fold(owned_box(owner));
-    frame();
     simp();
 }
 
@@ -434,26 +429,22 @@ verifying "box_pipeline.c";
 
 int32 box_init(struct box* owner, int32 data[], int32 value) {
     consumes object(owner);
-    mutable object(owner);
     produces owned_box(owner);
     ensures owner->data == data;
     ensures owner->value == value;
 } by {
     execute();
     fold(owned_box(owner));
-    frame();
     simp();
 }
 
 int32 box_touch(struct box* owner) {
     owns owned_box(owner);
-    mutable owner->value;
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_box(owner));
     execute();
     fold(owned_box(owner));
-    frame();
     simp();
 }
 
@@ -468,7 +459,8 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     step();
     have owner->data == data by {
         simp() using {
-            owner->data == at(statement(2).entry, owner->data);
+            owner->data == at(statement(3).entry, owner->data);
+            at(statement(3).entry, owner->data) == at(statement(2).entry, owner->data);
             at(statement(2).entry, owner->data) == data;
         }
     }
@@ -490,13 +482,13 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     let expanded =
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the snapshot-bridged restricted simp should expand");
-    // `owner->data` is untouched by `box_touch` (`mutable owner->value`
-    // only), but the kernel names the load after the calls by a fresh
-    // variable it relates to statement 2's entry by an equality: the
-    // expansion rewrites through that snapshot premise, in the form the
-    // proof stated it, and the remaining premise is then the goal itself.
+    // `box_touch` returns `owner->data` unchanged, but the kernel names the
+    // load after the calls by a fresh variable it relates to each call's entry
+    // by an equality: the expansion rewrites through those snapshot premises,
+    // in the form the proof stated them, and the remaining premise is then the
+    // goal itself.
     assert!(
-        expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
+        expanded.contains("rewrite(owner->data == at(statement(3).entry, owner->data));"),
         "the rewrite must cite the construction-time premise form:\n{expanded}"
     );
     assert!(
@@ -554,34 +546,29 @@ verifying "pipeline.c";
 
 int32 zero(struct counter* owner) {
     consumes object(owner);
-    mutable object(owner);
     produces counter(owner);
     ensures result == 0;
     ensures owner->value == 0;
 } by {
     execute();
     fold(counter(owner));
-    frame();
     simp();
 }
 
 int32 increment(struct counter* owner) {
     requires owner->value < 2147483647;
     owns counter(owner);
-    mutable owner->value;
     ensures result == old(owner->value) + 1;
     ensures owner->value == old(owner->value) + 1;
 } by {
     unfold(counter(owner));
     execute();
     fold(counter(owner));
-    frame();
     simp();
 }
 
 int32 pipeline(struct counter* owner) {
     consumes object(owner);
-    mutable object(owner);
     produces counter(owner);
     ensures result == 1;
     ensures owner->value == 1;
@@ -589,7 +576,6 @@ int32 pipeline(struct counter* owner) {
     execute_until(statement(3));
     have owner->value == 1 by simp;
     step();
-    frame();
     simp();
 }
 "#;
@@ -722,7 +708,6 @@ int32 buffer_init(struct buffer* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
     consumes object(owner);
     consumes data[0..capacity];
-    mutable owner->len, owner->cap, owner->data;
     produces empty_buffer(owner);
     ensures result == 0;
     ensures owner->len == 0;
@@ -731,14 +716,12 @@ int32 buffer_init(struct buffer* owner, int32 data[], int32 capacity) {
 } by {
     execute();
     fold(empty_buffer(owner));
-    frame();
     simp();
 }
 
 int32 buffer_push(struct buffer* owner, int32 value) {
     requires owner->len < owner->cap;
     owns buffer_storage(owner);
-    mutable owner->len, owner->data[owner->len..owner->len + 1];
     ensures result == old(owner->len) + 1;
     ensures owner->len == old(owner->len) + 1;
     ensures owner->data[old(owner->len)] == value;
@@ -748,7 +731,6 @@ int32 buffer_push(struct buffer* owner, int32 value) {
     unfold(buffer_storage(owner));
     execute();
     fold(buffer_storage(owner));
-    frame();
     simp();
 }
 
@@ -798,35 +780,6 @@ int32 buffer_pipeline(
     assert!(!expanded.contains("execute_until(statement(3));"));
     verify_c0_sources(&expanded, &sources)
         .expect("the vector-shaped mixed-snapshot expansion should check");
-
-    let buffer_push = click_source.find("int32 buffer_push").unwrap();
-    let frame = buffer_push + click_source[buffer_push..].find("frame();").unwrap();
-    let frame_position = expansion::position_at_offset(click_source, frame);
-    let frame_expanded = expand_c0_tactic_source_at(
-        click_source,
-        &sources,
-        frame_position.line,
-        frame_position.column,
-    )
-    .expect("the snapshot-qualified contextual frame should expand");
-    let leading_have =
-        "have at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->len)";
-    let leading_have_offset = frame_expanded
-        .find(leading_have)
-        .expect("the contextual frame should retain its checked leading have");
-    let frame_offset = frame_expanded[leading_have_offset..]
-        .find("frame() using")
-        .map(|offset| leading_have_offset + offset)
-        .expect("the contextual frame should retain its explicit frame");
-    assert!(leading_have_offset < frame_offset);
-    verify_c0_sources(&frame_expanded, &sources)
-        .expect("the contextual frame expansion should verify normally");
-
-    let corrupted = frame_expanded.replacen(leading_have, "have 1 == 0", 1);
-    assert!(
-        verify_c0_sources(&corrupted, &sources).is_err(),
-        "ordinary verification should reject a corrupted leading frame scope"
-    );
 }
 
 #[test]

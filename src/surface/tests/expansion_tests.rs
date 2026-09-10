@@ -738,7 +738,6 @@ fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
 
             int32 replace_allocated_cell(struct cell_owner* owner) {
                 consumes allocated_cell(owner);
-                mutable owner->data, owner->data[0..1];
                 produces allocated_cell(owner);
 
                 ensures result == 0 or result == 1;
@@ -747,13 +746,11 @@ fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
                 unfold(allocated_cell(owner));
                 execute();
                 fold(allocated_cell(owner));
-                frame();
                 simp();
             }
 
             int32 replace_after_scoped_open(struct cell_owner* owner) {
                 consumes allocated_cell(owner);
-                mutable owner->data, owner->data[0..1];
                 produces allocated_cell(owner);
 
                 ensures result == 0 or result == 1;
@@ -761,7 +758,6 @@ fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
                 open(allocated_cell(owner)) {
                 }
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -931,7 +927,6 @@ fn selected_post_execution_capture_ignores_nested_certificate_indices() {
 
             int32 set(int32 data[], int32 value) {
                 owns data[0..1];
-                mutable data[0..1];
                 ensures result == value;
                 ensures data[0] == value;
             } by {
@@ -939,7 +934,6 @@ fn selected_post_execution_capture_ignores_nested_certificate_indices() {
                 have value == value by { normalize(); }
                 have result == value by { normalize(); }
                 have data[0] == value by simp;
-                frame();
                 simp();
             }
         "#;
@@ -955,7 +949,6 @@ fn selected_post_execution_capture_ignores_nested_certificate_indices() {
         position.column,
     )
     .expect("nested certificate validation must not leak later deferred tactics into the capture");
-    assert_eq!(expanded.matches("frame();").count(), 1, "{expanded}");
     verify_c0_sources(&expanded, &[("set.c", c_source)])
         .expect("the selected post-execution have expansion should check");
 }
@@ -1876,20 +1869,17 @@ fn smart_apply_surfaces_a_framed_comparison_after_an_immutable_call() {
 
             int32 peek(int32* data) {
                 views data[0..1];
-                immutable;
                 ensures result == data[0] by auto;
             }
 
             int32 pipeline(int32* data, int32 expected) {
                 views equal_cell(data, expected);
-                immutable;
                 ensures result == expected;
             } by {
                 observe(equal_cell(data, expected));
                 execute_until(statement(2));
                 apply(int32_equality_transitive(observed, data[0], expected));
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -1927,7 +1917,6 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
 
             int32 decrement(int32* p) {
                 consumes one_cell(p);
-                mutable p[0..1];
                 produces p[0..1];
                 ensures result == 0;
             } by {
@@ -1940,7 +1929,6 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
                     at(statement(0).exit, p[0])
                 ));
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -2031,18 +2019,15 @@ fn marked_constant_store_transport_retains_load_identity() {
         verifying "pipeline.c";
 
         void touch_other(struct cell* owner) {
-            owns object(owner);
-            mutable owner->other;
+            owns owner->other;
             ensures owner->other == 0;
         } by {
             execute();
-            frame();
             simp();
         }
 
         int32 pipeline(struct cell* owner) {
             owns object(owner);
-            mutable object(owner);
             ensures result == 11;
         } by {
             step();
@@ -2052,7 +2037,6 @@ fn marked_constant_store_transport_retains_load_identity() {
                 at(after_write, owner->value == 11),
                 owner->value == 11
             );
-            frame() using {};
             simp();
         }
     "#;
@@ -2142,8 +2126,8 @@ fn marked_constant_store_transport_retains_load_identity() {
 
     let mutating_c = touch_c.replace("owner->other = 0;", "owner->value = 0;");
     let mutating_click = click_source.replace(
-        "mutable owner->other;\n            ensures owner->other == 0;",
-        "mutable owner->value;\n            ensures owner->value == 0;",
+        "owns owner->other;\n            ensures owner->other == 0;",
+        "owns owner->value;\n            ensures owner->value == 0;",
     );
     let error = verify_c0_sources(
         &mutating_click,
@@ -2176,7 +2160,6 @@ fn post_execution_store_transport_expands_from_the_recorded_store_equation() {
 
         int32 store_both(int32 p[2]) {
             consumes p[0..2];
-            mutable p[0..2];
             produces p[0..2];
             ensures p[0] == 7;
         } by {
@@ -2185,7 +2168,6 @@ fn post_execution_store_transport_expands_from_the_recorded_store_equation() {
                 at(statement(0).exit, p[0]) == 7,
                 p[0] == 7
             );
-            frame();
             simp();
         }
     "#;
@@ -2221,7 +2203,6 @@ fn statement_snapshots_support_complete_loadability_propositions() {
 
             int32 store_second_return_first(int32 p[2]) {
                 consumes p[0..2];
-                mutable p[1..2];
                 produces p[0..2];
                 ensures result == p[0];
             } by {
@@ -2236,7 +2217,6 @@ fn statement_snapshots_support_complete_loadability_propositions() {
                     at(statement(0).entry, loadable(p[0..2]));
                 }
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -2362,7 +2342,6 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
 
             int32 pointer_pipeline(struct pointer_pair* pair, int32* data) {
                 views linked_pair(pair, data);
-                immutable;
                 ensures result == 0;
             } by {
                 observe(linked_pair(pair, data));
@@ -2372,7 +2351,6 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
                     data
                 ));
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -4590,7 +4568,6 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
         int32 vector_push(struct vector* owner, int32 value) {
             requires owner->len < owner->cap;
             owns vector_storage(owner);
-            mutable owner->len, owner->data[owner->len..owner->len + 1];
             ensures result == old(owner->len) + 1;
             ensures owner->len == old(owner->len) + 1;
             ensures owner->data[old(owner->len)] == value;
@@ -4604,7 +4581,6 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
             unfold(vector_storage(owner));
             execute();
             fold(vector_storage(owner));
-            frame();
             simp();
         }
     "#;
@@ -5887,12 +5863,10 @@ fn execution_resource_unfold_is_recorded_once_and_checks() {
 
         int32 discard(int32 x) {
             consumes marker(x);
-            immutable;
             ensures result == x;
         } by {
             unfold(marker(x));
             execute();
-            frame();
             assumption();
         }
     "#;
@@ -5938,12 +5912,10 @@ fn execution_resource_observe_is_recorded_once_and_checks() {
 
         int32 inspect(int32 x) {
             views marker(x);
-            immutable;
             ensures result == x;
         } by {
             observe(marker(x));
             execute();
-            frame();
             assumption();
         }
     "#;
@@ -5989,13 +5961,11 @@ fn execution_resource_fold_is_recorded_once_and_checks() {
 
         int32 preserve(int32 x) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             unfold(marker(x));
             fold(marker(x));
             execute();
-            frame();
             simp();
         }
     "#;
@@ -6048,14 +6018,12 @@ fn linear_execution_open_retains_one_checked_scope_and_checks() {
 
         int32 two_steps(int32 x) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             open(marker(x)) {
                 step();
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -6130,14 +6098,12 @@ fn linear_execution_open_retains_checked_prefix_on_one_proof() {
         int32 add_once(int32 x, int32 y) {
             requires defined(x + y);
             owns marker(x);
-            immutable;
             ensures result == x + y;
         } by {
             step();
             open(marker(x)) {
                 step();
             }
-            frame();
             simp();
         }
     "#;
@@ -6192,13 +6158,11 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
 
         int32 two_steps(int32 x) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             open(marker(x)) {
                 execute();
             }
-            frame();
             simp();
         }
     "#;
@@ -6241,449 +6205,6 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
 }
 
 #[test]
-fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
-    let c_source = r#"
-        int32 two_steps(int32 x) {
-            x = x;
-            return x;
-        }
-    "#;
-    let click_source = r#"
-        resource marker(x: int32) {
-            fact x == x;
-        }
-
-        verifying "two_steps.c";
-
-        int32 two_steps(int32 x) {
-            owns marker(x);
-            immutable;
-            ensures result == x;
-        } by {
-            open(marker(x)) {
-                execute();
-                frame() using {};
-            }
-            simp();
-        }
-    "#;
-
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
-    });
-    let verified = verified.expect("the explicit frame should close the open Proof's effect goal");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "two_steps.contract"
-                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
-        )),
-        "the retained frame must neither check nor recheck its effect at finalization: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the checked grouped proof should retain its frame step");
-    assert!(
-        matches!(
-            tactics.first(),
-            Some(ProofTactic::Open(open))
-                if matches!(
-                    open.tactics.as_slice(),
-                    [
-                        ProofTactic::Step,
-                        ProofTactic::Step,
-                        ProofTactic::FrameUsing { region: None, premises }
-                    ] if premises.is_empty()
-                )
-        ),
-        "{tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("two_steps.c", c_source)],
-        "two_steps",
-        CProofClaim::Grouped,
-    )
-    .expect("the grouped checked frame should expand");
-    verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
-        .expect("the retained explicit frame should independently check");
-}
-
-#[test]
-fn smart_immutable_frame_inside_open_selects_a_checked_proof_step() {
-    let c_source = r#"
-        int32 identity(int32 x) {
-            return x;
-        }
-    "#;
-    let click_source = r#"
-        resource marker(x: int32) {
-            fact x == x;
-        }
-
-        verifying "identity.c";
-
-        int32 identity(int32 x) {
-            owns marker(x);
-            immutable;
-            ensures result == x;
-        } by {
-            open(marker(x)) {
-                execute();
-                frame();
-            }
-            simp();
-        }
-    "#;
-
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("identity.c", c_source)])
-    });
-    let verified = verified.expect("the smart frame should retain its checked simple successor");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract"
-                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
-        )),
-        "smart frame search must not check or recheck its selected step: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the smart frame proof should expose its retained certificate");
-    assert!(
-        matches!(
-            tactics.first(),
-            Some(ProofTactic::Open(open))
-                if matches!(
-                    open.tactics.as_slice(),
-                    [
-                        ProofTactic::Step,
-                        ProofTactic::FrameUsing { region: None, premises }
-                    ] if premises.is_empty()
-                )
-        ),
-        "{tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("identity.c", c_source)],
-        "identity",
-        CProofClaim::Grouped,
-    )
-    .expect("the smart immutable frame should expand");
-    verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("the selected empty frame step should independently check");
-}
-
-#[test]
-fn grouped_explicit_empty_mutable_frame_rejects_missing_premises_without_check() {
-    let c_source = r#"
-        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-            p[i] = 9;
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        verifying "write_in_bounds.c";
-
-        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-            requires n >= 0;
-            requires n <= 2147483647;
-            requires i >= 0;
-            requires i < n;
-            requires loadable(p[0..n]);
-            consumes p[0..n];
-            mutable p[0..n];
-        } by {
-            execute();
-            frame() using {};
-        }
-    "#;
-
-    let ((verified, certificate_checks), context_exports) = {
-        proof::count_execution_context_exports(|| {
-            proof::count_source_certificate_checks(|| {
-                verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-            })
-        })
-    };
-    let error = verified.expect_err("the exact empty frame must not import ambient bounds");
-    assert_eq!(
-        context_exports, 0,
-        "the effect Proof exported semantic state"
-    );
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary verification checked a certificate"
-    );
-    assert!(
-        error.message().contains("outside the mutable footprint"),
-        "{error:?}"
-    );
-}
-
-#[test]
-fn grouped_explicit_empty_mutable_frame_stays_on_proof() {
-    let c_source = r#"
-        int32 write_first(int32 p[]) {
-            p[0] = 9;
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        verifying "write_first.c";
-
-        int32 write_first(int32 p[]) {
-            requires loadable(p[0..1]);
-            consumes p[0..1];
-            mutable p[0..1];
-        } by {
-            execute();
-            frame() using {};
-        }
-    "#;
-
-    let (((verified, certificate_checks), context_exports), flat_units) =
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        verify_c0_sources(click_source, &[("write_first.c", c_source)])
-                    })
-                })
-            }
-        });
-    let verified = verified.expect("the exact empty mutable frame should verify on Proof");
-    assert_eq!(flat_units, 1, "the grouped effect should retain one Proof");
-    assert_eq!(
-        context_exports, 0,
-        "the effect Proof exported semantic state"
-    );
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary verification checked a certificate"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the exact frame should retain its checked operation");
-    assert!(
-        matches!(
-            tactics.last(),
-            Some(ProofTactic::FrameUsing { region: None, premises }) if premises.is_empty()
-        ),
-        "{tactics:#?}"
-    );
-}
-
-#[test]
-fn grouped_post_execution_haves_before_empty_mutable_frame_stay_on_proof() {
-    let c_source = r#"
-        int32 write_first(int32 p[]) {
-            p[0] = 9;
-            return p[0];
-        }
-    "#;
-    let click_source = r#"
-        verifying "write_first.c";
-
-        int32 write_first(int32 p[]) {
-            requires loadable(p[0..1]);
-            consumes p[0..1];
-            ensures result == 9;
-            mutable p[0..1];
-        } by {
-            execute();
-            have result == 9 by {
-                simp();
-            }
-            have forall (k: int32) {
-                result == 9 implies k == k
-            } by {
-                intro();
-                intro();
-                normalize();
-            }
-            frame() using {};
-            simp();
-        }
-    "#;
-    let sources = [("write_first.c", c_source)];
-
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units),
-        events,
-    ) = crate::instrumentation::collect(|| {
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
-                    })
-                })
-            }
-        })
-    });
-    let verified = verified.expect("the ordered outcome operations should verify on Proof");
-    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        context_exports, 0,
-        "the outcome Proof exported semantic state"
-    );
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary verification checked a certificate"
-    );
-    assert_eq!(
-        explicit_fallbacks, 0,
-        "an explicit outcome operation fell back"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_first.contract"
-                    && matches!(name.as_str(), "generated certificate validation" | "grouped proof tactic check")
-        )),
-        "the ordered outcome operations entered legacy fallback: {events:#?}"
-    );
-
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the ordered outcome operations should retain provenance");
-    let frame_index = tactics
-        .iter()
-        .position(|tactic| {
-            matches!(
-                tactic,
-                ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
-            )
-        })
-        .expect("the retained proof lost its exact empty frame");
-    assert_eq!(
-        tactics[..frame_index]
-            .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Have(_)))
-            .count(),
-        2,
-        "the retained proof lost a post-execution have: {tactics:#?}"
-    );
-    assert!(
-        tactics[..frame_index].iter().any(|tactic| matches!(
-            tactic,
-            ProofTactic::Have(ProofHave {
-                proposition: ClickProposition::ForAll { .. },
-                proof: SourceProof::Script(body),
-            }) if body.iter().filter(|step| matches!(step, ProofTactic::Intro)).count() == 2
-        )),
-        "the retained proof lost its universal scope operations: {tactics:#?}"
-    );
-    let rewritten =
-        expand_c0_claim_source(click_source, &sources, "write_first", CProofClaim::Grouped)
-            .expect("the ordered outcome operations should serialize");
-    verify_c0_sources(&rewritten, &sources)
-        .expect("the serialized outcome operations should independently reverify");
-
-    let corrupted = rewritten.replacen("k == k", "k == k + 1", 1);
-    assert_ne!(
-        corrupted, rewritten,
-        "the expansion should expose the checked have"
-    );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
-    corrupted_result.expect_err("tampering with the universal have must invalidate the proof");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "an invalid migrated operation must not become a compatibility miss"
-    );
-}
-
-#[test]
-fn grouped_post_execution_closers_before_empty_mutable_frame_stay_on_proof() {
-    let c_source = r#"
-        int32 write_first(int32 p[]) {
-            p[0] = 9;
-            return p[0];
-        }
-    "#;
-    let click_source = r#"
-        verifying "write_first.c";
-
-        int32 write_first(int32 p[]) {
-            requires loadable(p[0..1]);
-            consumes p[0..1];
-            ensures stored: result == 9;
-            ensures reflexive: result == result;
-            mutable p[0..1];
-        } by {
-            execute();
-            normalize();
-            frame() using {};
-        }
-    "#;
-    let sources = [("write_first.c", c_source)];
-
-    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        proof::count_explicit_linear_fallbacks(|| {
-                            verify_c0_sources(click_source, &sources)
-                        })
-                    })
-                })
-            }
-        });
-    let verified = verified.expect("the ordered outcome closers should verify on Proof");
-    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(context_exports, 0, "the outcome Proof exported state");
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary verification checked a certificate"
-    );
-    assert_eq!(explicit_fallbacks, 0, "an ordered outcome closer fell back");
-
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the outcome closers should retain provenance");
-    assert!(
-        tactics.contains(&ProofTactic::Normalize),
-        "the retained proof lost its normalization: {tactics:#?}"
-    );
-    assert!(
-        tactics.iter().any(|tactic| matches!(
-            tactic,
-            ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
-        )),
-        "the retained proof lost its exact frame: {tactics:#?}"
-    );
-
-    let rewritten =
-        expand_c0_claim_source(click_source, &sources, "write_first", CProofClaim::Grouped)
-            .expect("the ordered outcome closers should serialize");
-    verify_c0_sources(&rewritten, &sources)
-        .expect("the serialized outcome closers should independently reverify");
-
-    let corrupted = rewritten.replacen("normalize();", "assumption(); assumption();", 1);
-    assert_ne!(
-        corrupted, rewritten,
-        "the expansion should expose normalize"
-    );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
-    corrupted_result.expect_err("tampering with the outcome closer must invalidate the proof");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "an invalid migrated closer must not become a compatibility miss"
-    );
-}
-
-#[test]
 fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
     let apply_c = r#"
         int32 apply_write(int32 p[], int32 x) {
@@ -6715,24 +6236,20 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
             requires loadable(p[0..1]);
             consumes p[0..1];
             ensures result <= 0 or result > 0;
-            mutable p[0..1];
         } by {
             execute();
             apply(int32_sign_split(result)) using {}
             assumption();
-            frame() using {};
         }
 
         int32 rewrite_write(int32 p[]) {
             requires loadable(p[0..1]);
             consumes p[0..1];
             ensures result == 9;
-            mutable p[0..1];
         } by {
             execute();
             rewrite(result == 9);
             normalize();
-            frame() using {};
         }
     "#;
     let sources = [("apply_write.c", apply_c), ("rewrite_write.c", rewrite_c)];
@@ -6848,12 +6365,10 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
             requires loadable(p[0..1]);
             consumes p[0..1];
             ensures is_nine(result);
-            mutable p[0..1];
         } by {
             execute();
             unfold(is_nine);
             normalize();
-            frame() using {};
         }
     "#;
     let sources = [("write_first.c", c_source)];
@@ -6911,99 +6426,6 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
 }
 
 #[test]
-fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() {
-    let c_source = r#"
-        int32 increment(int32 p[]) {
-            p[0] = p[0] + 1;
-            return p[0];
-        }
-    "#;
-    let click_source = r#"
-        resource counted(p: int32*) {
-            owns p[0..1];
-            fact p[0] == count(counted(p));
-        }
-
-        verifying "increment.c";
-
-        int32 increment(int32 p[]) {
-            owns counted(p);
-            produces counted(p);
-            mutable p[0..1];
-        } by {
-            open(counted(p)) {
-                execute();
-                frame() using {};
-            }
-            simp();
-        }
-    "#;
-
-    verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect("an empty mutable frame must fall back to ambient-fact selection");
-
-    let smart_source = click_source.replace("frame() using {};", "frame();");
-    let ((((verified, events), certificate_checks), context_exports), flat_units) =
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        crate::instrumentation::collect(|| {
-                            verify_c0_sources(&smart_source, &[("increment.c", c_source)])
-                        })
-                    })
-                })
-            }
-        });
-    let verified = verified.expect("smart frame should select the exact empty mutable candidate");
-    assert_eq!(flat_units, 1, "the counted scope should retain one Proof");
-    assert_eq!(
-        context_exports, 0,
-        "the counted scope must not export semantic state"
-    );
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary counted-scope verification must not check a certificate"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "increment.contract"
-                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
-        )),
-        "the accepted mutable candidate must not be checked or rechecked: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the smart mutable frame should retain its selected candidate");
-    assert!(
-        matches!(
-            tactics.first(),
-            Some(ProofTactic::Open(open))
-                if matches!(
-                    open.tactics.as_slice(),
-                    [
-                        ProofTactic::Step,
-                        ProofTactic::Step,
-                        ProofTactic::FrameUsing { region: None, premises }
-                    ] if premises.is_empty()
-                )
-        ),
-        "{tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        &smart_source,
-        &[("increment.c", c_source)],
-        "increment",
-        CProofClaim::Grouped,
-    )
-    .expect("the smart mutable frame should expand");
-    verify_c0_sources(&expanded, &[("increment.c", c_source)])
-        .expect("the selected empty mutable frame should independently check");
-}
-
-#[test]
 fn quantified_contract_resource_open_stays_on_one_proof() {
     let c_source = "int32 preserve_markers(int32 x, int32 amount) { return x; }";
     let click_source = r#"
@@ -7014,12 +6436,10 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
         int32 preserve_markers(int32 x, int32 amount) {
             requires 1 <= amount;
             owns amount of marker(x);
-            immutable;
             ensures result == x;
         } by {
             open(marker(x)) {
                 execute();
-                frame();
             }
             simp();
         }
@@ -7089,509 +6509,6 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
 }
 
 #[test]
-fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
-    let c_source = r#"
-        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-            p[i] = 9;
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        resource marker(x: int32) {
-            fact x == x;
-        }
-
-        verifying "write_in_bounds.c";
-
-        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-            requires n >= 0;
-            requires n <= 2147483647;
-            requires i >= 0;
-            requires i < n;
-            owns marker(n);
-            consumes p[0..n];
-            mutable p[0..n];
-            ensures result == 0;
-        } by {
-            open(marker(n)) {
-                execute();
-                frame();
-            }
-            simp();
-        }
-    "#;
-
-    let ((((verified, events), certificate_checks), context_exports), flat_units) =
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        crate::instrumentation::collect(|| {
-                            verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-                        })
-                    })
-                })
-            }
-        });
-    let verified = verified.expect("contextual frame should submit its selected Proof candidate");
-    assert_eq!(
-        flat_units, 1,
-        "the mixed scoped contract should retain one Proof"
-    );
-    assert_eq!(
-        context_exports, 0,
-        "the mixed scoped Proof exported semantic state"
-    );
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary verification checked a certificate"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_in_bounds.contract" && name == "generated certificate validation"
-        )),
-        "the contextual candidate must not use ordinary surface check: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the contextual frame should retain its selected proof steps");
-    let Some(ProofTactic::Open(open)) = tactics.first() else {
-        panic!("{tactics:#?}");
-    };
-    assert!(
-        matches!(
-            open.tactics.last(),
-            Some(ProofTactic::FrameUsing { region: None, premises }) if !premises.is_empty()
-        ),
-        "{tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("write_in_bounds.c", c_source)],
-        "write_in_bounds",
-        CProofClaim::Grouped,
-    )
-    .expect("the contextual Proof-owned frame should expand");
-    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
-        .expect("the contextual frame candidate should independently check");
-}
-
-#[test]
-fn top_level_contextual_frame_applies_explicit_candidate_on_proof() {
-    let c_source = r#"
-        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-            p[i] = 9;
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        verifying "write_in_bounds.c";
-
-        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-            requires n >= 0;
-            requires n <= 2147483647;
-            requires i >= 0;
-            requires i < n;
-            consumes p[0..n];
-            mutable p[0..n];
-            ensures result == 0;
-        } by {
-            execute();
-            frame();
-            simp();
-        }
-    "#;
-
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-    });
-    let verified = verified.expect("top-level contextual frame should advance through Proof");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_in_bounds.contract"
-                    && name == "generated certificate validation"
-        )),
-        "the top-level contextual candidate must not use ordinary surface check: {events:#?}"
-    );
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                    if claim == "write_in_bounds.contract" && name == "frame exact effect check"
-            ))
-            .count(),
-        0,
-        "the accepted Proof must not recheck its retained frame through the whole-certificate gate: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the top-level contextual frame should retain its simple candidate");
-    assert!(matches!(
-        tactics.iter().find(|tactic| matches!(tactic, ProofTactic::FrameUsing { .. })),
-        Some(ProofTactic::FrameUsing { region: None, premises }) if !premises.is_empty()
-    ));
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("write_in_bounds.c", c_source)],
-        "write_in_bounds",
-        CProofClaim::Grouped,
-    )
-    .expect("the top-level contextual frame should expand");
-    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
-        .expect("the retained top-level contextual frame should independently check");
-
-    let frame_offset = click_source
-        .find("frame();")
-        .expect("proof should contain the selected frame");
-    let line = click_source[..frame_offset]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count()
-        + 1;
-    let column = frame_offset
-        - click_source[..frame_offset]
-            .rfind('\n')
-            .map(|offset| offset + 1)
-            .unwrap_or(0)
-        + 1;
-    let selected = expand_c0_tactic_source_at(
-        click_source,
-        &[("write_in_bounds.c", c_source)],
-        line,
-        column,
-    )
-    .expect("the deferred Proof-owned frame should expand by itself");
-    verify_c0_sources(&selected, &[("write_in_bounds.c", c_source)])
-        .expect("the selected deferred frame certificate should independently check");
-}
-
-#[test]
-fn top_level_proof_owned_frame_retains_deferred_source_order() {
-    let c_source = r#"
-        int32 preserve_storage(int32 p[]) {
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        resource storage(p: int32*) {
-            owns p[0..1];
-        }
-
-        verifying "preserve_storage.c";
-
-        int32 preserve_storage(int32 p[]) {
-            consumes p[0..1];
-            produces storage(p);
-            immutable;
-            ensures result == 0;
-        } by {
-            execute();
-            fold(storage(p));
-            frame();
-            simp();
-        }
-    "#;
-
-    let verified = verify_c0_sources(click_source, &[("preserve_storage.c", c_source)])
-        .expect("Proof-owned frame should remain after the deferred fold");
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the checked grouped proof should retain its expansion");
-    let fold_index = tactics
-        .iter()
-        .position(|tactic| matches!(tactic, ProofTactic::FoldResource(_)))
-        .expect("the expansion should retain the fold");
-    let frame_index = tactics
-        .iter()
-        .position(|tactic| matches!(tactic, ProofTactic::FrameUsing { .. }))
-        .expect("the expansion should retain the frame");
-    assert!(fold_index < frame_index, "{tactics:#?}");
-
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("preserve_storage.c", c_source)],
-        "preserve_storage",
-        CProofClaim::Grouped,
-    )
-    .expect("the ordered Proof-owned frame should expand");
-    verify_c0_sources(&expanded, &[("preserve_storage.c", c_source)])
-        .expect("the retained deferred order should independently check");
-}
-
-#[test]
-fn smart_execute_crosses_terminal_c_branch_before_checked_frame() {
-    let c_source = r#"
-        int32 write_selected(int32 p[2], int32 flag) {
-            if (flag) {
-                p[0] = 1;
-            } else {
-                p[1] = 1;
-            }
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        resource marker(x: int32) {
-            fact x == x;
-        }
-
-        verifying "write_selected.c";
-
-        int32 write_selected(int32 p[2], int32 flag) {
-            owns marker(flag);
-            consumes p[0..2];
-            mutable p[0..2];
-            ensures result == 0;
-        } by {
-            open(marker(flag)) {
-                execute();
-                frame();
-            }
-            simp();
-        }
-    "#;
-
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("write_selected.c", c_source)])
-    });
-    let verified = verified.expect("smart execute should retain both checked terminal C arms");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_selected.contract" && name == "generated certificate validation"
-        )),
-        "branched execute and its common frame must not use ordinary surface check: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the terminal execution branch should retain its checked certificate");
-    let Some(ProofTactic::Open(open)) = tactics.first() else {
-        panic!("{tactics:#?}");
-    };
-    assert!(
-        matches!(open.tactics.as_slice(), [ProofTactic::If(_), ProofTactic::FrameUsing { region: None, premises }] if premises.is_empty()),
-        "the common exact frame should follow the retained execution branch: {tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("write_selected.c", c_source)],
-        "write_selected",
-        CProofClaim::Grouped,
-    )
-    .expect("branched execute with common frame should expand");
-    verify_c0_sources(&expanded, &[("write_selected.c", c_source)])
-        .expect("the retained execution branch should independently check");
-}
-
-#[test]
-fn smart_execute_retains_nested_terminal_c_branches_before_checked_frame() {
-    let c_source = r#"
-        int32 write_nested(int32 p[2], int32 first, int32 second) {
-            if (first) {
-                if (second) {
-                    p[0] = 1;
-                } else {
-                    p[1] = 1;
-                }
-            } else {
-                p[0] = 2;
-            }
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        resource marker(x: int32) {
-            fact x == x;
-        }
-
-        verifying "write_nested.c";
-
-        int32 write_nested(int32 p[2], int32 first, int32 second) {
-            owns marker(first);
-            consumes p[0..2];
-            mutable p[0..2];
-            ensures result == 0;
-        } by {
-            open(marker(first)) {
-                execute();
-                frame();
-            }
-            simp();
-        }
-    "#;
-
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("write_nested.c", c_source)])
-    });
-    let verified = verified.expect("smart execute should retain nested checked C branches");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_nested.contract" && name == "generated certificate validation"
-        )),
-        "nested execute and its common frame must not use ordinary surface check: {events:#?}"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("the nested execution branch should retain its checked certificate");
-    let Some(ProofTactic::Open(open)) = tactics.first() else {
-        panic!("{tactics:#?}");
-    };
-    let [
-        ProofTactic::If(outer),
-        ProofTactic::FrameUsing {
-            region: None,
-            premises,
-        },
-    ] = open.tactics.as_slice()
-    else {
-        panic!("the common frame should follow one retained outer branch: {tactics:#?}");
-    };
-    assert!(premises.is_empty(), "{tactics:#?}");
-    assert!(
-        outer
-            .then_tactics
-            .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::If(_))),
-        "the outer then arm should retain its nested checked branch: {tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("write_nested.c", c_source)],
-        "write_nested",
-        CProofClaim::Grouped,
-    )
-    .expect("nested branched execute with common frame should expand");
-    verify_c0_sources(&expanded, &[("write_nested.c", c_source)])
-        .expect("the retained nested execution branches should independently check");
-}
-
-#[test]
-fn contextual_frame_checks_path_specific_evidence_on_partitioned_outcomes() {
-    let c_source = r#"
-        int32 write_conditionally_indexed(int32 p[1], int32 index) {
-            if (index == 0) {
-                p[index] = 1;
-            } else {
-                p[0] = 2;
-            }
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        resource marker(x: int32) {
-            fact x == x;
-        }
-
-        verifying "write_conditionally_indexed.c";
-
-        int32 write_conditionally_indexed(int32 p[1], int32 index) {
-            owns marker(index);
-            consumes p[0..1];
-            mutable p[0..1];
-            ensures result == 0;
-        } by {
-            open(marker(index)) {
-                execute();
-                frame();
-            }
-            simp();
-        }
-    "#;
-
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("write_conditionally_indexed.c", c_source)])
-    });
-    let verified =
-        verified.expect("path-specific frame evidence should check on outcome partitions");
-    let forbidden_operations = events
-        .iter()
-        .filter_map(|event| match event {
-            crate::instrumentation::VerificationEvent::OperationFinished {
-                claim, name, ..
-            } if claim == "write_conditionally_indexed.contract"
-                && matches!(
-                    name.as_str(),
-                    "generated certificate validation" | "frame exact effect check"
-                ) =>
-            {
-                Some(name.as_str())
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        forbidden_operations.is_empty(),
-        "partitioned frame search must neither check nor recheck its checked Proof arms: {forbidden_operations:?}"
-    );
-    let resource_transitions = events
-        .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                    if claim == "write_conditionally_indexed.contract"
-                        && name == "frame resource transition"
-            )
-        })
-        .count();
-    assert_eq!(
-        resource_transitions, 2,
-        "ordinary source verification should transition each original outcome exactly once"
-    );
-    let tactics = verified[0]
-        .expanded_proof_tactics()
-        .expect("partitioned frame should retain an expansion");
-    let Some(ProofTactic::Open(open)) = tactics.first() else {
-        panic!("{tactics:#?}");
-    };
-    let frame_branch = open
-        .tactics
-        .iter()
-        .rev()
-        .find_map(|tactic| match tactic {
-            ProofTactic::If(proof_if)
-                if matches!(
-                    proof_if.then_tactics.last(),
-                    Some(ProofTactic::FrameUsing { region: None, .. })
-                ) && matches!(
-                    proof_if.else_tactics.last(),
-                    Some(ProofTactic::FrameUsing { region: None, .. })
-                ) =>
-            {
-                Some(proof_if)
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("frame evidence should remain branch-local: {tactics:#?}"));
-    assert!(
-        frame_branch
-            .then_tactics
-            .iter()
-            .chain(&frame_branch.else_tactics)
-            .any(|tactic| matches!(tactic, ProofTactic::Have(_))),
-        "one outcome partition should retain its explicit derived bound: {tactics:#?}"
-    );
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("write_conditionally_indexed.c", c_source)],
-        "write_conditionally_indexed",
-        CProofClaim::Grouped,
-    )
-    .expect("partitioned contextual frame should expand");
-    verify_c0_sources(&expanded, &[("write_conditionally_indexed.c", c_source)])
-        .expect("the retained outcome-partition certificate should independently check");
-}
-
-#[test]
 fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     let c_source = r#"
         int32 three_steps(int32 x) {
@@ -7609,7 +6526,6 @@ fn linear_execute_until_inside_open_stops_on_checked_frontier() {
 
         int32 three_steps(int32 x) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             open(marker(x)) {
@@ -7617,7 +6533,6 @@ fn linear_execute_until_inside_open_stops_on_checked_frontier() {
                 step();
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -7682,7 +6597,6 @@ fn linear_open_have_retains_the_selected_theorem_application() {
 
         int32 two_steps(int32 x) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             open(marker(x)) {
@@ -7692,7 +6606,6 @@ fn linear_open_have_retains_the_selected_theorem_application() {
                 step();
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -7759,7 +6672,6 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
 
         int32 read_cell(int32 p[]) {
             owns wrapped_cell(p);
-            immutable;
             ensures result == old(p[0]);
         } by {
             open(wrapped_cell(p)) {
@@ -7767,7 +6679,6 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
                     execute();
                 }
             }
-            frame();
             simp();
         }
     "#;
@@ -7857,14 +6768,12 @@ fn linear_open_retains_a_direct_bare_theorem_application() {
 
         int32 retain_lower(int32 lower, int32 upper) {
             owns ordered(lower, upper);
-            immutable;
             ensures lower <= upper;
         } by {
             open(ordered(lower, upper)) {
                 apply(int32_lt_implies_le(lower, upper));
                 step();
             }
-            frame();
             simp();
         }
     "#;
@@ -7927,7 +6836,6 @@ fn linear_open_retains_a_direct_bare_fact_transport() {
 
         int32 set_second_return_first(int32 p[2]) {
             owns first_is_seven(p);
-            mutable p[1..2];
             ensures result == 7;
         } by {
             open(first_is_seven(p)) {
@@ -7935,7 +6843,6 @@ fn linear_open_retains_a_direct_bare_fact_transport() {
                 transport(old(p[0]) == 7, p[0] == 7);
                 step();
             }
-            frame();
             simp();
         }
     "#;
@@ -8004,7 +6911,6 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
 
         int32 read_if(int32 p[], int32 flag) {
             owns cell(p);
-            immutable;
             ensures result == old(p[0]) or result == 0;
         } by {
             step();
@@ -8031,7 +6937,6 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
                 }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -8132,7 +7037,6 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
 
         int32 read_if(int32 p[], int32 flag) {
             owns wrapped_cell(p, flag);
-            immutable;
             ensures result == old(p[0]) or result == 0;
         } by {
             open(wrapped_cell(p, flag)) {
@@ -8163,7 +7067,6 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
                 }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -8413,7 +7316,6 @@ fn branch_interface_retains_its_checked_abstract_join() {
         verifying "nonnegative.c";
 
         int32 nonnegative(int32 x) {
-            immutable;
             ensures result >= 0;
         } by {
             branch {
@@ -8424,7 +7326,6 @@ fn branch_interface_retains_its_checked_abstract_join() {
                 else { step(); }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -8475,7 +7376,6 @@ fn branch_interface_retains_its_checked_abstract_join() {
             [
                 ProofTactic::Branch(branch),
                 ProofTactic::Step,
-                ProofTactic::FrameUsing { .. },
                 ..
             ] if matches!(
                 branch.ensuring.as_deref(),
@@ -8519,7 +7419,6 @@ fn branch_interface_retains_exact_unchanged_ownership() {
 
         int32 preserve_marker(int32 x, int32 flag) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             step();
@@ -8532,7 +7431,6 @@ fn branch_interface_retains_exact_unchanged_ownership() {
                 else { step(); }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -8602,7 +7500,6 @@ fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
 
         int32 preserve_two_markers(int32 x, int32 flag) {
             owns 2 of marker(x);
-            immutable;
             ensures result == x;
         } by {
             step();
@@ -8615,7 +7512,6 @@ fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
                 else { step(); }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -8694,7 +7590,6 @@ fn branch_arms_retain_bare_theorem_applications_on_proof() {
 
         int32 retain_order(int32 lower, int32 upper, int32 flag) {
             requires lower < upper;
-            immutable;
             ensures lower <= upper;
         } by {
             step();
@@ -8712,7 +7607,6 @@ fn branch_arms_retain_bare_theorem_applications_on_proof() {
                 }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -8777,7 +7671,6 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
 
         int32 choose_bound(int32 lower, int32 upper, int32 flag) {
             requires lower < upper;
-            immutable;
             ensures lower <= upper;
         } by {
             step();
@@ -8790,7 +7683,6 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
             }
             apply(int32_lt_implies_le(lower, upper));
             step();
-            frame();
             simp();
         }
     "#;
@@ -8820,7 +7712,6 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
                 ProofTactic::Branch(branch),
                 ProofTactic::ApplyTheoremUsing { application, premises },
                 ProofTactic::Step,
-                ProofTactic::FrameUsing { region: None, premises: frame_premises },
                 ..
             ] if matches!(
                     branch.ensuring.as_deref(),
@@ -8833,7 +7724,6 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
                 && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 && application.name == "int32_lt_implies_le"
                 && premises.len() == 1
-                && frame_premises.is_empty()
         ),
         "{tactics:#?}"
     );
@@ -8866,7 +7756,6 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
 
         int32 choose_bound_transport(int32 lower, int32 upper, int32 flag) {
             requires lower < upper;
-            immutable;
             ensures lower < upper;
         } by {
             step();
@@ -8879,7 +7768,6 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
             }
             transport(old(lower) < old(upper), lower < upper);
             step();
-            frame();
             simp();
         }
     "#;
@@ -8908,7 +7796,6 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
                 ProofTactic::Branch(branch),
                 ProofTactic::TransportUsing { premises, .. },
                 ProofTactic::Step,
-                ProofTactic::FrameUsing { region: None, premises: frame_premises },
                 ..
             ] if matches!(
                     branch.ensuring.as_deref(),
@@ -8920,7 +7807,6 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
                 && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
                 && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 && !premises.is_empty()
-                && frame_premises.is_empty()
         ),
         "{tactics:#?}"
     );
@@ -8953,7 +7839,6 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
         verifying "select_positive.c";
 
         int32 select_positive(int32 flag) {
-            immutable;
             ensures result >= 0;
         } by {
             step();
@@ -8970,7 +7855,6 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
             }
             execute_until(statement(5));
             step();
-            frame();
             simp();
         }
     "#;
@@ -8994,7 +7878,6 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
                 }),
                 ProofTactic::Step,
                 ProofTactic::Step,
-                ProofTactic::FrameUsing { region: None, premises },
                 ..
             ] if matches!(
                     branch.ensuring.as_deref(),
@@ -9017,7 +7900,6 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
                         if application.name == "int32_strictly_positive_is_nonnegative"
                             && premises.len() == 1
                 )
-                && premises.is_empty()
         ),
         "{tactics:#?}"
     );
@@ -9030,20 +7912,6 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
     .expect("the retained common nested have should expand");
     verify_c0_sources(&expanded, &[("select_positive.c", c_source)])
         .expect("the explicit common nested proof should independently re-derive");
-
-    let corrupted = expanded.replacen(
-        "frame() using {\n            }",
-        "frame() using {\n                1 == 0;\n            }",
-        1,
-    );
-    assert_ne!(
-        corrupted, expanded,
-        "the expansion should expose the path-independent verified frame"
-    );
-    assert!(
-        verify_c0_sources(&corrupted, &[("select_positive.c", c_source)]).is_err(),
-        "ordinary verification should reject an unavailable frame premise"
-    );
 }
 
 #[test]
@@ -9064,7 +7932,7 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
         verifying "select_and_increment.c";
 
         int32 select_and_increment(int32 flag) {
-            immutable;
+            ensures result == result;
         } by {
             step();
             branch {
@@ -9076,7 +7944,7 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
                 else { step(); }
             }
             execute();
-            frame();
+            simp();
         }
     "#;
 
@@ -9104,7 +7972,6 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
                 ProofTactic::Branch(branch),
                 ProofTactic::Step,
                 ProofTactic::Step,
-                ProofTactic::FrameUsing { region: None, premises },
                 ..
             ] if matches!(
                     branch.ensuring.as_deref(),
@@ -9121,7 +7988,6 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
                 )
                 && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
                 && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
-                && premises.is_empty()
         ),
         "{tactics:#?}"
     );
@@ -9154,7 +8020,6 @@ fn incremented_strict_lower_bound_retains_its_theorem_path() {
         verifying "select_and_increment_positive.c";
 
         int32 select_and_increment_positive(int32 flag) {
-            immutable;
             ensures result > 0;
         } by {
             step();
@@ -9167,7 +8032,6 @@ fn incremented_strict_lower_bound_retains_its_theorem_path() {
                 else { step(); }
             }
             execute();
-            frame();
             simp();
         }
     "#;
@@ -9226,7 +8090,6 @@ fn post_execution_have_anchors_strict_increment_theorem_premises() {
         verifying "select_and_increment_positive_have.c";
 
         int32 select_and_increment_positive_have(int32 flag) {
-            immutable;
             ensures result > 0;
         } by {
             step();
@@ -9239,7 +8102,6 @@ fn post_execution_have_anchors_strict_increment_theorem_premises() {
                 else { step(); }
             }
             execute();
-            frame();
             have result > 0 by simp;
             simp();
         }
@@ -9311,7 +8173,6 @@ fn branch_arms_retain_bare_fact_transports_on_proof() {
         int32 set_choice_return_first(int32 p[2], int32 flag) {
             requires first_is_seven(p);
             consumes p[0..2];
-            mutable p[1..2];
             produces p[0..2];
             ensures result == 7;
         } by {
@@ -9331,7 +8192,6 @@ fn branch_arms_retain_bare_fact_transports_on_proof() {
                 }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -9402,7 +8262,6 @@ fn branch_arms_retain_nested_have_proofs() {
         verifying "select_nonnegative.c";
 
         int32 select_nonnegative(int32 flag) {
-            immutable;
             ensures result >= 0;
         } by {
             step();
@@ -9424,7 +8283,6 @@ fn branch_arms_retain_nested_have_proofs() {
                 }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -9495,7 +8353,6 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
         verifying "choose_one_or_two.c";
 
         int32 choose_one_or_two(int32 flag) {
-            immutable;
             ensures result == 1 or result == 2;
         } by {
             branch {
@@ -9506,7 +8363,6 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
                     execute();
                 }
             }
-            frame();
             simp();
         }
     "#;
@@ -9543,11 +8399,9 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
             "terminal arm expansion must not retain smart execution: {arm:#?}"
         );
         assert!(
-            arm.iter().any(|tactic| matches!(
-                tactic,
-                ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
-            )),
-            "each terminal arm must retain the checked immutable frame: {arm:#?}"
+            arm.iter()
+                .all(|tactic| !matches!(tactic, ProofTactic::Simp)),
+            "each terminal arm must retain only checked operations: {arm:#?}"
         );
     }
     let expanded = expand_c0_claim_source(
@@ -9839,7 +8693,6 @@ fn decided_branch_interface_retains_the_surviving_checked_state() {
 
         int32 selected_nonnegative(int32 x) {
             requires x < 0;
-            immutable;
             ensures result == 1;
         } by {
             branch {
@@ -9850,7 +8703,6 @@ fn decided_branch_interface_retains_the_surviving_checked_state() {
                 else { step(); }
             }
             step();
-            frame();
             simp();
         }
     "#;
@@ -9912,7 +8764,6 @@ fn open_scope_retains_its_checked_branch_interface() {
 
         int32 scoped_nonnegative(int32 x) {
             owns marker(x);
-            immutable;
             ensures result >= 0;
         } by {
             open(marker(x)) {
@@ -9925,7 +8776,6 @@ fn open_scope_retains_its_checked_branch_interface() {
                 }
                 step();
             }
-            frame();
             simp();
         }
     "#;
@@ -10010,7 +8860,6 @@ fn open_scope_retains_its_checked_execution_branch() {
 
         int32 empty_branch(int32 x) {
             owns marker(x);
-            immutable;
             ensures result == x;
         } by {
             open(marker(x)) {
@@ -10022,7 +8871,6 @@ fn open_scope_retains_its_checked_execution_branch() {
                 }
                 step();
             }
-            frame();
             simp();
         }
     "#;
@@ -10107,7 +8955,6 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
         int32 selected_branch(int32 x) {
             requires x < 0;
             owns marker(x);
-            immutable;
             ensures result == 1;
         } by {
             open(marker(x)) {
@@ -10117,7 +8964,6 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
                 }
                 step();
             }
-            frame();
             simp();
         }
     "#;
@@ -10542,11 +9388,9 @@ fn outcome_simp_with_no_open_claims_is_an_empty_proof_transition() {
         void release(struct object* obj) {
             requires obj->refs == 1;
             consumes object_ref(obj);
-            mutable obj->refs;
         } by {
             unfold(object_ref(obj));
             execute();
-            frame();
             simp();
         }
     "#;
@@ -10602,13 +9446,11 @@ fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
         void init(struct pool* pool, int32 capacity) {
             requires 0 < capacity;
             owns object(pool);
-            mutable pool->checked_out, pool->capacity;
             produces capacity of pool_slot(pool);
             ensures valid_pool(pool);
         } by {
             execute();
             fold(capacity of pool_slot(pool));
-            frame();
             simp();
         }
     "#;
@@ -10672,14 +9514,12 @@ fn outcome_predicate_unfold_uses_the_checked_frame_population_transition() {
             requires count(pool_object(pool, object)) == 1;
             owns object(pool);
             consumes pool_object(pool, object);
-            mutable pool->checked_out;
             produces object(object);
             ensures valid_pool(pool);
         } by {
             unfold(valid_pool);
             unfold(pool_object(pool, object));
             execute();
-            frame();
             simp();
         }
     "#;
@@ -10944,7 +9784,6 @@ fn bound_universal_outcome_retains_instantiation_and_transport() {
                 preserve by {
                     unfold(all_le_range);
                 }
-                mutable p[0..3] by frame;
             }
             step();
             unfold(all_le_range);
@@ -11598,78 +10437,6 @@ fn branch_continuation_claims_retain_their_selected_outcome_step() {
 }
 
 #[test]
-fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
-    let c_source = r#"
-        int32 preserve_after_loop(int32 p[], int32 n) {
-            int32 i;
-            i = 0;
-            while (i < n) {
-                p[i] = i;
-                i = i + 1;
-            }
-            return i;
-        }
-    "#;
-    let click_source = r#"
-        verifying "preserve.c";
-
-        int32 preserve_after_loop(int32 p[], int32 n) {
-            requires n >= 0;
-            requires n <= 100;
-            requires loadable(p[0..n + 1]);
-            consumes p[0..n + 1];
-            ensures preserved: p[n] == old(p[n]);
-        } by {
-            step();
-            step();
-            loop {
-                invariant i >= 0;
-                invariant i <= n;
-                mutable p[0..n] by frame;
-                initialize by simp;
-                preserve by {
-                    step();
-                    step();
-                    close_invariants();
-                }
-            }
-            step();
-            frame(loop(0));
-            simp();
-        }
-    "#;
-    let sources = [("preserve.c", c_source)];
-
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
-    verified.expect("the frame-certified ensure should close through Proof");
-    let compatibility_events = events
-        .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "outcome simp legacy exit planning"
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        compatibility_events.is_empty(),
-        "a checked frame goal must not enter legacy exit planning: {compatibility_events:#?}"
-    );
-
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &sources,
-        "preserve_after_loop",
-        CProofClaim::Grouped,
-    )
-    .expect("the frame-certified outcome should expand");
-    verify_c0_sources(&expanded, &sources)
-        .expect("the frame-certified expansion should check independently");
-}
-
-#[test]
 fn outcome_simp_transports_loadability_on_the_checked_proof() {
     let summarize_c = r#"
         int32 summarize(int32* p) {
@@ -11752,9 +10519,9 @@ fn outcome_simp_retains_checked_unchanged_old_equality_on_the_proof() {
             step();
             step();
             loop {
+                owns (p + 1)[0..n - 1];
                 invariant i >= 1;
                 invariant i <= n;
-                mutable (p + 1)[0..n - 1] by frame;
             }
             step();
             simp();
@@ -11964,7 +10731,6 @@ fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_pro
             loop {
                 invariant i >= 1;
                 invariant i <= n;
-                mutable (dst + 1)[0..n - 1] by frame;
             }
             step();
             simp();
@@ -12166,12 +10932,10 @@ fn source_expander_preserves_pointer_field_form_inside_smart_have() {
             int32 holder_zero(struct holder* owner, int32 data[]) {
                 requires owner->data == data;
                 views object(owner);
-                immutable;
                 ensures result == 0;
             } by {
                 have owner->data == data by simp;
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -12230,13 +10994,11 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
                 requires second_is(owner, value);
                 views object(owner);
                 views data[1..2];
-                immutable;
                 ensures result == 0;
             } by {
                 unfold(second_is);
                 have data[1] == value by simp;
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -12281,14 +11043,13 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
             int32 set_second_return_first(int32 p[2]) {
                 requires first_is_seven(p);
                 consumes p[0..2];
-                mutable p[1..2] by {
-                    unfold(first_is_seven);
-                    step();
-                    have p[0] == 7 by simp;
-                    step();
-                    frame();
-                }
                 produces p[0..2];
+            } by {
+                unfold(first_is_seven);
+                step();
+                have p[0] == 7 by simp;
+                step();
+                simp();
             }
         "#;
     let have_offset = click_source
@@ -12313,7 +11074,7 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
         .find("have p[0] == 7")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("step();\n                    frame();")
+            .find("step();\n                simp();")
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("assumption();"), "{expanded_have}");
     assert!(!expanded_have.contains("transport("), "{expanded_have}");
@@ -12340,14 +11101,13 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
             int32 set_second_return_first(int32 p[2]) {
                 requires first_is_seven(p);
                 consumes p[0..2];
-                mutable p[1..2] by {
-                    unfold(first_is_seven);
-                    step();
-                    have p[0] == 7 by simp;
-                    step();
-                    frame();
-                }
                 produces p[0..2];
+            } by {
+                unfold(first_is_seven);
+                step();
+                have p[0] == 7 by simp;
+                step();
+                simp();
             }
         "#;
     let have_offset = click_source
@@ -12372,7 +11132,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
         .find("have p[0] == 7")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("step();\n                    frame();")
+            .find("step();\n                simp();")
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("assumption();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
@@ -12405,25 +11165,21 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
 
             int32 preserve(int32 p[1]) {
                 views one(p);
-                immutable;
                 ensures result == 1;
             } by {
                 observe(one(p));
                 execute();
-                frame();
                 simp();
             }
 
             int32 pipeline(int32 p[1]) {
                 views one(p);
-                immutable;
                 ensures result == 1;
             } by {
                 observe(one(p));
                 execute_until(statement(2));
                 have at(statement(1).entry, p[0]) == 1 by simp;
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -12500,7 +11256,6 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 requires separate(memory(owner[0..4]), memory(data[0..length]));
                 consumes owner[0..4];
                 views data[0..length];
-                mutable owner[0..4];
                 produces owner[0..4];
                 ensures result == 0;
                 ensures owner->pos == 0;
@@ -12508,7 +11263,6 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 ensures owner->data == data;
             } by {
                 execute();
-                frame();
                 simp();
             }
 
@@ -12525,7 +11279,6 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 consumes left[0..4];
                 consumes right[0..4];
                 views data[0..length];
-                mutable left[0..4], right[0..4];
                 produces left[0..4];
                 produces right[0..4];
                 ensures result == 0;
@@ -12538,7 +11291,6 @@ fn source_expander_derives_separation_from_call_postconditions() {
                     simp();
                 }
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -12675,142 +11427,6 @@ fn source_expander_replaces_and_checks_grouped_proof() {
     assert!(!expanded.contains("execute();"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("expanded grouped proof should re-verify");
-}
-
-#[test]
-fn source_expander_replaces_and_checks_contextual_frame() {
-    let c_source = r#"
-            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-                p[i] = 9;
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_in_bounds.c";
-
-            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires i >= 0;
-                requires i < n;
-                consumes p[0..n];
-                mutable p[0..n] by { execute(); frame(); }
-            }
-        "#;
-
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("write_in_bounds.c", c_source)],
-        "write_in_bounds",
-        CProofClaim::Effect(0),
-    )
-    .expect("contextual frame should expand");
-    assert!(!expanded.contains("execute();"));
-    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)]).unwrap_or_else(|error| {
-        panic!(
-            "expanded contextual frame should re-verify: {}\n{expanded}",
-            error.message()
-        )
-    });
-}
-
-#[test]
-fn selected_post_execution_frame_stays_inside_open_scope() {
-    let c_source = r#"
-            int32 increment_counted(int32 p[]) {
-                p[0] = p[0] + 1;
-                return p[0];
-            }
-        "#;
-    let click_source = r#"
-            resource counted(p: int32*) {
-                owns p[0..1];
-                fact p[0] == count(counted(p));
-            }
-
-            verifying "increment_counted.c";
-
-            int32 increment_counted(int32 p[]) {
-                owns counted(p);
-                produces counted(p);
-                mutable p[0..1];
-            } by {
-                open(counted(p)) {
-                    execute();
-                    frame();
-                }
-                simp();
-            }
-        "#;
-    let offset = click_source
-        .find("frame();")
-        .expect("proof should contain the selected frame");
-    let line = click_source[..offset]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count()
-        + 1;
-    let column = offset
-        - click_source[..offset]
-            .rfind('\n')
-            .map(|offset| offset + 1)
-            .unwrap_or(0)
-        + 1;
-
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("increment_counted.c", c_source)],
-        line,
-        column,
-    )
-    .expect("selected frame inside an open scope should expand");
-    assert!(!expanded.contains("frame();"), "{expanded}");
-    verify_c0_sources(&expanded, &[("increment_counted.c", c_source)])
-        .expect("expanded frame must check before the open scope closes");
-}
-
-#[test]
-fn source_expander_shares_path_independent_frame_across_c_branches() {
-    let c_source = r#"
-            int32 write_by_flag(int32 p[], int32 flag) {
-                if (flag == 0) {
-                    p[0] = 1;
-                } else {
-                    p[0] = 2;
-                }
-                return p[0];
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_by_flag.c";
-
-            int32 write_by_flag(int32 p[], int32 flag) {
-                consumes p[0..1];
-                mutable p[0..1];
-            } by {
-                execute();
-                frame();
-            }
-        "#;
-
-    let frame_offset = click_source
-        .find("frame();")
-        .expect("proof should contain the selected frame");
-    let position = expansion::position_at_offset(click_source, frame_offset);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("write_by_flag.c", c_source)],
-        position.line,
-        position.column,
-    )
-    .expect("path-independent frame should expand across C branches");
-    assert!(!expanded.contains("frame();"), "{expanded}");
-    verify_c0_sources(&expanded, &[("write_by_flag.c", c_source)]).unwrap_or_else(|error| {
-        panic!(
-            "expanded path-independent frame should re-verify: {}\n{expanded}",
-            error.message()
-        )
-    });
 }
 
 #[test]
@@ -13262,34 +11878,6 @@ fn source_expander_replaces_and_checks_default_ensure_proof() {
 }
 
 #[test]
-fn source_expander_replaces_and_checks_default_effect_proof() {
-    let c_source = r#"
-            int32 zero() {
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "zero.c";
-
-            int32 zero() {
-                immutable;
-            }
-        "#;
-    let sources = [("zero.c", c_source)];
-
-    let expanded_once =
-        expand_c0_claim_source(click_source, &sources, "zero", CProofClaim::Effect(0))
-            .expect("default effect proof should expand");
-    let expanded_twice =
-        expand_c0_claim_source(&expanded_once, &sources, "zero", CProofClaim::Effect(0))
-            .expect("explicit effect expansion should expand again");
-
-    assert!(expanded_once.contains("immutable by {"));
-    assert_eq!(expanded_once, expanded_twice);
-    verify_c0_sources(&expanded_once, &sources).expect("expanded default effect should re-verify");
-}
-
-#[test]
 fn source_expander_reports_missing_grouped_proof_precisely() {
     let c_source = r#"
             int32 identity(int32 x) {
@@ -13449,7 +12037,6 @@ fn unfolded_conjunction_have_simp_expands_to_both_scopes() {
             void set_pair(struct pair* pair, int32 bound) {
                 requires 0 <= bound;
                 owns object(pair);
-                mutable pair->low, pair->high;
 
                 ensures ordered_pair(pair);
             } by {
@@ -13458,7 +12045,6 @@ fn unfolded_conjunction_have_simp_expands_to_both_scopes() {
                     unfold(ordered_pair);
                     simp();
                 }
-                frame();
                 simp();
             }
         "#;
@@ -13522,13 +12108,11 @@ fn outcome_predecessor_bound_simp_expands_to_the_named_rule() {
                 requires ordered_pair(pair);
                 requires pair->low == 1;
                 owns object(pair);
-                mutable pair->low;
 
                 ensures ordered_pair(pair);
             } by {
                 unfold(ordered_pair);
                 execute();
-                frame();
                 simp();
             }
         "#;

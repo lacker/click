@@ -1503,32 +1503,6 @@ fn apply_contract_lets_to_resource_subject(
     }
 }
 
-pub(in crate::surface) fn apply_contract_lets_to_effect_clause(
-    clause: EffectClause,
-    bindings: &[ContractLetBinding],
-) -> Result<EffectClause, String> {
-    let EffectClause { effect, proof } = clause;
-    Ok(EffectClause {
-        effect: apply_contract_lets_to_effect(effect, bindings)?,
-        proof,
-    })
-}
-
-pub(in crate::surface) fn apply_contract_lets_to_effect(
-    effect: Effect,
-    bindings: &[ContractLetBinding],
-) -> Result<Effect, String> {
-    match effect {
-        Effect::Immutable => Ok(Effect::Immutable),
-        Effect::Mutable(segments) => Ok(Effect::Mutable(
-            segments
-                .into_iter()
-                .map(|segment| apply_contract_lets_to_segment(segment, bindings))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-    }
-}
-
 pub(in crate::surface) fn apply_contract_lets_to_segment(
     segment: ContractSegment,
     bindings: &[ContractLetBinding],

@@ -18,7 +18,6 @@ fn proof_step_supports_explicit_fact_transport() {
             int32 set_second_return_first(int32 p[2]) {
                 requires first_is_seven(p);
                 consumes p[0..2];
-                mutable p[1..2];
                 produces p[0..2];
                 ensures result == 7;
             } by {
@@ -28,7 +27,6 @@ fn proof_step_supports_explicit_fact_transport() {
                     old(p[0]) == 7;
                 }
                 step();
-                frame();
                 simp();
             }
         "#;
@@ -71,7 +69,6 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
             int32 set_third_return_second(int32 p[3]) {
                 requires ordered(p);
                 consumes p[0..3];
-                mutable p[2..3];
                 produces p[0..3];
                 ensures result >= 0;
             } by {
@@ -79,7 +76,6 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
                 step();
                 transport(0 <= old(p[1]), 0 <= p[1]);
                 step();
-                frame();
                 simp();
             }
         "#;
@@ -151,14 +147,12 @@ fn smart_step_starts_each_source_tactic_with_an_empty_step_delta() {
             int32 set_third_return_second(int32 p[3]) {
                 requires ordered(p);
                 consumes p[0..3];
-                mutable p[2..3];
                 produces p[0..3];
                 ensures result >= 0;
             } by {
                 unfold(ordered);
                 step();
                 step();
-                frame();
                 simp();
             }
         "#;
@@ -220,7 +214,6 @@ fn clone_field_stores_with_observed_source_resource_verify() {
             );
             consumes target[0..4];
             views cursor(source);
-            mutable target[0..4];
             ensures result == source->pos;
         } by {
             observe(cursor(source));
@@ -228,7 +221,6 @@ fn clone_field_stores_with_observed_source_resource_verify() {
             step();
             step();
             step();
-            frame();
             simp();
         }
     "#;
@@ -784,16 +776,15 @@ fn execute_step_omits_materialization_only_transport() {
             int32 set_second_return_first(int32 p[2]) {
                 requires first_is_seven(p);
                 consumes p[0..2];
-                mutable p[1..2] by {
-                    unfold(first_is_seven);
-                    have p[0] == 7 by {
-                        assumption();
-                    }
-                    step();
-                    step();
-                    frame();
-                }
                 produces p[0..2];
+            } by {
+                unfold(first_is_seven);
+                have p[0] == 7 by {
+                    assumption();
+                }
+                step();
+                step();
+                simp();
             }
         "#;
 
@@ -866,13 +857,12 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
             int32 replace_first(int32 p[2]) {
                 requires first_less_than_second(p);
                 consumes p[0..2];
-                mutable p[0..1] by {
-                    unfold(first_less_than_second);
-                    step();
-                    step();
-                    frame();
-                }
                 produces p[0..2];
+            } by {
+                unfold(first_less_than_second);
+                step();
+                step();
+                simp();
             }
         "#;
 
@@ -935,15 +925,14 @@ fn execute_step_omits_materialization_transport_across_statements() {
                 requires separate(memory(p[0..2]), memory(q[0..1]));
                 consumes p[0..2];
                 consumes q[0..1];
-                mutable p[0..1], q[0..1] by {
-                    unfold(first_less_than_second);
-                    step();
-                    step();
-                    step();
-                    frame();
-                }
                 produces p[0..2];
                 produces q[0..1];
+            } by {
+                unfold(first_less_than_second);
+                step();
+                step();
+                step();
+                simp();
             }
         "#;
 
@@ -1008,27 +997,23 @@ fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
 
             int32 set_seven(int32 p[1]) {
                 consumes p[0..1];
-                mutable p[0..1];
                 produces p[0..1];
                 ensures result == 7;
                 ensures p[0] == 7;
             } by {
                 step();
                 step();
-                frame();
                 simp();
             }
 
             int32 call_set_seven(int32 p[1]) {
                 consumes p[0..1];
-                mutable p[0..1];
                 produces p[0..1];
                 ensures result == 7;
                 ensures p[0] == 7;
             } by {
                 step();
                 step();
-                frame();
                 simp();
             }
         "#;

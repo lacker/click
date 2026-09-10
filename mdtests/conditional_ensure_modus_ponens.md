@@ -31,14 +31,12 @@ verifying "use_five.c";
 
 int32 set_five(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
     ensures result == 0 or result == 1;
     ensures result == 1 implies cell[0] == 5;
 } by auto;
 
 int32 use_five(int32* cell) {
     owns cell[0..1];
-    mutable cell[0..1];
 } by {
     step();
     step();
@@ -50,13 +48,9 @@ int32 use_five(int32* cell) {
             }
         }
         execute();
-        frame() using {
-        }
         assumption();
     } else {
         execute();
-        frame() using {
-        }
         assumption();
     }
 }

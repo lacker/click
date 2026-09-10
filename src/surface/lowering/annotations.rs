@@ -244,7 +244,6 @@ pub(in crate::surface) fn lower_composite_resource_condition(
     let entry_state = CState::new();
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
-        function_effects: &[],
         implicit_contract_mutable_segments: &[],
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
@@ -316,7 +315,6 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
     let entry_state = CState::new();
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
-        function_effects: &[],
         implicit_contract_mutable_segments: &[],
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
@@ -403,7 +401,6 @@ pub(in crate::surface) fn annotated_function(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
-    inherit_function_effects_into_loops: bool,
 ) -> Result<CFunction, ClickError> {
     let (resource_requires, resource_ensures, borrowed_resource_ensures) =
         function_resource_summary(function_block, parsed_function, resource_environment)?;
@@ -422,28 +419,17 @@ pub(in crate::surface) fn annotated_function(
         click_function_environment,
         resource_environment,
     )?;
-    // `consumes` grants the callee a write-capable owned range even when the
-    // source has no explicit function-level `mutable` clause. Carry that
+    // `consumes` grants the callee a write-capable owned range. Carry that
     // frame into loop summaries so checked proof artifacts retain the same
-    // memory-effect evidence as independent contract certification.
-    let implicit_contract_mutable_segments = if function_block.effects().is_empty() {
-        contract_mutable.as_slice()
-    } else {
-        &[]
-    };
-    let resource_derived_mutable_frame = function_block.effects().is_empty()
-        && (!contract_mutable.is_empty()
-            || function_block
-                .requires()
-                .iter()
-                .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_))));
+    // memory-footprint evidence as independent contract certification.
+    let implicit_contract_mutable_segments = contract_mutable.as_slice();
+    let resource_derived_mutable_frame = !contract_mutable.is_empty()
+        || function_block
+            .requires()
+            .iter()
+            .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
-        function_effects: if inherit_function_effects_into_loops {
-            function_block.effects()
-        } else {
-            &[]
-        },
         implicit_contract_mutable_segments,
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: resource_derived_mutable_frame,
@@ -587,7 +573,6 @@ pub(in crate::surface) fn lower_branch_interface_fact(
 ) -> Result<SpecProposition, ClickError> {
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
-        function_effects: &[],
         implicit_contract_mutable_segments: &[],
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
@@ -646,7 +631,6 @@ fn fixed_state_elaboration<'a>(
 ) -> (AnnotationLowerer<'a>, SpecElaborationContext) {
     let lowerer = AnnotationLowerer {
         structural_clauses: &[],
-        function_effects: &[],
         predicate_environment,
         click_function_environment,
         entry_state,
@@ -795,7 +779,6 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
     let entry_state = CState::new();
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
-        function_effects: &[],
         implicit_contract_mutable_segments: &[],
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
@@ -842,7 +825,6 @@ pub(in crate::surface) fn function_contract_summary(
     );
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
-        function_effects: &[],
         implicit_contract_mutable_segments: &[],
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
@@ -976,7 +958,7 @@ pub(in crate::surface) fn function_contract_summary(
     }
 
     let mut mutable = Vec::new();
-    if function_block.effects().is_empty() {
+    {
         if let Some(startup) = &parsed_function.program_entry_state {
             mutable.extend(startup.resources().facts().iter().filter_map(|fact| {
                 let range = fact.memory_own_range()?;
@@ -1002,35 +984,12 @@ pub(in crate::surface) fn function_contract_summary(
             }
         }
     }
-    for effect in function_block.effects() {
-        match effect.effect() {
-            Effect::Immutable => {}
-            Effect::Mutable(segments) => {
-                mutable.extend(segments.iter().map(|segment| {
-                    CMemorySegment::new(
-                        segment.base.clone(),
-                        segment.start.clone(),
-                        segment.end.clone(),
-                    )
-                    .with_element_width(contract_segment_element_width(
-                        parsed_function.parameters(),
-                        segment,
-                    ))
-                }));
-            }
-        }
-    }
-    let claims = if function_block.effects().is_empty() && function_block.ensures().is_empty() {
+    let claims = if function_block.ensures().is_empty() {
         vec![CFunctionContractClaim::body_safety()]
     } else {
         let mut proposition_index = 0;
         let mut resource_index = 0;
-        let mut claims = function_block
-            .effects()
-            .iter()
-            .enumerate()
-            .map(|(index, _)| CFunctionContractClaim::effect(index))
-            .collect::<Vec<_>>();
+        let mut claims = Vec::new();
         for (source_index, ensure) in function_block.ensures().iter().enumerate() {
             claims.push(match ensure.ensure() {
                 Ensure::Proposition(_) => {
@@ -1273,17 +1232,15 @@ struct LoopResourceDeclaration {
 
 struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
-    function_effects: &'a [EffectClause],
     implicit_contract_mutable_segments: &'a [CMemorySegment],
     /// Resources declared by each loop, keyed by loop index. A loop with a
     /// declaration has the shape of a callee contract: its body executes
     /// owning exactly these resources, and its write footprint is the memory
     /// they own rather than everything the function owns.
     loop_resources: BTreeMap<usize, LoopResourceDeclaration>,
-    /// Whether this function's write footprint comes from its resources
-    /// rather than an effect clause. A loop in such a function inherits that
-    /// footprint, so an empty one is an inherited empty footprint rather than
-    /// the absence of one.
+    /// Whether this function's write footprint comes from its resources. A
+    /// loop in such a function inherits that footprint, so an empty one is an
+    /// inherited empty footprint rather than the absence of one.
     inherits_resource_derived_frame: bool,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
@@ -1328,7 +1285,7 @@ impl AnnotationLowerer<'_> {
                 let loop_index = self.next_loop_index();
                 let lowered_body = self.lower_statement(body)?;
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
-                let effect_checks = self.loop_effect_checks(loop_index, body)?;
+                let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
                 if matches!(statement, syntax::C0Statement::DoWhile { .. }) {
                     c_do_while_with_invariant_and_effect_checks(
@@ -1360,9 +1317,8 @@ impl AnnotationLowerer<'_> {
                 let loop_index = self.next_loop_index();
                 let lowered_body = self.lower_statement(body)?;
                 let lowered_step = self.lower_statement(step)?;
-                let effect_body = syntax::C0Statement::Seq(body.clone(), step.clone());
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
-                let effect_checks = self.loop_effect_checks(loop_index, &effect_body)?;
+                let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
                 c_seq(
                     lowered_initializer,
@@ -1438,13 +1394,11 @@ impl AnnotationLowerer<'_> {
             .iter()
             .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
             .flat_map(StructuralClause::items)
-            .filter(|item| item.kind() == StructuralItemKind::Invariant)
             .enumerate()
             .map(|(item_index, item)| {
                 let proposition = unfold_structural_invariant_proposition(
                     self.predicate_environment,
-                    item.proposition()
-                        .expect("invariant structural item should contain a proposition"),
+                    item.proposition(),
                     &unfolded_predicates,
                 )
                 .map_err(|message| {
@@ -3713,79 +3667,8 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    fn loop_effect_checks(
-        &self,
-        loop_index: usize,
-        body: &syntax::C0Statement,
-    ) -> Result<Vec<CLoopEffectCheck>, ClickError> {
-        // Static-storage objects are stable across loop iterations, even
-        // though their values are loop-modified. A whole-loop effect may
-        // therefore name one; only automatic locals make a whole-loop range
-        // iteration-dependent.
-        let modified_locals = c0_loop_modified_locals(body)
-            .into_iter()
-            .filter(|name| self.entry_state.global_object_type(name).is_none())
-            .collect();
-        let mut checks = self
-            .structural_clauses
-            .iter()
-            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-            .flat_map(StructuralClause::items)
-            .filter(|item| item.is_effect_kind())
-            .enumerate()
-            .map(|(item_index, item)| {
-                let effect = item
-                    .effect()
-                    .expect("effect structural item should contain an effect");
-                let span = match item.kind() {
-                    StructuralItemKind::Effect => CLoopEffectSpan::Whole,
-                    StructuralItemKind::StepEffect => CLoopEffectSpan::Step,
-                    _ => unreachable!("loop effect filter should only include effect items"),
-                };
-                let lowered = self
-                    .lower_loop_effect(effect, span, &modified_locals)
-                    .map_err(|message| {
-                        ClickError::new(format!("loop {loop_index} effect {item_index}: {message}"))
-                    })?;
-                let context = match effect {
-                    Effect::Immutable => match span {
-                        CLoopEffectSpan::Whole => {
-                            format!("loop {loop_index} immutable {item_index}")
-                        }
-                        CLoopEffectSpan::Step => {
-                            format!("loop {loop_index} step immutable {item_index}")
-                        }
-                    },
-                    Effect::Mutable(_) => match span {
-                        CLoopEffectSpan::Whole => {
-                            format!("loop {loop_index} mutable {item_index}")
-                        }
-                        CLoopEffectSpan::Step => {
-                            format!("loop {loop_index} step mutable {item_index}")
-                        }
-                    },
-                };
-                Ok(CLoopEffectCheck::new_with_span(
-                    lowered,
-                    span,
-                    Some(context),
-                ))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let function_mutable = self
-            .function_effects
-            .iter()
-            .flat_map(|clause| match clause.effect() {
-                Effect::Mutable(segments) => segments.clone(),
-                Effect::Immutable => Vec::new(),
-            })
-            .collect::<Vec<_>>();
-        let has_explicit_whole_effect = self
-            .structural_clauses
-            .iter()
-            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-            .flat_map(StructuralClause::items)
-            .any(|item| item.kind() == StructuralItemKind::Effect);
+    fn loop_frame_checks(&self, loop_index: usize) -> Result<Vec<CLoopEffectCheck>, ClickError> {
+        let mut checks: Vec<CLoopEffectCheck> = Vec::new();
         // A loop body can only write memory the function owns, so a loop with
         // no clause of its own inherits the function's owned write footprint
         // instead of becoming an unconditional havoc. An owned footprint that
@@ -3798,17 +3681,13 @@ impl AnnotationLowerer<'_> {
             // A loop that declares its own resources has the shape of a
             // callee: its footprint is the memory it owns, not everything the
             // function owns. The claim stays checked at every back edge.
-            if !has_explicit_whole_effect {
-                checks.push(CLoopEffectCheck::new_with_span(
-                    CLoopEffect::Mutable(declaration.owned_segments.clone()),
-                    CLoopEffectSpan::Whole,
-                    Some(format!("loop {loop_index} declared owned resource frame")),
-                ));
-            }
-        } else if self.function_effects.is_empty()
-            && !has_explicit_whole_effect
-            && (self.inherits_resource_derived_frame
-                || !self.implicit_contract_mutable_segments.is_empty())
+            checks.push(CLoopEffectCheck::new_with_span(
+                CLoopEffect::Mutable(declaration.owned_segments.clone()),
+                CLoopEffectSpan::Whole,
+                Some(format!("loop {loop_index} declared owned resource frame")),
+            ));
+        } else if self.inherits_resource_derived_frame
+            || !self.implicit_contract_mutable_segments.is_empty()
         {
             checks.push(CLoopEffectCheck::new_with_span(
                 CLoopEffect::Mutable(self.implicit_contract_mutable_segments.to_vec()),
@@ -3816,69 +3695,7 @@ impl AnnotationLowerer<'_> {
                 Some(format!("loop {loop_index} inherited owned resource frame")),
             ));
         }
-        let implicit_effect = if !function_mutable.is_empty() {
-            Some(Effect::Mutable(function_mutable))
-        } else if self
-            .function_effects
-            .iter()
-            .any(|clause| matches!(clause.effect(), Effect::Immutable))
-        {
-            Some(Effect::Immutable)
-        } else {
-            None
-        };
-        if let Some(effect) = implicit_effect {
-            let lowered = self
-                .lower_loop_effect(&effect, CLoopEffectSpan::Whole, &modified_locals)
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "loop {loop_index} inherited function effect: {message}"
-                    ))
-                })?;
-            checks.push(CLoopEffectCheck::new_with_span(
-                lowered,
-                CLoopEffectSpan::Whole,
-                Some(format!("loop {loop_index} inherited function effect")),
-            ));
-        }
         Ok(checks)
-    }
-
-    fn lower_loop_effect(
-        &self,
-        effect: &Effect,
-        span: CLoopEffectSpan,
-        modified_locals: &BTreeSet<String>,
-    ) -> Result<CLoopEffect, String> {
-        match effect {
-            Effect::Immutable => Ok(CLoopEffect::Immutable),
-            Effect::Mutable(segments) => segments
-                .iter()
-                .map(|segment| {
-                    if segment.state != ContractSegmentState::Current {
-                        return Err(
-                            "`mutable` inside `loop` expects current-state segments; `old(...)` is not supported here"
-                                .to_string(),
-                        );
-                    }
-                    if span == CLoopEffectSpan::Whole {
-                        let names = contract_segment_referenced_names(segment);
-                        if let Some(name) = names.iter().find(|name| modified_locals.contains(*name))
-                        {
-                            return Err(format!(
-                                "whole-loop `mutable` segment references loop-modified local `{name}`; use `step {{ ... }}` for iteration-relative effects or state a stable whole-loop range"
-                            ));
-                        }
-                    }
-                    Ok(CMemorySegment::new(
-                        self.lower_current_invariant_c_expression(&segment.base)?,
-                        self.lower_current_invariant_c_expression(&segment.start)?,
-                        self.lower_current_invariant_c_expression(&segment.end)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map(CLoopEffect::Mutable),
-        }
     }
 }
 

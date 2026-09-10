@@ -29,7 +29,7 @@ use crate::kernel::{
     c_function_contract_entry_state, c_function_contract_refinement_arguments,
     c_function_contract_refinement_context, c_function_entry_state,
     c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
-    c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
+    c_function_specification, c_function_termination_plan, c_if,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
     c_resources_directly_match, c_seq, c_typed_pointer_value,
@@ -188,12 +188,10 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "field",
     "fold",
     "forall",
-    "frame",
     "from",
     "function",
     "have",
     "if",
-    "immutable",
     "implies",
     "in",
     "induct",
@@ -213,7 +211,6 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "mark",
     "match",
     "memory",
-    "mutable",
     "normalize",
     "not",
     "object",
@@ -283,13 +280,11 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "forall",
     "function",
     "if-expression",
-    "immutable",
     "implies",
     "let-where",
     "loadable",
     "match-expression",
     "modifies",
-    "mutable",
     "not",
     "old",
     "operator-bit-and",
@@ -642,7 +637,6 @@ pub struct FunctionBlock {
     requirement_label_indices: BTreeMap<String, usize>,
     decreases: Option<CFunctionDecrease>,
     structural_clauses: Vec<StructuralClause>,
-    effects: Vec<EffectClause>,
     constructs: Vec<ResourceClause>,
     ensures: Vec<EnsureClause>,
     grouped_proof: Option<SourceProof>,
@@ -699,12 +693,6 @@ pub struct EnsureClause {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EffectClause {
-    effect: Effect,
-    proof: SourceProof,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuralClause {
     region: CodeRegion,
     label: Option<String>,
@@ -743,22 +731,7 @@ pub enum CodeRegion {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuralItem {
-    kind: StructuralItemKind,
-    claim: StructuralItemClaim,
-    proof: SourceProof,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StructuralItemClaim {
-    Proposition(ClickProposition),
-    Effect(Effect),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StructuralItemKind {
-    Invariant,
-    Effect,
-    StepEffect,
+    claim: ClickProposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -842,12 +815,6 @@ pub enum ResourceAccessMode {
 pub enum ResourceKind {
     Composite,
     Token,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Effect {
-    Immutable,
-    Mutable(Vec<ContractSegment>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2310,11 +2277,6 @@ pub enum ProofTactic {
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
-    SmartFrame(Option<CodeRegionRef>),
-    FrameUsing {
-        region: Option<CodeRegionRef>,
-        premises: Vec<ClickProposition>,
-    },
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
@@ -2414,7 +2376,6 @@ pub enum SimpleTactic {
     Instantiate,
     FoldResource,
     ConstructResource,
-    Frame,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2425,7 +2386,6 @@ pub enum SmartTacticKind {
     FactTransport,
     SmartExecute,
     ExecuteUntil,
-    Frame,
     Simp,
 }
 
@@ -2490,16 +2450,6 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         id: "execute-until",
         syntax: "execute_until",
         class: "smart",
-    },
-    PublicTacticForm {
-        id: "frame",
-        syntax: "frame()",
-        class: "smart",
-    },
-    PublicTacticForm {
-        id: "frame-using",
-        syntax: "frame() using",
-        class: "simple",
     },
     PublicTacticForm {
         id: "unfold-predicate",
@@ -2793,10 +2743,6 @@ pub enum ProofStep {
         argument: ContractExpression,
         premises: Vec<ClickProposition>,
     },
-    FrameUsing {
-        region: Option<CodeRegionRef>,
-        premises: Vec<ClickProposition>,
-    },
     Have {
         proposition: ClickProposition,
         proof: Box<ProofCertificate>,
@@ -2836,11 +2782,7 @@ pub struct CertificateStructuralClause {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CertificateStructuralItem {
-    kind: StructuralItemKind,
-    claim: StructuralItemClaim,
-    /// Invariants are declarations whose initialize/preserve proofs live on
-    /// the enclosing loop. Effect items contain their own explicit proof.
-    effect_proof: Option<Box<ProofCertificate>>,
+    claim: ClickProposition,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3039,10 +2981,6 @@ impl ProofStep {
                 argument: argument.clone(),
                 premises: premises.clone(),
             },
-            ProofTactic::FrameUsing { region, premises } => Self::FrameUsing {
-                region: region.clone(),
-                premises: premises.clone(),
-            },
             ProofTactic::Have(proof_have) => Self::Have {
                 proposition: proof_have.proposition.clone(),
                 proof: Box::new(ProofCertificate::from_validated_proof(&proof_have.proof)),
@@ -3117,11 +3055,7 @@ impl ProofStep {
                     .items
                     .iter()
                     .map(|item| CertificateStructuralItem {
-                        kind: item.kind,
                         claim: item.claim.clone(),
-                        effect_proof: item
-                            .is_effect_kind()
-                            .then(|| Box::new(ProofCertificate::from_validated_proof(&item.proof))),
                     })
                     .collect(),
                 initialize_proof: clause
@@ -3243,10 +3177,6 @@ impl ProofStep {
                 argument: argument.clone(),
                 premises: premises.clone(),
             },
-            Self::FrameUsing { region, premises } => ProofTactic::FrameUsing {
-                region: region.clone(),
-                premises: premises.clone(),
-            },
             Self::Have { proposition, proof } => ProofTactic::Have(ProofHave {
                 proposition: proposition.clone(),
                 proof: proof.to_source_proof(),
@@ -3291,13 +3221,7 @@ impl ProofStep {
                     .items
                     .iter()
                     .map(|item| StructuralItem {
-                        kind: item.kind,
                         claim: item.claim.clone(),
-                        proof: item
-                            .effect_proof
-                            .as_ref()
-                            .map(|proof| proof.to_source_proof())
-                            .unwrap_or(SourceProof::Tactic(SmartTactic::Auto)),
                     })
                     .collect(),
                 initialize_proof: clause
@@ -3479,19 +3403,7 @@ fn validate_certificate_tactics(
                     };
                     path.pop();
                 }
-                if result.is_ok() {
-                    for (item_index, item) in loop_clause.items().iter().enumerate() {
-                        if !item.is_effect_kind() {
-                            continue;
-                        }
-                        path.push(CertificatePathSegment::LoopItem(item_index));
-                        result = validate_certificate_proof(item.proof(), path);
-                        path.pop();
-                        if result.is_err() {
-                            break;
-                        }
-                    }
-                }
+                if result.is_ok() {}
                 result
             }
         };
@@ -3557,12 +3469,10 @@ impl ProofTactic {
             Self::InstantiateUsing { .. } => TacticClass::Simple(SimpleTactic::Instantiate),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::ConstructResource(_) => TacticClass::Simple(SimpleTactic::ConstructResource),
-            Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
             Self::SmartExecute | Self::SmartExecuteAllPaths => {
                 TacticClass::Smart(SmartTacticKind::SmartExecute)
             }
             Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
-            Self::SmartFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::SimpUsing(_) => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::Control(ControlTactic::Have),
@@ -3581,7 +3491,6 @@ impl SmartTactic {
     pub fn kind(self) -> SmartTacticKind {
         match self {
             Self::Auto => SmartTacticKind::Auto,
-            Self::Frame => SmartTacticKind::Frame,
             Self::Simp => SmartTacticKind::Simp,
         }
     }
@@ -3735,7 +3644,6 @@ pub enum ProofFactSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartTactic {
     Auto,
-    Frame,
     Simp,
 }
 
@@ -3924,14 +3832,12 @@ pub struct VerifiedPureTheorem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedClaim {
     Ensure { index: usize, clause: EnsureClause },
-    Effect { index: usize, clause: EffectClause },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProofKind {
     Axiom,
     Pure,
-    Frame,
     Simp,
     TacticScript,
     LoopVerification,
@@ -4213,10 +4119,6 @@ impl FunctionBlock {
         &self.structural_clauses
     }
 
-    pub fn effects(&self) -> &[EffectClause] {
-        &self.effects
-    }
-
     pub fn constructs(&self) -> &[ResourceClause] {
         &self.constructs
     }
@@ -4381,16 +4283,6 @@ impl EnsureClause {
     }
 }
 
-impl EffectClause {
-    pub fn effect(&self) -> &Effect {
-        &self.effect
-    }
-
-    pub fn proof(&self) -> &SourceProof {
-        &self.proof
-    }
-}
-
 impl StructuralClause {
     pub fn region(&self) -> &CodeRegion {
         &self.region
@@ -4429,47 +4321,14 @@ impl StructuralClause {
 }
 
 impl StructuralItem {
-    pub fn kind(&self) -> StructuralItemKind {
-        self.kind
-    }
-
-    pub fn proposition(&self) -> Option<&ClickProposition> {
-        match &self.claim {
-            StructuralItemClaim::Proposition(proposition) => Some(proposition),
-            StructuralItemClaim::Effect(_) => None,
-        }
-    }
-
-    pub fn effect(&self) -> Option<&Effect> {
-        match &self.claim {
-            StructuralItemClaim::Effect(effect) => Some(effect),
-            StructuralItemClaim::Proposition(_) => None,
-        }
-    }
-
-    fn is_effect_kind(&self) -> bool {
-        matches!(
-            self.kind,
-            StructuralItemKind::Effect | StructuralItemKind::StepEffect
-        )
-    }
-
-    pub fn proof(&self) -> &SourceProof {
-        &self.proof
+    pub fn proposition(&self) -> &ClickProposition {
+        &self.claim
     }
 }
 
 impl SourceProof {
     pub fn is_auto_tactic(&self) -> bool {
         matches!(self, Self::Default | Self::Tactic(SmartTactic::Auto))
-    }
-
-    pub fn is_frame_tactic(&self) -> bool {
-        matches!(self, Self::Tactic(SmartTactic::Frame))
-    }
-
-    pub fn is_auto_or_frame_tactic(&self) -> bool {
-        self.is_auto_tactic() || self.is_frame_tactic()
     }
 
     fn unfold_tactic_names(&self) -> Vec<String> {
@@ -4566,9 +4425,6 @@ impl ProofTactic {
                 if let Some(proof) = clause.preserve_proof() {
                     proof.collect_termination_loop_clauses(clauses);
                 }
-                for item in clause.items() {
-                    item.proof().collect_termination_loop_clauses(clauses);
-                }
             }
             _ => {}
         }
@@ -4655,14 +4511,6 @@ impl VerifiedCTheorem {
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
         match &self.claim {
             VerifiedClaim::Ensure { clause, .. } => Some(clause),
-            VerifiedClaim::Effect { .. } => None,
-        }
-    }
-
-    pub fn effect_clause(&self) -> Option<&EffectClause> {
-        match &self.claim {
-            VerifiedClaim::Effect { clause, .. } => Some(clause),
-            VerifiedClaim::Ensure { .. } => None,
         }
     }
 }

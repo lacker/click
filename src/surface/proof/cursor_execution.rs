@@ -1934,12 +1934,7 @@ fn execute_step_from_frontier_position_selecting_path(
             )
         });
         let mut mapped_invariants = Vec::new();
-        for surface in loop_clause
-            .items()
-            .iter()
-            .filter(|item| item.kind() == StructuralItemKind::Invariant)
-            .filter_map(StructuralItem::proposition)
-        {
+        for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
             let target = if let Some((_, target)) = mapped_invariants
                 .iter()
                 .find(|(mapped_surface, _)| *mapped_surface == surface)

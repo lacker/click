@@ -167,15 +167,6 @@ pub(super) fn verify_execution_theorem(
             ),
         };
     }
-    for clause in &mut block.effects {
-        if let Effect::Mutable(segments) = &mut clause.effect {
-            *segments = segments
-                .iter()
-                .map(|s| substitute_contract_segment(s, &substitutions))
-                .collect::<Result<_, _>>()
-                .map_err(ClickError::new)?;
-        }
-    }
     block.grouped_proof = Some(ensure.proof().clone());
     let arguments = execution
         .parameters
@@ -223,7 +214,7 @@ pub(super) fn verify_execution_theorem(
         theorem.name(),
     )?;
     let function = annotated_function(
-        &block, &parsed, &state, &arguments, predicates, functions, resources, false,
+        &block, &parsed, &state, &arguments, predicates, functions, resources,
     )?;
     let artifacts = verified
         .iter()

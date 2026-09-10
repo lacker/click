@@ -3,13 +3,13 @@ use super::*;
 
 mod algebraic_rewrite;
 mod contract_evaluation;
-mod effects;
 mod predicates;
+mod segments;
 mod simp;
 use crate::kernel::memory_effect_write_pointers;
 pub(super) use contract_evaluation::*;
-pub(super) use effects::*;
 pub(super) use predicates::*;
+pub(super) use segments::*;
 pub(super) use simp::*;
 
 pub(super) fn prove_ensure_resource(

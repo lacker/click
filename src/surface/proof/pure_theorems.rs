@@ -1315,11 +1315,6 @@ fn verify_theorem_ensure(
             }
             (ProofKind::Simp, None, None)
         }
-        SourceProof::Tactic(SmartTactic::Frame) => {
-            return Err(ClickError::new(format!(
-                "`frame` is not available in the pure proof for theorem `{claim_label}`"
-            )));
-        }
         SourceProof::Script(tactics) => {
             if tactics.is_empty() {
                 return Err(ClickError::new(format!(

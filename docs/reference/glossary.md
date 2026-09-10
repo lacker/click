@@ -203,7 +203,7 @@ transition need not retain a separate derivation value.
 ### Claim
 
 One property selected for verification and reporting. For a C function, a
-claim is normally one `ensures` or effect clause; a grouped proof packages all
+claim is normally one `ensures` or resource clause; a grouped proof packages all
 of the function's claims under one contract label. A claim may create several
 goals and obligations.
 
@@ -390,15 +390,20 @@ resource body can expose an ownership footprint.
 
 ### Frame
 
-The state outside an operation's effect, or the reasoning that proves this
-state is unchanged. Frame reasoning can preserve facts across execution and
-can prove that actual writes stay inside a declared effect.
+The state outside an operation's write footprint, or the reasoning that proves
+this state is unchanged. Frame reasoning can preserve facts across execution
+and rests on ownership: a contract may write only the memory it owns.
 
 ### Frame condition
 
-An obligation relating an operation's pre-state, post-state, and declared
-effect. It proves preservation outside the allowed footprint or coverage of
-the actual changes. The `frame` tactic proves these conditions.
+An obligation relating an operation's pre-state, post-state, and owned write
+footprint. It proves preservation outside the owned memory. Ownership
+discharges these conditions with no tactic of its own.
+
+Historically Click spelled the footprint with `mutable`/`immutable` effect
+clauses and closed the condition with a `frame` tactic. Both were removed:
+`owns` and `views` are the footprint, and a narrow write inside a wider range
+is spelled `views X; owns Y;`.
 
 ### Frontier
 
@@ -570,7 +575,7 @@ An execution fact retained specifically as evidence about a memory transition,
 such as a mutation summary, a completed free, or theorem-backed fact transport.
 These facts survive the public-execution-fact projection because later frame
 and transport checks need their provenance. They are a subset of execution
-facts, not contract effect clauses.
+facts, not contract clauses.
 
 ### Memory range
 

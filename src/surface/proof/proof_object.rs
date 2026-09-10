@@ -3,8 +3,8 @@ use super::pure_theorems::{
 };
 use super::*;
 use crate::kernel::proof::{
-    BranchId, CheckedBranchSplit, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError,
-    FrontierObligation, FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
+    BranchId, CheckedBranchSplit, EffectGoalSelection, ExecutionUpdateError, FrontierObligation,
+    FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
     OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
     ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofFocusError, ProofJoinError,
     ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
@@ -37,9 +37,6 @@ thread_local! {
         std::cell::RefCell::new(None)
     };
     static CHECKED_EXPANDED_EXECUTION_IFS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static SMART_LOOP_EFFECT_FRAME_CANDIDATES: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
     static FINALIZATION_VIEW_CONSTRUCTIONS: std::cell::Cell<usize> = const {
@@ -89,16 +86,6 @@ pub(in crate::surface) fn count_execution_context_exports<R>(
     let before = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
     let result = operation();
     let after = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::surface) fn count_smart_loop_effect_frame_candidates<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
-    let result = operation();
-    let after = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -468,7 +455,6 @@ fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
         SourceProof::Script(tactics) => script_contains_linear_search(tactics),
-        SourceProof::Tactic(SmartTactic::Frame) => false,
     }
 }
 
@@ -635,169 +621,7 @@ pub(in crate::surface::proof) fn source_proof_is_supported(proof: &SourceProof) 
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
         SourceProof::Script(tactics) => linear_script_is_supported(tactics),
-        SourceProof::Tactic(SmartTactic::Frame) => false,
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ContextualFrameHavePlan {
-    proposition: ClickProposition,
-    tactics: Vec<ProofTactic>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ContextualFrameLeafPlan {
-    haves: Vec<ContextualFrameHavePlan>,
-    premises: Vec<ClickProposition>,
-}
-
-impl ContextualFrameLeafPlan {
-    fn from_surface_tactics(mut tactics: Vec<ProofTactic>) -> Result<Self, String> {
-        let Some(ProofTactic::FrameUsing {
-            region: None,
-            premises,
-        }) = tactics.pop()
-        else {
-            return Err("contextual frame path did not end in `frame using`".to_string());
-        };
-        let haves = tactics
-            .into_iter()
-            .map(|tactic| {
-                let ProofTactic::Have(ProofHave { proposition, proof }) = tactic else {
-                    return Err(
-                        "contextual frame path contained an operation other than `have` before its frame"
-                            .to_string(),
-                    );
-                };
-                let SourceProof::Script(tactics) = proof else {
-                    return Err(
-                        "contextual frame `have` did not lower to explicit Surface operations"
-                            .to_string(),
-                    );
-                };
-                Ok(ContextualFrameHavePlan {
-                    proposition,
-                    tactics,
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { haves, premises })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ContextualFramePlan {
-    Leaf(ContextualFrameLeafPlan),
-    If {
-        condition: ClickProposition,
-        then_plan: Box<Self>,
-        else_plan: Box<Self>,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ContextualFrameSkeleton {
-    Leaf,
-    If {
-        condition: ClickProposition,
-        then_skeleton: Box<Self>,
-        else_skeleton: Box<Self>,
-    },
-}
-
-impl ContextualFrameSkeleton {
-    fn from_steps(steps: &[ProofStep]) -> Self {
-        let Some((condition, then_proof, else_proof)) =
-            steps.iter().rev().find_map(|step| match step {
-                ProofStep::If {
-                    condition,
-                    then_proof,
-                    else_proof,
-                } => Some((condition, then_proof, else_proof)),
-                _ => None,
-            })
-        else {
-            return Self::Leaf;
-        };
-        Self::If {
-            condition: condition.clone(),
-            then_skeleton: Box::new(Self::from_steps(then_proof.steps())),
-            else_skeleton: Box::new(Self::from_steps(else_proof.steps())),
-        }
-    }
-
-    fn collect_conditions(&self, conditions: &mut Vec<ClickProposition>) {
-        let Self::If {
-            condition,
-            then_skeleton,
-            else_skeleton,
-        } = self
-        else {
-            return;
-        };
-        if !conditions.contains(condition) {
-            conditions.push(condition.clone());
-        }
-        then_skeleton.collect_conditions(conditions);
-        else_skeleton.collect_conditions(conditions);
-    }
-
-    fn fill(
-        self,
-        leaves: &[ContextualFrameLeafPlan],
-        next: &mut usize,
-    ) -> Result<ContextualFramePlan, String> {
-        match self {
-            Self::Leaf => {
-                let Some(leaf) = leaves.get(*next) else {
-                    return Err(format!(
-                        "surface/frame path coverage diverged at p{}: the Proof has more leaves than the frame plan",
-                        *next
-                    ));
-                };
-                *next += 1;
-                Ok(ContextualFramePlan::Leaf(leaf.clone()))
-            }
-            Self::If {
-                condition,
-                then_skeleton,
-                else_skeleton,
-            } => Ok(ContextualFramePlan::If {
-                condition,
-                then_plan: Box::new(then_skeleton.fill(leaves, next)?),
-                else_plan: Box::new(else_skeleton.fill(leaves, next)?),
-            }),
-        }
-    }
-}
-
-fn contextual_frame_plan(
-    skeleton: ContextualFrameSkeleton,
-    path_tactics: Vec<Vec<ProofTactic>>,
-    path_independent_only: bool,
-) -> Result<Option<ContextualFramePlan>, String> {
-    if path_tactics.is_empty() {
-        return Ok(None);
-    }
-    let leaves = path_tactics
-        .into_iter()
-        .map(ContextualFrameLeafPlan::from_surface_tactics)
-        .collect::<Result<Vec<_>, _>>()?;
-    if leaves.iter().all(|leaf| leaf == &leaves[0]) {
-        return Ok(Some(ContextualFramePlan::Leaf(leaves[0].clone())));
-    }
-    if path_independent_only {
-        return Ok(None);
-    }
-    let mut next = 0;
-    let plan = skeleton.fill(&leaves, &mut next)?;
-    if next != leaves.len() {
-        return Err(format!(
-            "surface/frame path coverage diverged at p{next}: the Proof has {next} leaves but the frame plan has {}",
-            leaves.len()
-        ));
-    }
-    Ok(Some(plan))
 }
 
 fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
@@ -1566,27 +1390,6 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Number of selected function-effect obligations represented by this
-    /// frontier without materializing their clauses.
-    #[cfg(test)]
-    fn effect_goal_count(&self) -> usize {
-        let Some(Obligation::Frontier(FrontierObligation { selection, .. })) =
-            self.focused_obligation()
-        else {
-            return 0;
-        };
-        let ProofContext::Execution(context) = self.context.as_ref() else {
-            return 0;
-        };
-        match *selection {
-            EffectGoalSelection::None => 0,
-            EffectGoalSelection::One(index) => {
-                usize::from(index < context.function_block.effects().len())
-            }
-            EffectGoalSelection::All => context.function_block.effects().len(),
-        }
-    }
-
     /// Focuses a kernel proposition goal without a surface spelling; tests
     /// use it to address a goal directly.
     #[cfg(test)]
@@ -1854,9 +1657,10 @@ impl<'a> Proof<'a> {
     /// resource scopes unwind. It remains addressable for those audited
     /// representation transitions, but it is no longer an open semantic goal.
     fn focused_loop_effect_closed(&self) -> bool {
-        self.branch_execution()
-            .and_then(|execution| execution.core.loop_effect_goal.as_ref())
-            .is_some_and(|goal| goal.closed)
+        // Loop framing is derived from ownership and never installs a
+        // separate closed structural goal, so no frontier is ever in this
+        // state. The guards below keep the shape they check.
+        false
     }
 
     /// Names the failing step by where the user wrote it: the source tactic
@@ -1942,7 +1746,6 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ConstructResource(_) => "construct",
         ProofStep::ObserveResource(_) => "observe",
-        ProofStep::FrameUsing { .. } => "frame",
         ProofStep::CloseInvariants => "close_invariants()",
         ProofStep::CloseInvariantsBy(_) => "close_invariants by",
         ProofStep::Mark(_) => "mark",

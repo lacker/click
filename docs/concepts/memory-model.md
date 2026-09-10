@@ -111,8 +111,8 @@ Successful allocation starts from the pending snapshot but introduces only
 its fresh, uninitialized block. A successful `free` also emits a checked heap
 `CHeapAllocationFreed` effect connecting its before and after snapshots,
 exact base, and possibly symbolic byte extent. This is deliberately distinct
-from a mutable byte range: deallocation changes which allocation identities
-are live, while a mutable range bounds ordinary stores. Exact contract
+from an owned byte range: deallocation changes which allocation identities
+are live, while an owned range bounds ordinary stores. Exact contract
 checking and modular call verification therefore use the same allocation
 model as direct execution without pretending deallocation is a byte write.
 
@@ -237,22 +237,22 @@ inside `old(...)` remains a historical entry-state value when the entry
 permissions and bounds justified that load; the corresponding current-state
 load is still rejected as use-after-free.
 
-## Effects and frames
+## Write footprints and frames
 
-Function-level effects:
+A function's write footprint is the memory its contract owns:
 
 <!-- verified-example: mdtests/write_second_old_keeps_first.md -->
 ```click
-immutable by frame;
-mutable p[0..n] by frame;
-mutable dst[0..n], counter[0..1] by frame;
+owns p[0..n];
+owns dst[0..n];
+owns counter[0..1];
 ```
 
-`immutable` means no memory visible at function entry is changed. Stack-local
-writes and initialization of a function-fresh allocation are allowed.
-`mutable` means all externally visible writes are inside the listed segments.
-It is an upper bound, not a promise that each cell changed. Allocation and
-deallocation must still satisfy their separate allocation/resource obligations.
+A contract that owns nothing changes no memory visible at function entry.
+Stack-local writes and initialization of a function-fresh allocation are always
+allowed. The owned memory is an upper bound on externally visible writes, not a
+promise that each cell changed. Allocation and deallocation must still satisfy
+their separate allocation/resource obligations.
 
 Static-storage objects are initialized once before program startup. The
 designated program-entry state owns those initialized values; certifying an

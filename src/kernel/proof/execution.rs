@@ -7,10 +7,10 @@
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
     Bitvector32Term, CCompositeResourceDefinition, CConditionOutcome, CExpression, CFunction,
-    CFunctionExecutionCandidates, CLoopEffectCheck, CMemory, CMemoryRange, CResource,
-    CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
-    ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
-    ResourceContext, SpecProposition, Theorem, Variable,
+    CFunctionExecutionCandidates, CMemory, CMemoryRange, CResource, CResourceFact, CResourceSpec,
+    CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule, ExecutionBudget,
+    ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext, ResourceContext,
+    SpecProposition, Theorem, Variable,
 };
 use crate::persistent::PersistentSet;
 use std::collections::{BTreeMap, HashMap};
@@ -33,19 +33,6 @@ pub(crate) enum ExecutionRegionKind {
     LoopBody,
     /// One arm of a C `if`: exhausting the arm reaches its typed boundary.
     BranchArm,
-}
-
-/// One checked loop-effect obligation carried by an execution proof.
-#[derive(Clone)]
-pub(crate) struct LoopEffectGoal {
-    pub(crate) before_state: CState,
-    pub(crate) check: CLoopEffectCheck,
-    /// Whole-span summaries generated for the enclosing loop. They are
-    /// valid evidence for a whole-span effect, but a step-span check must
-    /// validate the iteration's own writes instead of inheriting the whole
-    /// loop's broader footprint.
-    pub(crate) whole_loop_effect_facts: Vec<Proposition>,
-    pub(crate) closed: bool,
 }
 
 /// Kernel-issued evidence for one semantic C transition accepted by this
@@ -2797,7 +2784,6 @@ pub(crate) struct ExecutionProofCore {
     pub(crate) function_entry: Option<Arc<CheckedFunctionEntry>>,
     pub(crate) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     pub(crate) execution_abstraction: bool,
-    pub(crate) loop_effect_goal: Option<LoopEffectGoal>,
     pub(crate) next_path_choice: usize,
     pub(crate) concrete_loop_execution: bool,
     /// Kernel theorems whose conclusions justify the facts a resource
@@ -3790,7 +3776,6 @@ impl ExecutionProofCore {
             function_entry: None,
             frontier_loop_rules: Default::default(),
             execution_abstraction: false,
-            loop_effect_goal: None,
             next_path_choice: 0,
             concrete_loop_execution: false,
             function_entry_derivations: Default::default(),

@@ -1,6 +1,6 @@
-# Field-derived precise effects survive metadata writes
+# Field-derived precise ownership survives metadata writes
 
-This checks that a mutable footprint evaluated at function entry remains usable
+This checks that an owned window evaluated at function entry remains usable
 after the function updates neighboring metadata. `buffer_push` writes only the
 old end cell, its successor, and `owner->len`. The modular caller therefore
 proves that the earlier `data[0]` cell is unchanged when the old length is
@@ -60,15 +60,15 @@ resource owned_buffer(owner: struct buffer*) {
 
 int32 buffer_push(struct buffer* owner, int32 value) {
     requires owner->len + 1 < owner->cap;
-    owns owned_buffer(owner);
-    mutable owner[0..1],
-        (owner->data + owner->len)[0..2];
+    views owned_buffer(owner);
+    owns owner[0..1];
+    owns (owner->data + owner->len)[0..2];
 
     ensures result == old(owner->len) + 1;
     ensures owner->cap == old(owner->cap);
     ensures owner->data == old(owner->data);
 } by {
-    unfold(owned_buffer(owner));
+    observe(owned_buffer(owner));
     execute();
     have 0 <= owner->len by simp;
     have owner->len < owner->cap by {
@@ -158,15 +158,13 @@ int32 buffer_push(struct buffer* owner, int32 value) {
             owner->cap == old(owner->cap);
         }
     }
-    fold(owned_buffer(owner));
-    frame();
     have result == (old(owner->len) + 1) by {
         normalize();
     }
     assumption();
     assumption();
     assumption();
-    assumption();
+    simp();
 }
 
 int32 buffer_push_preserves_first(
@@ -177,14 +175,13 @@ int32 buffer_push_preserves_first(
     requires 1 <= owner->len;
     requires owner->len + 1 < owner->cap;
     requires owner->data == data;
-    owns owned_buffer(owner);
-    mutable owner[0..1],
-        (owner->data + owner->len)[0..2];
+    views owned_buffer(owner);
+    owns owner[0..1];
+    owns (owner->data + owner->len)[0..2];
 
     ensures data[0] == old(data[0]);
 } by {
     execute();
-    frame();
     have at(statement(1).entry, data[0]) == old(data[0]) by {
         normalize();
     }
@@ -209,7 +206,7 @@ int32 buffer_push_preserves_first(
         }
     }
     assumption();
-    assumption();
+    simp();
 }
 ```
 

@@ -23,8 +23,7 @@ mod proof_object;
 pub(in crate::surface) use proof_object::{
     count_checked_execution_interface_joins, count_checked_expanded_execution_ifs,
     count_execution_context_exports, count_explicit_linear_fallbacks,
-    count_finalization_view_constructions, count_smart_loop_effect_frame_candidates,
-    count_source_certificate_checks,
+    count_finalization_view_constructions, count_source_certificate_checks,
 };
 mod checked_drivers;
 mod execution_state;
@@ -41,10 +40,9 @@ mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
 use crate::kernel::proof::{
-    CheckedFrameAuthority, ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind,
-    FrontierPosition, LoopEffectGoal, PersistentOrderedSet, PersistentSequence,
-    PersistentSequenceIter, ProofExecutionContinuation, ProofFacts, SharedVec, old_reference_state,
-    quantified_equivalence_index_key,
+    ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
+    PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, ProofExecutionContinuation,
+    ProofFacts, SharedVec, old_reference_state, quantified_equivalence_index_key,
 };
 pub(in crate::surface) use crate::kernel::proof::{
     SnapshotBlindPropositionKey, snapshot_blind_proposition_key,
@@ -1993,12 +1991,6 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
                 .initialize_proof()
                 .map_or(0, proof_source_tactic_count)
                 + clause.preserve_proof().map_or(0, proof_source_tactic_count)
-                + clause
-                    .items()
-                    .iter()
-                    .filter(|item| item.is_effect_kind())
-                    .map(|item| proof_source_tactic_count(item.proof()))
-                    .sum::<usize>()
         }
         _ => 1,
     }
@@ -2061,24 +2053,18 @@ pub(super) fn proof_source_tactic_count(proof: &SourceProof) -> usize {
 
 #[derive(Clone, Copy)]
 pub(super) enum FunctionClaimRef<'a> {
-    Effect(usize, &'a EffectClause),
     Ensure(usize, &'a EnsureClause),
 }
 
 impl<'a> FunctionClaimRef<'a> {
     pub(super) fn proof(self) -> &'a SourceProof {
         match self {
-            Self::Effect(_, clause) => clause.proof(),
             Self::Ensure(_, clause) => clause.proof(),
         }
     }
 
     fn verified_claim(self) -> VerifiedClaim {
         match self {
-            Self::Effect(index, clause) => VerifiedClaim::Effect {
-                index,
-                clause: clause.clone(),
-            },
             Self::Ensure(index, clause) => VerifiedClaim::Ensure {
                 index,
                 clause: clause.clone(),
@@ -2089,17 +2075,10 @@ impl<'a> FunctionClaimRef<'a> {
 
 pub(super) fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionClaimRef<'_>> {
     function_block
-        .effects()
+        .ensures()
         .iter()
         .enumerate()
-        .map(|(index, clause)| FunctionClaimRef::Effect(index, clause))
-        .chain(
-            function_block
-                .ensures()
-                .iter()
-                .enumerate()
-                .map(|(index, clause)| FunctionClaimRef::Ensure(index, clause)),
-        )
+        .map(|(index, clause)| FunctionClaimRef::Ensure(index, clause))
         .collect()
 }
 
@@ -2588,47 +2567,6 @@ pub(super) fn prove_claim_by_auto(
         }))
 }
 
-pub(super) fn prove_claim_by_frame(
-    expansion_capture: Option<&mut ExpansionCapture>,
-    source_path: &str,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
-        return Err(ClickError::new(format!(
-            "`frame` only proves effect clauses for `{claim_label}`; use `by auto;` or `by simp;` for postconditions"
-        )));
-    }
-
-    let tactics = [ProofTactic::SmartFrame(None)];
-    let mut theorems = prove_claim_by_tactics(
-        expansion_capture,
-        source_path,
-        function_block,
-        parsed_function,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &tactics,
-        ProofTacticSource::GeneratedBy { source_index: 0 },
-    )?;
-    for theorem in &mut theorems.theorems {
-        theorem.proof_kind = ProofKind::Frame;
-    }
-    Ok(theorems.theorems)
-}
-
 pub(super) fn prove_claim_by_simp(
     expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
@@ -2642,11 +2580,6 @@ pub(super) fn prove_claim_by_simp(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    if matches!(claim, FunctionClaimRef::Effect(_, _)) {
-        return Err(ClickError::new(format!(
-            "`simp` does not prove effect clauses for `{claim_label}`; use `by frame;` or `by auto;`"
-        )));
-    }
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
             "`simp` does not prove loop-backed claims for `{claim_label}`; use `by auto;`"

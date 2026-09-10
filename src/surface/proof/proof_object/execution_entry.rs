@@ -25,17 +25,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
-        let effect_goals = match constants.proof_site.as_ref() {
-            Some(ProofSite::FunctionClaim {
-                claim: CProofClaim::Grouped,
-                ..
-            }) if !function_block.effects().is_empty() => EffectGoalSelection::All,
-            Some(ProofSite::FunctionClaim {
-                claim: CProofClaim::Effect(index),
-                ..
-            }) => EffectGoalSelection::One(*index),
-            _ => EffectGoalSelection::None,
-        };
+        let effect_goals = EffectGoalSelection::None;
         Self::for_execution_frontier_with_effect_goals(
             claim_label,
             tactic_index,
@@ -112,72 +102,6 @@ impl<'a> Proof<'a> {
                 depth: 0,
             }),
         }
-    }
-
-    /// Derives one structural loop-effect obligation from an already checked
-    /// preservation path. The new root shares the path's facts and execution
-    /// snapshot; only the explicitly declared effect goal and its diagnostic
-    /// source site are installed.
-    pub(in crate::surface::proof) fn start_loop_effect_proof<'b>(
-        &'b self,
-        claim_label: &'b str,
-        site: ProofSite,
-        before_state: &CState,
-        check: &CLoopEffectCheck,
-        whole_loop_effect_facts: &[Proposition],
-    ) -> Result<Proof<'b>, ClickError> {
-        let ProofContext::Execution(context) = self.context.as_ref() else {
-            return Err(self.step_error("a loop effect requires an execution proof"));
-        };
-        self.require_execution_frontier("a loop effect")?;
-        let mut execution = self
-            .execution()
-            .cloned()
-            .ok_or_else(|| self.step_error("a loop effect lost its preservation state"))?;
-        execution.core.loop_effect_goal = Some(LoopEffectGoal {
-            before_state: before_state.clone(),
-            check: check.clone(),
-            whole_loop_effect_facts: whole_loop_effect_facts.to_vec(),
-            closed: false,
-        });
-        execution.presentation.surface_record = SurfaceRecord::default();
-        Ok(Proof {
-            site: ProofStepSite::default(),
-            context: Arc::new(ProofContext::Execution(ExecutionProofContext {
-                claim_label,
-                tactic_index: 0,
-                function_block: context.function_block,
-                function: context.function,
-                parsed_function: context.parsed_function,
-                arguments: context.arguments,
-                function_environment: context.function_environment,
-                resource_environment: context.resource_environment,
-                predicate_environment: context.predicate_environment,
-                click_function_environment: context.click_function_environment,
-                theorem_environment: context.theorem_environment,
-                constants: Arc::new(ExecutionProofConstants {
-                    proof_site: Some(site),
-                    ..(*context.constants).clone()
-                }),
-            })),
-            state: KernelProofObject::root(
-                ProofLocals::default(),
-                OpenBranch::frontier(
-                    EffectGoalSelection::None,
-                    BranchState {
-                        facts: self.facts().clone(),
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
-            ),
-            node: Arc::new(ProofNode {
-                parent: None,
-                step: None,
-                focused_branch: BranchId::ROOT,
-                depth: 0,
-            }),
-        })
     }
 
     /// Starts the `source_index`th source tactic on a threaded execution

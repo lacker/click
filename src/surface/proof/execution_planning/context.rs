@@ -37,7 +37,6 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        false,
     )?;
 
     let entry_state = c_function_contract_entry_state(
@@ -177,7 +176,6 @@ pub(in crate::surface::proof) struct FrontierLoopProofSource {
     pub(in crate::surface::proof) loop_source_index: usize,
     pub(in crate::surface::proof) initialize_source_index: Option<usize>,
     pub(in crate::surface::proof) preserve_source_index: Option<usize>,
-    pub(in crate::surface::proof) effect_source_indices: BTreeMap<usize, usize>,
 }
 
 impl FrontierLoopProofSource {
@@ -200,24 +198,12 @@ impl FrontierLoopProofSource {
             next_source_index += width;
             start
         });
-        let mut effect_source_indices = BTreeMap::new();
-        for (item_index, item) in clause.items().iter().enumerate() {
-            if !item.is_effect_kind() {
-                continue;
-            }
-            let width = proof_source_tactic_count(item.proof());
-            if width != 0 {
-                effect_source_indices.insert(item_index, next_source_index);
-            }
-            next_source_index += width;
-        }
         Self {
             proof_site,
             claim_label: claim_label.to_string(),
             loop_source_index,
             initialize_source_index,
             preserve_source_index,
-            effect_source_indices,
         }
     }
 }

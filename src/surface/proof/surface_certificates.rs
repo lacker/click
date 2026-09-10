@@ -5729,9 +5729,7 @@ pub(super) fn frame_certified_ensure_goals(
         .iter()
         .enumerate()
         .filter_map(|(claim_index, claim)| {
-            let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
-                return None;
-            };
+            let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
             let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
                 return None;
             };

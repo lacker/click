@@ -816,20 +816,17 @@ fn observed_cursor_facts_produce_checkable_surface_certificates() {
         int32 input_cursor_peek(struct input_cursor* owner) {
             requires owner->pos < owner->len;
             views input_cursor(owner);
-            immutable;
             ensures result == owner->data[owner->pos];
         } by {
             observe(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
             execute();
-            frame();
             simp();
         }
 
         int32 input_cursor_take(struct input_cursor* owner) {
             requires owner->pos < owner->len;
             owns input_cursor(owner);
-            mutable owner->pos;
             ensures result == old(owner->data[owner->pos]);
             ensures owner->pos == old(owner->pos) + 1;
             ensures owner->len == old(owner->len);
@@ -847,7 +844,6 @@ fn observed_cursor_facts_produce_checkable_surface_certificates() {
                 simp();
             }
             fold(input_cursor(owner));
-            frame();
             simp();
         }
 
@@ -1005,7 +1001,6 @@ fn expanded_read_step_uses_contextual_range_separation() {
         int32 owned_string_pop(struct owned_string* owner) {
             requires 1 <= owner->len;
             owns owned_string(owner);
-            mutable owner[0..1], (owner->data + (owner->len - 1))[0..1];
             ensures result == old(owner->data[owner->len - 1]);
             ensures owner->len == old(owner->len) - 1;
             ensures owner->cap == old(owner->cap);
@@ -1029,7 +1024,6 @@ fn expanded_read_step_uses_contextual_range_separation() {
                 simp();
             }
             fold(owned_string(owner));
-            frame();
             simp();
         }
     "#;

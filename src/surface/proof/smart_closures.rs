@@ -3654,7 +3654,6 @@ impl<'a> Proof<'a> {
                                 scope.try_linear_script(body)?
                             }
                         }
-                        SourceProof::Tactic(SmartTactic::Frame) => None,
                     };
                     let Some(selected) = selected else {
                         return Ok(None);

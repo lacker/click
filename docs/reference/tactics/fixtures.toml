@@ -43,16 +43,6 @@ path = "mdtests/execute_until_current_frontier.md"
 needle = "execute_until(statement(3));"
 
 [[form]]
-id = "frame"
-path = "mdtests/fill_n_mutable_segment.md"
-needle = "frame();"
-
-[[form]]
-id = "frame-using"
-path = "mdtests/conditional_ensure_modus_ponens.md"
-needle = "frame() using {"
-
-[[form]]
 id = "unfold-predicate"
 path = "mdtests/sorted_predicate.md"
 needle = "unfold(sorted);"

@@ -38,32 +38,28 @@ grouped execution proof of the function contract:
 ```click
 int32 set_first(int32 p[], int32 value) {
     owns p[0..1];
-    mutable p[0..1];
     ensures result == value;
     ensures p[0] == value;
 } by {
     execute();
-    frame();
     simp();
 }
 ```
 
-Click checks the C region once. Every effect and postcondition is then checked
-against the resulting shared proof state. Goal-specific closing steps still
-have their normal roles: `frame()` closes effect goals, and `simp()` or
-resource reasoning closes postconditions. Per-claim proof clauses remain
+Click checks the C region once. Every postcondition is then checked against the
+resulting shared proof state. Goal-specific closing steps still have their
+normal roles: `simp()` or resource reasoning closes postconditions. Per-claim proof clauses remain
 available for independent proofs, but cannot be mixed with a grouped proof in
 the same function.
 
 The shorthand `} by auto;` builds one deterministic grouped script:
-`execute()`, declared loop checks, `frame()` when the contract has effects,
-and `simp()` when it has postconditions. Composite-resource folds and theorem
+`execute()`, declared loop checks, and `simp()` when the contract has
+postconditions. Composite-resource folds and theorem
 applications remain explicit.
 
 After execution reaches the return frontier, grouped tactics retain source
 order. `fold`, `apply`, and `have` transform the current finalized path;
-`frame()` closes the effect goals then provable, and `simp()` closes the
-postconditions then provable. A later fact or fold does not retroactively affect
+`simp()` closes the postconditions then provable. A later fact or fold does not retroactively affect
 an earlier closing step. Each symbolic path is finalized once, and every
 contract proof is packaged from that same finalized specification.
 
@@ -75,13 +71,11 @@ Currently accepted tactics:
 ```click
 by auto;
 by simp;
-by frame;
 ```
 
 Omitting a proof clause uses `auto`. `by simp;` means the same operation as
-`by { simp(); }`, and `by frame;` means the same operation as
-`by { frame(); }`. All four forms act at the current execution frontier; neither
-`simp` nor `frame` implicitly executes C. See the
+`by { simp(); }`. All three forms act at the current execution frontier; `simp`
+does not implicitly execute C. See the
 [proof tactics reference](../reference/tactics/index.md).
 
 For an individual claim, `auto` is the broad orchestration tactic. It first
@@ -95,9 +89,6 @@ constant/reflexive integer comparisons, small arithmetic forms, concrete folds,
 and several kernel equality patterns. For order goals, it also rewrites through
 known equalities, evaluates equality-linked constant arithmetic, and uses the
 discrete relationship between strict and non-strict integer bounds.
-
-Bare `frame()` (including `by frame;`) performs smart contextual range
-reasoning. The simple exact form is `frame() using { P; ... }`.
 
 The exhaustive simple/smart classification is in the
 [proof tactics reference](../reference/tactics/index.md).
@@ -144,15 +135,11 @@ control flow.
   must produce exactly one normal successor.
 - `loop { ... }`: verify the loop exactly at the current frontier and advance
   to its checked abstract exit. Its nested `initialize`, `preserve`, invariant,
-  and effect clauses construct the kernel rule; it never seeks to a numbered
-  source loop.
+  invariant, and resource clauses construct the kernel rule; it never seeks to a
+  numbered source loop.
 - `close_invariants()`: discharge a loop's whole invariant bundle at the back
   edge. It is accepted only inside `preserve by { ... }`, and at most once per
   path. Omitting it makes Click append the closer implicitly.
-- `frame()`: smart contextual frame reasoning for the current function or
-  active structural-effect goal.
-- `frame() using { P; ... }` and the region form: the simple exact-premise
-  frame check. Expansion always emits this form.
 - `unfold(name);`: unfold matching predicate facts and goals.
 - `unfold(resource);`: consume one owned composite resource fact and expose its
   immediate body facts.
@@ -406,13 +393,9 @@ by {
         simp();
     }
     loop as fill {
+        owns p[0..n];
         invariant i >= 0;
         invariant i <= n;
-        mutable p[0..n] by frame;
-
-        step {
-            mutable p[i..i + 1] by frame;
-        }
     }
 }
 ```
@@ -540,51 +523,32 @@ symbolic loop-entry state and its required assumptions. The `loop` tactic
 applies it immediately and advances the enclosing frontier. There is no later
 summary tactic and no detached traversal from function entry.
 
-## Loop effects
+## Loop frames
 
-Whole-loop effects:
-
-<!-- verified-example: mdtests/grouped_function_proof.md -->
-```click
-loop {
-    mutable p[0..n] by frame;
-}
-```
-
-Step-relative effects:
+A loop frames by ownership. With no clause of its own it may write exactly the
+memory the function owns, and it can narrow that authority the way a callee
+contract does:
 
 <!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 loop {
-    step {
-        mutable p[i..i + 1] by frame;
-    }
+    owns p[0..n];
+    invariant i >= 0;
 }
 ```
 
-Whole-loop mutable segments must use stable names such as parameters. They
-cannot depend on locals modified by the loop. Use `step` effects for
-iteration-relative footprints.
+A loop's owned segments must use stable names such as parameters or fields
+reached through a stable owner, such as `owner->data[0..owner->len]`.
+Structural loop setup projects the immediate core of a held composite resource,
+so an owned `vector(owner)` can justify reading those fields without redundant
+`views` clauses. A body store outside the loop's owned ranges is rejected at
+the store, and a cell outside them holds its entry value after the loop with no
+invariant.
 
-A whole-loop segment may depend on fields reached through a stable owner, such
-as `owner->data[0..owner->len]`. Structural loop setup projects the immediate
-core of a held composite resource, so an owned `vector(owner)` can justify
-reading those fields without redundant `views` clauses. The verified effect
-summary then preserves field values outside the mutable backing range in the
-arbitrary loop-head state. The preservation proof must still establish the
-effect at every back edge.
-
-Loop effect summaries are reusable. For example, if a loop mutates only
-`dst[0..n]` and requirements prove
-`separate(memory(dst[0..n]), memory(src[0..n]))`, `auto` can
-use that effect summary to prove source-memory postconditions without a
-handwritten source-invariance invariant.
-
-In an explicit proof, `frame(loop(N))` after the `loop` tactic certifies
-memory-preservation `ensures` goals from that loop's effect summary before the
-closing `simp`. A labeled loop (`loop as fill { ... }`) can be named the same
-way with `frame(fill)`. The qualified frame requires the referenced `loop`
-tactic to declare a `mutable` or `immutable` clause.
+The resulting frame is reusable. For example, if a loop owns only `dst[0..n]`
+and requirements prove `separate(memory(dst[0..n]), memory(src[0..n]))`, `auto`
+can prove source-memory postconditions without a handwritten source-invariance
+invariant.
 
 ## Debugging failed proofs
 
@@ -603,7 +567,7 @@ Practical approach:
 2. Read pure facts to learn which branch/path failed.
 3. If a predicate is still opaque, add `unfold(predicate_name);`.
 4. If memory preservation is missing, check `loadable`, `separate(memory(...))`,
-   `immutable`, `mutable`, and loop effects.
+   the contract's `owns`/`views` clauses, and the loop's owned resources.
 5. If arithmetic overflow appears, add numeric requirements or invariants.
 6. If the proof needs a general new pattern, add a focused mdtest and then a
    deterministic kernel/proof rule.

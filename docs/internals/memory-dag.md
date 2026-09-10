@@ -35,7 +35,7 @@ kinds:
 | --- | --- |
 | `Store` | One pointer was assigned a value. No fact context is recorded on the edge. |
 | `LoopHavoc` | A loop may have changed memory; verified whole-loop effects carry a checked write set. |
-| `CallHavoc` | A call may have changed declared mutable ranges. |
+| `CallHavoc` | A call may have changed the callee's owned ranges. |
 | `BlockDeclared` | A new non-havoc block entered the memory model. |
 | `CellsForgotten` | Possibly aliasing cached cells were discarded on a write path. |
 | `HeapAllocationPending` | An allocation request has an unresolved base and extent but no successful storage yet. |
@@ -92,7 +92,7 @@ therefore change expansion spellings. Isolated memory-resolution fuel keeps
 a nested graph query from consuming the caller's bounded reasoning budget.
 
 Loop havoc uses the same edge-local rule as call havoc when a whole-loop effect
-summary has been checked: its mutable ranges are carried on `LoopHavoc`, and a
+summary has been checked: its owned ranges are carried on `LoopHavoc`, and a
 load may cross only with evidence that it is outside every range. The copy-back
 in `prepare_loop_top_state` materializes entry cells already known to be stable;
 it is an abstract-state optimization, not the soundness source for post-loop

@@ -12,26 +12,6 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.core.frontier.is_at_function_exit())
     }
 
-    /// Whether the focused branch execution frontier still owns a function effect
-    /// goal: an effect-claim site's selected effect, or every effect of a
-    /// grouped contract with effect clauses. A frame applied here is a
-    /// checked step on that goal; without one, a frame is an ordered
-    /// outcome operation for the drain.
-    pub(in crate::surface::proof) fn frontier_owns_effect_goal(&self) -> bool {
-        let ProofContext::Execution(context) = self.context.as_ref() else {
-            return false;
-        };
-        let effect_count = context.function_block.effects().len();
-        match self.focused_obligation() {
-            Some(Obligation::Frontier(FrontierObligation { selection, .. })) => match selection {
-                EffectGoalSelection::None => false,
-                EffectGoalSelection::One(index) => *index < effect_count,
-                EffectGoalSelection::All => effect_count > 0,
-            },
-            _ => false,
-        }
-    }
-
     /// The focused branch execution rests at its bounded region's typed boundary:
     /// its own statement tree is exhausted and no code lies beyond it.
     pub(in crate::surface::proof) fn is_at_region_boundary(&self) -> bool {
@@ -73,18 +53,6 @@ impl<'a> Proof<'a> {
             value: (*goal.data.core.result).clone(),
             state: (*goal.data.core.state).clone(),
         })
-    }
-
-    pub(in crate::surface::proof) fn checked_outcome_frame_authority(
-        &self,
-    ) -> Result<CheckedFrameAuthority, ClickError> {
-        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
-            return Err(self.step_error("frame authority requires a focused outcome goal"));
-        };
-        if !matches!(goal.selection, EffectGoalSelection::None) || goal.checked_effects.is_empty() {
-            return Err(self.step_error("the focused outcome has no checked frame authority"));
-        }
-        Ok(CheckedFrameAuthority::new((*goal.checked_effects).clone()))
     }
 
     /// Updates the focused branch outcome goal's immutable result/state snapshot

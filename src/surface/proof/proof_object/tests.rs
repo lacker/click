@@ -24,151 +24,6 @@ fn opposite_atomic_fact(fact: &Proposition) -> Proposition {
     }
 }
 
-#[test]
-fn execution_frontier_owns_compact_selected_effect_goals() {
-    let click_file = crate::surface::parse(
-        r#"
-            verifying "identity.c";
-            int32 identity(int32 x) {
-                immutable;
-                ensures result == x;
-            } by {
-                execute();
-                frame();
-                simp();
-            }
-        "#,
-    )
-    .expect("the effect-goal fixture should parse");
-    let function_block = &click_file.function_blocks()[0];
-    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
-        .expect("the effect-goal C function should parse");
-    let function = parsed_function.to_kernel_function();
-    let arguments = vec![CExpression::Value(int32(7))];
-    let function_environment = CExecutionEnvironment::new();
-    let resource_environment = ResourceEnvironment::new(&[]);
-    let predicate_environment = PredicateEnvironment::new(&[]);
-    let click_function_environment = ClickFunctionEnvironment::new(&[]);
-    let theorem_environment = TheoremEnvironment::new(&[]);
-
-    for (claim, expected, selection) in [
-        (CProofClaim::Grouped, 1, EffectGoalSelection::All),
-        (CProofClaim::Effect(0), 1, EffectGoalSelection::One(0)),
-        (CProofClaim::Ensure(0), 0, EffectGoalSelection::None),
-    ] {
-        let root = Proof::for_execution_frontier(
-            "typed effect goals",
-            0,
-            ExecutionProofState::at_entry(
-                CState::new(),
-                ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
-                SurfacePropositionMap::default(),
-                PersistentSequence::default(),
-            ),
-            Vec::new(),
-            ExecutionProofConstants {
-                proof_site: Some(ProofSite::FunctionClaim {
-                    function_name: "identity".to_string(),
-                    claim,
-                }),
-                ..ExecutionProofConstants::default()
-            },
-            function_block,
-            &function,
-            &parsed_function,
-            &arguments,
-            &function_environment,
-            &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
-            &theorem_environment,
-        );
-        assert_eq!(root.effect_goal_count(), expected);
-        assert!(
-            matches!(root.focused_obligation(), Some(Obligation::Frontier(FrontierObligation { selection: actual, .. })) if *actual == selection)
-        );
-        let marked = root
-            .apply_step(ProofStep::Mark("selected".to_string()))
-            .expect("an ordinary frontier step should preserve its effect goals");
-        assert_eq!(marked.effect_goal_count(), expected);
-        assert!(
-            matches!(marked.focused_obligation(), Some(Obligation::Frontier(FrontierObligation { selection: actual, .. })) if *actual == selection)
-        );
-    }
-}
-
-#[test]
-fn loop_effect_derivation_starts_a_separate_root_branch() {
-    let click_file = crate::surface::parse(
-        r#"
-            verifying "identity.c";
-            int32 identity(int32 x) {
-                immutable;
-                ensures result == x;
-            } by {
-                execute();
-                frame();
-                simp();
-            }
-        "#,
-    )
-    .expect("the loop-effect fixture should parse");
-    let function_block = &click_file.function_blocks()[0];
-    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
-        .expect("the loop-effect C function should parse");
-    let function = parsed_function.to_kernel_function();
-    let arguments = vec![CExpression::Value(int32(7))];
-    let function_environment = CExecutionEnvironment::new();
-    let resource_environment = ResourceEnvironment::new(&[]);
-    let predicate_environment = PredicateEnvironment::new(&[]);
-    let click_function_environment = ClickFunctionEnvironment::new(&[]);
-    let theorem_environment = TheoremEnvironment::new(&[]);
-    let before_state = CState::new();
-    let preservation = Proof::for_execution_frontier(
-        "loop preservation",
-        0,
-        ExecutionProofState::at_entry(
-            before_state.clone(),
-            ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
-            SurfacePropositionMap::default(),
-            PersistentSequence::default(),
-        ),
-        Vec::new(),
-        ExecutionProofConstants::default(),
-        function_block,
-        &function,
-        &parsed_function,
-        &arguments,
-        &function_environment,
-        &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
-        &theorem_environment,
-    );
-    let preservation_branch = preservation.sole_branch_id();
-    let effect = preservation
-        .start_loop_effect_proof(
-            "loop effect",
-            ProofSite::LoopPhase {
-                function_name: "identity".to_string(),
-                loop_index: 0,
-                phase: "effect",
-            },
-            &before_state,
-            &CLoopEffectCheck::new(CLoopEffect::Immutable, None),
-            &[],
-        )
-        .expect("a loop effect should derive a separate proof");
-
-    assert_eq!(preservation.branches().count(), 1);
-    assert_eq!(preservation.sole_branch_id(), preservation_branch);
-    assert_eq!(effect.branches().count(), 1);
-    assert_eq!(effect.sole_branch_id(), Some(BranchId::ROOT));
-    assert!(!preservation.state.shares_state_with(&effect.state));
-}
-
 fn pure_identity_fixture() -> PureTheoremContext {
     PureTheoremContext {
         memory: CMemory::new(),
@@ -3117,7 +2972,6 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
     let click_file = crate::surface::parse(
         r#"
             int32 choose(int32 left, int32 right, int32 choose_left) {
-                immutable;
                 ensures reflexive_result: result == result by { assumption(); }
             }
         "#,
@@ -3150,11 +3004,6 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         left: ContractExpression::CFragment(CExpression::Value(left.clone())),
         operator: ComparisonOperator::LessThan,
         right: ContractExpression::CFragment(CExpression::Value(right.clone())),
-    };
-    let unavailable_frame_premise = ClickProposition::Comparison {
-        left: ContractExpression::CFragment(CExpression::Value(right.clone())),
-        operator: ComparisonOperator::LessThan,
-        right: ContractExpression::CFragment(CExpression::Value(left.clone())),
     };
     let kernel_premise = lower_fixed_state_proposition_with_assumptions(
         &premise,
@@ -3342,53 +3191,25 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
                 ..
             }] if then_proof.steps().len() == 2 && else_proof.steps().len() == 2
         ));
-        if size == 16 {
-            let retained = terminal.clone();
-            assert!(
-                terminal
-                    .apply_step_at(
-                        ProofStep::FrameUsing {
-                            region: None,
-                            premises: vec![unavailable_frame_premise.clone()],
-                        },
-                        1,
-                        1,
-                    )
-                    .is_err(),
-                "an unavailable frame premise must reject the checked descendant"
-            );
-            assert!(terminal.state.shares_state_with(&retained.state));
-            assert_eq!(terminal.certificate(), retained.certificate());
-        }
-        let framed = terminal
-            .try_smart_frame_at(None, 1, 1)
-            .expect("terminal frame search should run")
-            .expect("the immutable effect should produce a checked frame descendant");
         execute_samples.push((
             size,
             (u32::BITS - size.leading_zeros()) as usize,
             fact_node_allocations() - before_execute,
         ));
         assert!(matches!(
-            framed.certificate().steps(),
-            [
-                ProofStep::If { .. },
-                ProofStep::FrameUsing {
-                    region: None,
-                    premises,
-                },
-            ] if premises.is_empty()
+            terminal.certificate().steps(),
+            [ProofStep::If { .. }]
         ));
         assert!(root.certificate().steps().is_empty());
 
-        // The framed function exit derives its typed outcome goal set:
+        // The terminal function exit derives its typed outcome goal set:
         // one sibling goal per returning path in one proof, each owning
         // its path-local result and facts while borrowing the frontier
         // snapshot by identity. The ancestor keeps its single frontier.
         let before_outcomes = fact_node_allocations();
-        let (outcomes, outcome_ids) = framed
+        let (outcomes, outcome_ids) = terminal
             .split_function_outcomes(Arc::new(Vec::new()))
-            .expect("the framed terminal execution should expose typed outcome goals");
+            .expect("the terminal execution should expose typed outcome goals");
         outcome_samples.push((
             size,
             (u32::BITS - size.leading_zeros()) as usize,
@@ -3397,7 +3218,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         assert_eq!(outcome_ids.len(), 2);
         assert_eq!(outcomes.branches().collect::<Vec<_>>(), outcome_ids);
         assert!(!outcomes.is_complete());
-        assert_eq!(framed.branches().count(), 1);
+        assert_eq!(terminal.branches().count(), 1);
         let then_outcome = outcomes
             .focus_branch(outcome_ids[0])
             .expect("the first outcome goal is open");
@@ -3414,9 +3235,9 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
                 outcome
                     .branch_execution()
                     .expect("each outcome borrows the frontier snapshot"),
-                framed
+                terminal
                     .branch_execution()
-                    .expect("the framed frontier owns its snapshot"),
+                    .expect("the terminal frontier owns its snapshot"),
             ));
         }
         assert!(
@@ -7156,12 +6977,10 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
             verifying "identity.c";
             int32 identity(int32 x) {
                 views marker(x);
-                immutable;
                 ensures returns_x: result == x;
             } by {
                 observe(marker(x));
                 execute();
-                frame();
             }
         "#,
     )
@@ -7272,12 +7091,10 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             verifying "identity.c";
             int32 identity(int32 x) {
                 owns marker(x);
-                immutable;
                 ensures returns_x: result == x;
             } by {
                 unfold(marker(x));
                 execute();
-                frame();
             }
         "#,
     )
@@ -7385,13 +7202,11 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             verifying "identity.c";
             int32 identity(int32 x) {
                 owns marker(x);
-                immutable;
                 ensures returns_x: result == x;
             } by {
                 unfold(marker(x));
                 fold(marker(x));
                 execute();
-                frame();
             }
         "#,
     )
@@ -7510,12 +7325,10 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             verifying "two_steps.c";
             int32 two_steps(int32 x) {
                 owns marker(x);
-                immutable;
                 ensures returns_x: result == x;
             } by {
                 open(marker(x)) { step(); }
                 step();
-                frame();
             }
         "#,
     )
@@ -8041,7 +7854,6 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
                 requires i < n;
                 requires loadable(p[0..n]);
                 consumes p[0..n];
-                mutable p[0..n] by { execute(); frame(); }
             }
         "#,
     )
@@ -8756,7 +8568,6 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
     let click_file = crate::surface::parse(
         r#"
             int32 identity(int32 x) {
-                immutable;
                 ensures result == x;
             } by {
                 assumption();
@@ -8861,7 +8672,6 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
     let click_file = crate::surface::parse(
         r#"
             int32 identity(int32 x) {
-                immutable;
                 ensures result == x;
             } by {
                 assumption();
@@ -9108,7 +8918,6 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             }
 
             int32 constant(int32 x) {
-                immutable;
                 ensures returns_one: result == 1 by { assumption(); }
             }
         "#,
@@ -9283,27 +9092,19 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
                 .frontier
                 .is_at_function_exit()
         );
-        let framed = completed
-            .try_smart_frame_at(None, 2, 2)
-            .expect("common terminal frame search should run")
-            .expect("the immutable effect should produce a checked descendant");
         allocation_samples.push((
             size,
             (u32::BITS - size.leading_zeros()) as usize,
             fact_node_allocations() - before,
         ));
         assert!(matches!(
-            framed.certificate().steps(),
+            completed.certificate().steps(),
             [
                 ProofStep::Branch { .. },
                 ProofStep::ApplyTheoremUsing { .. },
                 ProofStep::Have { .. },
                 ProofStep::Step,
-                ProofStep::FrameUsing {
-                    region: None,
-                    premises,
-                },
-            ] if premises.is_empty()
+            ]
         ));
 
         // The in-`Proof` execution join: an arm still at branch entry
