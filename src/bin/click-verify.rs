@@ -12,6 +12,7 @@ use click::cli::{
     looks_like_source_location, parse_duration, parse_source_location, read_verifying_sources,
     source_refs,
 };
+use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
 use click::surface::{
     VerifiedCTheorem, c0_external_dependencies, c0_function_names, c0_incremental_selection,
@@ -588,15 +589,40 @@ fn load_baseline_sidecar(
         return Ok(None);
     };
     let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let Some(sources) = load_baseline_sources(&parent, &click_source, |source_path| {
+        git_show(repo, revision, source_path)
+    })?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((click_source, sources)))
+}
+
+fn load_baseline_sources(
+    parent: &Path,
+    click_source: &str,
+    mut load: impl FnMut(&Path) -> Result<Option<String>, String>,
+) -> Result<Option<Vec<(String, String)>>, String> {
+    let mut pending = verifying_source_paths(click_source).map_err(click_message)?;
     let mut sources = Vec::new();
-    for name in verifying_source_paths(&click_source).map_err(click_message)? {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next = 0;
+    while next < pending.len() {
+        let name = pending[next].clone();
+        next += 1;
+        if !seen.insert(name.clone()) {
+            continue;
+        }
         let source_path = parent.join(&name);
-        let Some(source) = git_show(repo, revision, &source_path)? else {
+        let Some(source) = load(&source_path)? else {
             return Ok(None);
         };
+        let includes = c_source::local_include_paths(&name, &source)
+            .map_err(|error| format!("failed to process baseline C source includes: {error}"))?;
+        pending.extend(includes);
         sources.push((name, source));
     }
-    Ok(Some((click_source, sources)))
+    Ok(Some(sources))
 }
 
 /// Shows a discovered sidecar relative to the directory the user named, since
@@ -780,6 +806,43 @@ mod tests {
             vec![("a.c".to_string(), "int32 f() { return 1; }".to_string())],
         );
         assert!(!baseline_matches_current(&edited, &current));
+    }
+
+    #[test]
+    fn baseline_sources_include_transitive_local_headers() {
+        let files = BTreeMap::from([
+            (
+                PathBuf::from("project/m.c"),
+                "#include \"cap.h\"\nint32 m() { return 0; }".to_string(),
+            ),
+            (
+                PathBuf::from("project/cap.h"),
+                "#include \"limits.h\"\ntypedef int32 cap_t;".to_string(),
+            ),
+            (
+                PathBuf::from("project/limits.h"),
+                "#define CAP_LIMIT 4".to_string(),
+            ),
+        ]);
+        let loaded = load_baseline_sources(Path::new("project"), "verifying \"m.c\";", |path| {
+            Ok(files.get(path).cloned())
+        })
+        .expect("baseline sources should load")
+        .expect("all baseline sources should be present");
+        assert_eq!(
+            loaded,
+            vec![
+                (
+                    "m.c".to_string(),
+                    "#include \"cap.h\"\nint32 m() { return 0; }".to_string()
+                ),
+                (
+                    "cap.h".to_string(),
+                    "#include \"limits.h\"\ntypedef int32 cap_t;".to_string()
+                ),
+                ("limits.h".to_string(), "#define CAP_LIMIT 4".to_string()),
+            ]
+        );
     }
 
     #[test]

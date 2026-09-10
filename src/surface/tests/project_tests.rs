@@ -1266,6 +1266,44 @@ int32 first(int32 x) { ensures result == x; } by simp;
     assert_eq!(selection.selected_functions, ["first"]);
 }
 
+#[test]
+fn incremental_selection_rechecks_functions_when_an_imported_header_changes() {
+    let baseline_sources = [
+        ("m.c", "#include \"cap.h\"\nint32 read_cap() { return 0; }"),
+        ("other.c", "int32 unrelated() { return 0; }"),
+        ("cap.h", "// baseline header contents"),
+    ];
+    let current_sources = [
+        baseline_sources[0],
+        baseline_sources[1],
+        ("cap.h", "// edited header contents"),
+    ];
+    let click_source = r#"
+verifying "m.c";
+verifying "other.c";
+int32 read_cap() { ensures result == 0; } by simp;
+int32 unrelated() { ensures result == 0; } by simp;
+"#;
+
+    let selection = c0_incremental_selection(
+        click_source,
+        &current_sources,
+        click_source,
+        &baseline_sources,
+    )
+    .expect("incremental selection should accept local headers");
+    assert_eq!(selection.selected_functions, ["read_cap"]);
+    assert_eq!(selection.reused_functions, ["unrelated"]);
+    assert!(!selection.full_rebuild);
+    assert!(
+        selection
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("cap.h")),
+        "{selection:?}"
+    );
+}
+
 /// The perpetual-service example used to verify or fail depending on ambient
 /// machine load: `fold(service(owner))` decided its body's separation fact
 /// through an open-ended kernel search whose budget truncation was reported

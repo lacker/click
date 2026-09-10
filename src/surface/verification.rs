@@ -403,6 +403,40 @@ pub fn c0_function_names(
         .collect())
 }
 
+fn c0_imported_headers(
+    file: &ClickFile,
+    c_sources: &BTreeMap<&str, &str>,
+) -> Result<BTreeMap<String, BTreeSet<String>>, ClickError> {
+    let mut imported = BTreeMap::new();
+    for source_path in &file.verifying_sources {
+        let mut pending = vec![source_path.clone()];
+        let mut seen = BTreeSet::new();
+        let mut headers = BTreeSet::new();
+        while let Some(path) = pending.pop() {
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let source = c_sources.get(path.as_str()).copied().ok_or_else(|| {
+                ClickError::new(format!(
+                    "source bundle is missing `{path}` while tracking local C headers"
+                ))
+            })?;
+            for include in crate::languages::c::source::local_include_paths(&path, source).map_err(
+                |error| {
+                    ClickError::new(format!(
+                        "failed to process local C headers for `{path}`: {error}"
+                    ))
+                },
+            )? {
+                headers.insert(include.clone());
+                pending.push(include);
+            }
+        }
+        imported.insert(source_path.clone(), headers);
+    }
+    Ok(imported)
+}
+
 /// Compares two parsed versions of one sidecar and returns the current
 /// functions whose proofs may be affected. Comments and formatting disappear
 /// during parsing; changes to shared logical definitions conservatively select
@@ -484,6 +518,36 @@ pub fn c0_incremental_selection(
                     (false, false) => unreachable!(),
                 }
             ));
+        }
+    }
+
+    let current_imports = c0_imported_headers(&current_file, &current_source_map)?;
+    let baseline_imports = c0_imported_headers(&baseline_file, &baseline_source_map)?;
+    for source_path in &current_file.verifying_sources {
+        let current_headers = current_imports.get(source_path).into_iter().flatten();
+        let baseline_headers = baseline_imports.get(source_path).into_iter().flatten();
+        let headers = current_headers
+            .chain(baseline_headers)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let changed_headers = headers
+            .into_iter()
+            .filter(|header| {
+                current_source_map.get(header.as_str()).copied()
+                    != baseline_source_map.get(header.as_str()).copied()
+            })
+            .collect::<Vec<_>>();
+        if changed_headers.is_empty() {
+            continue;
+        }
+        for (name, (function_source, _)) in &current_parsed {
+            if function_source == source_path {
+                changed.insert(name.clone());
+                reasons.push(format!(
+                    "`{name}` imports changed local header(s): {}",
+                    changed_headers.join(", ")
+                ));
+            }
         }
     }
 
