@@ -1355,7 +1355,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         // Variable identities are shared by all logical sorts, but a
         // machine substitution must never rewrite an Integer variable with a
         // machine term. Integer binders use the dedicated function below.
-        Term::Integer(integer) => Term::Integer(integer.clone()),
+        Term::Integer(integer) => {
+            Term::Integer(substitute_bitvector_variable_in_integer(integer, from, to))
+        }
         Term::PointerOffset(offset) => Term::PointerOffset(
             substitute_bitvector_variable_in_pointer_offset(offset, from, to),
         ),
@@ -1433,6 +1435,49 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         Term::CState(state) => {
             Term::CState(substitute_bitvector_variable_in_c_state(state, from, to))
         }
+    }
+}
+
+fn substitute_bitvector_variable_in_integer(
+    term: &IntegerTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> IntegerTerm {
+    match term {
+        IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => term.clone(),
+        IntegerTerm::Machine(source) => {
+            IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
+                source.ty(),
+                substitute_bitvector_variable(source.value(), from, to),
+            ))
+        }
+        IntegerTerm::Negate(value) => IntegerTerm::Negate(crate::kernel::SharedIntegerTerm::from(
+            substitute_bitvector_variable_in_integer(value, from, to),
+        )),
+        IntegerTerm::Add(left, right) => IntegerTerm::Add(
+            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
+                left, from, to,
+            )),
+            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
+                right, from, to,
+            )),
+        ),
+        IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
+            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
+                left, from, to,
+            )),
+            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
+                right, from, to,
+            )),
+        ),
+        IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
+            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
+                left, from, to,
+            )),
+            crate::kernel::SharedIntegerTerm::from(substitute_bitvector_variable_in_integer(
+                right, from, to,
+            )),
+        ),
     }
 }
 
