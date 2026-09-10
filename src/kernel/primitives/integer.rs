@@ -75,7 +75,7 @@ impl SharedIntegerApplication {
                 >,
             >,
         > = OnceLock::new();
-        static CLEANUP: OnceLock<Mutex<Vec<(u64, usize)>>> = OnceLock::new();
+        static CLEANUP: OnceLock<Mutex<VecDeque<(u64, usize)>>> = OnceLock::new();
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut hasher = DefaultHasher::new();
         name.hash(&mut hasher);
@@ -85,13 +85,24 @@ impl SharedIntegerApplication {
         let mut interner = interner
             .lock()
             .expect("Integer application interner lock poisoned");
-        let cleanup = CLEANUP.get_or_init(|| Mutex::new(Vec::new()));
-        for _ in 0..8 {
-            let Some((fingerprint, pointer)) = cleanup.lock().expect("cleanup lock poisoned").pop()
+        let cleanup = CLEANUP.get_or_init(|| Mutex::new(VecDeque::new()));
+        let cleanup_limit = cleanup.lock().expect("cleanup lock poisoned").len().min(8);
+        for _ in 0..cleanup_limit {
+            let Some((fingerprint, pointer)) =
+                cleanup.lock().expect("cleanup lock poisoned").pop_front()
             else {
                 break;
             };
             if let Some(bucket) = interner.get_mut(&fingerprint) {
+                let live = bucket.iter().any(|(_, _, node)| {
+                    node.as_ptr() as usize == pointer && node.strong_count() != 0
+                });
+                if live {
+                    cleanup
+                        .lock()
+                        .expect("cleanup lock poisoned")
+                        .push_back((fingerprint, pointer));
+                }
                 bucket.retain(|(_, _, node)| {
                     node.as_ptr() as usize != pointer || node.strong_count() != 0
                 });
@@ -123,7 +134,7 @@ impl SharedIntegerApplication {
         cleanup
             .lock()
             .expect("cleanup lock poisoned")
-            .push((key, Arc::as_ptr(&node) as usize));
+            .push_back((key, Arc::as_ptr(&node) as usize));
         Self(node)
     }
     pub(crate) fn id(&self) -> u64 {
