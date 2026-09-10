@@ -14,6 +14,10 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
+Landed so far (2026-09-10): packages 1, 2, 3, 6, and 14, plus the package 0
+census whose results are recorded below. Their sections remain as the record
+of what was decided; each is marked landed.
+
 This document is the complete brief for that work. An agent taking one work
 package should be able to act from this file, the linked docs, and the code,
 without the conversation that produced it. Line numbers are as of commit
@@ -371,6 +375,58 @@ may remain only when its authoritative result is an exact, local rule over
 named input. Merely wrapping the general prover or moving proof construction
 to another kernel module does not complete the migration.
 
+## Census results
+
+Package 0 ran on 2026-09-10 at `34ef4d87`. It labeled 77 production prover
+sites (95 grep hits minus test-only code, the prover's own recursion, and an
+unrelated method of the same name), counted attempts and deciding successes
+over both fixture harnesses, then reran with single sites denied. "Deciding"
+means the general prover answered and none of the retained routes (builtin
+solving, exact fact lookup, `decide` on a bare `ConditionIs`, the frozen
+atomic checkers) would have. A denial run is stronger than the migration
+because it also removes exact-covered answers; an "exact-only" run answers
+from the retained routes only and is the true migration target. Believe the
+exact-only number where both exist. The probe branch is
+`claude/simplify-kernel-pkg-00-census`; it must never land.
+
+Deciding successes by site, mdtests plus examples, all others zero:
+
+| site | package | deciding | fixtures lost under the migration target |
+|---|---|---|---|
+| `bounds.rs::collect_derived_order_facts_from_proposition` | 13 | 249 | 1: `bubble_pass3_max_suffix` |
+| `fact_reasoning.rs::normalizes_context_free` | 8 | 92 | 9: `bubble_pass3_max_suffix`, `bubble_sort3_loop_sorted`, `bubble_sort3_two_pass_sorted`, `copy3_array_demo`, `copy_n_segment_invariant`, `fill3_array_loop`, `fill_n_segment_invariant`, `fill_tail_old_prefix_segment`, `sort3_sorted` |
+| `functions.rs::prepare_verified_function_call` (guarded requirement) | 10(c) | 40 | none |
+| `loops.rs::condition_value_is_proven` | 4 | 32 | 2 (with `assume_invariant_checks`): `loop_quantified_memory_invariant`, `loop_sorted_range_invariant` |
+| `termination.rs::ranking_proves` | 5 | 16 | 2: `c_decreases_resource_recursive_in_loop`, `_rejects_parent` |
+| `api.rs::prove_universally_quantified_pure_implication` | 2 | 13 | none (landed) |
+| `path_facts.rs::add_required_proof_obligation_with_context` | 4 | 12 | 2 exact-only: `bubble_sort3_two_pass_sorted`, `copy3_array_demo` (81 under full denial; 79 were exact-covered) |
+| `loops.rs::assume_invariant_checks` | 4 | 8 | see `condition_value_is_proven` |
+| `functions.rs::contract_refinement_proves` | 11 | 2 | none exact-only (15 under full denial) |
+| `memory_reasoning.rs::pointer_access_in_range` | 16 | 2 | none |
+
+Consequences for the packages:
+
+- **26 sites are never reached by either harness**, including every package
+  12 and 10(d) site, `assume_structural_path`, `capture_spec_algebraic_value`,
+  all four `loop_effect_segment_contains_*` helpers, and the unreached arms of
+  `contract_refinement_proves`. A package migrating one of these must first
+  add a fixture that reaches it, or its regression proves nothing.
+- **Packages 4, 8, and 13 collide on one fixture family** (the bubble-sort,
+  copy, fill, and sort loop-invariant proofs). They share one owner and land
+  in the order 4, 13, 8; do not run them in parallel worktrees.
+- **Package 9 is nearly free and a measurable speedup.** `evaluate_spec_if_paths`
+  runs the prover 41,503 times on an empty context for 11 successes, all
+  exact-covered, and `assumptions_prove_proposition_false` 25,094 times for
+  6.
+- **Packages 10(c), 11, and 12 decide nothing the exact routes do not.** Their
+  migration is a route restriction plus a fixture that would have needed the
+  removed search.
+- **Six prover calls sit inside the frozen boundary** and must go before
+  package 15 can delete `proves`: two in `decide_algebraic_equality`
+  (`condition_reasoning/decision.rs`, 1,074 attempts, 0 successes) and four
+  in `pointer_access_in_range` (`assumptions/memory_reasoning.rs`, 291
+  attempts, 2 deciding, denial breaks nothing). Package 16.
+
 ## Work packages
 
 Each package is one coherent green change, or a short series of them, with
@@ -401,6 +457,8 @@ report, not in the tree.
 
 ### Package 1: delete legacy theorem constructors
 
+**Landed** 2026-09-10 ("Delete legacy theorem constructors that re-prove added propositions").
+
 **Entry points.** `src/kernel/api.rs::prove_c_function_satisfies_specification_and_propositions`
 (about line 4078) and `prove_c_statement_executes_and_propositions` (about
 line 4122). Both call `proves` on every added proposition.
@@ -412,6 +470,8 @@ line 4122). Both call `proves` on every added proposition.
 **Dependencies.** None.
 
 ### Package 2: retain pure-theorem completions
+
+**Landed** 2026-09-10 ("Issue pure-theorem authority from the retained proof completion"). The completion is `CheckedProposition` carrying the root `ProofFacts` it was closed under; both constructors are `pub(crate)` and take it. Known narrowing: a pure theorem whose certificate uses `instantiate` is not checked by the proof object today, so it now publishes no whole-contract certification authority. The corpus has one such theorem (`bounded_value` in `mdtests/pure_theorem_instantiate.md`) and nothing consumes its authority. Restoring it belongs to the legacy pure-driver migration, not this umbrella.
 
 **Entry points.** `src/kernel/api.rs::prove_universally_quantified_pure_implication`
 (about line 4639) and `_by_int32_rewrites` (about line 5096). Sole non-test
@@ -439,6 +499,8 @@ requirements are each rejected.
 **Dependencies.** None.
 
 ### Package 3: exact quantity and resource-algebra rules
+
+**Landed** 2026-09-10 ("Decide quantity and separation by exact routes, not the general prover" and its scaling regressions). All eight helpers share `resource_algebra.rs::quantity_condition_holds`: `proves_exact`, then `decide` on the bare condition. The `decide` leg is load-bearing (`examples/binary-tree` fails without it). No fixture changed and nothing needed package 4.
 
 **Entry points.**
 `src/kernel/functions.rs::population_quantity_is_zero`, `_is_positive`,
@@ -495,9 +557,14 @@ finite disjunction obligation over members (selection shape). `decide` calls
 that reject a path stay, under the freeze rule, because `decide` is a retained
 checker; `proves` calls that reject a path do not.
 
-**Expected cost.** Fixtures will grow obligations that `auto`/`simp` must now
-close, and fact stores may grow where suppression is deleted. Use the package
-0 census to find which suppressions decided anything; measure deterministic
+**Expected cost (measured).** The census puts this package's whole cost in
+four fixtures: `add_required_proof_obligation_with_context` under exact-only
+loses `bubble_sort3_two_pass_sorted` and `copy3_array_demo`;
+`condition_value_is_proven` together with `assume_invariant_checks` loses
+`loop_quantified_memory_invariant` and `loop_sorted_range_invariant`. Every
+other listed site either never fires or is fully exact-covered, so migrating
+it is a route restriction. Those four fixtures are the same family package 8
+breaks; this package owns them first, then 13, then 8. Measure deterministic
 work on profiled examples before and after and report the delta.
 
 **Regression.** For each suppressed obligation class, a fixture where the
@@ -572,13 +639,21 @@ member named. A scaling test with growing unrelated inequalities in scope
 shows flat work for the bundle check, since arithmetic premises are the
 cited ones only.
 
+**Census.** `ranking_proves` decides 16 times in mdtests; denying it loses
+only `c_decreases_resource_recursive_in_loop` and its `_rejects_parent`
+sibling, so those two are the fixtures to watch. `assume_structural_path`'s
+non-loadability arm is never reached by either harness; add a fixture that
+reaches it before claiming it migrated.
+
 **Dependencies.** Package 4 (obligation emission shape) and package 14
-(the bundle step must be `CloseInvariantsBy` with an expanded body, so the
-printed pivot is not hidden behind a smart leaf). Arithmetic obligations are
+(landed: the bundle step is `CloseInvariantsBy` with an expanded body, so
+the printed pivot cannot hide behind a smart leaf). Arithmetic obligations are
 closed by `arithmetic() using`, so this package does not depend on
 [arithmetic.md](arithmetic.md).
 
 ### Package 6: one goal for loop-entry planning and validation
+
+**Landed** 2026-09-10 ("Share one goal between loop-entry planning and validation"). `loop_planning.rs::loop_entry_checked_goal` is the shared function. No fixture's expansion changed: the retained certificates already carried the introductions, so the defect was goal-versus-fact identity, not a missing step. The helper `invariant_lowering_under_guards` mirrors the `intro` shape heuristic and is package 7's to replace with provenance.
 
 **Entry points.** `src/surface/proof/execution_planning/loop_planning.rs`:
 planning strips leading implications with `planning_assumptions.proves`
@@ -632,6 +707,10 @@ and a second `intro` introduces the written antecedent; expansion prints both
 in order and reordering is rejected. A universal whose binder appears in a
 later `extract` argument resolves through the retained binding.
 
+**Also owned here.** `loop_planning.rs::invariant_lowering_under_guards`,
+landed by package 6, decides written-versus-guard by Surface constructor
+shape. Replace that with the provenance record as part of this package.
+
 **Dependencies.** None. Blocks packages 8 and 9.
 
 ### Package 8: quantifier normalization
@@ -664,7 +743,14 @@ steps.
 expansion inspection, independent verification of the expansion, and rejection
 of a deleted or reordered introduction.
 
-**Dependencies.** Packages 6 and 7.
+**Census.** `normalizes_context_free` is genuinely load-bearing: denying its
+`derive_proposition` leg (the atomic leg is already tried first) fails nine
+fixtures, all in the bubble-sort, copy, fill, and sort loop-invariant family.
+Those proofs need explicit quantifier steps. This package runs after 4 and
+13 under the same owner.
+
+**Dependencies.** Packages 6 and 7, and packages 4 and 13 for fixture
+ownership.
 
 ### Package 9: specification branch selection during lowering
 
@@ -682,6 +768,10 @@ the same shape as C branches.
 **Regression.** A specification `if` whose condition is provable only from
 ambient facts: verification requires an explicit branch step; expansion prints
 it. Multi-size scaling on the number of ambient facts is flat.
+
+**Census.** The two sites run the prover 66,597 times on an empty context
+for 17 successes, all exact-covered. Migration loses no fixture and should
+show as a deterministic-work drop on profiled examples; report it.
 
 **Dependencies.** Package 7 (guard provenance), package 4 (path obligation
 shape).
@@ -729,7 +819,17 @@ requires each to be exactly available or emits it.
 must fail at the obligation; expansion of a smart proof shows the discharging
 steps; scaling in unrelated context is flat.
 
-**Dependencies.** Packages 0, 3, 4. Slice (c) benefits from package 7 because
+**Census.** Slice (c)'s guarded-requirement site decides 40 times but denying
+it loses nothing; slice (d)'s sites and several others (`allocation_continuity`,
+`assume_contract_proposition`, `prove_contract_propositions`,
+`lower_refinement_mutable_guards`, `evaluate_decided_contract_mutable_ranges`,
+`evaluate_guarded_contract_condition`) are never reached by either harness,
+so each needs a reaching fixture before its migration counts. Also in this
+package: `ResourceContext::satisfies_fact`'s miss path scans unrelated
+ambient condition facts linearly (measured 40 to 264 work over sizes 16 to
+128 after package 3); it belongs to the resource slice.
+
+**Dependencies.** Packages 3 and 4. Slice (c) benefits from package 7 because
 requirement obligations are path-guarded.
 
 ### Package 11: contract refinement
@@ -753,7 +853,13 @@ proofs.
 proof must cite it; expansion prints it; the certificate without it is
 rejected.
 
-**Dependencies.** Packages 0, 4, 10(b).
+**Census.** Restricting the head site to exact routes loses no fixture, and
+the equality-class rewrite site's ten successes are all exact-covered; two
+arms are never reached. So the first slice is a route restriction plus a
+fixture that reaches each arm; the obligation form above is the second
+slice.
+
+**Dependencies.** Packages 4, 10(b).
 
 ### Package 12: loop-rule prerequisite selection
 
@@ -765,6 +871,9 @@ asking `proves` whether each rule's required assumptions hold.
 exactly available or is emitted as an obligation. If no surface form names the
 rule today, the selection is lowered as a finite disjunction over candidate
 rules (selection shape) before proposing syntax.
+
+**Census.** Never reached by either harness (6 attempts, 0 successes). The
+regression below is also the first fixture to exercise the site.
 
 **Regression.** Two applicable rules with different prerequisites: the proof
 names one; the other is rejected without its prerequisite.
@@ -789,10 +898,15 @@ is deleted.
 proof requires the explicit step; scaling in the number of unrelated
 propositions is flat.
 
-**Dependencies.** None, but expect fixture churn; run the package 0 census on
-this site first.
+**Census.** 249 deciding successes, the largest in the tree, but denying the
+site loses only `bubble_pass3_max_suffix`. Same fixture family as packages 4
+and 8; same owner, lands between them.
+
+**Dependencies.** Package 4 for fixture ownership.
 
 ### Package 14: no smart leaf in the certificate
+
+**Landed** 2026-09-10 ("Keep smart leaves out of proof certificates"). Parts (a) and (b) landed as specified: the `CloseInvariants` step variant is deleted, `from_steps` validates through an exhaustive step classifier, and expansion output is byte-identical on the loop fixtures. Part (c) was a false premise: the `simp` appended by automatic preservation planning only drives per-invariant preplanning and never becomes a retained step, because the retained closer is already gated by the smart-rejecting validator. A regression pins that. Do not replace that `simp` with `close_invariants()`; it would drop the preplanning.
 
 **Entry points.** `ProofStep::CloseInvariants` in `src/surface.rs` (about line
 2742), produced by `Proof::certify_loop_invariant_bundle` in
@@ -803,9 +917,9 @@ appended `ProofTactic::Simp` in
 `src/surface/proof/execution_planning/forward_planning.rs` (about line 203).
 
 **Target.** The bundle step is `CloseInvariantsBy(certificate)` with the
-expanded body; `from_steps` validates like `from_proof_tactics`; automatic
-preservation planning expands its `simp` before retaining the certificate.
-`click audit`'s fixed-point check then has no smart residue to tolerate.
+expanded body; `from_steps` validates like `from_proof_tactics`. (The third
+target originally listed here, expanding the appended `simp`, was withdrawn;
+see the landed note above.)
 
 **Regression.** Expanding any loop fixture yields a certificate that
 `from_proof_tactics` accepts; a certificate containing `close_invariants()`
@@ -834,16 +948,36 @@ deterministic work does not regress.
 
 **Dependencies.** All other packages and [arithmetic.md](arithmetic.md).
 
+### Package 16: delete prover calls inside the frozen checkers
+
+**Entry points.** `src/kernel/assumptions/condition_reasoning/decision.rs::decide_algebraic_equality`
+(two `proves` calls near the top of the file) and
+`src/kernel/assumptions/memory_reasoning.rs::pointer_access_in_range` (four
+`proves` calls, about lines 1637 to 1660).
+
+**Census.** 1,074 attempts and 0 successes for the first; 291 attempts, 2
+deciding successes for the second; denying both breaks nothing.
+
+**Target.** Delete the calls. The freeze rule permits deletions from the
+frozen checkers and nothing else. Where a call had an exact sibling route,
+keep the sibling; add none.
+
+**Regression.** The gate. If a deletion loses a fixture, that fixture is the
+regression and the deletion becomes an explicit obligation instead.
+
+**Dependencies.** None. Blocks package 15.
+
 ### Dependency order
 
-Independent, can start immediately: 0, 1, 2, 3, 6, 7, 14.
-After 0: 4, 13. After 3 and 4: 10(a), 10(b), 12. After 4 and 14: 5.
-After 6 and 7: 8. After 7 and 4: 9. After 10(b): 10(c), 10(d), 10(e), 11.
-Last: 15.
+Landed: 0, 1, 2, 3, 6, 14. Running or next: 7 (in flight), 16 and 11
+(independent of everything unlanded except that 11 waits for 4 only in its
+second slice). One owner in sequence: 4, then 13, then 8 (8 also needs 7).
+After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
+10(e), 11 second slice. Last: 15.
 
-Rough size, for scheduling only: small = 1, 2, 3, 14; medium = 0, 6, 12,
-13, 5, 9; large = 4, 7, 11; largest = 8, 10, 15. Size is a guess at the
-number of coherent green slices, not a promise.
+Rough size after the census, for scheduling only: small = 16, 12, 11 first
+slice, 9; medium = 13, 5, 4; large = 7, 11 second slice; largest = 8, 10,
+15. Size is a guess at the number of coherent green slices, not a promise.
 
 When a boundary has many callers, first run the package 0 census. A successful
 fallback attempt does not prove that a fixture needs it; rerun with only that
@@ -871,6 +1005,9 @@ switches must not land.
   a production `std::env` read under `src/kernel/`. Do not raise a time or
   work limit to make a fixture pass.
 - Do not file issues. Report findings in the package report.
+- Read the census section before designing evidence for a site. A site that
+  never fires in the corpus needs a reaching fixture; a site whose successes
+  are exact-covered needs a route restriction, not new vocabulary.
 - Judge green only from an unpiped `scripts/check.sh` exit status. Both
   fixture harnesses must pass with the body-rerun census pinned at zero.
 - The package report states: what landed, the census numbers before and after
