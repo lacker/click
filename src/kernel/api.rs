@@ -475,6 +475,7 @@ fn abstract_c_state_for_join_across_with_policy(
                 + sibling.memory.blocks.len()
                 + sibling.memory.cells.len()
                 + sibling.memory.union_cells.len()
+                + sibling.memory.ended_local_blocks.len()
                 + sibling.resources().facts().len()
                 + sibling.counted_populations.len(),
         );
@@ -505,6 +506,11 @@ fn abstract_c_state_for_join_across_with_policy(
             }
         }
     }
+    abstract_state.next_local_lifetime = sibling_states
+        .iter()
+        .map(|sibling| sibling.next_local_lifetime)
+        .max()
+        .unwrap_or(state.next_local_lifetime);
     let mut abstract_objects = Vec::new();
     let mut preserved_blocks = BTreeSet::new();
 
@@ -578,7 +584,10 @@ fn abstract_c_state_for_join_across_with_policy(
 
     let comparable_memory = |state: &CState| {
         crate::instrumentation::record_deterministic_work(
-            state.memory.blocks.len() + state.memory.cells.len() + state.memory.union_cells.len(),
+            state.memory.blocks.len()
+                + state.memory.cells.len()
+                + state.memory.union_cells.len()
+                + state.memory.ended_local_blocks.len(),
         );
         let mut memory = state.memory.clone();
         std::sync::Arc::make_mut(&mut memory.blocks)

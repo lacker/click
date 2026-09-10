@@ -2459,15 +2459,21 @@ pub struct CMemory {
     /// two members at one address must remain independently readable after a
     /// by-value aggregate copy.
     pub(super) union_cells: std::sync::Arc<BTreeMap<(Pointer, CType), CValue>>,
+    /// Automatic-storage blocks whose lifetimes have ended. Unlike removing
+    /// the block alone, retaining this tombstone makes stale aliases invalid
+    /// even when a later proof step forgets or rejoins ordinary cells.
+    pub(super) ended_local_blocks: std::sync::Arc<BTreeSet<PointerBlock>>,
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
-/// A pinned, shallow identity for the allocation metadata relevant to a read.
-/// Empty retirement sets are equivalent; nonempty sets must share storage.
-/// Keeping the heap alive prevents allocation-address reuse in an index.
+/// A pinned, shallow identity for the lifetime metadata relevant to a read.
+/// Keeping the heap alive prevents allocation-address reuse in an index, and
+/// the local-lifetime bit distinguishes a retired automatic block from a
+/// snapshot where its block is still live.
 #[derive(Clone)]
 pub(in crate::kernel) struct ReadRegionIdentity {
     block_size: Option<Bitvector32Term>,
+    local_lifetime_ended: bool,
     heap: Arc<CHeapMemory>,
 }
 
@@ -2496,6 +2502,7 @@ impl Ord for ReadRegionIdentity {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.block_size
             .cmp(&other.block_size)
+            .then_with(|| self.local_lifetime_ended.cmp(&other.local_lifetime_ended))
             .then_with(|| self.retirement_identity().cmp(&other.retirement_identity()))
     }
 }
@@ -2511,6 +2518,9 @@ impl std::hash::Hash for CMemory {
         if !self.union_cells.is_empty() {
             self.union_cells.hash(state);
         }
+        if !self.ended_local_blocks.is_empty() {
+            std::hash::Hash::hash(&self.ended_local_blocks, state);
+        }
         self.heap.hash(state);
     }
 }
@@ -2521,6 +2531,7 @@ impl Ord for CMemory {
             .cmp(&other.blocks)
             .then_with(|| self.cells.cmp(&other.cells))
             .then_with(|| self.union_cells.cmp(&other.union_cells))
+            .then_with(|| self.ended_local_blocks.cmp(&other.ended_local_blocks))
             .then_with(|| self.heap.cmp(&other.heap))
     }
 }
@@ -2806,6 +2817,13 @@ pub enum CMemoryDerivation {
         variable: Variable,
         mutable_ranges: Option<Vec<CMemoryRange>>,
     },
+    /// `base` after an automatic-storage object's lifetime ended. The block
+    /// is named so the memory-DAG can preserve unrelated loads while stopping
+    /// every load through an alias to this retired object.
+    LocalLifetimeEnded {
+        base: SharedCMemory,
+        block: PointerBlock,
+    },
     /// `base` after a call that may write only within `mutable_ranges`.
     ///
     /// Preservation of a load outside those ranges must be justified in the
@@ -2830,6 +2848,7 @@ impl CMemoryDerivation {
             | Self::ContractAllocationClaimsChanged { base }
             | Self::HeapFreed { base, .. }
             | Self::CellsForgotten { base }
+            | Self::LocalLifetimeEnded { base, .. }
             | Self::LoopHavoc { base, .. }
             | Self::CallHavoc { base, .. } => base,
         }
@@ -2853,6 +2872,7 @@ struct CMemoryShallowIdentity {
     blocks: usize,
     cells: usize,
     union_cells: usize,
+    ended_local_blocks: usize,
     heap: usize,
 }
 
@@ -2862,6 +2882,7 @@ impl CMemoryShallowIdentity {
             blocks: std::sync::Arc::as_ptr(&memory.blocks) as usize,
             cells: std::sync::Arc::as_ptr(&memory.cells) as usize,
             union_cells: std::sync::Arc::as_ptr(&memory.union_cells) as usize,
+            ended_local_blocks: std::sync::Arc::as_ptr(&memory.ended_local_blocks) as usize,
             heap: std::sync::Arc::as_ptr(&memory.heap) as usize,
         }
     }
@@ -2942,6 +2963,7 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
         memory.blocks.len()
             + memory.cells.len()
             + memory.union_cells.len()
+            + memory.ended_local_blocks.len()
             + memory.heap.live_allocations.len()
             + memory.heap.deallocated_allocations.len()
             + memory.heap.pending_allocations.len()
@@ -3055,6 +3077,10 @@ pub struct CState {
     /// Keeping this in the symbolic state makes frame identities deterministic
     /// and ensures recursive calls cannot reuse a caller's stack slots.
     pub(super) next_local_frame: u64,
+    /// Monotonic identity source for automatic-storage objects whose
+    /// declaration can be re-entered by a loop. This is path state so joins
+    /// and nested calls cannot accidentally reuse an ended local block.
+    pub(super) next_local_lifetime: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
