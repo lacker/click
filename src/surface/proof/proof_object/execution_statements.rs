@@ -894,7 +894,14 @@ impl<'a> Proof<'a> {
                 }),
             )
         });
-        if direct_result.is_none_or(|result| result.is_err()) {
+        // A direct run may reach a verified loop summary successfully while
+        // still discovering that the summary has no standalone surface form.
+        // In that case the semantic plan is valid, but it cannot be retained
+        // as the certificate for an explicit `execute()`.  Retry through the
+        // bounded path planner, which records the loop body and its nested
+        // branches as ordinary checked operations instead of emitting a
+        // detached loop-summary certificate.
+        if direct_result.is_none_or(|result| result.is_err()) || sink.blocker.is_some() {
             planning = execution.clone();
             planning.planned_statement_transitions.clear();
             planning.surface_record.certificate_facts =

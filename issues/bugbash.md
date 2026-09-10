@@ -1,7 +1,7 @@
 # Bug bash: open tooling failures
 
-Two remaining tooling failures are tracked here. They reject supported inputs
-or expose verifier reliability gaps.
+One remaining tooling failure is tracked here. It rejects supported inputs or
+exposes a verifier reliability gap.
 
 This is deliberately a bundle rather than one file per problem, so the set
 stays together while it is triaged. **Split it up as work starts**: when a
@@ -23,11 +23,6 @@ A project with
 change in the tree. Incremental mode builds its source bundle without headers.
 Acceptance: incremental verification of a project with local headers works, and
 a header edit selects the functions whose translation units include it.
-
-## 2. `execute()` emits a certificate the checker rejects
-
-This occurs for `break` inside an `if` inside a nested `while`, in the same
-class as item 1.
 
 ---
 
