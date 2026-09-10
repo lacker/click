@@ -14,12 +14,12 @@ Astra may delegate bounded work to Luna agents. It should remain involved at
 the review checkpoints below; the document is durable shared context, not a
 claim that all design questions have already been resolved.
 
-Only repository inspection and planning have been performed for this handoff.
-No Linux revision, compiler binary, kernel configuration, or generated
-translation unit has been pinned or validated by this investigation. No
-compiler-backed importer has been implemented. Stage 0 must establish those
-facts. Do not treat illustrative interface names or suggested fixture locations
-below as existing APIs or completed work.
+The original handoff contained repository inspection and planning only. The
+receiving investigation has now captured a concrete Linux input; see the
+progress section and `design/kernel-import-stage0.json`. This evidence does not
+establish that Click supports that translation unit or that the importer is
+complete. Do not treat illustrative interface names or suggested fixture
+locations below as existing APIs or completed work.
 
 Read the current `AGENTS.md`, this document, and the referenced implementation
 before starting. The repository may have advanced; use symbol names to locate
@@ -523,6 +523,71 @@ Execution started on 2026-09-10 from
 `codex/kernel-scale-preprocessing`. Stage 0 has two Luna medium investigations:
 existing input/capture and provisioning evidence; shared engine/import API and
 diagnostic integration. No compiler-backed implementation is claimed yet.
+
+### Checkpoint A: captured input and approved first milestone
+
+The user approved delivering the validated importer first on 2026-09-10, with
+explicit rejection of unsupported C forms and compiler options. Full Linux
+support and the original acceptance criteria above remain open. Completing this
+first milestone must not close this issue or claim the real rbtree input lowers.
+
+The pristine source is Linux `v6.8.12`, peeled commit
+`632428373bea7581869cb05dce40bef0d37793e3`, from the kernel.org release archive
+with SHA-256
+`19b31956d229b5b9ca5671fa1c74320179682a3d8d00fc86794114b21da86039`.
+This fixed release provides a reproducible discovery target; it is not a claim
+to support a kernel-version matrix. A fresh `x86_64_defconfig` was built with
+GCC `13.3.0` (Ubuntu `13.3.0-6ubuntu2~24.04.1`). Normal Kbuild compilation of
+unmodified `lib/rbtree.c`, including objtool validation, exited 0. Missing host
+build tools were provisioned under `/tmp`; no target compiler flags were changed.
+
+The exact compiler argument vector, derived preprocessing vector, configuration,
+compiler binary identities, and 222 concrete dependency hashes are recorded in
+[`design/kernel-import-stage0.json`](../design/kernel-import-stage0.json).
+Two preprocessing runs in an environment cleared to the recorded allowlist
+produced identical bytes: 637,604 bytes, 16,371 lines, 1,552 line markers, SHA-256
+`19a1f6aee08bc6b0b4e5c0f8959cf986da569547a227db2241974b5e446173e7`.
+Line-marker filenames are not the dependency inventory. The live source/build
+tree is `/tmp/click-linux-pinned`; captured output is
+`/tmp/rbtree-v6.8.12-controlled-a.i`. The evidence JSON is an investigation
+record, not a validated importer lock or a complete toolchain distribution.
+
+The first ordinary parser rejection after decoding only structured line markers
+is `include/linux/panic.h:12`, the variadic declaration of `panic`. Further
+retained forms include `_Generic`, attributes, anonymous aggregates, and
+effectful x86 assembly. Concrete examples include `cli` in
+`arch/x86/include/asm/irqflags.h:37`, and export-generated pointer storage plus
+`.export_symbol` assembly at `lib/rbtree.c:415` (and eleven further exports).
+Neither disabling interrupts nor allocating export storage qualifies as harmless
+metadata. The actual compiler vector also includes options such as
+`-ftrivial-auto-var-init=zero`, `-fshort-wchar`, and `-fno-strict-overflow` that
+require explicit target-policy review. Do not remove those options to make the
+kernel input fit the first importer profile.
+
+The earlier `/tmp/linux-6.8.12` tree and `/tmp/rbtree-6.8.12.i` combined upstream
+sources with host-generated headers and failed compiler validation. They are
+rejected exploratory inputs and must never be used as fixtures. A temporary
+objtool-skipping build was also superseded by the successful normal build.
+
+First-milestone interface decisions:
+
+- Compiler imports are selected by explicit `<sidecar>.import.json` configuration;
+  legacy source-bundle inputs remain available with no silent fallback.
+- `click import lock <sidecar.click>` explicitly creates or refreshes the separate
+  `<sidecar>.import.lock.json` and configured artifacts. Verification reproduces
+  and validates the locked input without modifying it.
+- Opaque `PreparedCImport` values carry validated text, source map, logical source
+  identity, and import identity through the shared engine. Raw text plus a digest
+  cannot manufacture this status.
+- The initial importer accepts one explicitly checked GCC/x86-64 profile and a
+  restricted argument vocabulary. Unsupported response files, compiler plugins,
+  target options, residual directives, and C forms fail explicitly.
+- Imported projects initially reject incremental `--changed-since` requests and
+  do not read or create verification markers. Ordinary verification, profiling,
+  audit, and expansion use the same validated prepared inputs.
+- No metadata projection is authorized. The focused fixture establishes the
+  compiler-backed proof route; kernel capture remains negative discovery evidence
+  until the retained semantics and complete reproducible fixture gate are ready.
 
 - [x] Repository inspection and handoff plan written at the baseline above.
 - [ ] Stage 0: concrete pin, reproducible capture, inventory, and checkpoint A.
