@@ -115,6 +115,52 @@ mod tests {
     }
 
     #[test]
+    fn symbolic_integer_conversions_require_exact_bounds_for_all_targets() {
+        for (target, lower, upper) in [
+            ("int16", "-32768", "32767"),
+            ("int32", "-2147483648", "2147483647"),
+            ("uint8", "0", "255"),
+            ("uint16", "0", "65535"),
+            ("uint32", "0", "4294967295"),
+            ("int64", "-9223372036854775808", "9223372036854775807"),
+            ("uint64", "0", "18446744073709551615"),
+        ] {
+            let source = format!(
+                "theorem conversion(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_{target}(z) == to_{target}(z) by simp; }}"
+            );
+            verify_c0_sources(&source, &[]).unwrap_or_else(|error| {
+                panic!(
+                    "bounded symbolic conversion `{target}` rejected: {}",
+                    error.message()
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn symbolic_integer_conversions_reject_missing_bounds() {
+        for (target, lower, upper) in [
+            ("int16", "-32768", "32767"),
+            ("int32", "-2147483648", "2147483647"),
+            ("uint8", "0", "255"),
+            ("uint16", "0", "65535"),
+            ("uint32", "0", "4294967295"),
+            ("int64", "-9223372036854775808", "9223372036854775807"),
+            ("uint64", "0", "18446744073709551615"),
+        ] {
+            for requirement in [format!("z >= {lower}"), format!("z <= {upper}")] {
+                let source = format!(
+                    "theorem conversion(z: Integer) {{ requires {requirement}; ensures to_integer(to_{target}(z)) == z by simp; }}"
+                );
+                assert!(
+                    verify_c0_sources(&source, &[]).is_err(),
+                    "conversion `{target}` accepted without both bounds: {source}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn integer_conversion_preserves_source_types_and_argument_definedness() {
         for (parameters, claim) in [
             ("", "to_integer(true) == 1"),
