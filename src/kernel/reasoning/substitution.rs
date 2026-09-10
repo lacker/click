@@ -2144,7 +2144,7 @@ fn substitute_bitvector_variable_in_pure_function_argument(
 ) -> PureFunctionArgument {
     match argument {
         PureFunctionArgument::Integer(value) => PureFunctionArgument::Integer(
-            substitute_bitvector_variable_in_integer(value, from, to),
+            substitute_bitvector_variable_in_integer(value, from, to).into(),
         ),
         PureFunctionArgument::Value(value) => {
             PureFunctionArgument::Value(substitute_bitvector_variable_in_c_value(value, from, to))

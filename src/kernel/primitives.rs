@@ -1125,7 +1125,7 @@ pub enum AlgebraicTermNode {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum PureFunctionArgument {
     Value(CValue),
-    Integer(IntegerTerm),
+    Integer(SharedIntegerTerm),
     Algebraic(AlgebraicTerm),
     ArrayRef {
         memory: CMemory,

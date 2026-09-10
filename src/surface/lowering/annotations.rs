@@ -2338,7 +2338,7 @@ impl AnnotationLowerer<'_> {
             let crate::kernel::SpecIntegerExpression::Term(value) = value else {
                 return Err("Integer function arguments must be symbolic terms".to_string());
             };
-            lowered.push(crate::kernel::PureFunctionArgument::Integer(value));
+            lowered.push(crate::kernel::PureFunctionArgument::Integer(value.into()));
         }
         Ok(crate::kernel::SpecIntegerExpression::Term(
             crate::kernel::IntegerTerm::PureFunctionApplication {

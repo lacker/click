@@ -3907,7 +3907,7 @@ fn evaluate_spec_pure_function_argument_paths(
             )?
             .into_iter()
             .map(|path| SpecPureFunctionArgumentPath {
-                value: PureFunctionArgument::Integer(path.value),
+                value: PureFunctionArgument::Integer(path.value.into()),
                 facts: path.facts,
                 obligations: path.obligations,
             })
