@@ -5168,3 +5168,90 @@ mod integer_budget_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod lowering_provenance_tests {
+    use super::*;
+
+    fn binder(name: &str) -> SpecExpression {
+        SpecExpression::CExpression(CExpression::Variable(name.to_string()))
+    }
+
+    fn positive(expression: SpecExpression) -> SpecProposition {
+        SpecProposition::Comparison {
+            left: expression,
+            operator: CComparisonOperator::GreaterThan,
+            right: SpecExpression::Value(int32(0)),
+        }
+    }
+
+    fn universal(body: SpecProposition) -> SpecProposition {
+        SpecProposition::ForAllInt32 {
+            name: "k".to_string(),
+            variable: Variable(41),
+            body: Box::new(body),
+        }
+    }
+
+    fn introductions(proposition: &SpecProposition) -> LoweringIntroductions {
+        let (_, _, _, introductions) =
+            crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+                &CState::new(),
+                proposition,
+                None,
+                &PureFactContext::new(),
+            )
+            .expect("the test proposition lowers on one path");
+        introductions
+    }
+
+    #[test]
+    fn a_written_universal_over_a_written_implication_records_both() {
+        let recorded = introductions(&universal(SpecProposition::Implies(
+            Box::new(positive(binder("k"))),
+            Box::new(positive(binder("k"))),
+        )));
+
+        assert_eq!(
+            recorded,
+            vec![
+                LoweringIntroduction::WrittenUniversal {
+                    name: "k".to_string(),
+                    variable: Variable(41),
+                    pointer: false,
+                },
+                LoweringIntroduction::WrittenImplication,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_definedness_guard_is_recorded_before_the_written_implication() {
+        // `k + 1` may overflow for an unconstrained `k`, so lowering keeps
+        // the defined path and folds its no-overflow fact into an implication
+        // that no spec, and therefore no Surface, connective wrote.
+        let incremented = || {
+            SpecExpression::Add(
+                Box::new(binder("k")),
+                Box::new(SpecExpression::Value(int32(1))),
+            )
+        };
+        let recorded = introductions(&universal(SpecProposition::Implies(
+            Box::new(positive(incremented())),
+            Box::new(positive(incremented())),
+        )));
+
+        assert_eq!(
+            recorded,
+            vec![
+                LoweringIntroduction::WrittenUniversal {
+                    name: "k".to_string(),
+                    variable: Variable(41),
+                    pointer: false,
+                },
+                LoweringIntroduction::PathFactGuard,
+                LoweringIntroduction::WrittenImplication,
+            ]
+        );
+    }
+}

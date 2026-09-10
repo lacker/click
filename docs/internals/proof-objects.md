@@ -311,6 +311,28 @@ checking only when a claim is judged over it. A rewritten claim goal stays
 on the retained outcome proof, so the closer after the rewrite records the
 claim goal the proof was rooted at rather than the rewritten form.
 
+That lowering is not an isomorphism, so it reports what it did. A quantified
+body's path facts are folded into kernel implications that no written
+connective produced, and a quantifier binds its written name to a kernel
+variable the written syntax never names. `c_lower_spec_proposition_at_state`
+therefore also returns the head chain of the proposition it built: per
+outermost node, whether lowering inserted it as a path-fact or obligation
+guard, or the spec wrote it, and, for a written universal, the written name
+with the kernel variable it was bound to. The chain and the proposition come
+from one traversal inside `wrap_path_context`, so the record cannot drift
+from what it describes. A newly stated goal keeps that chain in its
+presentation. `intro` reads it rather than inferring a correspondence from a
+shape the written syntax happens to share: a hidden guard is introduced with
+the written goal still focused, a written implication consumes the written
+connective and retains the checked Surface-to-kernel antecedent pair with the
+structural conjuncts it refines to, and a written universal binds the written
+name to the variable the introduction actually freshened to. Later citations
+of an introduced antecedent read the retained pair, because re-lowering a
+written antecedent runs under the fact context the introduction changed and
+produces no path at all for an antecedent no state satisfies. A goal whose
+kernel proposition did not come from a lowering performed for it carries no
+chain and refines its written form structurally.
+
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A
 recorded `CState` is logically complete, but its memory, facts, and resources
