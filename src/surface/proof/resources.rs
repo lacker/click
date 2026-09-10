@@ -1285,7 +1285,7 @@ fn try_select_composite_resource_body(
         // through every materialized heap snapshot in a recursive resource.
         return Ok(None);
     }
-    if fact_conflicts_with_assumptions(&lowered, &assumptions) {
+    if fact_conflicts_with_assumptions(&lowered, assumptions) {
         return Ok(Some(false));
     }
     Ok(None)
@@ -1422,18 +1422,18 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         .iter()
         .filter(|fact| fact.is_own())
         .collect::<Vec<_>>();
-    if !owned_body_resources.is_empty() {
-        if owned_body_resources.iter().all(|fact| {
+    if !owned_body_resources.is_empty()
+        && owned_body_resources.iter().all(|fact| {
             state
                 .resources()
                 .directly_supporting_fact(fact, available_pure_facts.assumptions())
                 .is_some()
-        }) {
-            // `open` retains the folded head for contract accounting while
-            // exposing the unique owned body. Until that body is closed, do
-            // not re-project its invariant at a newer memory/count snapshot.
-            return Ok((memory, ResourceContext::new()));
-        }
+        })
+    {
+        // `open` retains the folded head for contract accounting while
+        // exposing the unique owned body. Until that body is closed, do
+        // not re-project its invariant at a newer memory/count snapshot.
+        return Ok((memory, ResourceContext::new()));
     }
     let fact_state = state.clone().with_memory(memory.clone());
 
@@ -1772,7 +1772,7 @@ fn resource_value_substitutions(
             arguments.len()
         ));
     }
-    Ok(definition
+    definition
         .parameters()
         .iter()
         .zip(arguments)
@@ -1785,7 +1785,7 @@ fn resource_value_substitutions(
                 ContractExpression::CFragment(CExpression::Value(argument.clone())),
             ))
         })
-        .collect::<Result<_, String>>()?)
+        .collect::<Result<_, String>>()
 }
 
 /// Value substitutions for a held composite resource fact, with its
@@ -2501,7 +2501,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 )));
             }
             body_active &= quantity_is_positive;
-            if state.resources().satisfies_fact(&population, &assumptions) {
+            if state.resources().satisfies_fact(&population, assumptions) {
                 // Exact execution preserves the abstract contract resource
                 // while the proof may still carry its exposed body. This is
                 // representation state, independent of whether the resource
@@ -2537,11 +2537,11 @@ fn fold_composite_resources_on_outcome_with_facts(
                 resource, parameters, arguments, state, value,
             )?;
             let assumptions = pure_facts.assumptions();
-            if !state.resources().satisfies_fact(&population, &assumptions) {
+            if !state.resources().satisfies_fact(&population, assumptions) {
                 let viewed_population = CResourceFact::View(population.resource().clone());
                 closing_view = state
                     .resources()
-                    .satisfies_fact(&viewed_population, &assumptions);
+                    .satisfies_fact(&viewed_population, assumptions);
             }
             let (name, population_arguments) = match population.resource() {
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {

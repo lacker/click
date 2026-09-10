@@ -425,7 +425,7 @@ fn synthesize_surface_quantified_proposition(
                 state,
                 &body_variables,
             )?);
-            return Some(match proposition {
+            Some(match proposition {
                 Proposition::ForAll { .. } => ClickProposition::ForAll {
                     c_type: C0Type::Int32,
                     name,
@@ -437,7 +437,7 @@ fn synthesize_surface_quantified_proposition(
                     body,
                 },
                 _ => unreachable!(),
-            });
+            })
         }
         _ => unreachable!("non-quantified proposition dispatched to binder synthesis"),
     }

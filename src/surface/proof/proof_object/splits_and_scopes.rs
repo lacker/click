@@ -210,10 +210,10 @@ impl<'a> Proof<'a> {
         )?;
         let mut advanced = split;
         for (arm_index, take_then) in [(0usize, true), (1usize, false)] {
-            let (tactic_index, source_index) = arm_steps[arm_index];
+            let (_, source_index) = arm_steps[arm_index];
             advanced = advanced
                 .focus_execution_if_arm(&record, take_then)?
-                .apply_step_at(ProofStep::Step, tactic_index, source_index)?;
+                .apply_step_at(ProofStep::Step, source_index)?;
         }
         Ok(Some((advanced, record)))
     }
@@ -271,6 +271,7 @@ impl<'a> Proof<'a> {
                 FrontierSplitError::NonComplementaryCases => self.step_error(
                     "proof `if` condition and negation did not lower to complementary facts",
                 ),
+                #[cfg(test)]
                 FrontierSplitError::MissingDisjunction(_)
                 | FrontierSplitError::ExpectedDisjunction(_) => {
                     unreachable!("proof if does not require a disjunction")
@@ -332,12 +333,13 @@ impl<'a> Proof<'a> {
     /// of an available proposition. The disjunction is checked once at the
     /// split; each sibling receives only its own disjunct in its persistent
     /// fact context, and no semantic state is exported to a construction cursor.
+    #[cfg(test)]
     pub(in crate::surface::proof) fn split_focused_execution_cases(
         &self,
         disjunction: ClickProposition,
-    ) -> Result<(Self, ExecutionLogicalCasesSplit<'a>), ClickError> {
+    ) -> Result<(Self, ExecutionLogicalCasesSplit), ClickError> {
         let lowered = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
-        let (state, split, ids, path_facts) = self
+        let (state, _, ids, path_facts) = self
             .state
             .split_frontier_cases(lowered)
             .map_err(|error| match error {
@@ -373,8 +375,6 @@ impl<'a> Proof<'a> {
             }),
         };
         let record = ExecutionLogicalCasesSplit {
-            marker: successor.checkpoint(),
-            split,
             arm_branches: ids,
             path_facts,
         };
@@ -384,9 +384,10 @@ impl<'a> Proof<'a> {
     /// Focuses one arm of a logical execution-frontier `cases` split. The
     /// arm's exact disjunct is re-presented only as this focused branch operation's
     /// local fact delta.
+    #[cfg(test)]
     pub(in crate::surface::proof) fn focus_execution_cases_arm(
         &self,
-        record: &ExecutionLogicalCasesSplit<'a>,
+        record: &ExecutionLogicalCasesSplit,
         take_left: bool,
     ) -> Result<Self, ClickError> {
         let arm_index = usize::from(!take_left);
@@ -397,30 +398,6 @@ impl<'a> Proof<'a> {
                 .state
                 .with_fact_deltas(path_facts.clone(), path_facts),
         ))
-    }
-
-    /// Applies one recursively driven logical `cases` operation over an
-    /// execution frontier. Both callbacks must retire their sibling goals;
-    /// the returned node retains one structured `Cases` provenance step.
-    pub(in crate::surface::proof) fn apply_execution_cases_with<Left, Right>(
-        self,
-        disjunction: ClickProposition,
-        apply_left: Left,
-        apply_right: Right,
-    ) -> Result<Self, ClickError>
-    where
-        Left: FnOnce(Self) -> Result<Self, ClickError>,
-        Right: FnOnce(Self) -> Result<Self, ClickError>,
-    {
-        let (split, record) = self.split_focused_execution_cases(disjunction.clone())?;
-        let left_done = apply_left(split.focus_execution_cases_arm(&record, true)?)?;
-        let right_done = apply_right(left_done.focus_execution_cases_arm(&record, false)?)?;
-        right_done.join_focused_cases(
-            &record.marker,
-            record.split,
-            record.arm_branches,
-            disjunction,
-        )
     }
 
     /// Applies one recursively driven proof-level execution `if` as an

@@ -59,8 +59,8 @@ pub(in crate::surface) fn prove_empty_write_footprint(
         .flatten()
         .filter(|(before, range)| {
             is_preexisting_write_pointer(range.base(), pre_state)
-                && !(crate::kernel::c_memory_holds_live_heap_allocation_at(before, range.base())
-                    && !crate::kernel::c_memory_holds_live_heap_allocation_at(
+                && (!crate::kernel::c_memory_holds_live_heap_allocation_at(before, range.base())
+                    || crate::kernel::c_memory_holds_live_heap_allocation_at(
                         pre_state.memory(),
                         range.base(),
                     ))

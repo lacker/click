@@ -2092,7 +2092,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
             "size {size} rewrite should not alter the persistent fact index \
              ({allocations} persistent nodes allocated)"
         );
-        assert_eq!(rewritten.certificate().steps(), &[step.clone()]);
+        assert_eq!(rewritten.certificate().steps(), std::slice::from_ref(&step));
         assert!(
             rewritten.surface_goal().is_none(),
             "a surface form that lowers through extra normalization must not be paired with the unnormalized kernel successor"
@@ -2667,7 +2667,10 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             "size {size} instantiate allocated {allocations} persistent nodes (bound {allocation_bound})"
         );
         assert!(!instantiated.is_complete());
-        assert_eq!(instantiated.certificate().steps(), &[step.clone()]);
+        assert_eq!(
+            instantiated.certificate().steps(),
+            std::slice::from_ref(&step)
+        );
         assert_eq!(
             instantiated.added_facts(),
             std::slice::from_ref(&kernel_goal)
@@ -2835,7 +2838,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             allocations <= allocation_bound,
             "size {size} theorem application allocated {allocations} persistent nodes (bound {allocation_bound})"
         );
-        assert_eq!(applied.certificate().steps(), &[step.clone()]);
+        assert_eq!(applied.certificate().steps(), std::slice::from_ref(&step));
         assert_eq!(
             applied.added_facts(),
             std::slice::from_ref(&kernel_conclusion)
@@ -6811,8 +6814,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         );
         let missing = root
             .select_pure_theorem_application_step(&missing_application)
-            .err()
-            .expect("an unavailable instantiated requirement must reject the candidate");
+            .expect_err("an unavailable instantiated requirement must reject the candidate");
         assert!(missing.message().contains("required exact fact"));
         assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
@@ -8133,9 +8135,11 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
     };
     let mut samples = Vec::new();
     for size in [16, 32, 64, 128] {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.region = ExecutionRegionKind::LoopBody;
-        frontier.position = FrontierPosition::RegionBoundary;
+        let frontier = ExecutionFrontier {
+            region: ExecutionRegionKind::LoopBody,
+            position: FrontierPosition::RegionBoundary,
+            ..ExecutionFrontier::default()
+        };
         let root = Proof::for_execution_frontier(
             "checked loop have",
             0,
@@ -8243,11 +8247,15 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 
     for size in [16_u32, 64, 256, 1024, 4096] {
         let make_root = |loop_invariant_region: bool| {
-            let mut frontier = ExecutionFrontier::default();
-            if loop_invariant_region {
-                frontier.region = ExecutionRegionKind::LoopBody;
-                frontier.position = FrontierPosition::RegionBoundary;
-            }
+            let frontier = if loop_invariant_region {
+                ExecutionFrontier {
+                    region: ExecutionRegionKind::LoopBody,
+                    position: FrontierPosition::RegionBoundary,
+                    ..ExecutionFrontier::default()
+                }
+            } else {
+                ExecutionFrontier::default()
+            };
             Proof::for_execution_frontier(
                 "persistent close invariants",
                 0,
@@ -8807,8 +8815,10 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let mut statement_delta: Option<Vec<Proposition>> = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.next_statement_index = 0;
+        let frontier = ExecutionFrontier {
+            next_statement_index: 0,
+            ..ExecutionFrontier::default()
+        };
         let root = Proof::for_execution_frontier(
             "empty branch proof",
             0,
@@ -8953,8 +8963,10 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
     let mut allocation_samples = Vec::new();
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.next_statement_index = 0;
+        let frontier = ExecutionFrontier {
+            next_statement_index: 0,
+            ..ExecutionFrontier::default()
+        };
         let root = Proof::for_execution_frontier(
             "nonempty branch proof",
             0,
@@ -9255,8 +9267,10 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         right: value(0),
     };
     let make_root = |size: u32, state: CState| {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.next_statement_index = 0;
+        let frontier = ExecutionFrontier {
+            next_statement_index: 0,
+            ..ExecutionFrontier::default()
+        };
         Proof::for_execution_frontier(
             "branch interface proof",
             0,
@@ -9803,8 +9817,10 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         right: ContractExpression::CFragment(CExpression::Value(int32(0))),
     };
     let make_root = |size: u32| {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.next_statement_index = 0;
+        let frontier = ExecutionFrontier {
+            next_statement_index: 0,
+            ..ExecutionFrontier::default()
+        };
         Proof::for_execution_frontier(
             "nested branch interface proof",
             0,
@@ -9942,8 +9958,10 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let function_environment = CExecutionEnvironment::new();
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let make_root = |facts: Vec<Proposition>| {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.next_statement_index = 0;
+        let frontier = ExecutionFrontier {
+            next_statement_index: 0,
+            ..ExecutionFrontier::default()
+        };
         Proof::for_execution_frontier(
             "decided branch proof",
             0,
@@ -10213,8 +10231,10 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let mut expected_outcome_fact_sizes = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let mut frontier = ExecutionFrontier::default();
-        frontier.next_statement_index = 0;
+        let frontier = ExecutionFrontier {
+            next_statement_index: 0,
+            ..ExecutionFrontier::default()
+        };
         let root = Proof::for_execution_frontier(
             "terminal branch proof",
             0,

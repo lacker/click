@@ -19,143 +19,6 @@ pub(crate) struct TermRewrite<'a> {
     #[cfg(test)]
     pub(crate) visits: usize,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::kernel::{
-        AlgebraicSchemas, AlgebraicType, AlgebraicValueType, AlgebraicVariantType,
-    };
-
-    #[test]
-    fn narrowing_rewrite_visits_scale_with_selected_expression() {
-        let from = Bitvector32Term::Variable(Variable(91));
-        let to = Bitvector32Term::Variable(Variable(92));
-        let make = |value: &Bitvector32Term, size| {
-            Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
-                name: "many".into(),
-                arguments: vec![
-                    PureFunctionArgument::Value(CValue::UInt32(
-                        Bitvector32Term::UInt32From64(Box::new(value.clone()))
-                    ));
-                    size
-                ],
-            })
-        };
-        for size in [16, 64, 256] {
-            let mut rewrite = TermRewrite::for_bits(&from, &to);
-            assert_eq!(rewrite.term(&make(&from, size)), make(&to, size));
-            assert!(rewrite.changed);
-            assert_eq!(rewrite.visits, 2 + 2 * size);
-        }
-    }
-
-    #[test]
-    fn conditional_reduction_work_scales_with_selected_expression() {
-        let condition = ConditionTerm::Variable(Variable(51));
-        let conditions = HashMap::from([(condition.clone(), true)]);
-        for size in [16, 64, 256] {
-            let input = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
-                name: "many".into(),
-                arguments: vec![
-                    PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::If {
-                        condition: Box::new(condition.clone()),
-                        then_term: Box::new(Bitvector32Term::Constant(7)),
-                        else_term: Box::new(Bitvector32Term::Constant(0)),
-                    },));
-                    size
-                ],
-            });
-            let expected = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
-                name: "many".into(),
-                arguments: vec![
-                    PureFunctionArgument::Value(CValue::Int32(
-                        Bitvector32Term::Constant(7),
-                    ));
-                    size
-                ],
-            });
-            let mut rewrite = TermRewrite::for_conditions(&conditions);
-            assert_eq!(rewrite.term(&input), expected);
-            assert_eq!(rewrite.visits, 2 + 3 * size);
-        }
-    }
-
-    #[test]
-    fn conditional_reduction_does_not_use_outer_facts_under_a_binder() {
-        let variable = Variable(51);
-        let condition = ConditionTerm::Bitvector32Equal(
-            Box::new(Bitvector32Term::Variable(variable)),
-            Box::new(Bitvector32Term::Constant(0)),
-        );
-        let conditions = HashMap::from([(condition.clone(), true)]);
-        let input = Bitvector32Term::RangeFold {
-            start: Box::new(Bitvector32Term::Constant(0)),
-            end: Box::new(Bitvector32Term::Constant(2)),
-            initial: Box::new(Bitvector32Term::Constant(0)),
-            accumulator: Variable(52),
-            item: variable,
-            body: Box::new(Bitvector32Term::If {
-                condition: Box::new(condition),
-                then_term: Box::new(Bitvector32Term::Constant(7)),
-                else_term: Box::new(Bitvector32Term::Constant(0)),
-            }),
-        };
-        assert_eq!(TermRewrite::for_conditions(&conditions).bits(&input), input);
-    }
-
-    #[test]
-    fn mixed_algebraic_rewrite_visits_scale_with_the_selected_expression() {
-        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![AlgebraicVariantType {
-            name: "Unit".into(),
-            fields: vec![],
-        }]
-        .into();
-        let algebraic_type = AlgebraicType {
-            rigid: false,
-            name: "Marker".into(),
-            arguments: vec![],
-            variants: variants.clone(),
-            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
-                AlgebraicValueType::Algebraic {
-                    name: "Marker".into(),
-                    arguments: vec![],
-                },
-                variants,
-            )]))),
-        };
-        let from = AlgebraicTerm {
-            algebraic_type: algebraic_type.clone(),
-            node: AlgebraicTermNode::Variable(Variable(51)),
-        };
-        let to = AlgebraicTerm {
-            algebraic_type,
-            node: AlgebraicTermNode::Variable(Variable(52)),
-        };
-        for size in [16, 64, 256] {
-            let argument = |value: &AlgebraicTerm| {
-                PureFunctionArgument::Value(CValue::Int32(
-                    Bitvector32Term::ClickFunctionApplication {
-                        name: "observe".into(),
-                        arguments: vec![PureFunctionArgument::Algebraic(value.clone())],
-                    },
-                ))
-            };
-            let input = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
-                name: "many".into(),
-                arguments: vec![argument(&from); size],
-            });
-            let expected = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
-                name: "many".into(),
-                arguments: vec![argument(&to); size],
-            });
-            let mut rewrite = TermRewrite::new(&from, &to);
-            assert_eq!(rewrite.term(&input), expected);
-            assert!(rewrite.changed);
-            assert_eq!(rewrite.visits, 2 + 2 * size);
-        }
-    }
-}
 impl<'a> TermRewrite<'a> {
     pub(crate) fn new(from: &'a AlgebraicTerm, to: &'a AlgebraicTerm) -> Self {
         Self {
@@ -746,6 +609,143 @@ impl<'a> TermRewrite<'a> {
                 left: Box::new(self.bits(left)),
                 right: Box::new(self.bits(right)),
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::{
+        AlgebraicSchemas, AlgebraicType, AlgebraicValueType, AlgebraicVariantType,
+    };
+
+    #[test]
+    fn narrowing_rewrite_visits_scale_with_selected_expression() {
+        let from = Bitvector32Term::Variable(Variable(91));
+        let to = Bitvector32Term::Variable(Variable(92));
+        let make = |value: &Bitvector32Term, size| {
+            Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "many".into(),
+                arguments: vec![
+                    PureFunctionArgument::Value(CValue::UInt32(
+                        Bitvector32Term::UInt32From64(Box::new(value.clone()))
+                    ));
+                    size
+                ],
+            })
+        };
+        for size in [16, 64, 256] {
+            let mut rewrite = TermRewrite::for_bits(&from, &to);
+            assert_eq!(rewrite.term(&make(&from, size)), make(&to, size));
+            assert!(rewrite.changed);
+            assert_eq!(rewrite.visits, 2 + 2 * size);
+        }
+    }
+
+    #[test]
+    fn conditional_reduction_work_scales_with_selected_expression() {
+        let condition = ConditionTerm::Variable(Variable(51));
+        let conditions = HashMap::from([(condition.clone(), true)]);
+        for size in [16, 64, 256] {
+            let input = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "many".into(),
+                arguments: vec![
+                    PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::If {
+                        condition: Box::new(condition.clone()),
+                        then_term: Box::new(Bitvector32Term::Constant(7)),
+                        else_term: Box::new(Bitvector32Term::Constant(0)),
+                    },));
+                    size
+                ],
+            });
+            let expected = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "many".into(),
+                arguments: vec![
+                    PureFunctionArgument::Value(CValue::Int32(
+                        Bitvector32Term::Constant(7),
+                    ));
+                    size
+                ],
+            });
+            let mut rewrite = TermRewrite::for_conditions(&conditions);
+            assert_eq!(rewrite.term(&input), expected);
+            assert_eq!(rewrite.visits, 2 + 3 * size);
+        }
+    }
+
+    #[test]
+    fn conditional_reduction_does_not_use_outer_facts_under_a_binder() {
+        let variable = Variable(51);
+        let condition = ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(variable)),
+            Box::new(Bitvector32Term::Constant(0)),
+        );
+        let conditions = HashMap::from([(condition.clone(), true)]);
+        let input = Bitvector32Term::RangeFold {
+            start: Box::new(Bitvector32Term::Constant(0)),
+            end: Box::new(Bitvector32Term::Constant(2)),
+            initial: Box::new(Bitvector32Term::Constant(0)),
+            accumulator: Variable(52),
+            item: variable,
+            body: Box::new(Bitvector32Term::If {
+                condition: Box::new(condition),
+                then_term: Box::new(Bitvector32Term::Constant(7)),
+                else_term: Box::new(Bitvector32Term::Constant(0)),
+            }),
+        };
+        assert_eq!(TermRewrite::for_conditions(&conditions).bits(&input), input);
+    }
+
+    #[test]
+    fn mixed_algebraic_rewrite_visits_scale_with_the_selected_expression() {
+        let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![AlgebraicVariantType {
+            name: "Unit".into(),
+            fields: vec![],
+        }]
+        .into();
+        let algebraic_type = AlgebraicType {
+            rigid: false,
+            name: "Marker".into(),
+            arguments: vec![],
+            variants: variants.clone(),
+            schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+                AlgebraicValueType::Algebraic {
+                    name: "Marker".into(),
+                    arguments: vec![],
+                },
+                variants,
+            )]))),
+        };
+        let from = AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(Variable(51)),
+        };
+        let to = AlgebraicTerm {
+            algebraic_type,
+            node: AlgebraicTermNode::Variable(Variable(52)),
+        };
+        for size in [16, 64, 256] {
+            let argument = |value: &AlgebraicTerm| {
+                PureFunctionArgument::Value(CValue::Int32(
+                    Bitvector32Term::ClickFunctionApplication {
+                        name: "observe".into(),
+                        arguments: vec![PureFunctionArgument::Algebraic(value.clone())],
+                    },
+                ))
+            };
+            let input = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "many".into(),
+                arguments: vec![argument(&from); size],
+            });
+            let expected = Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                name: "many".into(),
+                arguments: vec![argument(&to); size],
+            });
+            let mut rewrite = TermRewrite::new(&from, &to);
+            assert_eq!(rewrite.term(&input), expected);
+            assert!(rewrite.changed);
+            assert_eq!(rewrite.visits, 2 + 2 * size);
         }
     }
 }

@@ -148,15 +148,16 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
     let mut load_assumptions = assumptions.clone();
-    let candidates = assumptions
-        .should_transport_memory_load_condition_facts()
-        .then(|| {
+    let candidates = if assumptions.should_transport_memory_load_condition_facts() {
+        {
             assumptions
                 .exact_memory_load_condition_candidates(&pointer)
                 .map(|(condition, value)| Proposition::ConditionIs(condition.clone(), value))
                 .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        }
+    } else {
+        Default::default()
+    };
     for source in candidates {
         let Some(theorem) = prove_c_condition_fact_transport(&source, memory, assumptions) else {
             continue;
@@ -1074,7 +1075,7 @@ pub(crate) fn canonical_form_of_load(memory: SharedCMemory, pointer: Pointer) ->
 pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool) {
     thread_local! {
         static SEEN: std::cell::RefCell<std::collections::BTreeSet<(String, String)>> =
-            std::cell::RefCell::new(std::collections::BTreeSet::new());
+            const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
     }
     if !CANONICAL_AT_CREATION_VIOLATIONS.with(|count| count.get().is_some()) {
         return;

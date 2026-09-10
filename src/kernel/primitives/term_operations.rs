@@ -1249,7 +1249,7 @@ fn divide_decoded_floats(
     let (quotient, exponent) = if adjust >= 0 {
         let numerator = u128::from(left_significand) << (working_shift + adjust as u32);
         let quotient = numerator / divisor;
-        let sticky = u128::from(numerator % divisor != 0);
+        let sticky = u128::from(!numerator.is_multiple_of(divisor));
         (
             quotient | sticky,
             left_exponent - right_exponent - working_shift as i32 - adjust,
@@ -1257,7 +1257,7 @@ fn divide_decoded_floats(
     } else {
         let divisor = divisor << (-adjust as u32);
         let quotient = numerator / divisor;
-        let sticky = u128::from(numerator % divisor != 0);
+        let sticky = u128::from(!numerator.is_multiple_of(divisor));
         (
             quotient | sticky,
             left_exponent - right_exponent - working_shift as i32 - adjust,
@@ -2313,6 +2313,7 @@ fn compare_float_bits(
 }
 
 impl CType {
+    #[cfg(test)]
     pub(crate) fn function_pointer_signature(
         return_type: Self,
         parameter_types: &[Self],
@@ -2665,14 +2666,6 @@ impl CLValue {
         Self::local_with_qualifiers(name, value_type, false, false)
     }
 
-    pub(in crate::kernel) fn local_with_volatile(
-        name: impl Into<String>,
-        value_type: CType,
-        volatile: bool,
-    ) -> Self {
-        Self::local_with_qualifiers(name, value_type, volatile, false)
-    }
-
     pub(in crate::kernel) fn local_with_qualifiers(
         name: impl Into<String>,
         value_type: CType,
@@ -2687,10 +2680,6 @@ impl CLValue {
             constant: false,
             pointee_constant: false,
         }
-    }
-
-    pub(in crate::kernel) fn memory(pointer: Pointer, value_type: CType) -> Self {
-        Self::memory_with_qualifiers(pointer, value_type, false, false)
     }
 
     pub(in crate::kernel) fn memory_with_volatile(

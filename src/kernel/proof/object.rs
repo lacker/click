@@ -113,14 +113,15 @@ pub(crate) enum ProofJoinError {
 
 pub(crate) enum ProofFocusError {
     NotOpen,
-    NotAllocated,
 }
 
 pub(crate) enum FrontierSplitError {
     Completed,
     NotFrontier,
     MissingExecution,
+    #[cfg(test)]
     MissingDisjunction(Proposition),
+    #[cfg(test)]
     ExpectedDisjunction(Proposition),
     NonComplementaryCases,
 }
@@ -274,29 +275,6 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
         Ok(self
             .focus_open_branch(focused_branch)?
             .with_fact_deltas(added_facts, checked_facts))
-    }
-
-    /// Restores a provenance cursor that was allocated earlier in this
-    /// branch lineage, including a now-retired parent identity. This changes
-    /// no semantic state and may replace only reporting deltas.
-    pub(crate) fn restore_allocated_cursor_with_fact_deltas(
-        &self,
-        focused_branch: BranchId,
-        added_facts: Vec<Proposition>,
-        checked_facts: Vec<Proposition>,
-    ) -> Result<Self, ProofFocusError> {
-        if !self.state.open_branches.has_allocated(focused_branch) {
-            return Err(ProofFocusError::NotAllocated);
-        }
-        Ok(Self::new(
-            ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.clone(),
-                added_facts: Arc::new(added_facts),
-                checked_facts: Arc::new(checked_facts),
-            },
-            focused_branch,
-        ))
     }
 
     pub(crate) fn with_fact_deltas(
@@ -1630,6 +1608,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn split_frontier_cases(
         &self,
         disjunction: Proposition,

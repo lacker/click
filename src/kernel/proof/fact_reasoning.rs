@@ -732,11 +732,10 @@ pub(crate) fn check_signed_affine_arithmetic(
                 form.terms.is_empty() && form.constant.rem_euclid(1i64 << 32) != 0
             }
             SignedAffineClaim::Inequality(goal) => {
-                if goal.terms.is_empty() && 0 <= goal.bound {
-                    true
-                } else if inequalities
-                    .iter()
-                    .any(|available| inequality_implies(available, &goal))
+                if (goal.terms.is_empty() && 0 <= goal.bound)
+                    || inequalities
+                        .iter()
+                        .any(|available| inequality_implies(available, &goal))
                 {
                     true
                 } else if inequalities.is_empty() {

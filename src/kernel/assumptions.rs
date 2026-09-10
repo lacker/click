@@ -433,21 +433,6 @@ pub(crate) fn record_implicit_reasoning_provenance(
     }
 }
 
-struct AtomicPremiseMinimizationGuard;
-
-impl AtomicPremiseMinimizationGuard {
-    fn disable() -> Self {
-        ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.set(depth.get() + 1));
-        Self
-    }
-}
-
-impl Drop for AtomicPremiseMinimizationGuard {
-    fn drop(&mut self) {
-        ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.set(depth.get() - 1));
-    }
-}
-
 fn atomic_premise_minimization_disabled() -> bool {
     ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.get() != 0)
 }

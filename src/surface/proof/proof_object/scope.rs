@@ -240,33 +240,6 @@ impl<'a> ProofScope<'a> {
         self.body.certificate_since(checkpoint)
     }
 
-    /// Applies a source-owned proof step inside the scope. Terminal steps use
-    /// the site only to schedule already-checked ordered outcome work.
-    pub(in crate::surface::proof) fn apply_step_at(
-        &self,
-        step: ProofStep,
-        tactic_index: usize,
-        source_index: usize,
-    ) -> Result<Self, ClickError> {
-        let mut next = self.clone();
-        let body = self.body.apply_step_with_origin(
-            step,
-            Some(ProofStepOrigin {
-                tactic_index,
-                source_index,
-            }),
-        )?;
-        if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
-            for fact in body.added_facts() {
-                if !next.introduced_facts.contains(fact) {
-                    next.introduced_facts.push(fact.clone());
-                }
-            }
-        }
-        next.body = body;
-        Ok(next)
-    }
-
     /// Runs the narrow linear `execute` search inside this scope.
     ///
     /// Each selected statement is checked and retained by

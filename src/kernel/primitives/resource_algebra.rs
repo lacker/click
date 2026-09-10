@@ -7,6 +7,9 @@ use super::*;
 /// facts and proves nothing on that path, noted as a truncation so the memo
 /// layers do not cache the weakened answer; distinct queries nest freely,
 /// bounded by the resources the facts connect.
+// Every variant asks the same separation question about a different kind of
+// operand, so the shared suffix is the meaning rather than redundant naming.
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CompositionQuery {
     ResourcesSeparate(CResource, CResource),

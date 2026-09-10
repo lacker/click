@@ -342,10 +342,9 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             &path_assumptions,
         ) else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &arguments_path.values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    argument_binding_error(function, &arguments_path.values).to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -354,10 +353,9 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
         let Some(callee_state) = bind_c_function_arguments(state, function, &argument_values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &argument_values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    argument_binding_error(function, &argument_values).to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
             });
@@ -539,10 +537,9 @@ pub(super) fn execute_c_function_verification_paths(
             &path_assumptions,
         ) else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &arguments_path.values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    argument_binding_error(function, &arguments_path.values).to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -551,10 +548,9 @@ pub(super) fn execute_c_function_verification_paths(
         let Some(callee_state) = bind_c_function_arguments(state, function, &argument_values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &argument_values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    argument_binding_error(function, &argument_values).to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
             });
@@ -807,10 +803,9 @@ pub(super) fn execute_c_function_call_paths(
             &path_assumptions,
         ) else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &arguments_path.values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    argument_binding_error(function, &arguments_path.values).to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -820,10 +815,9 @@ pub(super) fn execute_c_function_call_paths(
             bind_c_function_arguments(caller_state, function, &argument_values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "{}",
-                    argument_binding_error(function, &argument_values)
-                ))),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    argument_binding_error(function, &argument_values).to_string(),
+                )),
                 facts: arguments_path.facts,
                 obligations: argument_obligations,
             });
@@ -1445,10 +1439,9 @@ fn prepare_verified_function_call<'a>(
         &path_assumptions,
     ) else {
         return Ok(Err(CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "{}",
-                argument_binding_error(function, &arguments_path.values)
-            ))),
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                argument_binding_error(function, &arguments_path.values).to_string(),
+            )),
             facts: arguments_path.facts,
             obligations: arguments_path.obligations,
         }));
@@ -1456,10 +1449,9 @@ fn prepare_verified_function_call<'a>(
     let Some(mut entry_state) = bind_c_function_arguments(caller_state, function, &argument_values)
     else {
         return Ok(Err(CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "{}",
-                argument_binding_error(function, &argument_values)
-            ))),
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                argument_binding_error(function, &argument_values).to_string(),
+            )),
             facts: arguments_path.facts,
             obligations: argument_obligations,
         }));
@@ -1975,8 +1967,10 @@ pub(super) fn prepare_contract_refinement_obligations(
 ) -> Option<CFunctionContractRefinementObligations> {
     let target = context.contract.template();
     let source = &context.function;
-    let mut budget = ExecutionBudget::default();
-    budget.next_kernel_variable = context.next_kernel_variable;
+    let mut budget = ExecutionBudget {
+        next_kernel_variable: context.next_kernel_variable,
+        ..ExecutionBudget::default()
+    };
     let entry = function_contract_refinement_entry_state(context);
     let source_entry =
         with_contract_argument_views(&CState::new(), source, &context.argument_values);
@@ -2615,12 +2609,7 @@ fn evaluate_refinement_resource_context(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<ResourceContext>> {
-    Ok(
-        match evaluate_function_resource_context(state, resources, assumptions, budget)? {
-            Ok(resources) => Some(resources),
-            Err(_) => None,
-        },
-    )
+    Ok((evaluate_function_resource_context(state, resources, assumptions, budget)?).ok())
 }
 
 /// Checks that the named requirements can supply the concrete requirements,
@@ -2770,10 +2759,10 @@ fn mutable_footprint_is_compatible(
         for (available_segment, available_guard) in
             contract.contract_mutable().iter().zip(&contract_guards)
         {
-            if let Some(guard) = available_guard {
-                if !active_assumptions.proves(guard) {
-                    continue;
-                }
+            if let Some(guard) = available_guard
+                && !active_assumptions.proves(guard)
+            {
+                continue;
             }
             let Some(available_range) = evaluate_contract_mutable_range(
                 contract_entry,
@@ -3954,9 +3943,9 @@ fn statement_writes_aggregate_parameter(
 ) {
     match statement {
         CStatement::Store { pointer, .. } => {
-            if c_expression_parameter_offset(pointer, parameter_name).is_some() {
-                *unknown_write = true;
-            } else if c_expression_mentions_variable(pointer, parameter_name) {
+            if c_expression_parameter_offset(pointer, parameter_name).is_some()
+                || c_expression_mentions_variable(pointer, parameter_name)
+            {
                 *unknown_write = true;
             }
         }
@@ -6681,10 +6670,7 @@ fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool
     if end <= start {
         return true;
     }
-    let Some(elements) = u32::try_from(end - start).ok() else {
-        return false;
-    };
-    let Some(bytes) = elements.checked_mul(range.element_width()) else {
+    let Some(bytes) = (end - start).checked_mul(range.element_width()) else {
         return false;
     };
     let base = range
@@ -8542,7 +8528,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                 }
                 match &paths[0].outcome {
                     CExpressionOutcome::Value(value) => {
-                        coerce_c_function_argument_without_obligations(&value, parameter)
+                        coerce_c_function_argument_without_obligations(value, parameter)
                             .map(AlgebraicValue::C)
                             .ok_or("recursive child argument type mismatch")
                     }
@@ -10009,10 +9995,10 @@ pub(super) fn resource_context_satisfies_definitional_fact(
     else {
         return false;
     };
-    required.facts().iter().all(|fact| {
-        let satisfied = available.satisfies_fact(fact, assumptions);
-        satisfied
-    })
+    required
+        .facts()
+        .iter()
+        .all(|fact| available.satisfies_fact(fact, assumptions))
 }
 
 /// True when every element of a constant-bounded memory range is concretely

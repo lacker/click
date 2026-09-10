@@ -315,19 +315,19 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     let mut canonical = memory.clone();
     let cells = std::mem::take(&mut canonical.cells);
     for (pointer, value) in cells.iter() {
-        let key = canonicalize_pointer_loads(&pointer);
+        let key = canonicalize_pointer_loads(pointer);
         let value = match value {
             CValue::Void => CValue::Void,
-            CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(&term)),
-            CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(&term)),
-            CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
-            CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
-            CValue::UInt16(term) => CValue::UInt16(canonicalize_atomic_loads(&term)),
-            CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(&term)),
-            CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(&term)),
-            CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(&term)),
-            CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(&term)),
-            CValue::Float64(term) => CValue::Float64(canonicalize_atomic_loads(&term)),
+            CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(term)),
+            CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
+            CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
+            CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
+            CValue::UInt16(term) => CValue::UInt16(canonicalize_atomic_loads(term)),
+            CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(term)),
+            CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(term)),
+            CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(term)),
+            CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(term)),
+            CValue::Float64(term) => CValue::Float64(canonicalize_atomic_loads(term)),
             CValue::Pointer(pointer) => CValue::typed_pointer(
                 canonicalize_pointer_loads(pointer.pointer()),
                 pointer.c_type(),
@@ -1914,7 +1914,7 @@ fn typed_canonical_projection_load_equality_evidence(
 thread_local! {
     static CELL_LOOKUPS_IN_PROGRESS: std::cell::RefCell<
         std::collections::BTreeSet<((u32, u32), Pointer)>,
-    > = std::cell::RefCell::new(std::collections::BTreeSet::new());
+    > = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
 }
 
 struct CellLookupGuard {
@@ -5608,6 +5608,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
         }
     }
 
+    #[allow(clippy::boxed_local)]
     fn push_binary(
         tasks: &mut Vec<ExactLoadNormalizationTask>,
         operator: ExactLoadBinary,
@@ -5619,6 +5620,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
         tasks.push(ExactLoadNormalizationTask::Visit(*left));
     }
 
+    #[allow(clippy::boxed_local)]
     fn push_unary(
         tasks: &mut Vec<ExactLoadNormalizationTask>,
         operator: ExactLoadUnary,

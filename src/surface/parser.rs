@@ -1750,16 +1750,16 @@ impl Parser {
         } else {
             None
         };
-        if external {
-            if decreases.is_some()
+        if external
+            && (decreases.is_some()
                 || grouped_proof.is_some()
                 || ensures
                     .iter()
-                    .any(|ensure| !matches!(ensure.proof(), SourceProof::Default))
-            {
-                return Err(self
-                    .error("external function contracts cannot carry proof or decreases clauses"));
-            }
+                    .any(|ensure| !matches!(ensure.proof(), SourceProof::Default)))
+        {
+            return Err(
+                self.error("external function contracts cannot carry proof or decreases clauses")
+            );
         }
         self.current_struct_params = previous_struct_params;
         self.current_resource_bindings = previous_resource_bindings;
@@ -5032,27 +5032,27 @@ impl Parser {
         ) {
             if field.slot_end_bytes < field.offset_bytes
                 || (matches!(field.c_type, C0Type::Int32Array(_))
-                    && (field.slot_end_bytes - field.offset_bytes) % 4 != 0)
+                    && !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(4))
             {
                 return Err(self.error("inline array field has an invalid resource extent"));
             }
             return Ok(());
         }
         if matches!(field.c_type, C0Type::Int16 | C0Type::UInt16) {
-            if field.offset_bytes % 2 != 0
+            if !field.offset_bytes.is_multiple_of(2)
                 || field.byte_width != 2
                 || field.slot_end_bytes < field.offset_bytes
-                || (field.slot_end_bytes - field.offset_bytes) % 2 != 0
+                || !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(2)
             {
                 return Err(self.error("16-bit field places require two-byte alignment and width"));
             }
             return Ok(());
         }
         if matches!(field.c_type, C0Type::Int64 | C0Type::UInt64) {
-            if field.offset_bytes % 8 != 0
+            if !field.offset_bytes.is_multiple_of(8)
                 || field.byte_width != 8
                 || field.slot_end_bytes < field.offset_bytes
-                || (field.slot_end_bytes - field.offset_bytes) % 8 != 0
+                || !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(8)
             {
                 return Err(
                     self.error("64-bit field places require eight-byte alignment and width")
@@ -5066,7 +5066,9 @@ impl Parser {
             }
             return Ok(());
         }
-        if field.offset_bytes % 4 != 0 || field.byte_width % 4 != 0 || field.slot_end_bytes % 4 != 0
+        if !field.offset_bytes.is_multiple_of(4)
+            || !field.byte_width.is_multiple_of(4)
+            || !field.slot_end_bytes.is_multiple_of(4)
         {
             return Err(
                 self.error("field places currently require int32-aligned offsets and widths")
@@ -5615,10 +5617,10 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        return Ok(ContractExpression::AlgebraicMatch {
+        Ok(ContractExpression::AlgebraicMatch {
             scrutinee: Box::new(scrutinee),
             arms,
-        });
+        })
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {

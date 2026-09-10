@@ -60,6 +60,21 @@ Run the larger example-project verifier with:
 cargo test --test examples
 ```
 
+## What the gate runs
+
+`scripts/check.sh` is the single source of truth for "is this tree green", and
+CI runs exactly that script. In order it runs `cargo fmt --check`, then
+`cargo clippy --all-targets -- -D warnings`, then the documentation test, the
+mdBook render and the docs lint, then `cargo nextest run --lib --bins`, then
+the mdtest and example fixture harnesses serially. Judge the verdict from the
+script's exit status.
+
+The tree is clippy-clean, so a new diagnostic belongs to the change that
+introduced it. When a lint is wrong about a deliberate design, silence exactly
+that case with an `#[allow(clippy::…)]` carrying a one-line reason rather than
+reshaping verifier behaviour to satisfy the lint. The crate-wide exceptions
+live at the top of `src/lib.rs` with their reasons.
+
 ## Time-Bounded runs
 
 Ordinary development and test builds use `debug = "line-tables-only"` to

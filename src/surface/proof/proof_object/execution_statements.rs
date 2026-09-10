@@ -82,7 +82,7 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
-        let checked = check_statement_step(&mut execution, context, &self.facts(), fact_context)?;
+        let checked = check_statement_step(&mut execution, context, self.facts(), fact_context)?;
         let mut checked = checked;
         // A fact the statement introduces (a callee's `ensures`, a store's
         // value) is recorded under its readable spelling at the successor
@@ -748,7 +748,7 @@ impl<'a> Proof<'a> {
                     fact_transport_planning_failure(
                         surface_source,
                         surface_target,
-                        &view.unfolded_predicates,
+                        view.unfolded_predicates,
                         &error,
                     )
                 ))
@@ -1013,7 +1013,7 @@ impl<'a> Proof<'a> {
                 steps: smart_certificate.steps().to_vec(),
                 ..ProofCertificateBuilder::default()
             };
-            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &expansion, false);
+            finish_tactic_expansion_capture(expansion_capture, &expansion, false);
         }
         let added = facts[base_facts..].to_vec();
         let mut proof_facts = self.facts().clone();

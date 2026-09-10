@@ -1006,14 +1006,13 @@ pub(super) fn infer_contract_expression_type(
                 };
                 if let Some(actual) =
                     infer_contract_expression_type(argument, variables, click_functions, context)?
+                    && !click_types_compatible(actual, expected)
                 {
-                    if !click_types_compatible(actual, expected) {
-                        return Err(ClickError::new(format!(
-                            "function `{name}` argument {index} expects {}, got {} in {context}",
-                            describe_c0_type(expected),
-                            describe_c0_type(actual)
-                        )));
-                    }
+                    return Err(ClickError::new(format!(
+                        "function `{name}` argument {index} expects {}, got {} in {context}",
+                        describe_c0_type(expected),
+                        describe_c0_type(actual)
+                    )));
                 }
             }
             Ok(function.return_type.c_type())

@@ -308,7 +308,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     // The checked drivers are tried in order: the structural driver owns
     // scopes and branches, and the flat driver owns linear proofs. A decline
     // tries the next checked driver; an error is terminal.
-    let structural = match try_check_structural_function_proof(
+    let structural = try_check_structural_function_proof(
         &initial,
         &pure_facts,
         &constants,
@@ -325,14 +325,11 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         theorem_environment,
         &function,
         &arguments,
-    ) {
-        Ok(proof) => proof,
-        Err(error) => return Err(error),
-    };
+    )?;
     let direct_proof = if structural.is_some() {
         structural
     } else {
-        match try_check_flat_function_proof(
+        try_check_flat_function_proof(
             &initial,
             &pure_facts,
             &constants,
@@ -349,14 +346,11 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             theorem_environment,
             &function,
             &arguments,
-        ) {
-            Ok(proof) => proof,
-            Err(error) => return Err(error),
-        }
+        )?
     };
     if let Some(proof) = direct_proof {
         match finish_ordered_proof_units(
-            expansion_capture.as_deref_mut(),
+            expansion_capture,
             vec![proof],
             source_path,
             function_block,
@@ -486,7 +480,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         )
     );
     // Same order as the single-claim route: structural, then flat.
-    let structural = match try_check_structural_function_proof(
+    let structural = try_check_structural_function_proof(
         &initial,
         &pure_facts,
         &constants,
@@ -503,14 +497,11 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         theorem_environment,
         &function,
         &arguments,
-    ) {
-        Ok(proof) => proof,
-        Err(error) => return Err(error),
-    };
+    )?;
     let direct_proof = if structural.is_some() {
         structural
     } else {
-        match try_check_flat_function_proof(
+        try_check_flat_function_proof(
             &initial,
             &pure_facts,
             &constants,
@@ -527,14 +518,11 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
             theorem_environment,
             &function,
             &arguments,
-        ) {
-            Ok(proof) => proof,
-            Err(error) => return Err(error),
-        }
+        )?
     };
     if let Some(proof) = direct_proof {
         match finish_ordered_proof_units(
-            expansion_capture.as_deref_mut(),
+            expansion_capture,
             vec![proof],
             source_path,
             function_block,
@@ -3353,11 +3341,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                             "`{proof_label}` path {path_index}, tactic {tactic_index}: divergence produced an invalid normalize certificate: {error:?}"
                                         ))
                                     })?;
-                                    for claim_index in 0..claims.len() {
-                                        if closures[claim_index].is_closed() {
+                                    for closure in closures.iter_mut().take(claims.len()) {
+                                        if closure.is_closed() {
                                             continue;
                                         }
-                                        closures[claim_index] =
+                                        *closure =
                                             ClaimClosure::by_checked_certificate(&certificate);
                                         if proof_context.constants.grouped_contract {
                                             path_grouped_surface_closers
@@ -4161,7 +4149,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             })?;
                         returned_core
                             .collect_return_resource_rewrites(core, path_index)
-                            .map_err(|message| ClickError::new(message))?;
+                            .map_err(ClickError::new)?;
                         any_return_instance_rewrite = true;
                         &rewritten_path
                     } else {

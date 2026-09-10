@@ -653,11 +653,13 @@ fn fixed_state_elaboration<'a>(
     // The proof's current locals are fixed values in every context: a name a
     // snapshot or the entry does not bind keeps its current value, as the
     // proof reads it.
-    let mut context = SpecElaborationContext::default();
-    context.values = current_values
-        .into_iter()
-        .map(|(name, value)| (name, SpecExpression::Value(value)))
-        .collect();
+    let mut context = SpecElaborationContext {
+        values: current_values
+            .into_iter()
+            .map(|(name, value)| (name, SpecExpression::Value(value)))
+            .collect(),
+        ..SpecElaborationContext::default()
+    };
     if let Some(result) = result {
         context
             .values
@@ -2334,12 +2336,11 @@ impl AnnotationLowerer<'_> {
                 let value = self.lower_contract_expression_to_spec(value, environment)?;
                 if let (Some(ClickType::C(c_type)), SpecExpression::Value(fixed)) =
                     (click_type, &value)
+                    && !c_value_matches_click_type(fixed, *c_type)
                 {
-                    if !c_value_matches_click_type(fixed, *c_type) {
-                        return Err(format!(
-                            "let binding `{name}` evaluated to {fixed:?}, which does not match {c_type:?}"
-                        ));
-                    }
+                    return Err(format!(
+                        "let binding `{name}` evaluated to {fixed:?}, which does not match {c_type:?}"
+                    ));
                 }
                 let mut body_environment = environment.clone();
                 body_environment.values.insert(
@@ -3152,20 +3153,18 @@ impl AnnotationLowerer<'_> {
             }
             CExpression::Subtract(left, right) => {
                 if let Some(element_type) = self.c_expression_array_element_type(left, environment)
-                {
-                    if self
+                    && self
                         .c_expression_array_element_type(right, environment)
                         .is_none()
-                    {
-                        return Ok(SpecExpression::PointerOffset {
-                            pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
-                            elements: Box::new(SpecExpression::Subtract(
-                                Box::new(SpecExpression::Value(int32(0))),
-                                Box::new(self.lower_c_fragment_to_spec(right, environment)?),
-                            )),
-                            byte_width: element_type.byte_width(),
-                        });
-                    }
+                {
+                    return Ok(SpecExpression::PointerOffset {
+                        pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                        elements: Box::new(SpecExpression::Subtract(
+                            Box::new(SpecExpression::Value(int32(0))),
+                            Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                        )),
+                        byte_width: element_type.byte_width(),
+                    });
                 }
                 Ok(SpecExpression::Subtract(
                     Box::new(self.lower_c_fragment_to_spec(left, environment)?),
@@ -3578,92 +3577,6 @@ impl AnnotationLowerer<'_> {
                 self.c_expression_array_element_type(left, environment)
             }
             _ => None,
-        }
-    }
-
-    fn lower_current_invariant_c_expression(
-        &self,
-        expression: &CExpression,
-    ) -> Result<CExpression, String> {
-        match expression {
-            CExpression::Value(value) => Ok(CExpression::Value(value.clone())),
-            CExpression::Variable(name) => Ok(self
-                .quantified_values
-                .get(name)
-                .cloned()
-                .map(CExpression::Value)
-                .unwrap_or_else(|| CExpression::Variable(name.clone()))),
-            CExpression::AddressOf(expression) => Ok(CExpression::AddressOf(Box::new(
-                self.lower_current_invariant_c_expression(expression)?,
-            ))),
-            CExpression::PointerOffsetBytes { pointer, bytes } => {
-                Ok(CExpression::PointerOffsetBytes {
-                    pointer: Box::new(self.lower_current_invariant_c_expression(pointer)?),
-                    bytes: *bytes,
-                })
-            }
-            CExpression::Add(left, right) => Ok(CExpression::Add(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::Subtract(left, right) => Ok(CExpression::Subtract(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::Multiply(left, right) => Ok(CExpression::Multiply(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::Divide(left, right) => Ok(CExpression::Divide(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::Remainder(left, right) => Ok(CExpression::Remainder(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::ShiftLeft(left, right) => Ok(CExpression::ShiftLeft(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::ShiftRight(left, right) => Ok(CExpression::ShiftRight(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::BitwiseAnd(left, right) => Ok(CExpression::BitwiseAnd(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::BitwiseOr(left, right) => Ok(CExpression::BitwiseOr(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::BitwiseXor(left, right) => Ok(CExpression::BitwiseXor(
-                Box::new(self.lower_current_invariant_c_expression(left)?),
-                Box::new(self.lower_current_invariant_c_expression(right)?),
-            )),
-            CExpression::BitwiseNot(expression) => Ok(CExpression::BitwiseNot(Box::new(
-                self.lower_current_invariant_c_expression(expression)?,
-            ))),
-            CExpression::Load(pointer) => Ok(CExpression::Load(Box::new(
-                self.lower_current_invariant_c_expression(pointer)?,
-            ))),
-            CExpression::TypedLoad {
-                pointer,
-                value_type,
-                volatile,
-            } => Ok(CExpression::TypedLoad {
-                pointer: Box::new(self.lower_current_invariant_c_expression(pointer)?),
-                value_type: *value_type,
-                volatile: *volatile,
-            }),
-            CExpression::Index(base, index) => Ok(CExpression::Index(
-                Box::new(self.lower_current_invariant_c_expression(base)?),
-                Box::new(self.lower_current_invariant_c_expression(index)?),
-            )),
-            expression => Err(format!(
-                "unsupported expression in loop invariant: `{expression:?}`"
-            )),
         }
     }
 

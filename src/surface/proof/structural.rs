@@ -23,21 +23,6 @@ pub(super) fn resolve_code_region_ref(
     })
 }
 
-pub(super) fn validate_loop_code_region(
-    parsed_function: &syntax::C0Function,
-    loop_index: usize,
-    claim_label: &str,
-    tactic_index: usize,
-) -> Result<(), ClickError> {
-    let loop_count = count_loops(parsed_function.body());
-    if loop_index >= loop_count {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: function has no `loop({loop_index})` code region; it contains {loop_count} loop(s)"
-        )));
-    }
-    Ok(())
-}
-
 pub(super) fn requirements_with_structural_unfolds(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,

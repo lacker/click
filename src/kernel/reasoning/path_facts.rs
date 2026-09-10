@@ -337,47 +337,6 @@ fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
     }
 }
 
-#[cfg(test)]
-mod sequence_equality_tests {
-    use super::*;
-
-    fn singleton(value: u32) -> SequenceTerm {
-        SequenceTerm {
-            element_type: Some(CType::Int32),
-            node: std::sync::Arc::new(SequenceTermNode::Literal(
-                vec![crate::kernel::api::int32(value)].into(),
-            )),
-        }
-    }
-
-    fn concatenate(left: SequenceTerm, right: SequenceTerm) -> SequenceTerm {
-        SequenceTerm {
-            element_type: Some(CType::Int32),
-            node: std::sync::Arc::new(SequenceTermNode::Concat(left, right)),
-        }
-    }
-
-    #[test]
-    fn associative_sequence_equality_is_iterative_across_rope_shapes() {
-        for size in [8u32, 64, 512] {
-            let mut left_associated = singleton(0);
-            for value in 1..size {
-                left_associated = concatenate(left_associated, singleton(value));
-            }
-
-            let mut right_associated = singleton(size - 1);
-            for value in (0..size - 1).rev() {
-                right_associated = concatenate(singleton(value), right_associated);
-            }
-
-            assert!(solve_builtin_prop(&Proposition::Equal(
-                Term::Sequence(left_associated),
-                Term::Sequence(right_associated),
-            )));
-        }
-    }
-}
-
 pub(in crate::kernel) fn memory_ranges_disjoint_builtin(
     left_base: &Pointer,
     left_start: &Bitvector32Term,
@@ -1127,4 +1086,45 @@ pub(in crate::kernel) fn assumptions_with_propositions(
         assumptions = assumptions.assume_proposition(proposition.clone());
     }
     assumptions
+}
+
+#[cfg(test)]
+mod sequence_equality_tests {
+    use super::*;
+
+    fn singleton(value: u32) -> SequenceTerm {
+        SequenceTerm {
+            element_type: Some(CType::Int32),
+            node: std::sync::Arc::new(SequenceTermNode::Literal(
+                vec![crate::kernel::api::int32(value)].into(),
+            )),
+        }
+    }
+
+    fn concatenate(left: SequenceTerm, right: SequenceTerm) -> SequenceTerm {
+        SequenceTerm {
+            element_type: Some(CType::Int32),
+            node: std::sync::Arc::new(SequenceTermNode::Concat(left, right)),
+        }
+    }
+
+    #[test]
+    fn associative_sequence_equality_is_iterative_across_rope_shapes() {
+        for size in [8u32, 64, 512] {
+            let mut left_associated = singleton(0);
+            for value in 1..size {
+                left_associated = concatenate(left_associated, singleton(value));
+            }
+
+            let mut right_associated = singleton(size - 1);
+            for value in (0..size - 1).rev() {
+                right_associated = concatenate(singleton(value), right_associated);
+            }
+
+            assert!(solve_builtin_prop(&Proposition::Equal(
+                Term::Sequence(left_associated),
+                Term::Sequence(right_associated),
+            )));
+        }
+    }
 }

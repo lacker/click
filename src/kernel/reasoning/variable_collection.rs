@@ -506,10 +506,8 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
             collect_c_expression_bitvector_variables(expression, variables);
         }
         SpecExpression::CountedResourceCount { arguments, .. } => {
-            for argument in arguments {
-                if let Some(argument) = argument {
-                    collect_spec_expression_bitvector_variables(argument, variables);
-                }
+            for argument in arguments.iter().flatten() {
+                collect_spec_expression_bitvector_variables(argument, variables);
             }
         }
         SpecExpression::Add(left, right)

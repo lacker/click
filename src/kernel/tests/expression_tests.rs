@@ -680,8 +680,8 @@ fn floating_point_arithmetic_preserves_ieee_exceptions_and_ties() {
     );
     assert_eq!(
         evaluate(c_add(
-            c_float64_literal(0x7fe_fffff_ffff_ffff),
-            c_float64_literal(0x7fe_fffff_ffff_ffff),
+            c_float64_literal(0x7fef_ffff_ffff_ffff),
+            c_float64_literal(0x7fef_ffff_ffff_ffff),
         )),
         f64_value(0x7ff0_0000_0000_0000)
     );

@@ -169,7 +169,7 @@ fn verify_click_file_theorems_with_environment(
         .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
-        &combined_algebraic_type_definitions(&file)?,
+        &combined_algebraic_type_definitions(file)?,
     );
     let verified = verify_theorem_definitions(
         &theorem_definitions,
@@ -1836,9 +1836,11 @@ pub(in crate::surface) fn c0_statement_calls(
         names: &mut BTreeSet<String>,
     ) {
         match statement {
-            syntax::C0Statement::Declare { c_type, name, .. }
-                if matches!(c_type, syntax::C0Type::FunctionPointer(_)) =>
-            {
+            syntax::C0Statement::Declare {
+                c_type: syntax::C0Type::FunctionPointer(_),
+                name,
+                ..
+            } => {
                 names.insert(name.clone());
             }
             syntax::C0Statement::Seq(first, second) => {

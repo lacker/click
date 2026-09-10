@@ -1,7 +1,6 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn lower_outcome_proposition(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -76,44 +75,6 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    crate::surface::proof::lower_fixed_state_proposition_through_kernel(
-        proposition,
-        &assumptions,
-        &values,
-        &array_refs,
-        pre_state,
-        post_state,
-        Some(result),
-        recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
-    )
-}
-
-/// Lowers a proposition while retaining symbolic external-memory loads even
-/// when the selected snapshot already materializes their values.
-///
-/// Fact transport needs this form for propositions such as
-/// `at(mark, field == 11)`: reducing the marked load to `11 == 11` proves the
-/// source but erases the memory identity needed to frame it to a later state.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::surface) fn lower_outcome_proposition_symbolically_with_recorded_snapshots(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    post_state: &CState,
-    result: &CValue,
-    available_pure_facts: &[Proposition],
-    proposition: &ClickProposition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    recorded_snapshots: &RecordedSnapshots,
-) -> Result<Proposition, String> {
-    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
-    let assumptions = assumptions_from_propositions(available_pure_facts)
-        .allow_symbolic_contract_loads()
-        .force_symbolic_external_loads();
     crate::surface::proof::lower_fixed_state_proposition_through_kernel(
         proposition,
         &assumptions,

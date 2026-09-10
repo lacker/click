@@ -1441,6 +1441,7 @@ impl SurfacePropositionMap {
         self.storage.by_kernel.keys()
     }
 
+    #[cfg(test)]
     pub(crate) fn current_c_variable_kernel_facts(
         &self,
         name: &str,
@@ -3403,7 +3404,6 @@ fn validate_certificate_tactics(
                     };
                     path.pop();
                 }
-                if result.is_ok() {}
                 result
             }
         };

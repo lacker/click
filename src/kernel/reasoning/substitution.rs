@@ -1,60 +1,5 @@
 use super::*;
 
-#[cfg(test)]
-mod pointee_const_return_tests {
-    use super::*;
-
-    #[test]
-    fn pointee_const_return_value_substitution_preserves_qualifiers_and_identity() {
-        let value = CValue::typed_pointer(Pointer::symbolic(Variable(918)), CType::Int32Pointer)
-            .with_pointer_pointee_constant(true)
-            .with_pointer_pointee_volatile(true);
-        assert_eq!(
-            substitute_bitvector_variable_in_c_value(
-                &value,
-                Variable(919),
-                &Bitvector32Term::Constant(0)
-            ),
-            value
-        );
-        assert_eq!(
-            substitute_pointer_variable_in_c_value(&value, Variable(919), &Pointer::null()),
-            value
-        );
-        let replaced =
-            substitute_pointer_variable_in_c_value(&value, Variable(918), &Pointer::null());
-        assert!(matches!(replaced, CValue::Pointer(pointer)
-            if pointer.is_null() && pointer.pointee_constant() && pointer.pointee_volatile()));
-    }
-
-    #[test]
-    fn pointee_const_return_survives_both_substitutions() {
-        let function = CFunction::new(
-            CType::UInt8Pointer,
-            "text",
-            Vec::new(),
-            c_return(c_int32_literal(0)),
-        )
-        .with_return_pointee_constant(true);
-        assert!(
-            substitute_bitvector_variable_in_c_function(
-                &function,
-                Variable(914),
-                &Bitvector32Term::Constant(0),
-            )
-            .return_pointee_is_constant()
-        );
-        assert!(
-            substitute_pointer_variable_in_c_function(
-                &function,
-                Variable(914),
-                &Pointer::symbolic(Variable(915)),
-            )
-            .return_pointee_is_constant()
-        );
-    }
-}
-
 /// Rewrites kernel-minted load variables back to their defining load terms,
 /// using the certified defining equations the canonicalizing loader pushed
 /// into the execution fact stream. Surface synthesis calls this before
@@ -5899,5 +5844,60 @@ fn substitute_pointer_variable_in_c_function_specification(
             from,
             to,
         ),
+    }
+}
+
+#[cfg(test)]
+mod pointee_const_return_tests {
+    use super::*;
+
+    #[test]
+    fn pointee_const_return_value_substitution_preserves_qualifiers_and_identity() {
+        let value = CValue::typed_pointer(Pointer::symbolic(Variable(918)), CType::Int32Pointer)
+            .with_pointer_pointee_constant(true)
+            .with_pointer_pointee_volatile(true);
+        assert_eq!(
+            substitute_bitvector_variable_in_c_value(
+                &value,
+                Variable(919),
+                &Bitvector32Term::Constant(0)
+            ),
+            value
+        );
+        assert_eq!(
+            substitute_pointer_variable_in_c_value(&value, Variable(919), &Pointer::null()),
+            value
+        );
+        let replaced =
+            substitute_pointer_variable_in_c_value(&value, Variable(918), &Pointer::null());
+        assert!(matches!(replaced, CValue::Pointer(pointer)
+            if pointer.is_null() && pointer.pointee_constant() && pointer.pointee_volatile()));
+    }
+
+    #[test]
+    fn pointee_const_return_survives_both_substitutions() {
+        let function = CFunction::new(
+            CType::UInt8Pointer,
+            "text",
+            Vec::new(),
+            c_return(c_int32_literal(0)),
+        )
+        .with_return_pointee_constant(true);
+        assert!(
+            substitute_bitvector_variable_in_c_function(
+                &function,
+                Variable(914),
+                &Bitvector32Term::Constant(0),
+            )
+            .return_pointee_is_constant()
+        );
+        assert!(
+            substitute_pointer_variable_in_c_function(
+                &function,
+                Variable(914),
+                &Pointer::symbolic(Variable(915)),
+            )
+            .return_pointee_is_constant()
+        );
     }
 }

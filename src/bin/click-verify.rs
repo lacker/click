@@ -589,7 +589,7 @@ fn load_baseline_sidecar(
         return Ok(None);
     };
     let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
-    let Some(sources) = load_baseline_sources(&parent, &click_source, |source_path| {
+    let Some(sources) = load_baseline_sources(parent, &click_source, |source_path| {
         git_show(repo, revision, source_path)
     })?
     else {

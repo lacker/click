@@ -194,9 +194,8 @@ pub(super) struct ExecutionProofCaseSplit<'a> {
 /// Unlike an execution `if`, this split introduces the two exact disjuncts
 /// from an already-available proposition and does not write a C-path choice
 /// into the execution state.
-pub(super) struct ExecutionLogicalCasesSplit<'a> {
-    marker: ProofCheckpoint<'a>,
-    split: SplitId,
+#[cfg(test)]
+pub(super) struct ExecutionLogicalCasesSplit {
     arm_branches: [BranchId; 2],
     path_facts: [Vec<Proposition>; 2],
 }
@@ -275,24 +274,6 @@ impl<'a> ExecutionSplit<'a> {
                         .descends_from(self.parent_execution.core.state.resources())
                 }))
     }
-}
-
-/// Bookkeeping for one in-`Proof` terminal-outcome partition split: the
-/// marker and recorded arm ids its join verifies, the partition condition
-/// and the effect selection both arms must close, the parent context the
-/// join resumes, and each arm's entry fact delta. This is a record the
-/// audited join checks — never semantic authority.
-pub(super) struct OutcomeSplit<'a> {
-    marker: ProofCheckpoint<'a>,
-    split: SplitId,
-    arm_branches: [BranchId; 2],
-    condition: ClickProposition,
-    expected_effects: Vec<usize>,
-    path_facts: [Vec<Proposition>; 2],
-    parent_facts: ProofFacts,
-    parent_unfolds: PersistentOrderedSet<String>,
-    parent_execution: Arc<ExecutionProofState>,
-    root_post_execution_count: usize,
 }
 
 /// The audited branch-entry result shared by the execution container and
@@ -457,138 +438,6 @@ fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
     }
 }
 
-/// Collects only source-local C names mentioned by one candidate statement.
-/// Smart statement selection uses these names as keys into the persistent
-/// Surface-fact index; it never scans the ambient proposition set.
-fn collect_expression_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
-    match expression {
-        CExpression::Variable(name) => {
-            names.insert(name.clone());
-        }
-        CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
-        CExpression::Cast { expression, .. } => {
-            collect_expression_variable_names(expression, names)
-        }
-        CExpression::FloatNegate(expression)
-        | CExpression::FloatClassification { expression, .. } => {
-            collect_expression_variable_names(expression, names)
-        }
-        CExpression::Conditional {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_expression_variable_names(condition, names);
-            collect_expression_variable_names(then_branch, names);
-            collect_expression_variable_names(else_branch, names);
-        }
-        CExpression::PointerOffsetBytes { pointer, .. } => {
-            collect_expression_variable_names(pointer, names)
-        }
-        CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {
-            collect_expression_variable_names(inner, names)
-        }
-        CExpression::TypedLoad { pointer, .. } => collect_expression_variable_names(pointer, names),
-        CExpression::LessThan(left, right)
-        | CExpression::LessEqual(left, right)
-        | CExpression::GreaterThan(left, right)
-        | CExpression::GreaterEqual(left, right)
-        | CExpression::Equal(left, right)
-        | CExpression::NotEqual(left, right)
-        | CExpression::And(left, right)
-        | CExpression::Or(left, right)
-        | CExpression::Add(left, right)
-        | CExpression::Subtract(left, right)
-        | CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
-        | CExpression::ShiftLeft(left, right)
-        | CExpression::ShiftRight(left, right)
-        | CExpression::BitwiseAnd(left, right)
-        | CExpression::BitwiseOr(left, right)
-        | CExpression::BitwiseXor(left, right)
-        | CExpression::Index(left, right) => {
-            collect_expression_variable_names(left, names);
-            collect_expression_variable_names(right, names);
-        }
-        CExpression::BitwiseNot(inner) => collect_expression_variable_names(inner, names),
-    }
-}
-
-fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet<String>) {
-    match statement {
-        CStatement::Skip
-        | CStatement::Break
-        | CStatement::Continue
-        | CStatement::Declare { .. }
-        | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ContinueWithStep { step } => {
-            collect_statement_variable_names(step, names);
-        }
-        CStatement::Assign { name, expression } => {
-            names.insert(name.clone());
-            collect_expression_variable_names(expression, names);
-        }
-        CStatement::Return(expression)
-        | CStatement::Assert {
-            condition: expression,
-            ..
-        }
-        | CStatement::HeapAllocate {
-            bytes: expression, ..
-        }
-        | CStatement::HeapFree {
-            pointer: expression,
-        } => collect_expression_variable_names(expression, names),
-        CStatement::CallAssign {
-            target, arguments, ..
-        } => {
-            names.insert(target.clone());
-            for argument in arguments {
-                collect_expression_variable_names(argument, names);
-            }
-        }
-        CStatement::Call { arguments, .. } => {
-            for argument in arguments {
-                collect_expression_variable_names(argument, names);
-            }
-        }
-        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
-            collect_expression_variable_names(pointer, names);
-            collect_expression_variable_names(value, names);
-        }
-        CStatement::CopyAggregate { target, source, .. } => {
-            collect_expression_variable_names(target, names);
-            collect_expression_variable_names(source, names);
-        }
-        CStatement::Update {
-            target, operand, ..
-        } => {
-            collect_expression_variable_names(target, names);
-            collect_expression_variable_names(operand, names);
-        }
-        // The execution cursor normally splits sequences before selection.
-        // If a composite statement reaches this helper, only its immediate
-        // operation may influence the next checked transition; later source
-        // must not widen one smart step's dependency query.
-        CStatement::Seq(first, _) => {
-            collect_statement_variable_names(first, names);
-        }
-        CStatement::If { condition, .. } => {
-            collect_expression_variable_names(condition, names);
-        }
-        CStatement::While { condition, .. } => {
-            collect_expression_variable_names(condition, names);
-        }
-        CStatement::Switch { expression, cases } => {
-            collect_expression_variable_names(expression, names);
-            for case in cases {
-                collect_statement_variable_names(&case.body, names);
-            }
-        }
-    }
-}
-
 pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
     tactics.iter().any(|tactic| match tactic {
         ProofTactic::ApplyTheorem(_) | ProofTactic::Simp | ProofTactic::SimpUsing(_) => true,
@@ -620,42 +469,6 @@ pub(in crate::surface::proof) fn source_proof_is_supported(proof: &SourceProof) 
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
         SourceProof::Script(tactics) => linear_script_is_supported(tactics),
-    }
-}
-
-fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
-    match proposition {
-        ClickProposition::Comparison {
-            left,
-            operator,
-            right,
-        } => {
-            let operator = match operator {
-                ComparisonOperator::Equal => ComparisonOperator::Equal,
-                ComparisonOperator::NotEqual => ComparisonOperator::NotEqual,
-                ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
-                ComparisonOperator::LessEqual => ComparisonOperator::GreaterEqual,
-                ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
-                ComparisonOperator::GreaterEqual => ComparisonOperator::LessEqual,
-                ComparisonOperator::In => return None,
-            };
-            Some(ClickProposition::Comparison {
-                left: right.clone(),
-                operator,
-                right: left.clone(),
-            })
-        }
-        ClickProposition::At {
-            selector,
-            proposition,
-        } => Some(ClickProposition::At {
-            selector: selector.clone(),
-            proposition: Box::new(reverse_surface_comparison(proposition)?),
-        }),
-        ClickProposition::Not(body) => Some(ClickProposition::Not(Box::new(
-            reverse_surface_comparison(body)?,
-        ))),
-        _ => None,
     }
 }
 
@@ -1776,24 +1589,6 @@ impl ExecutionProofPresentation {
                 source_index,
                 tactic,
                 surface_recorded: false,
-            });
-    }
-
-    /// Schedules ordered outcome work whose semantics and Surface provenance
-    /// are already owned by a checked `Proof` descendant.
-    pub(in crate::surface::proof) fn defer_checked_post_execution(
-        &mut self,
-        tactic_index: usize,
-        source_index: usize,
-        tactic: PostExecutionTactic,
-    ) {
-        self.post_execution_tactics
-            .push(DeferredPostExecutionTactic {
-                lexical_bindings: None,
-                tactic_index,
-                source_index,
-                tactic,
-                surface_recorded: true,
             });
     }
 }

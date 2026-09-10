@@ -172,34 +172,34 @@ fn expand_declared_resources_in_function_block(
                 expand_declared_resource_expression(expression, resource_definitions)?,
             )),
             CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
-                expand_declared_resource_clause(resource, &resource_definitions)?,
+                expand_declared_resource_clause(resource, resource_definitions)?,
             )),
         })
         .transpose()?;
     function.requires = function
         .requires
         .drain(..)
-        .map(|requirement| expand_declared_resource_requirement(requirement, &resource_definitions))
+        .map(|requirement| expand_declared_resource_requirement(requirement, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
     function.ensures = function
         .ensures
         .drain(..)
-        .map(|clause| expand_declared_resource_ensure_clause(clause, &resource_definitions))
+        .map(|clause| expand_declared_resource_ensure_clause(clause, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
     function.constructs = function
         .constructs
         .drain(..)
-        .map(|resource| expand_declared_resource_clause(resource, &resource_definitions))
+        .map(|resource| expand_declared_resource_clause(resource, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
     function.structural_clauses = function
         .structural_clauses
         .drain(..)
-        .map(|clause| expand_declared_resource_structural_clause(clause, &resource_definitions))
+        .map(|clause| expand_declared_resource_structural_clause(clause, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
     function.grouped_proof = function
         .grouped_proof
         .take()
-        .map(|proof| expand_declared_resource_proof(proof, &resource_definitions))
+        .map(|proof| expand_declared_resource_proof(proof, resource_definitions))
         .transpose()?;
     Ok(())
 }

@@ -563,11 +563,8 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     if resolution_interrupted() {
         return None;
     }
-    let Some(_query) =
-        ResolutionQueryGuard::enter(ResolutionQuery::OffsetEqual(left.clone(), right.clone()))
-    else {
-        return None;
-    };
+    let _query =
+        ResolutionQueryGuard::enter(ResolutionQuery::OffsetEqual(left.clone(), right.clone()))?;
     if let Some(value) = assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
         left.clone(),
         right.clone(),
@@ -692,12 +689,11 @@ fn bitvector_terms_equal_for_memory_resolution_unmemoized(
     // for the load term, then fall through to the variable-form
     // paths if the load view does not decide.
     let canonical_view = |term: &Bitvector32Term| {
-        if let Bitvector32Term::Variable(variable) = term {
-            if let Some((memory, pointer)) =
+        if let Bitvector32Term::Variable(variable) = term
+            && let Some((memory, pointer)) =
                 crate::kernel::eval::registered_load_origin_for_variable(variable)
-            {
-                return Some(Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
-            }
+        {
+            return Some(Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
         }
         None
     };
@@ -1079,15 +1075,11 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_distinctness_condition
         }
         _ => None,
     };
-    let Some((left_index, right_index)) = index_pair else {
-        return None;
-    };
+    let (left_index, right_index) = index_pair?;
     if let (Some(left), Some(right)) = (left_index.as_const(), right_index.as_const()) {
         return Some(ConditionTerm::Constant(left == right));
     }
-    let Some(element_width) = common_pointer_offset_element_width(left_index, right_index) else {
-        return None;
-    };
+    let element_width = common_pointer_offset_element_width(left_index, right_index)?;
     let (Some(left_index), Some(right_index)) = (
         element_index_from_offset(left_index, element_width),
         element_index_from_offset(right_index, element_width),

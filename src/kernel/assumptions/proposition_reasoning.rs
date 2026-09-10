@@ -329,20 +329,6 @@ impl PureFactContext {
         self.derive_proposition_using(proposition, false)
     }
 
-    /// Build a checkable derivation while retaining its complete atomic
-    /// premise sets. This is used both by internal deterministic checks that
-    /// immediately check the result and by certificate planning after it has
-    /// already selected a narrow explicit premise set. In the latter case,
-    /// minimizing through a stronger internal theory can erase the selected
-    /// surface dependency even though the retained proof still checks.
-    pub(crate) fn derive_proposition_without_premise_minimization(
-        &self,
-        proposition: &Proposition,
-    ) -> Option<PropositionDerivation> {
-        let _guard = AtomicPremiseMinimizationGuard::disable();
-        self.derive_proposition_using(proposition, false)
-    }
-
     pub fn derive_simp_proposition(
         &self,
         proposition: &Proposition,

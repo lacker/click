@@ -187,9 +187,6 @@ impl<'a> Proof<'a> {
                 ProofFocusError::NotOpen => {
                     self.step_error(format!("goal {goal:?} is not open in this proof"))
                 }
-                ProofFocusError::NotAllocated => {
-                    unreachable!("open-branch focus reports only whether the branch is open")
-                }
             })?;
         Ok(focused)
     }
@@ -439,11 +436,14 @@ pub(in crate::surface::proof) fn frontier_premise_anchor(
         kind: ProgramPointKind::Entry,
     };
     Some(
-        execution
+        if execution
             .presentation
             .recorded_snapshots
             .contains_key(&entry)
-            .then_some(entry)
-            .unwrap_or(anchor),
+        {
+            entry
+        } else {
+            anchor
+        },
     )
 }

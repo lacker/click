@@ -401,7 +401,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
-            let pointer = resolve_local_pointer_alias(&state, &pointer, &effective_assumptions);
+            let pointer = resolve_local_pointer_alias(state, &pointer, &effective_assumptions);
             if state
                 .memory
                 .heap

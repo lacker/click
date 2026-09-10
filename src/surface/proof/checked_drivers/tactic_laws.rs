@@ -45,7 +45,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         parsed_function.parameters(),
         arguments,
         proof_context.old_reference_state(&execution.core.frontier, state),
-        &state,
+        state,
         None,
         None,
         ExecutionView::new(
@@ -122,7 +122,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
                         parsed_function.parameters(),
                         arguments,
                         proof_context.old_reference_state(&execution.core.frontier, state),
-                        &state,
+                        state,
                         None,
                         None,
                         ExecutionView::new(
@@ -515,7 +515,7 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
                 pre_state,
                 state,
                 result,
-                &view.recorded_snapshots,
+                view.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -539,13 +539,13 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
         state,
         result,
         premise_anchor,
-        &view.recorded_snapshots,
+        view.recorded_snapshots,
         surface_propositions,
         predicate_environment,
         click_function_environment,
         theorem_environment,
         unfolded_predicates,
-        &view.effect_facts,
+        view.effect_facts,
         original_requirements,
         requirement_label_indices,
     );

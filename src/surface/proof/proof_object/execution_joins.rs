@@ -141,7 +141,7 @@ impl<'a> Proof<'a> {
         )?;
         let (checked_condition_split, transitions) = certified_proof_condition_split(
             &current_state,
-            &self.facts(),
+            self.facts(),
             &branch_statement,
             remaining.as_ref(),
             &format!(
@@ -1248,7 +1248,7 @@ impl<'a> Proof<'a> {
         {
             append_execution_effect_facts(
                 &mut execution.core.effect_facts,
-                std::slice::from_ref(&effect),
+                std::slice::from_ref(effect),
             );
         }
         migrate_arm_metadata(&mut execution, &arms, true);
@@ -2025,9 +2025,6 @@ impl<'a> Proof<'a> {
             .map_err(|error| match error {
                 ProofFocusError::NotOpen => {
                     self.step_error(format!("goal {id:?} is not open in this proof"))
-                }
-                ProofFocusError::NotAllocated => {
-                    unreachable!("open-branch focus reports only whether the branch is open")
                 }
             })?;
         Ok(self.with_kernel_state(state))

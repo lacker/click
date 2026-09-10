@@ -445,7 +445,7 @@ pub(super) fn lower_surface_atomic_derivation(
         view.old_reference_state(state),
         state,
         None,
-        &view.recorded_snapshots,
+        view.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -469,7 +469,7 @@ pub(super) fn lower_surface_atomic_derivation(
         view.old_reference_state(state),
         state,
         None,
-        &view.recorded_snapshots,
+        view.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -492,7 +492,7 @@ pub(super) fn lower_surface_atomic_derivation(
                             view.old_reference_state(state),
                             state,
                             None,
-                            &view.recorded_snapshots,
+                            view.recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -1303,7 +1303,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     view.old_reference_state(state),
                     state,
                     None,
-                    &view.recorded_snapshots,
+                    view.recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1366,7 +1366,7 @@ pub(super) fn lower_surface_atomic_derivation(
         &conclusion,
         &premise_pairs,
         available,
-        &view.effect_facts,
+        view.effect_facts,
         state,
     ) {
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
@@ -1410,7 +1410,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     view.old_reference_state(state),
                     state,
                     None,
-                    &view.recorded_snapshots,
+                    view.recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1433,7 +1433,7 @@ pub(super) fn lower_surface_atomic_derivation(
             &source,
             &lowered_conclusion,
             available,
-            &view.effect_facts,
+            view.effect_facts,
             parameters,
             arguments,
             view,
@@ -3555,8 +3555,8 @@ fn orient_surface_bitvector_equality(
         return None;
     };
     let reverse = step.source() == premise_right.as_ref() && step.target() == premise_left.as_ref();
-    if !reverse
-        && !(step.source() == premise_left.as_ref() && step.target() == premise_right.as_ref())
+    if !(reverse
+        || (step.source() == premise_left.as_ref() && step.target() == premise_right.as_ref()))
     {
         return None;
     }
@@ -4405,12 +4405,8 @@ fn plan_explicit_increment_strict_greater_from_strict_lower(
     let [(lower_kernel, lower_surface), (upper_kernel, upper_surface)] = premise_pairs else {
         return None;
     };
-    let Some((premise_lower, lower_base)) = signed_strict_parts(lower_kernel) else {
-        return None;
-    };
-    let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
-        return None;
-    };
+    let (premise_lower, lower_base) = signed_strict_parts(lower_kernel)?;
+    let (upper_base, _) = signed_strict_parts(upper_kernel)?;
     if premise_lower != goal_lower.as_ref() || lower_base != base || upper_base != base {
         return None;
     }
@@ -5428,11 +5424,11 @@ fn pointer_array_index_pair(
     let source_index = source
         .iter()
         .find(|addend| **addend != *common)
-        .and_then(|addend| pointer_int32_scaled_value(addend))?;
+        .and_then(pointer_int32_scaled_value)?;
     let target_index = target
         .iter()
         .find(|addend| **addend != *common)
-        .and_then(|addend| pointer_int32_scaled_value(addend))?;
+        .and_then(pointer_int32_scaled_value)?;
     Some((source_index, target_index))
 }
 
@@ -5697,62 +5693,6 @@ pub(super) fn plan_restricted_simp_expansion(
     )
 }
 
-pub(super) fn frame_certified_ensure_goals(
-    claims: &[FunctionClaimRef<'_>],
-    path_execution_facts: &[ExecutionPureFact],
-    path_requirements: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    outcome: &CFunctionOutcome,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    recorded_snapshots: &RecordedSnapshots,
-    unfolded_predicates: &[String],
-) -> Vec<(usize, Proposition)> {
-    let mut reasoning_facts = path_requirements.to_vec();
-    reasoning_facts.extend(
-        path_execution_facts
-            .iter()
-            .filter(|fact| {
-                matches!(
-                    fact.proposition(),
-                    Proposition::CMemoryMutatesOnly { .. }
-                        | Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CHeapAllocationFreed { .. }
-                )
-            })
-            .map(|fact| fact.proposition().clone()),
-    );
-    let assumptions = assumptions_from_propositions(&reasoning_facts);
-    claims
-        .iter()
-        .enumerate()
-        .filter_map(|(claim_index, claim)| {
-            let FunctionClaimRef::Ensure(_, ensure_clause) = claim;
-            let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
-                return None;
-            };
-            let goal = lower_ensure_proposition_goal(
-                path_requirements,
-                surface_goal,
-                parameters,
-                arguments,
-                pre_state,
-                outcome,
-                predicate_environment,
-                click_function_environment,
-                recorded_snapshots,
-                unfolded_predicates,
-            )
-            .ok()?;
-            plan_simp_certificate(&goal, &assumptions)
-                .is_some()
-                .then_some((claim_index, goal))
-        })
-        .collect()
-}
-
 pub(super) fn comparison_snapshot_variants(
     proposition: &ClickProposition,
     selectors: &[SnapshotSelector],
@@ -5982,7 +5922,7 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
         view.old_reference_state(state),
         state,
         None,
-        &view.recorded_snapshots,
+        view.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )

@@ -574,26 +574,21 @@ fn advance_checked_linear_continuation<'a>(
         let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
             proof.apply_close_invariants_body(&[ProofTactic::Simp])?
         } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
-            proof.apply_step_at(step, indexed.index, indexed.source_index)?
+            proof.apply_step_at(step, indexed.source_index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
-            proof.apply_step_at(
-                ProofStep::Choose(choice.clone()),
-                indexed.index,
-                indexed.source_index,
-            )?
+            proof.apply_step_at(ProofStep::Choose(choice.clone()), indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
                 return decline();
             };
             applied
         } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
-            let transported = match proof.try_execution_fact_transport(source, target)? {
+            match proof.try_execution_fact_transport(source, target)? {
                 Some(transported) => transported,
                 None => proof.apply_planned_fact_transport(source, target, indexed.index)?,
-            };
-            transported
+            }
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
             if let Some(selected) = solve_nested_have(nested, have, true)? {
@@ -2249,7 +2244,7 @@ fn try_advance_checked_execution_branch<'a>(
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
     continuation: &InternalProofNode,
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
     depth: usize,
@@ -2268,7 +2263,7 @@ fn try_advance_checked_execution_branch<'a>(
         then_branch,
         else_branch,
         continuation,
-        expansion_capture.as_deref_mut(),
+        expansion_capture,
         proof_site,
         owning_source_index,
         depth,
@@ -2366,7 +2361,7 @@ fn advance_checked_branch_arms<'a>(
                 continuing,
                 Some(record),
                 continuation,
-                expansion_capture.as_deref_mut(),
+                expansion_capture,
                 proof_site,
                 owning_source_index,
                 depth + 1,

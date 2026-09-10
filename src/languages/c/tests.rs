@@ -394,8 +394,7 @@ fn c0_plain_char_cross_file_signatures_remain_distinct() {
             ),
         ],
     )
-    .err()
-    .expect("cross-file signatures must preserve plain char pointer identity");
+    .expect_err("cross-file signatures must preserve plain char pointer identity");
 }
 
 #[test]
@@ -1628,7 +1627,7 @@ fn c0_collects_aggregate_arrays() {
     let global = &function.global_aggregate_arrays()["shared_table"];
     assert!(global.is_defined());
     assert!(!global.is_tentative());
-    assert!(global.is_file_static() == false);
+    assert!(!global.is_file_static());
     assert_eq!(global.length(), 2);
     assert_eq!(global.c_type(), syntax::C0Type::UInt8Array(16));
     let global_initializers = global.initializer().expect("global array initializer");
@@ -2899,7 +2898,8 @@ fn c0_accepts_standard_integer_spellings_and_struct_typedefs() {
 
 #[test]
 fn c0_rejects_unmodeled_signed_char() {
-    for (source, spelling) in [("signed char unsupported() { return 0; }", "signed char")] {
+    {
+        let (source, spelling) = ("signed char unsupported() { return 0; }", "signed char");
         let error = syntax::parse_function(source)
             .expect_err("unmodeled standard C types should be rejected");
         assert!(
@@ -3284,7 +3284,7 @@ fn c0_static_inline_header_helpers_are_translation_unit_local() {
     );
 
     let beta = syntax::parse_functions_for_source(
-        &source::expand_includes(
+        source::expand_includes(
             "beta.c",
             &std::collections::BTreeMap::from([
                 (
@@ -3298,8 +3298,7 @@ fn c0_static_inline_header_helpers_are_translation_unit_local() {
             ]),
         )
         .expect("second local static inline helper should expand")
-        .source()
-        .to_string(),
+        .source(),
         "beta.c",
     )
     .expect("second expanded static inline helper should parse");

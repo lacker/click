@@ -2215,7 +2215,8 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
     else {
         panic!("expected a nested owned field requirement")
     };
-    for segment in [required] {
+    {
+        let segment = required;
         assert_eq!(segment.start, CExpression::Value(int32(1)));
         assert_eq!(segment.end, CExpression::Value(int32(2)));
         assert!(matches!(

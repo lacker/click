@@ -202,9 +202,9 @@ pub(in crate::surface) fn rewrite_proposition_by_exact_equality(
     }
     let (rewritten, changed) = results.pop().expect("root rewrite result");
     debug_assert!(results.is_empty());
-    return changed
+    changed
         .then_some(rewritten)
-        .ok_or_else(|| "`rewrite` equality does not occur in the current goal".to_string());
+        .ok_or_else(|| "`rewrite` equality does not occur in the current goal".to_string())
 }
 
 /// Whether rewriting by this equality cannot change any goal: it states
@@ -1687,147 +1687,6 @@ pub(in crate::surface) fn check_simp_certificate(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
-        let left = PointerOffsetTerm::Int32Scaled {
-            value: Box::new(Bitvector32Term::Variable(Variable(41))),
-            byte_width: 4,
-        };
-        let right = PointerOffsetTerm::Int32Scaled {
-            value: Box::new(Bitvector32Term::Variable(Variable(42))),
-            byte_width: 4,
-        };
-        let equality = Proposition::ConditionIs(
-            ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
-            true,
-        );
-        let pointer = |offset| Pointer {
-            block: PointerBlock::ExternalArgument,
-            offset,
-        };
-        let null = Pointer {
-            block: "null".into(),
-            offset: PointerOffsetTerm::Constant(0),
-        };
-        let goal = Proposition::ConditionIs(
-            ConditionTerm::pointer_equal(pointer(left), null.clone()),
-            true,
-        );
-
-        assert_eq!(
-            rewrite_proposition_by_exact_equality(
-                &goal,
-                &equality,
-                std::slice::from_ref(&equality),
-            )
-            .unwrap(),
-            Proposition::ConditionIs(ConditionTerm::pointer_equal(pointer(right), null), true,),
-        );
-    }
-
-    #[test]
-    fn rewrite_substitutes_index_and_base_equalities_inside_load_addresses() {
-        let memory = crate::kernel::intern_c_memory(CMemory::new());
-        let data = Bitvector32Term::Variable(Variable(51));
-        let alias = Bitvector32Term::Variable(Variable(52));
-        let index = Bitvector32Term::Variable(Variable(53));
-        let pointer = |offset| Pointer {
-            block: PointerBlock::ExternalArgument,
-            offset,
-        };
-        let load = |offset| Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer(offset)));
-        let data_offset = PointerOffsetTerm::scale_int32(data.clone(), 4);
-        let alias_offset = PointerOffsetTerm::scale_int32(alias.clone(), 4);
-        let indexed_offset = PointerOffsetTerm::add(
-            data_offset.clone(),
-            PointerOffsetTerm::scale_int32(index.clone(), 4),
-        );
-        let goal = Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(load(indexed_offset)),
-                Box::new(load(alias_offset.clone())),
-            ),
-            true,
-        );
-        let index_is_zero = Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(index),
-                Box::new(Bitvector32Term::Constant(0)),
-            ),
-            true,
-        );
-        let data_is_alias = Proposition::ConditionIs(
-            ConditionTerm::PointerOffsetEqual(Box::new(data_offset), Box::new(alias_offset)),
-            true,
-        );
-        let available = [index_is_zero.clone(), data_is_alias.clone()];
-
-        let indexed =
-            rewrite_proposition_by_exact_equality(&goal, &index_is_zero, &available).unwrap();
-        let aliased =
-            rewrite_proposition_by_exact_equality(&indexed, &data_is_alias, &available).unwrap();
-        assert_eq!(normalize_proposition(&aliased), SimpProposition::True);
-    }
-
-    #[test]
-    fn rewrite_substitutes_length_and_base_equalities_inside_memory_resources() {
-        let source = Bitvector32Term::Variable(Variable(61));
-        let target = Bitvector32Term::Variable(Variable(62));
-        let source_len = Bitvector32Term::Variable(Variable(63));
-        let target_len = Bitvector32Term::Variable(Variable(64));
-        let fixed = CResource::Memory(CMemoryRange::new(
-            Pointer {
-                block: PointerBlock::ExternalArgument,
-                offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(65)), 4),
-            },
-            Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(4),
-        ));
-        let range = |base: Bitvector32Term, end: Bitvector32Term| {
-            CResource::Memory(CMemoryRange::new(
-                Pointer {
-                    block: PointerBlock::ExternalArgument,
-                    offset: PointerOffsetTerm::scale_int32(base, 4),
-                },
-                Bitvector32Term::Constant(0),
-                end,
-            ))
-        };
-        let goal = Proposition::CResourceSeparate {
-            left: fixed.clone(),
-            right: range(source.clone(), source_len.clone()),
-        };
-        let length_equality = Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(Box::new(source_len), Box::new(target_len.clone())),
-            true,
-        );
-        let base_equality = Proposition::ConditionIs(
-            ConditionTerm::PointerOffsetEqual(
-                Box::new(PointerOffsetTerm::scale_int32(source, 4)),
-                Box::new(PointerOffsetTerm::scale_int32(target.clone(), 4)),
-            ),
-            true,
-        );
-        let available = [length_equality.clone(), base_equality.clone()];
-
-        let resized =
-            rewrite_proposition_by_exact_equality(&goal, &length_equality, &available).unwrap();
-        let replaced =
-            rewrite_proposition_by_exact_equality(&resized, &base_equality, &available).unwrap();
-        assert_eq!(
-            replaced,
-            Proposition::CResourceSeparate {
-                left: fixed,
-                right: range(target, target_len),
-            }
-        );
-    }
-}
-
 pub(in crate::surface) fn simp_proposition(
     proposition: &Proposition,
     assumptions: &PureFactContext,
@@ -2474,5 +2333,146 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
         Bitvector32Term::PointerAddress(pointer) => {
             Bitvector32Term::PointerAddress(pointer.clone())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
+        let left = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(41))),
+            byte_width: 4,
+        };
+        let right = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(42))),
+            byte_width: 4,
+        };
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        );
+        let pointer = |offset| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset,
+        };
+        let null = Pointer {
+            block: "null".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pointer(left), null.clone()),
+            true,
+        );
+
+        assert_eq!(
+            rewrite_proposition_by_exact_equality(
+                &goal,
+                &equality,
+                std::slice::from_ref(&equality),
+            )
+            .unwrap(),
+            Proposition::ConditionIs(ConditionTerm::pointer_equal(pointer(right), null), true,),
+        );
+    }
+
+    #[test]
+    fn rewrite_substitutes_index_and_base_equalities_inside_load_addresses() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let data = Bitvector32Term::Variable(Variable(51));
+        let alias = Bitvector32Term::Variable(Variable(52));
+        let index = Bitvector32Term::Variable(Variable(53));
+        let pointer = |offset| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset,
+        };
+        let load = |offset| Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer(offset)));
+        let data_offset = PointerOffsetTerm::scale_int32(data.clone(), 4);
+        let alias_offset = PointerOffsetTerm::scale_int32(alias.clone(), 4);
+        let indexed_offset = PointerOffsetTerm::add(
+            data_offset.clone(),
+            PointerOffsetTerm::scale_int32(index.clone(), 4),
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(load(indexed_offset)),
+                Box::new(load(alias_offset.clone())),
+            ),
+            true,
+        );
+        let index_is_zero = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(index),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let data_is_alias = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(data_offset), Box::new(alias_offset)),
+            true,
+        );
+        let available = [index_is_zero.clone(), data_is_alias.clone()];
+
+        let indexed =
+            rewrite_proposition_by_exact_equality(&goal, &index_is_zero, &available).unwrap();
+        let aliased =
+            rewrite_proposition_by_exact_equality(&indexed, &data_is_alias, &available).unwrap();
+        assert_eq!(normalize_proposition(&aliased), SimpProposition::True);
+    }
+
+    #[test]
+    fn rewrite_substitutes_length_and_base_equalities_inside_memory_resources() {
+        let source = Bitvector32Term::Variable(Variable(61));
+        let target = Bitvector32Term::Variable(Variable(62));
+        let source_len = Bitvector32Term::Variable(Variable(63));
+        let target_len = Bitvector32Term::Variable(Variable(64));
+        let fixed = CResource::Memory(CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(65)), 4),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+        ));
+        let range = |base: Bitvector32Term, end: Bitvector32Term| {
+            CResource::Memory(CMemoryRange::new(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::scale_int32(base, 4),
+                },
+                Bitvector32Term::Constant(0),
+                end,
+            ))
+        };
+        let goal = Proposition::CResourceSeparate {
+            left: fixed.clone(),
+            right: range(source.clone(), source_len.clone()),
+        };
+        let length_equality = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(source_len), Box::new(target_len.clone())),
+            true,
+        );
+        let base_equality = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(
+                Box::new(PointerOffsetTerm::scale_int32(source, 4)),
+                Box::new(PointerOffsetTerm::scale_int32(target.clone(), 4)),
+            ),
+            true,
+        );
+        let available = [length_equality.clone(), base_equality.clone()];
+
+        let resized =
+            rewrite_proposition_by_exact_equality(&goal, &length_equality, &available).unwrap();
+        let replaced =
+            rewrite_proposition_by_exact_equality(&resized, &base_equality, &available).unwrap();
+        assert_eq!(
+            replaced,
+            Proposition::CResourceSeparate {
+                left: fixed,
+                right: range(target, target_len),
+            }
+        );
     }
 }

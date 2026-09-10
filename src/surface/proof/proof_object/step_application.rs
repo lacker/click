@@ -172,16 +172,9 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn apply_step_at(
         &self,
         step: ProofStep,
-        tactic_index: usize,
         source_index: usize,
     ) -> Result<Self, ClickError> {
-        self.apply_step_with_origin(
-            step,
-            Some(ProofStepOrigin {
-                tactic_index,
-                source_index,
-            }),
-        )
+        self.apply_step_with_origin(step, Some(ProofStepOrigin { source_index }))
     }
 
     /// Searches for a terminal frame candidate and submits the selected
@@ -636,24 +629,4 @@ impl<'a> Proof<'a> {
             _ => unreachable!("kernel returned an unrelated enumerate error"),
         })
     }
-}
-
-/// The kernel variable identities named in a rendered kernel value, as
-/// substrings that identify them in a rendered proposition. Candidate
-/// selection only; every selected premise is still checked.
-fn kernel_variable_keys(rendered_value: &str) -> Vec<String> {
-    let mut keys = Vec::new();
-    let mut rest = rendered_value;
-    while let Some(start) = rest.find("Variable(Variable(") {
-        let after = &rest[start + "Variable(Variable(".len()..];
-        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-        if !digits.is_empty() {
-            let key = format!("Variable(Variable({digits}))");
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        }
-        rest = after;
-    }
-    keys
 }

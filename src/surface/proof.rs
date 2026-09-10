@@ -541,7 +541,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
                     || condition_polarity_equivalent(available, part)
                     || (matches!(available, Proposition::ForAll { .. })
                         && matches!(part, Proposition::ForAll { .. })
-                        && assumptions_from_propositions(&[available.clone()])
+                        && assumptions_from_propositions(std::slice::from_ref(available))
                             .derive_simp_proposition(part)
                             .is_some())
             })

@@ -1301,9 +1301,9 @@ impl PureFactContext {
             matches!((left, right), (CResource::Memory(_), CResource::Memory(_)));
         let scan_facts: &dyn Fn(&dyn Fn(&Proposition) -> bool) -> bool = &|entails| {
             if memory_memory_query {
-                self.nonmemory_separation_facts.iter().any(|p| entails(p))
+                self.nonmemory_separation_facts.iter().any(entails)
             } else {
-                self.prop_facts.iter().any(|p| entails(p))
+                self.prop_facts.iter().any(entails)
             }
         };
         let residual_hit = scan_facts(&|proposition| {

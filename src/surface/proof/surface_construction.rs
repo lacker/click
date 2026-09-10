@@ -1,21 +1,5 @@
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
-/// True when the proposition asserts a syntactically reflexive equality —
-/// the shape defining-equation bridging facts collapse to once kernel-minted
-/// load variables are resolved to their loads.
-fn proposition_is_reflexive_equality(proposition: &Proposition) -> bool {
-    match proposition {
-        Proposition::ConditionIs(condition, true) => match condition {
-            ConditionTerm::Bitvector32Equal(left, right) => left == right,
-            ConditionTerm::PointerOffsetEqual(left, right) => left == right,
-            ConditionTerm::PointerEqual(left, right) => left == right,
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
 pub(super) fn checked_surface_fact_in_state(
     view: ExecutionView<'_>,
     kernel: &Proposition,
@@ -59,7 +43,7 @@ fn checked_surface_fact_in_state_with_assumptions(
             view.old_reference_state(state),
             state,
             None,
-            &view.recorded_snapshots,
+            view.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -143,7 +127,7 @@ fn checked_surface_fact_in_state_with_assumptions(
             "kernel fact belongs to a different recorded memory snapshot: {kernel:?}"
         )));
     }
-    let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, &view.effect_facts);
+    let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, view.effect_facts);
     // Representative selection can derive facts through load variables
     // whose defining facts are not in this view's effect stream; the
     // registry is the kernel's own record of what each one stands for, and
@@ -167,7 +151,7 @@ fn checked_surface_fact_in_state_with_assumptions(
     // that is correct only until the cell changes.
     if crate::kernel::proposition_mentions_registered_load_variable(kernel) {
         let (exact_snapshots, compatible_snapshots) =
-            snapshot_indexed_selectors(&resolved_kernel, &view.recorded_snapshots);
+            snapshot_indexed_selectors(&resolved_kernel, view.recorded_snapshots);
         for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
             let Some(candidate) = synthesize_surface_proposition(
                 &resolved_kernel,
@@ -219,45 +203,6 @@ fn checked_surface_fact_in_state_with_assumptions(
             error.message()
         ))),
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn checked_surface_frame_premise_in_state(
-    view: ExecutionView<'_>,
-    kernel: &Proposition,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<ClickProposition, ClickError> {
-    checked_surface_fact_in_state(
-        view,
-        kernel,
-        available,
-        parameters,
-        arguments,
-        state,
-        predicate_environment,
-        click_function_environment,
-    )
-    .or_else(|_| {
-        // The exact kernel footprint fact can be a snapshot-normalized form
-        // of an earlier recorded `old(...)` comparison. The snapshot-blind
-        // index recovers only forms in that structural bucket.
-        checked_surface_comparison_fact_for_typed_derivation(
-            view,
-            kernel,
-            SurfaceFactMatch::CanonicalExact,
-            available,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-        )
-    })
 }
 
 fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<CMemory> {
@@ -494,7 +439,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             view.old_reference_state(state),
             state,
             None,
-            &view.recorded_snapshots,
+            view.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -595,7 +540,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             bases.push(surface.clone());
         }
     }
-    let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, &view.effect_facts);
+    let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, view.effect_facts);
     // Load variables represent loads whose snapshots the snapshot index needs;
     // resolve through the registry when no defining fact is in scope, and
     // index points from the load term rather than the kernel variable.
@@ -605,7 +550,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
         resolved_kernel
     };
     let (exact_snapshots, compatible_snapshots) =
-        snapshot_indexed_selectors(&resolved_kernel, &view.recorded_snapshots);
+        snapshot_indexed_selectors(&resolved_kernel, view.recorded_snapshots);
     if let Some(surface) =
         synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         && !bases.contains(&surface)
@@ -811,159 +756,6 @@ impl std::ops::DerefMut for ProofCertificateConstructionContext<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.execution
     }
-}
-
-/// Lowers checked per-path frame derivations into their exact Surface plans.
-///
-/// This operation records stable Surface identities in the planning cursor,
-/// but it does not build or interpret a certificate. Callers choose whether
-/// the returned path-local tactics feed legacy serialization or a typed
-/// Proof-owned plan.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn lower_certified_frame_path_tactics(
-    surface_propositions: &mut SurfacePropositionMap,
-    frontier: &ExecutionFrontier,
-    effect_facts: &[ExecutionPureFact],
-    recorded_snapshots: &RecordedSnapshots,
-    proof_context: &ExecutionProofContext<'_>,
-    state: &CState,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    path_derivations: &[Vec<PropositionDerivation>],
-) -> Result<Vec<Vec<ProofTactic>>, ClickError> {
-    path_derivations
-        .iter()
-        .map(|derivations| {
-            check_verification_deadline()?;
-            let mut tactics = Vec::new();
-            let mut premises = Vec::new();
-            let mut surfaced_premise_facts = Vec::new();
-            let mut path_available = available.to_vec();
-            for fact in derivations
-                .iter()
-                .flat_map(PropositionDerivation::context_premises)
-            {
-                if !path_available.contains(&fact) {
-                    path_available.push(fact);
-                }
-            }
-            // A certified frame's derivation contexts are its exact per-path
-            // dependency boundary. A branch fact may be named only in the
-            // leaf whose derivation selected it.
-            for fact in derivations
-                .iter()
-                .flat_map(PropositionDerivation::context_premises)
-            {
-                check_verification_deadline()?;
-                if let Ok(surface) = checked_surface_frame_premise_in_state(
-                    ExecutionView::new(
-                        frontier,
-                        effect_facts,
-                        recorded_snapshots,
-                        surface_propositions,
-                        proof_context.constants.function_entry_state.as_ref(),
-                    ),
-                    &fact,
-                    &path_available,
-                    parameters,
-                    arguments,
-                    state,
-                    predicate_environment,
-                    click_function_environment,
-                ) {
-                    if !premises.contains(&surface) {
-                        premises.push(surface);
-                    }
-                    if !surfaced_premise_facts.contains(&fact) {
-                        surfaced_premise_facts.push(fact);
-                    }
-                }
-            }
-            for derivation in derivations {
-                check_verification_deadline()?;
-                let canonical_conclusion =
-                    crate::kernel::canonical_condition_fact(derivation.conclusion());
-                // An exact context fact may already be the frame checker's
-                // canonical spelling of this planning goal. Naming that
-                // Surface premise is sufficient; synthesizing a redundant
-                // `have` can erase the old/current snapshot distinction while
-                // pretty-printing the canonical kernel form.
-                if surfaced_premise_facts.iter().any(|premise| {
-                    crate::kernel::canonical_condition_fact(premise) == canonical_conclusion
-                }) {
-                    continue;
-                }
-                // Kernel-minted load-variable bridges are deterministic
-                // bookkeeping and have no Surface premise to emit.
-                let resolved = crate::kernel::resolve_minted_load_variables(
-                    derivation.conclusion(),
-                    &effect_facts,
-                );
-                if resolved != *derivation.conclusion()
-                    && proposition_is_reflexive_equality(&resolved)
-                {
-                    continue;
-                }
-                let memories = c_condition_fact_memories(derivation.conclusion());
-                // Prefer the stable function-entry selector. Statement-entry
-                // states are transient planning artifacts.
-                let mut candidate_snapshots = Vec::new();
-                if let Some(entry_state) = &proof_context.constants.function_entry_state {
-                    candidate_snapshots.push((
-                        SnapshotSelector::ProgramPoint(ProgramPointRef {
-                            region: CodeRegionRef::Function,
-                            kind: ProgramPointKind::Entry,
-                        }),
-                        entry_state.clone(),
-                    ));
-                }
-                candidate_snapshots.extend(
-                    recorded_snapshots
-                        .iter()
-                        .rev()
-                        .map(|(selector, state)| (selector.clone(), state.clone())),
-                );
-                let anchor_snapshot = candidate_snapshots
-                    .into_iter()
-                    .find(|(_, snapshot_state)| {
-                        !memories.is_empty()
-                            && memories.iter().any(|memory| {
-                                memory.has_same_snapshot_markers(snapshot_state.memory())
-                            })
-                    })
-                    .map(|(selector, _)| selector);
-                let (conclusion, proof) = lower_surface_atomic_derivation(
-                    ExecutionView::new(
-                        frontier,
-                        effect_facts,
-                        recorded_snapshots,
-                        surface_propositions,
-                        proof_context.constants.function_entry_state.as_ref(),
-                    ),
-                    derivation,
-                    None,
-                    anchor_snapshot.as_ref(),
-                    &path_available,
-                    parameters,
-                    arguments,
-                    state,
-                    predicate_environment,
-                    click_function_environment,
-                )?;
-                if !premises.contains(&conclusion) {
-                    premises.push(conclusion.clone());
-                    tactics.push(ProofTactic::Have(ProofHave {
-                        proposition: conclusion,
-                        proof,
-                    }));
-                }
-            }
-            Ok(tactics)
-        })
-        .collect()
 }
 
 /// Constructs the surface step(s) for one planned operation directly into the
@@ -2047,7 +1839,7 @@ pub(super) fn surface_simp_plan_proof(
                 view.old_reference_state(state),
                 state,
                 None,
-                &view.recorded_snapshots,
+                view.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -2140,8 +1932,8 @@ pub(super) fn construct_smart_have_plan(
         arguments,
         view.old_reference_state(state),
         state,
-        &view.recorded_snapshots,
-        &view.surface_propositions,
+        view.recorded_snapshots,
+        view.surface_propositions,
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
@@ -2218,7 +2010,7 @@ pub(super) fn surface_smart_have_proof(
                             view.old_reference_state(state),
                             state,
                             None,
-                            &view.recorded_snapshots,
+                            view.recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         );
@@ -2311,7 +2103,7 @@ pub(super) fn surface_smart_have_proof(
             view.old_reference_state(state),
             state,
             None,
-            &view.recorded_snapshots,
+            view.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )

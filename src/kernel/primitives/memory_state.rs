@@ -840,26 +840,6 @@ impl CLocalEnvironment {
         self.set_typed_with_qualifiers(name, value, c_type, false, false);
     }
 
-    pub(in crate::kernel) fn set_typed_volatile(
-        &mut self,
-        name: impl Into<String>,
-        value: CValue,
-        c_type: CType,
-        volatile: bool,
-    ) {
-        self.set_typed_with_qualifiers(name, value, c_type, volatile, false);
-    }
-
-    pub(in crate::kernel) fn set_typed_at(
-        &mut self,
-        name: impl Into<String>,
-        value: CValue,
-        c_type: CType,
-        slot: Pointer,
-    ) {
-        self.set_typed_qualified(name, value, c_type, slot, false, false);
-    }
-
     pub(in crate::kernel) fn set_typed_with_qualifiers(
         &mut self,
         name: impl Into<String>,
@@ -908,27 +888,6 @@ impl CLocalEnvironment {
         );
     }
 
-    pub(in crate::kernel) fn set_typed_qualified(
-        &mut self,
-        name: impl Into<String>,
-        value: CValue,
-        c_type: CType,
-        slot: Pointer,
-        volatile: bool,
-        pointee_volatile: bool,
-    ) {
-        self.set_typed_qualified_with_all_qualifiers(
-            name,
-            value,
-            c_type,
-            slot,
-            volatile,
-            pointee_volatile,
-            false,
-            false,
-        );
-    }
-
     pub(in crate::kernel) fn set_typed_qualified_with_all_qualifiers(
         &mut self,
         name: impl Into<String>,
@@ -956,38 +915,6 @@ impl CLocalEnvironment {
         );
     }
 
-    pub(in crate::kernel) fn set_typed_volatile_at(
-        &mut self,
-        name: impl Into<String>,
-        value: CValue,
-        c_type: CType,
-        slot: Pointer,
-        volatile: bool,
-    ) {
-        self.set_typed_qualified(name, value, c_type, slot, volatile, false);
-    }
-
-    pub(in crate::kernel) fn set_global_at(
-        &mut self,
-        name: impl Into<String>,
-        c_type: CType,
-        slot: Pointer,
-        volatile: bool,
-    ) {
-        self.set_global_with_qualifiers(name, c_type, slot, volatile, false);
-    }
-
-    pub(in crate::kernel) fn set_global_with_qualifiers(
-        &mut self,
-        name: impl Into<String>,
-        c_type: CType,
-        slot: Pointer,
-        volatile: bool,
-        constant: bool,
-    ) {
-        self.set_global_with_all_qualifiers(name, c_type, slot, volatile, false, constant, false);
-    }
-
     pub(in crate::kernel) fn set_global_with_all_qualifiers(
         &mut self,
         name: impl Into<String>,
@@ -1008,40 +935,6 @@ impl CLocalEnvironment {
                 constant,
                 pointee_constant,
             },
-        );
-    }
-
-    pub(in crate::kernel) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
-        let name = name.into();
-        self.set_uninitialized_at(name.clone(), c_type, CMemory::local_pointer(&name), false);
-    }
-
-    pub(in crate::kernel) fn set_uninitialized_at(
-        &mut self,
-        name: impl Into<String>,
-        c_type: CType,
-        slot: Pointer,
-        volatile: bool,
-    ) {
-        self.set_uninitialized_qualified_at(name, c_type, slot, volatile, false);
-    }
-
-    pub(in crate::kernel) fn set_uninitialized_qualified_at(
-        &mut self,
-        name: impl Into<String>,
-        c_type: CType,
-        slot: Pointer,
-        volatile: bool,
-        pointee_volatile: bool,
-    ) {
-        self.set_uninitialized_with_all_qualifiers(
-            name,
-            c_type,
-            slot,
-            volatile,
-            pointee_volatile,
-            false,
-            false,
         );
     }
 
@@ -1694,13 +1587,11 @@ impl CMemory {
             .remove(base)
             .is_some();
         if (removed_live.is_some() || removed_uninitialized || removed_zeroed_prefix)
-            && prior.is_some()
+            && let Some(base) = prior
         {
             record_c_memory_derivation(
                 &self,
-                CMemoryDerivation::ContractAllocationClaimsChanged {
-                    base: prior.expect("checked above"),
-                },
+                CMemoryDerivation::ContractAllocationClaimsChanged { base },
             );
         }
         self
@@ -2472,16 +2363,16 @@ impl CMemory {
     pub(in crate::kernel) fn string_literal_loadable_facts(&self) -> Vec<Proposition> {
         self.blocks
             .iter()
-            .filter_map(|(block, contents)| {
-                (contents.is_read_only() && matches!(block, PointerBlock::StringLiteral { .. }))
-                    .then(|| Proposition::CMemoryLoadable {
-                        memory: self.clone(),
-                        base: Pointer {
-                            block: block.clone(),
-                            offset: PointerOffsetTerm::Constant(0),
-                        },
-                        bytes: contents.size().clone(),
-                    })
+            .filter(|&(block, contents)| {
+                contents.is_read_only() && matches!(block, PointerBlock::StringLiteral { .. })
+            })
+            .map(|(block, contents)| Proposition::CMemoryLoadable {
+                memory: self.clone(),
+                base: Pointer {
+                    block: block.clone(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                bytes: contents.size().clone(),
             })
             .collect()
     }
@@ -2962,7 +2853,7 @@ thread_local! {
     /// block is intrinsic, like a heap block's, so the decision consults
     /// this instead of a path fact on every implicit address-of read.
     static BLOCK_ALIGNMENT_REGISTRY: std::cell::RefCell<BTreeMap<PointerBlock, u64>> =
-        std::cell::RefCell::new(BTreeMap::new());
+        const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn register_block_alignment(block: &PointerBlock, alignment: u32) {

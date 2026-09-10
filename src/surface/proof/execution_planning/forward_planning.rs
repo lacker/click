@@ -336,7 +336,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 }
                 if environment.frontier_loop_source.is_none() {
                     finish_proof_site_expansion_capture(
-                        expansion_capture.as_deref_mut(),
+                        expansion_capture,
                         &ProofSite::LoopPhase {
                             function_name: environment
                                 .function_block
@@ -553,7 +553,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
                     SourceProof::Script(_) => {
                         if let Some(tactic) = certificate.to_proof_tactics().get(source_index) {
                             record_proof_site_tactic_expansion(
-                                expansion_capture.as_deref_mut(),
+                                expansion_capture,
                                 proof_site,
                                 source_index,
                                 std::slice::from_ref(tactic),
