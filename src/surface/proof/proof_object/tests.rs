@@ -2060,6 +2060,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
         &click_function_environment,
     )
     .expect("constant equality should lower");
+    let mut allocation_baseline = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
         requires.push(kernel_equality.clone());
@@ -2096,14 +2097,15 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
             .apply_step(step.clone())
             .expect("the exact available equality should rewrite the goal");
         let allocations = fact_node_allocations() - before;
-        // The one permitted node rewrites the sole entry of the goal
-        // collection; the bound must stay independent of `size` because
-        // the rewrite never touches the persistent fact index.
-        assert!(
-            allocations <= 1,
-            "size {size} rewrite should not alter the persistent fact index \
-             ({allocations} persistent nodes allocated)"
+        // Count the goal update and selected-expression binding maps together.
+        // Their allocation cost must stay constant as unrelated facts grow.
+        assert_eq!(
+            allocations,
+            *allocation_baseline.get_or_insert(allocations),
+            "size {size} rewrite should not rebuild the persistent fact index"
         );
+        assert!(rewritten.facts().shares_exact_index_with(root.facts()));
+        assert!(rewritten.facts().shares_assumptions_with(root.facts()));
         assert_eq!(rewritten.certificate().steps(), std::slice::from_ref(&step));
         assert!(
             rewritten.surface_goal().is_none(),
@@ -2775,6 +2777,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         name: "int32_lt_implies_le".to_string(),
         arguments: application.arguments.iter().cloned().rev().collect(),
     };
+    let mut selection_allocation_baseline = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_premise.clone());
@@ -2815,11 +2818,17 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         let selected = root
             .select_execution_theorem_application_step(&application)
             .expect("smart search should select one explicit indexed premise");
+        // The global persistent-node counter now also sees the selected
+        // theorem's small elaboration binding maps. Their fixed setup cost
+        // must not grow with the unrelated fact context.
+        let query_allocations = fact_node_allocations() - before_query;
         assert_eq!(
-            fact_node_allocations() - before_query,
-            0,
+            query_allocations,
+            *selection_allocation_baseline.get_or_insert(query_allocations),
             "size {size} execution theorem selection must not rebuild persistent fact indexes"
         );
+        assert!(root.facts().shares_exact_index_with(retained_root.facts()));
+        assert!(root.facts().shares_assumptions_with(retained_root.facts()));
         assert_eq!(
             selected,
             ProofStep::ApplyTheoremUsing {
@@ -3374,6 +3383,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         .record_lowering(&premise, &kernel_premise)
         .expect("the selected premise form should be recorded");
 
+    let mut allocation_baseline = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         facts.push(Proposition::And(
@@ -3418,7 +3428,8 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
             .expect("smart search should select one explicit indexed premise");
         let query_allocations = fact_node_allocations() - before_query;
         assert_eq!(
-            query_allocations, 0,
+            query_allocations,
+            *allocation_baseline.get_or_insert(query_allocations),
             "size {size} theorem selection must not rebuild persistent fact indexes"
         );
         assert_eq!(
@@ -3629,6 +3640,7 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
         .record_lowering(surface_premise, &kernel_premise)
         .expect("the selected premise form should be recorded");
 
+    let mut allocation_baseline = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         facts.push(kernel_premise.clone());
@@ -3665,7 +3677,11 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
         let step = root
             .select_fixed_state_theorem_application_step(application)
             .expect("the indexed result-aware premise should be selected");
-        assert_eq!(fact_node_allocations() - before_query, 0);
+        let query_allocations = fact_node_allocations() - before_query;
+        assert_eq!(
+            query_allocations,
+            *allocation_baseline.get_or_insert(query_allocations)
+        );
         assert_eq!(
             step,
             ProofStep::ApplyTheoremUsing {
@@ -6808,6 +6824,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         arguments: application.arguments.iter().cloned().rev().collect(),
     };
 
+    let mut allocation_baseline = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut requires = (0..size).map(indexed_fact).collect::<Vec<_>>();
         requires.push(kernel_premise.clone());
@@ -6851,7 +6868,8 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
             .expect("smart pure search should select the indexed source requirement");
         let query_allocations = fact_node_allocations() - before_query;
         assert_eq!(
-            query_allocations, 0,
+            query_allocations,
+            *allocation_baseline.get_or_insert(query_allocations),
             "size {size} pure theorem selection must not rebuild persistent fact indexes"
         );
         assert_eq!(

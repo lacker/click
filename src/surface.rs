@@ -2070,10 +2070,10 @@ struct SpecArrayRef {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecElaborationContext {
-    values: BTreeMap<String, SpecExpression>,
+    values: PersistentMap<String, SpecExpression>,
     integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
-    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
-    array_refs: BTreeMap<String, SpecArrayRef>,
+    algebraic_values: PersistentMap<String, SpecAlgebraicExpression>,
+    array_refs: PersistentMap<String, SpecArrayRef>,
     current_memory: SpecMemory,
     current_loop_entry: Option<usize>,
     function_contract: bool,
@@ -2089,10 +2089,10 @@ struct SpecElaborationContext {
 impl Default for SpecElaborationContext {
     fn default() -> Self {
         Self {
-            values: BTreeMap::new(),
+            values: PersistentMap::default(),
             integer_values: PersistentMap::default(),
-            algebraic_values: BTreeMap::new(),
-            array_refs: BTreeMap::new(),
+            algebraic_values: PersistentMap::default(),
+            array_refs: PersistentMap::default(),
             current_memory: SpecMemory::Current,
             current_loop_entry: None,
             at_function_entry: false,
@@ -2134,7 +2134,7 @@ impl SpecElaborationContext {
                 values: self.values.clone(),
                 integer_values: self.integer_values.clone(),
                 algebraic_values: self.algebraic_values.clone(),
-                array_refs: BTreeMap::new(),
+                array_refs: PersistentMap::default(),
                 current_memory: SpecMemory::FunctionEntry,
                 current_loop_entry: None,
                 function_contract: true,
@@ -2154,10 +2154,10 @@ impl SpecElaborationContext {
         }
 
         Ok(Self {
-            values,
+            values: values.into_iter().collect(),
             integer_values: self.integer_values.clone(),
             algebraic_values: self.algebraic_values.clone(),
-            array_refs: BTreeMap::new(),
+            array_refs: PersistentMap::default(),
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
             current_loop_entry: None,
             function_contract: false,

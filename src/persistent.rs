@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
@@ -38,10 +39,13 @@ impl<K: Ord, V> PersistentMap<K, V> {
         self.len == 0
     }
 
-    pub(crate) fn get(&self, key: &K) -> Option<&V> {
+    pub(crate) fn get<Q: Ord + ?Sized>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+    {
         let mut node = self.root.as_ref();
         while let Some(current) = node {
-            match key.cmp(current.key.as_ref()) {
+            match key.cmp(current.key.as_ref().borrow()) {
                 Ordering::Less => node = current.left.as_ref(),
                 Ordering::Equal => return Some(current.value.as_ref()),
                 Ordering::Greater => node = current.right.as_ref(),
@@ -94,6 +98,15 @@ impl<K: Ord, V> PersistentMap<K, V> {
         }
     }
 
+    /// Update one binding while retaining structural sharing with cloned maps.
+    pub(crate) fn insert(&mut self, key: K, value: V) {
+        *self = self.with_inserted(key, value);
+    }
+
+    pub(crate) fn remove(&mut self, key: &K) {
+        *self = self.without_key(key);
+    }
+
     pub(crate) fn without_key(&self, key: &K) -> Self {
         let (root, removed) = remove_node(self.root.as_ref(), key);
         Self {
@@ -131,6 +144,31 @@ impl<K: Ord, V> PersistentMap<K, V> {
             (None, None) => true,
             _ => false,
         }
+    }
+}
+
+impl<K: Ord, V> FromIterator<(K, V)> for PersistentMap<K, V> {
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
+        iter.into_iter().fold(Self::default(), |map, (key, value)| {
+            map.with_inserted(key, value)
+        })
+    }
+}
+
+impl<K: Ord, V> Extend<(K, V)> for PersistentMap<K, V> {
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        for (key, value) in iter {
+            self.insert(key, value);
+        }
+    }
+}
+
+impl<'a, K: Ord, V> IntoIterator for &'a PersistentMap<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = PersistentMapIter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

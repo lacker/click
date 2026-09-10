@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn integer_binder_contexts_share_unrelated_machine_bindings() {
+    use crate::kernel::{IntegerTerm, SpecIntegerExpression};
+    let mut all_costs = Vec::new();
+    for unrelated in [0, 64, 256, 1024] {
+        let context = SpecElaborationContext {
+            values: (0..unrelated)
+                .map(|index| {
+                    (
+                        format!("unrelated{index}"),
+                        SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(
+                            index,
+                        )))),
+                    )
+                })
+                .collect(),
+            ..SpecElaborationContext::default()
+        };
+        let mut costs = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let before = crate::persistent::persistent_node_allocations();
+            let mut scope = context.clone();
+            assert_eq!(crate::persistent::persistent_node_allocations(), before);
+            for index in 0..depth {
+                let mut child = scope.clone();
+                child.integer_values.insert(
+                    format!("bound{index}"),
+                    SpecIntegerExpression::Term(IntegerTerm::var(Variable(index + 2000))),
+                );
+                assert!(child.values.shares_root_with(&context.values));
+                assert!(
+                    child
+                        .algebraic_values
+                        .shares_root_with(&context.algebraic_values)
+                );
+                assert!(child.array_refs.shares_root_with(&context.array_refs));
+                scope = child;
+            }
+            assert_eq!(context.integer_values.len(), 0);
+            assert_eq!(scope.integer_values.len(), depth as usize);
+            costs.push(crate::persistent::persistent_node_allocations() - before);
+        }
+        for pair in costs.windows(2) {
+            assert!(pair[1] <= pair[0] * 3, "{costs:?}");
+        }
+        all_costs.push(costs);
+    }
+    assert!(
+        all_costs.windows(2).all(|pair| pair[0] == pair[1]),
+        "{all_costs:?}"
+    );
+}
+
+#[test]
 fn integer_certificate_lowering_scales_with_nodes_not_unrelated_bindings() {
     use crate::kernel::{IntegerTerm, SpecIntegerExpression};
     let surface = ClickProposition::Comparison {

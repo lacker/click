@@ -734,7 +734,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
         opaque_click_functions,
     );
     let mut context = context;
-    context.algebraic_values = algebraic_values;
+    context.algebraic_values = algebraic_values.into_iter().collect();
     context.integer_values = integer_values.clone();
     lowerer.click_proposition_to_spec_proposition(proposition, &context)
 }
@@ -3298,7 +3298,7 @@ impl AnnotationLowerer<'_> {
             values,
             integer_values: environment.integer_values.clone(),
             algebraic_values: environment.algebraic_values.clone(),
-            array_refs,
+            array_refs: array_refs.into_iter().collect(),
             current_memory: SpecMemory::Fixed(state.memory().clone()),
             current_loop_entry: None,
             function_contract: false,
