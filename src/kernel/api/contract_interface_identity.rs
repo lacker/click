@@ -221,13 +221,27 @@ impl Names {
             }
         }
     }
+    fn integer(&mut self, expression: &mut SpecIntegerExpression) {
+        self.visit();
+        match expression {
+            SpecIntegerExpression::Term(_) => {}
+            SpecIntegerExpression::FromMachine(machine) => self.expression(machine),
+            SpecIntegerExpression::Negate(inner) => self.integer(inner),
+            SpecIntegerExpression::Add(left, right)
+            | SpecIntegerExpression::Subtract(left, right)
+            | SpecIntegerExpression::Multiply(left, right) => {
+                self.integer(left);
+                self.integer(right);
+            }
+        }
+    }
     fn expression(&mut self, expression: &mut SpecExpression) {
         self.visit();
         use SpecExpression::*;
         match expression {
             // Instance identities are not lexical C parameter names.
             Value(_) | ResourceField { .. } => {}
-            IntegerToMachine { .. } => {}
+            IntegerToMachine { value, .. } => self.integer(value),
             CExpression(e) => self.c(e),
             CountedResourceCount { arguments, .. } => {
                 for e in arguments.iter_mut().flatten() {
