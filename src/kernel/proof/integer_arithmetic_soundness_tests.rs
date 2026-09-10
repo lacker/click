@@ -188,15 +188,25 @@ fn integer_certificate_comparison_normalization_preserves_small_models() {
     );
 }
 
-#[test]
-fn integer_certificate_binary_rules_preserve_small_models() {
+// Partition the exhaustive matrix by left-expression family and rule. Every
+// supported premise pair and goal is still checked against the independent oracle.
+fn check_binary_rule_family(family: usize, rule_index: usize) {
     let cases = cases();
+    assert_eq!(
+        cases.len(),
+        7 * 12,
+        "update partitions when the case matrix changes"
+    );
     let supported: Vec<_> = cases
         .iter()
         .filter_map(|case| integer_affine_claim(&case.proposition).map(|claim| (case, claim)))
         .collect();
     let mut accepted = [0usize; 2];
-    for (left, left_claim) in &supported {
+    for (left, left_claim) in supported.iter().filter(|(case, _)| {
+        cases[family * 12..(family + 1) * 12]
+            .iter()
+            .any(|candidate| std::ptr::eq(*case, candidate))
+    }) {
         for (right, right_claim) in &supported {
             let premises = [left.proposition.clone(), right.proposition.clone()];
             let premise_models = left.satisfying_assignments & right.satisfying_assignments;
@@ -213,7 +223,11 @@ fn integer_certificate_binary_rules_preserve_small_models() {
                         result: goal_claim.clone(),
                     },
                 ];
-                for (rule_index, rule) in rules.into_iter().enumerate() {
+                for (rule_index, rule) in rules
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index == rule_index)
+                {
                     let certificate = IntegerArithmeticCertificate {
                         nodes: vec![
                             IntegerArithmeticNode::Premise {
@@ -243,5 +257,57 @@ fn integer_certificate_binary_rules_preserve_small_models() {
             }
         }
     }
-    assert!(accepted.into_iter().all(|count| count > 100));
+    assert!(
+        accepted[rule_index] > 0,
+        "each partition must exercise successful certificates: {}",
+        accepted[rule_index]
+    );
 }
+
+macro_rules! binary_rule_family_tests {
+    ($add:ident, $bounds:ident, $family:expr) => {
+        #[test]
+        fn $add() {
+            check_binary_rule_family($family, 0);
+        }
+        #[test]
+        fn $bounds() {
+            check_binary_rule_family($family, 1);
+        }
+    };
+}
+binary_rule_family_tests!(
+    integer_certificate_add_variables,
+    integer_certificate_bounds_variables,
+    0
+);
+binary_rule_family_tests!(
+    integer_certificate_add_successor,
+    integer_certificate_bounds_successor,
+    1
+);
+binary_rule_family_tests!(
+    integer_certificate_add_zero,
+    integer_certificate_bounds_zero,
+    2
+);
+binary_rule_family_tests!(
+    integer_certificate_add_cancellation,
+    integer_certificate_bounds_cancellation,
+    3
+);
+binary_rule_family_tests!(
+    integer_certificate_add_negation,
+    integer_certificate_bounds_negation,
+    4
+);
+binary_rule_family_tests!(
+    integer_certificate_add_doubling,
+    integer_certificate_bounds_doubling,
+    5
+);
+binary_rule_family_tests!(
+    integer_certificate_add_subtraction,
+    integer_certificate_bounds_subtraction,
+    6
+);
