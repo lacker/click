@@ -664,6 +664,9 @@ impl ConditionTerm {
     }
 
     pub(crate) fn integer_equal(left: IntegerTerm, right: IntegerTerm) -> Self {
+        if left == right {
+            return Self::Constant(true);
+        }
         match (left.as_const(), right.as_const()) {
             (Some(left), Some(right)) => {
                 charge_binary_bits(left, right);
@@ -674,6 +677,9 @@ impl ConditionTerm {
     }
 
     pub(crate) fn integer_not_equal(left: IntegerTerm, right: IntegerTerm) -> Self {
+        if left == right {
+            return Self::Constant(false);
+        }
         match (left.as_const(), right.as_const()) {
             (Some(left), Some(right)) => {
                 charge_binary_bits(left, right);

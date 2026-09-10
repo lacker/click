@@ -23,6 +23,13 @@ theorem integer_field_equality(value: Integer) {
         == Box<Integer>::Wrapped(value) by simp;
 }
 
+theorem integer_field_match(value: Integer) {
+    ensures match Box<Integer>::Wrapped(value) {
+        Box::Empty => value,
+        Box::Wrapped(inner) => inner,
+    } == value by { normalize(); assumption(); }
+}
+
 
 
 
