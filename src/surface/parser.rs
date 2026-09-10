@@ -2885,10 +2885,11 @@ impl Parser {
             }
             self.expect(Token::Colon)?;
             let (click_type, parsed_type) = self.parse_click_type()?;
-            if let Some(parsed_type) = &parsed_type {
-                if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
-                    return Err(self.error("only pointer-to-struct types are supported"));
-                }
+            if let Some(parsed_type) = &parsed_type
+                && parsed_type.struct_name.is_some()
+                && !parsed_type.struct_pointer
+            {
+                return Err(self.error("only pointer-to-struct types are supported"));
             }
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
@@ -2947,10 +2948,11 @@ impl Parser {
             }
             self.expect(Token::Colon)?;
             let (click_type, parsed_type) = self.parse_click_type()?;
-            if let Some(parsed_type) = &parsed_type {
-                if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
-                    return Err(self.error("only pointer-to-struct types are supported"));
-                }
+            if let Some(parsed_type) = &parsed_type
+                && parsed_type.struct_name.is_some()
+                && !parsed_type.struct_pointer
+            {
+                return Err(self.error("only pointer-to-struct types are supported"));
             }
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
