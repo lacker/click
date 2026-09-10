@@ -4800,3 +4800,45 @@ fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
         CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
+
+#[cfg(test)]
+mod integer_budget_tests {
+    use super::*;
+    use num_bigint::BigInt;
+    use num_traits::One;
+
+    #[test]
+    fn deferred_integer_multiply_precharges_product_work_without_active_tactic() {
+        // Each operand is individually below the configured setup allowance,
+        // while their product is deliberately above it.  This exercises the
+        // same configured allowance used during setup, without an active
+        // tactic supplying a separate work limit.
+        let operand_bits = 1_000usize;
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 10_000,
+            smart: 10_000,
+            control: 10_000,
+        };
+        let expression = SpecIntegerExpression::Multiply(
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(
+                BigInt::one() << operand_bits,
+            ))),
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(
+                BigInt::one() << operand_bits,
+            ))),
+        );
+
+        let result = crate::instrumentation::with_tactic_work_limits(limits, || {
+            evaluate_spec_integer_expression_paths(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &BTreeMap::new(),
+                &mut ExecutionBudget::default(),
+            )
+        });
+
+        assert_eq!(result, Err(ExecutionLimit::Deadline));
+    }
+}
