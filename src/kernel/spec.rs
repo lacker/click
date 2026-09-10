@@ -1,4 +1,5 @@
 use super::prelude::*;
+use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
 type EvaluatedSpecResource = (CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>);
@@ -3064,25 +3065,57 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
     budget.consume_expression_step()?;
     let paths = match expression {
         SpecExpression::IntegerToMachine { value, destination } => {
-            evaluate_spec_integer_expression_paths(
+            let integer_paths = evaluate_spec_integer_expression_paths(
                 state,
                 value,
                 loop_entry_state,
                 assumptions,
                 algebraic_bindings,
                 budget,
-            )?
-            .into_iter()
-            .map(|path| {
-                let value = integer_constant_to_machine(&path.value, *destination)
-                    .ok_or(ExecutionLimit::Paths)?;
-                Ok(SpecExpressionPath {
+            )?;
+            let (lower, upper) = integer_machine_bounds(*destination);
+            let mut paths = Vec::new();
+            for path in integer_paths {
+                if let Some(value) = integer_constant_to_machine(&path.value, *destination) {
+                    paths.push(SpecExpressionPath {
+                        value,
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    });
+                    continue;
+                }
+                let path_assumptions =
+                    assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
+                let mut obligations = path.obligations;
+                let lower_bound = Proposition::ConditionIs(
+                    ConditionTerm::integer_greater_equal(path.value.clone(), lower.clone()),
+                    true,
+                );
+                let upper_bound = Proposition::ConditionIs(
+                    ConditionTerm::integer_less_equal(path.value.clone(), upper.clone()),
+                    true,
+                );
+                if add_proof_obligation(&mut obligations, &path_assumptions, lower_bound).is_none()
+                    || add_proof_obligation(&mut obligations, &path_assumptions, upper_bound)
+                        .is_none()
+                {
+                    continue;
+                }
+                let value = c_value_from_bitvector_term(
+                    destination.c_type(),
+                    Bitvector32Term::IntegerToMachine {
+                        value: path.value.into(),
+                        destination: *destination,
+                    },
+                )
+                .ok_or(ExecutionLimit::Paths)?;
+                paths.push(SpecExpressionPath {
                     value,
                     facts: path.facts,
-                    obligations: path.obligations,
-                })
-            })
-            .collect::<ExecutionResult<Vec<_>>>()?
+                    obligations,
+                });
+            }
+            paths
         }
         SpecExpression::ResourceField { projection, c_type } => {
             let snapshot = if projection.at_entry {
@@ -3972,6 +4005,39 @@ fn integer_constant_to_machine(
         MachineIntegerType::UInt64 => Some(CValue::UInt64(Bitvector32Term::UInt64Constant(
             value.to_u64()?,
         ))),
+    }
+}
+
+fn integer_machine_bounds(destination: MachineIntegerType) -> (IntegerTerm, IntegerTerm) {
+    match destination {
+        MachineIntegerType::Int16 => (
+            IntegerTerm::constant_i64(i16::MIN as i64),
+            IntegerTerm::constant_i64(i16::MAX as i64),
+        ),
+        MachineIntegerType::Int32 => (
+            IntegerTerm::constant_i64(i32::MIN as i64),
+            IntegerTerm::constant_i64(i32::MAX as i64),
+        ),
+        MachineIntegerType::UInt8 => (
+            IntegerTerm::constant_i64(0),
+            IntegerTerm::constant_i64(u8::MAX as i64),
+        ),
+        MachineIntegerType::UInt16 => (
+            IntegerTerm::constant_i64(0),
+            IntegerTerm::constant_i64(u16::MAX as i64),
+        ),
+        MachineIntegerType::UInt32 => (
+            IntegerTerm::constant_i64(0),
+            IntegerTerm::constant(BigInt::from(u32::MAX)),
+        ),
+        MachineIntegerType::Int64 => (
+            IntegerTerm::constant(BigInt::from(i64::MIN)),
+            IntegerTerm::constant(BigInt::from(i64::MAX)),
+        ),
+        MachineIntegerType::UInt64 => (
+            IntegerTerm::constant_i64(0),
+            IntegerTerm::constant(BigInt::from(u64::MAX)),
+        ),
     }
 }
 
@@ -5088,6 +5154,63 @@ mod integer_budget_tests {
                 &mut ExecutionBudget::default(),
             );
             assert_eq!(result, Err(ExecutionLimit::Paths));
+        }
+    }
+
+    #[test]
+    fn integer_to_machine_symbolic_values_keep_carrier_and_range_obligations() {
+        let variable = Variable(990);
+        let value = IntegerTerm::Variable(variable);
+        let cases = [
+            MachineIntegerType::Int16,
+            MachineIntegerType::Int32,
+            MachineIntegerType::UInt8,
+            MachineIntegerType::UInt16,
+            MachineIntegerType::UInt32,
+            MachineIntegerType::Int64,
+            MachineIntegerType::UInt64,
+        ];
+        for destination in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(value.clone())),
+                destination,
+            };
+            let paths = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .expect("symbolic conversion should produce a path");
+            assert_eq!(paths.len(), 1);
+            assert!(matches!(
+                &paths[0].value,
+                CValue::Int16(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    | CValue::Int32(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    | CValue::UInt8(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    | CValue::UInt16(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    | CValue::UInt32(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    | CValue::Int64(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    | CValue::UInt64(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                    if *d == destination
+            ));
+            assert_eq!(paths[0].obligations.len(), 2);
+            let (lower, upper) = integer_machine_bounds(destination);
+            assert!(paths[0].obligations.iter().any(|obligation| {
+                *obligation.proposition()
+                    == Proposition::ConditionIs(
+                        ConditionTerm::integer_greater_equal(value.clone(), lower.clone()),
+                        true,
+                    )
+            }));
+            assert!(paths[0].obligations.iter().any(|obligation| {
+                *obligation.proposition()
+                    == Proposition::ConditionIs(
+                        ConditionTerm::integer_less_equal(value.clone(), upper.clone()),
+                        true,
+                    )
+            }));
         }
     }
 }
