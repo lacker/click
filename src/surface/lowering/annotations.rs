@@ -246,6 +246,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -316,6 +317,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -441,6 +443,7 @@ pub(in crate::surface) fn annotated_function(
             &[]
         },
         implicit_contract_mutable_segments,
+        inherits_resource_derived_frame: resource_derived_mutable_frame,
         predicate_environment,
         click_function_environment,
         entry_state,
@@ -572,6 +575,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
         entry_state,
@@ -642,6 +646,7 @@ fn fixed_state_elaboration<'a>(
         next_quantifier_variable: 2_000_000,
         branch_join_target: None,
         implicit_contract_mutable_segments: &[],
+        inherits_resource_derived_frame: false,
         snapshots: Some(snapshots),
         count_assumptions: Some(assumptions),
     };
@@ -776,6 +781,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         structural_clauses: &[],
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -821,6 +827,7 @@ pub(in crate::surface) fn function_contract_summary(
         structural_clauses: function_block.structural_clauses(),
         function_effects: &[],
         implicit_contract_mutable_segments: &[],
+        inherits_resource_derived_frame: false,
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -1201,6 +1208,11 @@ struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
     function_effects: &'a [EffectClause],
     implicit_contract_mutable_segments: &'a [CMemorySegment],
+    /// Whether this function's write footprint comes from its resources
+    /// rather than an effect clause. A loop in such a function inherits that
+    /// footprint, so an empty one is an inherited empty footprint rather than
+    /// the absence of one.
+    inherits_resource_derived_frame: bool,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     entry_state: &'a CState,
@@ -3683,9 +3695,18 @@ impl AnnotationLowerer<'_> {
             .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
             .flat_map(StructuralClause::items)
             .any(|item| item.kind() == StructuralItemKind::Effect);
+        // A loop body can only write memory the function owns, so a loop with
+        // no clause of its own inherits the function's owned write footprint
+        // instead of becoming an unconditional havoc. An owned footprint that
+        // is empty -- a contract that only `views` memory -- is an inherited
+        // empty footprint, not the absence of one: the loop still may not
+        // write any of the memory it can reach, so every viewed cell is framed
+        // across it. The inherited claim stays checked at every back edge, so
+        // a body that does write outside the footprint fails there.
         if self.function_effects.is_empty()
             && !has_explicit_whole_effect
-            && !self.implicit_contract_mutable_segments.is_empty()
+            && (self.inherits_resource_derived_frame
+                || !self.implicit_contract_mutable_segments.is_empty())
         {
             checks.push(CLoopEffectCheck::new_with_span(
                 CLoopEffect::Mutable(self.implicit_contract_mutable_segments.to_vec()),
