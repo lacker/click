@@ -693,6 +693,9 @@ pub struct EnsureClause {
     name: Option<String>,
     ensure: Ensure,
     proof: SourceProof,
+    /// A resource ensure desugared from `owns`: the function returns what it
+    /// was lent, so the clause is evaluated at entry, not at exit.
+    borrowed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4361,6 +4364,12 @@ fn click_array_element_type(c_type: C0Type) -> Option<CType> {
 impl EnsureClause {
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
+    }
+
+    /// Whether this resource ensure returns a borrowed resource, evaluated at
+    /// the function's entry state rather than its exit.
+    pub fn borrowed(&self) -> bool {
+        self.borrowed
     }
 
     pub fn ensure(&self) -> &Ensure {

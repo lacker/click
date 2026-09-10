@@ -1055,6 +1055,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                 right: ContractExpression::CFragment(CExpression::Value(int32(0))),
             }),
             proof: SourceProof::Tactic(SmartTactic::Auto),
+            borrowed: false,
         };
         let mut claims = function_claims(&function_block);
         let has_explicit_claims = !claims.is_empty();
@@ -3470,7 +3471,7 @@ pub(in crate::surface) fn build_function_environment(
             .find(|block| block.signature().name() == function.name())
         {
             Some(function_block) => {
-                let (resource_requires, resource_ensures) =
+                let (resource_requires, resource_ensures, borrowed_resource_ensures) =
                     function_resource_summary(function_block, function, resource_environment)?;
                 let resource_constructors = function_resource_constructors(function_block)?;
                 let (
@@ -3495,6 +3496,7 @@ pub(in crate::surface) fn build_function_environment(
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
+                    .with_borrowed_resource_ensures(borrowed_resource_ensures)
                     .with_resource_constructors(resource_constructors)
                     .with_composite_resource_definitions(composite_resource_definitions(
                         resource_environment,
@@ -3559,7 +3561,7 @@ pub(in crate::surface) fn function_resource_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     resource_environment: &ResourceEnvironment,
-) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>), ClickError> {
+) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>, Vec<usize>), ClickError> {
     let mut requires = Vec::new();
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
@@ -3572,19 +3574,22 @@ pub(in crate::surface) fn function_resource_summary(
             &mut requires,
         )?;
     }
-    let ensures = function_block
-        .ensures()
-        .iter()
-        .filter_map(|ensure| match ensure.ensure() {
-            Ensure::Resource(resource) => Some(resource_clause_to_resource_spec_with_parameters(
-                resource,
-                parsed_function.parameters(),
-                Some(parsed_function.return_type().to_kernel_type()),
-            )),
-            _ => None,
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((requires, ensures))
+    let mut ensures = Vec::new();
+    let mut borrowed = Vec::new();
+    for ensure in function_block.ensures() {
+        let Ensure::Resource(resource) = ensure.ensure() else {
+            continue;
+        };
+        if ensure.borrowed() {
+            borrowed.push(ensures.len());
+        }
+        ensures.push(resource_clause_to_resource_spec_with_parameters(
+            resource,
+            parsed_function.parameters(),
+            Some(parsed_function.return_type().to_kernel_type()),
+        )?);
+    }
+    Ok((requires, ensures, borrowed))
 }
 
 pub(in crate::surface) fn function_resource_constructors(

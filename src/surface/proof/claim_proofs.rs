@@ -2717,6 +2717,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &path.execution_facts(),
                                             &path_requirements,
                                             resource,
+                                            ensure_clause.borrowed(),
                                             parsed_function.parameters(),
                                             arguments,
                                             pre_state,
@@ -3795,8 +3796,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         ));
                                                     }
                                                     Ensure::Resource(resource) => {
-                                                        direct_resource_claims
-                                                            .push((claim_index, resource.clone()));
+                                                        direct_resource_claims.push((
+                                                            claim_index,
+                                                            resource.clone(),
+                                                            ensure_clause.borrowed(),
+                                                        ));
                                                     }
                                                 }
                                             }
@@ -3810,7 +3814,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                         let CFunctionOutcome::Return { .. } = &outcome else {
                                             unreachable!("gated on a return outcome above");
                                         };
-                                        for (claim_index, resource) in &direct_resource_claims {
+                                        for (claim_index, resource, borrowed) in
+                                            &direct_resource_claims
+                                        {
                                             let claim_label = function_claim_label(
                                                 function_block.signature().name(),
                                                 &claims[*claim_index],
@@ -3822,6 +3828,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     &path.execution_facts(),
                                                     &path_requirements,
                                                     resource,
+                                                    *borrowed,
                                                     parsed_function.parameters(),
                                                     arguments,
                                                     pre_state,
@@ -3857,7 +3864,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     ))
                                                 })?;
                                         if proof_context.constants.grouped_contract {
-                                            for (claim_index, _) in &direct_resource_claims {
+                                            for (claim_index, _, _) in &direct_resource_claims {
                                                 closures[*claim_index] =
                                                     ClaimClosure::by_grouped_transition(
                                                         &certificate,
@@ -3866,7 +3873,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             path_grouped_surface_closers
                                                 .extend(certificate.to_proof_tactics());
                                         } else {
-                                            for (claim_index, _) in &direct_resource_claims {
+                                            for (claim_index, _, _) in &direct_resource_claims {
                                                 closures[*claim_index] =
                                                     ClaimClosure::by_checked_certificate(
                                                         &certificate,
@@ -4169,7 +4176,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                             checked_proposition,
                                                         );
                                                 }
-                                                for (claim_index, _) in &direct_resource_claims {
+                                                for (claim_index, _, _) in &direct_resource_claims {
                                                     closures[*claim_index] =
                                                         ClaimClosure::by_grouped_transition(
                                                             &certificate,
@@ -4209,7 +4216,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                                                 "`{proof_label}` path {path_index}, tactic {tactic_index}: resource `simp` produced an invalid surface certificate: {error:?}"
                                                             ))
                                                         })?;
-                                                    for (claim_index, _) in &direct_resource_claims
+                                                    for (claim_index, _, _) in
+                                                        &direct_resource_claims
                                                     {
                                                         closures[*claim_index] =
                                                             ClaimClosure::by_checked_certificate(
@@ -4430,6 +4438,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &path.execution_facts(),
                                             &path_requirements,
                                             resource,
+                                            ensure_clause.borrowed(),
                                             parsed_function.parameters(),
                                             arguments,
                                             pre_state,

@@ -1392,6 +1392,7 @@ impl Parser {
                                 name: None,
                                 ensure: Ensure::Resource(resource),
                                 proof,
+                                borrowed: true,
                             },
                             &contract_lets,
                         )
@@ -1432,6 +1433,7 @@ impl Parser {
                                 name: None,
                                 ensure: Ensure::Resource(resource),
                                 proof,
+                                borrowed: false,
                             },
                             &contract_lets,
                         )
@@ -1654,6 +1656,7 @@ impl Parser {
                                 name: None,
                                 ensure: Ensure::Resource(resource),
                                 proof,
+                                borrowed: true,
                             },
                             &contract_lets,
                         )
@@ -1694,6 +1697,7 @@ impl Parser {
                                 name: None,
                                 ensure: Ensure::Resource(resource),
                                 proof,
+                                borrowed: false,
                             },
                             &contract_lets,
                         )
@@ -2780,6 +2784,7 @@ impl Parser {
             name,
             ensure,
             proof,
+            borrowed: false,
         })
     }
 
@@ -6542,6 +6547,7 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
         name,
         ensure,
         proof,
+        borrowed,
     } = clause;
     match ensure {
         Ensure::Resource(resource) => expand_aggregate_resource_clause(resource)
@@ -6550,12 +6556,14 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
                 name: name.clone(),
                 ensure: Ensure::Resource(resource),
                 proof: proof.clone(),
+                borrowed,
             })
             .collect(),
         ensure => vec![EnsureClause {
             name,
             ensure,
             proof,
+            borrowed,
         }],
     }
 }

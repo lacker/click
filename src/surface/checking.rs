@@ -18,6 +18,7 @@ pub(super) fn prove_ensure_resource(
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
     available_pure_facts: &[Proposition],
     resource: &ResourceClause,
+    borrowed: bool,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -43,8 +44,19 @@ pub(super) fn prove_ensure_resource(
             )
         )));
     };
+    // A borrowed resource is returned as it was lent: its clause is read at
+    // entry, where address expressions still see the caller's values.
+    let clause_state = if borrowed && !matches!(resource, ResourceClause::Named { .. }) {
+        pre_state
+    } else {
+        post_state
+    };
     let expected = lower_resource_clause_facts_at_state_with_result(
-        resource, parameters, arguments, post_state, result,
+        resource,
+        parameters,
+        arguments,
+        clause_state,
+        result,
     )?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     if expected.iter().all(|expected| {

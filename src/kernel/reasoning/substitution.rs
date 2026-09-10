@@ -2834,6 +2834,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
             .collect(),
+        borrowed_resource_ensures: function.borrowed_resource_ensures.clone(),
         contract_requires: function
             .contract_requires
             .iter()
@@ -5673,6 +5674,7 @@ fn substitute_pointer_variable_in_c_function(
             .iter()
             .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
             .collect(),
+        borrowed_resource_ensures: function.borrowed_resource_ensures.clone(),
         contract_requires: function
             .contract_requires
             .iter()

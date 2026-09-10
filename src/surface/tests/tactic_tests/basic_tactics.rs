@@ -433,6 +433,7 @@ fn parses_resource_verb_function_clauses() {
                     },
                 })),
                 proof: SourceProof::Default,
+                borrowed: true,
             },
             EnsureClause {
                 name: None,
@@ -444,6 +445,7 @@ fn parses_resource_verb_function_clauses() {
                     parameter_types: vec![C0Type::Int32],
                 }),
                 proof: SourceProof::Default,
+                borrowed: false,
             },
         ]
     );

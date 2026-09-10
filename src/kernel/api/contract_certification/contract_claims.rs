@@ -1274,9 +1274,18 @@ fn function_claim_holds_on_prepared_path(
             // each clause independently would let one resource unit certify two
             // identical clauses. The prefix makes every claim account for all
             // units claimed up to and including its own clause.
-            let resources = &function.resource_ensures()[..=*index];
+            // A borrowed resource is what the callee was lent: it is
+            // evaluated at entry, where the clause's address expressions
+            // still read the values the caller saw.
             let Ok(Ok(expected)) =
-                evaluate_function_resource_context(post_state, resources, assumptions, &mut budget)
+                crate::kernel::functions::evaluate_function_return_resource_context(
+                    function,
+                    entry_state,
+                    post_state,
+                    *index + 1,
+                    assumptions,
+                    &mut budget,
+                )
             else {
                 return false;
             };

@@ -1413,6 +1413,7 @@ pub(in crate::surface) fn apply_contract_lets_to_ensure_clause(
         name,
         ensure,
         proof,
+        borrowed,
     } = clause;
     let ensure = match ensure {
         Ensure::Proposition(proposition) => {
@@ -1426,6 +1427,7 @@ pub(in crate::surface) fn apply_contract_lets_to_ensure_clause(
         name,
         ensure,
         proof,
+        borrowed,
     })
 }
 

@@ -1248,6 +1248,8 @@ fn execute_verified_function_templates(
         }
         let output_resource_state =
             with_contract_argument_views(&post_state, function, &argument_values);
+        let entry_resource_state =
+            with_contract_argument_views(&entry_state, function, &argument_values);
 
         let return_resource_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
@@ -1256,6 +1258,7 @@ fn execute_verified_function_templates(
         );
         let return_resources = match evaluate_function_return_resources(
             &caller_resources_after_requirements,
+            &entry_resource_state,
             &output_resource_state,
             function,
             &effective_assumptions,
@@ -7309,8 +7312,53 @@ fn prepare_function_resource_transfer(
     }))
 }
 
+/// Evaluates the first `count` returned resources of a contract as one
+/// jointly returned context. A borrowed resource (an `owns` clause) is
+/// evaluated at `entry_state`: the callee returns exactly what it was lent,
+/// even when the clause's address depends on a field the body writes. Every
+/// other returned resource is evaluated at `post_state`, where the result and
+/// the exit memory are visible.
+pub(super) fn evaluate_function_return_resource_context(
+    function: &CFunction,
+    entry_state: &CState,
+    post_state: &CState,
+    count: usize,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    let mut context = ResourceContext::new();
+    for (index, resource) in function.resource_ensures().iter().take(count).enumerate() {
+        // A named instance keeps its identity and takes fresh post-fields;
+        // only its ensures relate those to entry, so it is read at exit.
+        let borrowed = function.resource_ensure_is_borrowed(index)
+            && !matches!(resource, CResourceSpec::Instance { .. });
+        let state = if borrowed { entry_state } else { post_state };
+        let evaluation_state = state.clone().with_resource_context(
+            state
+                .resources()
+                .clone()
+                .unchecked_with_facts(context.facts().iter().cloned()),
+        );
+        let resource = match evaluate_function_resource_spec(
+            &evaluation_state,
+            resource,
+            assumptions,
+            budget,
+        )? {
+            Ok(resource) => resource,
+            Err(error) => return Ok(Err(error)),
+        };
+        context = match context.try_compose_with_fact(resource, assumptions) {
+            Ok(context) => context,
+            Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+        };
+    }
+    Ok(Ok(context))
+}
+
 fn evaluate_function_return_resources(
     caller_resources_after_requirements: &ResourceContext,
+    entry_state: &CState,
     post_state: &CState,
     function: &CFunction,
     assumptions: &PureFactContext,
@@ -7321,9 +7369,11 @@ fn evaluate_function_return_resources(
         "contract resource transition",
         "ensured resource lowering",
         || {
-            evaluate_function_resource_context(
+            evaluate_function_return_resource_context(
+                function,
+                entry_state,
                 post_state,
-                function.resource_ensures(),
+                function.resource_ensures().len(),
                 assumptions,
                 budget,
             )
@@ -9915,9 +9965,13 @@ pub(super) fn function_return_resources_definitionally_established(
             .set_typed("result".to_string(), value.clone(), function.return_type());
     }
     let mut budget = ExecutionBudget::default();
-    let Ok(Ok(expected)) = evaluate_function_resource_context(
+    let entry_resource_state =
+        with_contract_argument_views(caller_state, function, &argument_values);
+    let Ok(Ok(expected)) = evaluate_function_return_resource_context(
+        function,
+        &entry_resource_state,
         &post_state,
-        function.resource_ensures(),
+        function.resource_ensures().len(),
         &assumptions,
         &mut budget,
     ) else {
@@ -10831,6 +10885,8 @@ fn function_outcome_from_body_with_resource_transfer(
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
     let output_resource_state = with_contract_argument_views(&state, function, argument_values);
+    let entry_resource_state =
+        with_contract_argument_views(caller_state, function, argument_values);
     let return_resources = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
@@ -10838,6 +10894,7 @@ fn function_outcome_from_body_with_resource_transfer(
         || {
             evaluate_function_return_resources(
                 &caller_resources_after_requirements,
+                &entry_resource_state,
                 &output_resource_state,
                 function,
                 assumptions,

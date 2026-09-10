@@ -494,6 +494,7 @@ fn instantiate_ensure_clause(
         name: ensure.name.clone(),
         ensure: ensure_value,
         proof: instantiate_source_proof(ensure.proof(), substitution, algebraic_parameters)?,
+        borrowed: ensure.borrowed,
     })
 }
 
