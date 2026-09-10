@@ -2608,11 +2608,17 @@ fn disjunctive_premise_simp_expands_to_a_cases_certificate() {
                     }
                     then {
                         step();
-                        have selected == left or selected == right by { normalize(); }
+                        have selected == left or selected == right by {
+                            have selected == left by { normalize(); }
+                            left();
+                        }
                     }
                     else {
                         step();
-                        have selected == left or selected == right by { normalize(); }
+                        have selected == left or selected == right by {
+                            have selected == right by { normalize(); }
+                            right();
+                        }
                     }
                 }
                 step();

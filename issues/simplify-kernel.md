@@ -85,13 +85,14 @@ Separate input-bounded definitional reduction from logical proof construction.
 Keep exact normalization in the kernel; require explicit logical steps for any
 remaining closure.
 
-This migration is in progress. The first green slice makes a top-level
-conjunction an explicit proof boundary for `normalize` and `normalize using`:
-smart proofs retain `both` scopes, and saved expansions spell those scopes
-instead of relying on the kernel to reconstruct both children. Nested
-conjunctions under another logical constructor, plus disjunction, implication,
-and quantifier construction, still need the same treatment before this boundary
-is complete.
+This migration is in progress. The first two green slices make top-level
+conjunction and disjunction explicit proof boundaries for `normalize` and
+`normalize using`. Smart proofs retain `both` scopes for conjunctions; for a
+disjunction they retain a checked proof of the selected arm followed by
+`left` or `right`. Saved expansions spell those choices instead of relying on
+the kernel to reconstruct them. Nested conjunctions and disjunctions under
+another logical constructor, plus implication and quantifier construction,
+still need the same treatment before this boundary is complete.
 
 ### Pure-theorem authority
 
@@ -164,8 +165,8 @@ Each item should land as a coherent green change with its own focused and
 scaling regressions.
 
 1. Split context-free definitional normalization from logical derivation. In
-   progress: top-level conjunction construction is explicit; nested conjunction,
-   disjunction, implication, and quantifier construction remain.
+   progress: top-level conjunction and disjunction construction is explicit;
+   nested logical construction under implication and quantifiers remains.
 2. Retain checked pure-theorem completions and remove the second proof.
 3. Delete unused legacy theorem constructors after confirming their callers.
 4. Migrate call, refinement, and resource consumers one evidence type at a

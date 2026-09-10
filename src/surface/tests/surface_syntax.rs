@@ -1203,6 +1203,86 @@ theorem cited_pair(x: int32) {
 }
 
 #[test]
+fn normalization_does_not_hide_context_free_disjunction_derivation() {
+    let opaque = r#"
+theorem reflexive_choice() {
+    ensures 1 == 1 or 2 == 3 by { normalize(); }
+}
+"#;
+    let error = verify_c0_sources(opaque, &[])
+        .expect_err("normalize must not construct a disjunction proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+
+    let explicit_left = r#"
+theorem reflexive_choice() {
+    ensures 1 == 1 or 2 == 3 by {
+        have 1 == 1 by { normalize(); }
+        left();
+    }
+}
+"#;
+    verify_c0_sources(explicit_left, &[]).expect("the explicit left-disjunct proof should verify");
+
+    let explicit_right = r#"
+theorem reflexive_choice() {
+    ensures 2 == 3 or 1 == 1 by {
+        have 1 == 1 by { normalize(); }
+        right();
+    }
+}
+"#;
+    verify_c0_sources(explicit_right, &[])
+        .expect("the explicit right-disjunct proof should verify");
+
+    let opaque_using = r#"
+theorem cited_choice(x: int32) {
+    requires x == 0;
+    ensures x == 1 or x == 0 by { normalize() using { x == 0; } }
+}
+"#;
+    let error = verify_c0_sources(opaque_using, &[])
+        .expect_err("normalize using must not construct a disjunction proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+}
+
+#[test]
+fn smart_context_free_disjunction_retains_explicit_choice() {
+    let source = r#"
+theorem choose_left() {
+    ensures 1 == 1 or 2 == 3 by { simp(); }
+}
+
+theorem choose_right() {
+    ensures 2 == 3 or 1 == 1 by { simp(); }
+}
+"#;
+    let verified =
+        verify_click_theorems(source).expect("smart context-free disjunction proofs should verify");
+
+    let left = verified[0]
+        .proof_tactics()
+        .expect("expected left certificate");
+    assert!(matches!(
+        left.as_slice(),
+        [ProofTactic::Have(ProofHave {
+            proof: SourceProof::Script(proof),
+            ..
+        }), ProofTactic::Left] if matches!(proof.as_slice(), [ProofTactic::Normalize])
+    ));
+
+    let right = verified[1]
+        .proof_tactics()
+        .expect("expected right certificate");
+    assert!(matches!(
+        right.as_slice(),
+        [ProofTactic::Have(ProofHave {
+            proof: SourceProof::Script(proof),
+            ..
+        }), ProofTactic::Right] if matches!(proof.as_slice(), [ProofTactic::Normalize])
+    ));
+}
+
+#[test]
 fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     let current = ClickProposition::Comparison {
         left: current_var("x"),

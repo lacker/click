@@ -1102,15 +1102,27 @@ impl<'a> Proof<'a> {
         let Some(goal) = self.goal() else {
             return Ok(None);
         };
+        if matches!(goal, Proposition::And(_, _))
+            && surface_logical_children(surface_goal, true).is_some()
+        {
+            return self.try_structural_and_simp_closure(introduced_surfaces);
+        }
+        if matches!(goal, Proposition::Or(_, _))
+            && let Some((surface_left, surface_right)) =
+                surface_logical_children(surface_goal, false)
+        {
+            return self.try_structural_or_simp_closure(
+                &surface_left,
+                &surface_right,
+                introduced_surfaces,
+            );
+        }
         match (surface_goal, goal) {
             (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
                 self.try_structural_forall_simp_closure(surface_goal, introduced_surfaces)
             }
             (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
                 self.try_implication_simp_closure(surface_antecedent, introduced_surfaces)
-            }
-            (ClickProposition::And(_, _), Proposition::And(_, _)) => {
-                self.try_structural_and_simp_closure(introduced_surfaces)
             }
             // A predicate-call goal unfolds to its body, which the
             // structural arms and logical closers then work over. Repeat
@@ -1121,8 +1133,6 @@ impl<'a> Proof<'a> {
             {
                 self.try_structural_predicate_simp_closure(name, introduced_surfaces)
             }
-            (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => self
-                .try_structural_or_simp_closure(surface_left, surface_right, introduced_surfaces),
             _ => Ok(None),
         }
     }
@@ -2334,7 +2344,7 @@ impl<'a> Proof<'a> {
             let branch_surfaces = [&surface_left, &surface_right];
             let mut proof = split_proof;
             let mut complete = true;
-            for (id, assumed_surface) in ids.into_iter().zip(branch_surfaces) {
+            for (index, (id, assumed_surface)) in ids.into_iter().zip(branch_surfaces).enumerate() {
                 let Ok(focused_branch) = proof.focus_branch(id) else {
                     complete = false;
                     break;
@@ -2344,14 +2354,20 @@ impl<'a> Proof<'a> {
                     .ok()
                     .flatten()
                     .or_else(|| {
-                        let rewritten = focused_branch
+                        let (goal_left, goal_right) =
+                            surface_logical_children(focused_branch.surface_goal()?, false)?;
+                        let (selected_goal, closer) = if index == 0 {
+                            (goal_left, ProofStep::Left)
+                        } else {
+                            (goal_right, ProofStep::Right)
+                        };
+                        let scope = focused_branch.begin_have(selected_goal).ok()?;
+                        let rewritten = scope
                             .apply_step(ProofStep::Rewrite(assumed_surface.clone()))
                             .ok()?;
-                        rewritten
-                            .try_direct_logical_closure()
-                            .ok()
-                            .flatten()
-                            .or_else(|| rewritten.try_typed_atomic_simp_closure())
+                        let closed = rewritten.try_direct_logical_closure().ok().flatten()?;
+                        let joined = closed.join().ok()?;
+                        joined.apply_step(closer).ok()
                     });
                 let Some(selected) = selected else {
                     complete = false;

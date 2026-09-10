@@ -2066,11 +2066,15 @@ pub(super) fn surface_simp_plan_proof(
                     "could not lower the context-free smart proof goal: {message}"
                 ))
             })?;
-            SourceProof::Script(plan_context_free_normalization(&lowered_goal).ok_or_else(|| {
-                ClickError::new(
-                    "could not transcribe the context-free smart proof as explicit structural normalization",
-                )
-            })?)
+            SourceProof::Script(
+                plan_context_free_normalization(&lowered_goal, &active_surface_goal).ok_or_else(
+                    || {
+                        ClickError::new(
+                            "could not transcribe the context-free smart proof as explicit structural normalization",
+                        )
+                    },
+                )?,
+            )
         }
         SimpEvidence::Derivation(derivation) => {
             let (_, proof) = lower_surface_atomic_derivation(

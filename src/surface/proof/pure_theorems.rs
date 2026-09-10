@@ -1142,7 +1142,7 @@ fn lower_pure_simp_certificate(
     let tactic = match certificate {
         SimpEvidence::Assumption => ProofTactic::Assumption,
         SimpEvidence::Normalize => {
-            let tactics = plan_context_free_normalization(goal)?;
+            let tactics = plan_context_free_normalization(goal, surface_goal)?;
             ProofCertificate::from_proof_tactics(&tactics).ok()?;
             return Some(tactics);
         }
@@ -1177,7 +1177,7 @@ fn lower_pure_simp_certificate(
                 return Some(vec![tactic]);
             }
             if premise_pairs.is_empty() {
-                let tactics = plan_context_free_normalization(goal)?;
+                let tactics = plan_context_free_normalization(goal, surface_goal)?;
                 ProofCertificate::from_proof_tactics(&tactics).ok()?;
                 return Some(tactics);
             } else if let Some(ordered) = recorded_signed_order_pairs(derivation, &premise_pairs)
@@ -2236,7 +2236,7 @@ fn pure_theorem_surface_certificate(
         );
     }
     if matches!(normalize_proposition(goal), SimpProposition::True) {
-        let tactics = plan_context_free_normalization(goal).ok_or_else(|| {
+        let tactics = plan_context_free_normalization(goal, surface_goal).ok_or_else(|| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` could not transcribe normalization as explicit structure"
             ))

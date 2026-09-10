@@ -1,12 +1,77 @@
 use super::*;
 
-pub(super) fn plan_context_free_normalization(goal: &Proposition) -> Option<Vec<ProofTactic>> {
+pub(super) fn surface_logical_children(
+    goal: &ClickProposition,
+    conjunction: bool,
+) -> Option<(ClickProposition, ClickProposition)> {
     match goal {
-        Proposition::And(left, right) => Some(vec![ProofTactic::Both(ProofBoth {
-            left_tactics: plan_context_free_normalization(left)?,
-            right_tactics: plan_context_free_normalization(right)?,
-        })]),
-        _ => crate::kernel::proof::fact_reasoning::normalizes_context_free_without_top_level_conjunction(goal)
+        ClickProposition::And(left, right) if conjunction => {
+            Some((left.as_ref().clone(), right.as_ref().clone()))
+        }
+        ClickProposition::Or(left, right) if !conjunction => {
+            Some((left.as_ref().clone(), right.as_ref().clone()))
+        }
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => {
+            let (left, right) = surface_logical_children(proposition, conjunction)?;
+            Some((
+                ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(left),
+                },
+                ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(right),
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn plan_context_free_normalization(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+) -> Option<Vec<ProofTactic>> {
+    match goal {
+        Proposition::And(left, right) => {
+            let surface_children = surface_logical_children(surface_goal, true);
+            let surface_left = surface_children
+                .as_ref()
+                .map_or(surface_goal, |(left, _)| left);
+            let surface_right = surface_children
+                .as_ref()
+                .map_or(surface_goal, |(_, right)| right);
+            Some(vec![ProofTactic::Both(ProofBoth {
+                left_tactics: plan_context_free_normalization(left, surface_left)?,
+                right_tactics: plan_context_free_normalization(right, surface_right)?,
+            })])
+        }
+        Proposition::Or(left, right) => {
+            let (surface_left, surface_right) = surface_logical_children(surface_goal, false)?;
+            if let Some(proof) = plan_context_free_normalization(left, &surface_left) {
+                return Some(vec![
+                    ProofTactic::Have(ProofHave {
+                        proposition: surface_left,
+                        proof: SourceProof::Script(proof),
+                    }),
+                    ProofTactic::Left,
+                ]);
+            }
+            if let Some(proof) = plan_context_free_normalization(right, &surface_right) {
+                return Some(vec![
+                    ProofTactic::Have(ProofHave {
+                        proposition: surface_right,
+                        proof: SourceProof::Script(proof),
+                    }),
+                    ProofTactic::Right,
+                ]);
+            }
+            None
+        }
+        _ => crate::kernel::proof::fact_reasoning::normalizes_context_free_leaf(goal)
             .then(|| vec![ProofTactic::Normalize]),
     }
 }
@@ -806,7 +871,7 @@ pub(super) fn lower_surface_atomic_derivation(
         )));
     }
     if premise_pairs.is_empty() && surface_normalizes_context_free {
-        let tactics = plan_context_free_normalization(&lowered_conclusion).ok_or_else(|| {
+        let tactics = plan_context_free_normalization(&lowered_conclusion, &conclusion).ok_or_else(|| {
             ClickError::new(
                 "context-free derivation could not be transcribed as explicit structural normalization",
             )
@@ -2000,7 +2065,19 @@ pub(super) fn lower_restricted_simp_plan(
             {
                 return Ok(vec![ProofTactic::ArithmeticUsing(Vec::new())]);
             }
-            None
+            if crate::kernel::proof::fact_reasoning::normalizes_context_free_leaf(goal) {
+                return Ok(vec![ProofTactic::Normalize]);
+            }
+            let surface_goal = surface_goal.ok_or_else(|| {
+                ClickError::new(
+                    "`simp() using` selected structural context-free normalization, but its surface goal was not retained",
+                )
+            })?;
+            return plan_context_free_normalization(goal, surface_goal).ok_or_else(|| {
+                ClickError::new(
+                    "`simp() using` could not transcribe context-free normalization as explicit structure",
+                )
+            });
         }
         SimpEvidence::Derivation(derivation) => {
             if derivation.conclusion() != goal || !derivation.check(&assumptions) {
@@ -2033,16 +2110,49 @@ pub(super) fn lower_restricted_simp_plan(
             || available
                 .iter()
                 .any(|fact| condition_polarity_equivalent(fact, child_goal));
-        if child.conclusion() != child_goal || !disjunct_available {
+        if child.conclusion() != child_goal {
             return Err(ClickError::new(
-                "`simp() using` selected a derived disjunct that needs an explicit intermediate `have`",
+                "`simp() using` selected a disjunction proof for the wrong child goal",
             ));
         }
-        return Ok(vec![if choose_left {
+        let choice = if choose_left {
             ProofTactic::Left
         } else {
             ProofTactic::Right
-        }]);
+        };
+        if disjunct_available {
+            return Ok(vec![choice]);
+        }
+        let surface_goal = surface_goal.ok_or_else(|| {
+            ClickError::new(
+                "`simp() using` selected a derived disjunct, but its surface goal was not retained",
+            )
+        })?;
+        let (surface_left, surface_right) = surface_logical_children(surface_goal, false)
+            .ok_or_else(|| {
+                ClickError::new(
+                    "`simp() using` selected a disjunction proof for a non-disjunction surface goal",
+                )
+            })?;
+        let child_surface = if choose_left {
+            surface_left
+        } else {
+            surface_right
+        };
+        let child_plan = SimpEvidence::Derivation(child.clone());
+        let child_tactics = lower_restricted_simp_plan(
+            child_goal,
+            Some(&child_surface),
+            &child_plan,
+            premise_pairs,
+        )?;
+        return Ok(vec![
+            ProofTactic::Have(ProofHave {
+                proposition: child_surface,
+                proof: SourceProof::Script(child_tactics),
+            }),
+            choice,
+        ]);
     }
 
     let named_rule = |goal: &Proposition| plan_explicit_named_signed_rule(goal, premise_pairs);

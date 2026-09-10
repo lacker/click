@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn context_free_disjunction_simp_expands_choice_and_rechecks() {
+    for (goal, choice) in [
+        ("1 == 1 or 2 == 3", "left();"),
+        ("2 == 3 or 1 == 1", "right();"),
+    ] {
+        let source = format!(
+            r#"
+theorem choose_reflexive_arm() {{
+    ensures {goal} by {{ simp(); }}
+}}
+"#
+        );
+        verify_c0_sources(&source, &[]).expect("smart disjunction proof should verify");
+        let offset = source.find("simp();").expect("expected smart tactic");
+        let position = expansion::position_at_offset(&source, offset);
+        let expanded =
+            expand_c0_tactic_source_at(&source, &[], position.line, position.column).unwrap();
+        assert!(expanded.contains("have 1 == 1 by"), "{expanded}");
+        assert!(expanded.contains(choice), "{expanded}");
+        assert!(!expanded.contains("simp();"), "{expanded}");
+        verify_c0_sources(&expanded, &[])
+            .expect("expanded disjunction choice should independently recheck");
+        let wrong_choice = if choice == "left();" {
+            expanded.replacen("left();", "right();", 1)
+        } else {
+            expanded.replacen("right();", "left();", 1)
+        };
+        verify_c0_sources(&wrong_choice, &[])
+            .expect_err("changing the retained disjunct choice must invalidate the proof");
+    }
+}
+
+#[test]
 fn deferred_preservation_simp_expands_at_its_original_source_site() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/owned-vector/vector.click");
@@ -7962,12 +7995,18 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
                 then {
                     open(cell(p)) {
                         step();
-                        have value == old(p[0]) or value == 0 by { normalize(); }
+                        have value == old(p[0]) or value == 0 by {
+                            have value == old(p[0]) by { normalize(); }
+                            left();
+                        }
                     }
                 }
                 else {
                     step();
-                    have value == old(p[0]) or value == 0 by { normalize(); }
+                    have value == old(p[0]) or value == 0 by {
+                        have value == 0 by { normalize(); }
+                        right();
+                    }
                 }
             }
             step();
@@ -8086,12 +8125,18 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
                         then {
                             open(marker(flag)) {
                                 step();
-                                have value == old(p[0]) or value == 0 by { normalize(); }
+                                have value == old(p[0]) or value == 0 by {
+                                    have value == old(p[0]) by { normalize(); }
+                                    left();
+                                }
                             }
                         }
                         else {
                             step();
-                            have value == old(p[0]) or value == 0 by { normalize(); }
+                            have value == old(p[0]) or value == 0 by {
+                                have value == 0 by { normalize(); }
+                                right();
+                            }
                         }
                     }
                 }

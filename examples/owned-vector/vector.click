@@ -322,7 +322,7 @@ int32 vector_grow(struct vector* owner) {
             normalize();
         }
         have result == 0 or result == 1 by {
-            normalize();
+            left();
         }
         have owner->len == old(owner->len) by {
             normalize();
@@ -391,7 +391,7 @@ int32 vector_grow(struct vector* owner) {
             normalize();
         }
         have result == 0 or result == 1 by {
-            normalize();
+            right();
         }
         have owner->len == old(owner->len) by {
             normalize();
@@ -526,7 +526,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 normalize();
             }
             have result == 0 or result == 1 by {
-                normalize();
+                left();
             }
             have result == 0 implies owner->len == old(owner->len) by {
                 intro();
@@ -641,7 +641,8 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 normalize();
             }
             have result == 0 or result == 1 by {
-                normalize();
+                have result == 1 by { normalize(); }
+                right();
             }
             have result == 0 implies owner->len == old(owner->len) by {
                 normalize();
@@ -784,7 +785,7 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             normalize();
         }
         have result == 0 or result == 1 by {
-            normalize();
+            right();
         }
         have result == 0 implies owner->len == old(owner->len) by {
             normalize();

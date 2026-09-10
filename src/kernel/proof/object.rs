@@ -663,11 +663,9 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         let (goal, _) = self
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
-        super::fact_reasoning::normalizes_context_free_without_top_level_conjunction(
-            goal.proposition(),
-        )
-        .then(|| self.closed_focused())
-        .ok_or(PropositionCloseError::DoesNotNormalize)
+        super::fact_reasoning::normalizes_context_free_leaf(goal.proposition())
+            .then(|| self.closed_focused())
+            .ok_or(PropositionCloseError::DoesNotNormalize)
     }
 
     pub(crate) fn apply_normalize_using(
