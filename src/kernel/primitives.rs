@@ -2406,6 +2406,7 @@ pub enum ExecutionLimit {
     FunctionCalls,
     LoopUnrolls,
     Paths,
+    UnsupportedIntegerExistentialBody,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

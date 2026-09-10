@@ -553,7 +553,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             // implication would make a false guard vacuously prove the body.
             // The pure Integer fragment currently accepts only total bodies.
             if !path.facts.is_empty() || !path.obligations.is_empty() {
-                return Err(ExecutionLimit::Paths);
+                return Err(ExecutionLimit::UnsupportedIntegerExistentialBody);
             }
             Ok(SpecPropositionPath {
                 proposition: Proposition::Exists {
@@ -4744,5 +4744,44 @@ mod integer_quantifier_tests {
         };
         assert_eq!(left, IntegerTerm::var(Variable(1)));
         assert_eq!(right, IntegerTerm::var(Variable(2)));
+    }
+
+    #[test]
+    fn integer_existential_rejects_conditional_path_facts() {
+        let mut state = CState::new();
+        state
+            .locals
+            .set("flag", int32(Bitvector32Term::Variable(Variable(900))));
+        let proposition = SpecProposition::ExistsInteger {
+            name: "z".into(),
+            variable: Variable(901),
+            body: Box::new(SpecProposition::Comparison {
+                left: SpecExpression::CExpression(CExpression::Conditional {
+                    condition: Box::new(CExpression::Variable("flag".into())),
+                    then_branch: Box::new(CExpression::Divide(
+                        Box::new(CExpression::Value(int32(Bitvector32Term::constant(
+                            0x8000_0000,
+                        )))),
+                        Box::new(CExpression::Value(int32(Bitvector32Term::constant(
+                            u32::MAX,
+                        )))),
+                    )),
+                    else_branch: Box::new(CExpression::Value(int32(Bitvector32Term::constant(0)))),
+                }),
+                operator: CComparisonOperator::Equal,
+                right: SpecExpression::Value(int32(Bitvector32Term::constant(1))),
+            }),
+        };
+        let result = lower_spec_proposition_at_state_with_loop_entry(
+            &state,
+            &proposition,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        );
+        assert_eq!(
+            result,
+            Err(ExecutionLimit::UnsupportedIntegerExistentialBody)
+        );
     }
 }
