@@ -2104,11 +2104,9 @@ impl AnnotationLowerer<'_> {
                         );
                     }
                     return Ok(SpecProposition::IntegerComparison {
-                        left: self
-                            .lower_contract_integer_to_spec(left, &environment.integer_values)?,
+                        left: self.lower_contract_integer_to_spec(left, environment)?,
                         operator: integer_comparison_operator(*operator)?,
-                        right: self
-                            .lower_contract_integer_to_spec(right, &environment.integer_values)?,
+                        right: self.lower_contract_integer_to_spec(right, environment)?,
                     });
                 }
                 let has_algebraic = contract_expression_is_algebraic(
@@ -2252,6 +2250,7 @@ impl AnnotationLowerer<'_> {
                 .click_function_environment
                 .get(name)
                 .is_some_and(|function| function.return_type() == &ClickType::Integer),
+            ContractExpression::AlgebraicMatch { .. } => true,
             _ => false,
         }
     }
@@ -2259,12 +2258,43 @@ impl AnnotationLowerer<'_> {
     fn lower_contract_integer_to_spec(
         &mut self,
         expression: &ContractExpression,
-        integer_values: &crate::persistent::PersistentMap<
-            String,
-            crate::kernel::SpecIntegerExpression,
-        >,
+        environment: &SpecElaborationContext,
     ) -> Result<crate::kernel::SpecIntegerExpression, String> {
-        lower_contract_integer_to_spec(expression, integer_values)
+        if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
+            let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
+            if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =
+                &scrutinee.node
+            {
+                let arm = arms
+                    .iter()
+                    .find(|arm| arm.variant == *variant)
+                    .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
+                let mut values = environment.integer_values.clone();
+                for (name, field) in arm.bindings.iter().zip(fields) {
+                    if let crate::kernel::SpecAlgebraicValue::Integer(value) = field {
+                        values.insert(name.clone(), value.clone());
+                    }
+                }
+                let mut body_environment = environment.clone();
+                body_environment.integer_values = values;
+                return self.lower_contract_integer_to_spec(&arm.body, &body_environment);
+            }
+            let mut lowered_arms = Vec::new();
+            for arm in arms {
+                let body = self.lower_contract_integer_to_spec(&arm.body, environment)?;
+                lowered_arms.push(crate::kernel::SpecIntegerMatchArm {
+                    variant: arm.variant.clone(),
+                    bindings: arm.bindings.clone(),
+                    binding_types: Vec::new(),
+                    body: Box::new(body),
+                });
+            }
+            return Ok(crate::kernel::SpecIntegerExpression::AlgebraicMatch {
+                scrutinee: Box::new(scrutinee),
+                arms: lowered_arms,
+            });
+        }
+        lower_contract_integer_to_spec(expression, &environment.integer_values)
     }
 
     fn lower_contract_expression_to_spec(
@@ -2794,7 +2824,7 @@ impl AnnotationLowerer<'_> {
                             .lower_contract_expression_to_spec(argument, environment)
                             .map(SpecAlgebraicValue::C),
                         AlgebraicValueType::Integer => self
-                            .lower_contract_integer_to_spec(argument, &environment.integer_values)
+                            .lower_contract_integer_to_spec(argument, environment)
                             .map(SpecAlgebraicValue::Integer),
                         AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
                             self.lower_contract_algebraic_to_spec(argument, environment)

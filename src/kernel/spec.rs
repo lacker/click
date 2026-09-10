@@ -774,6 +774,104 @@ fn evaluate_spec_integer_expression_paths(
             budget,
             IntegerTerm::multiply,
         ),
+        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+            let mut result = Vec::new();
+            for path in evaluate_spec_algebraic_at_state_with_bindings(
+                state,
+                scrutinee,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )? {
+                let AlgebraicTermNode::Constructor { variant, fields } = &path.value.node else {
+                    return Err(ExecutionLimit::Paths);
+                };
+                let arm = arms
+                    .iter()
+                    .find(|arm| arm.variant == *variant)
+                    .ok_or(ExecutionLimit::Paths)?;
+                let mut substitutions = BTreeMap::new();
+                for (name, field) in arm.bindings.iter().zip(fields) {
+                    if let AlgebraicValue::Integer(term) = field {
+                        substitutions.insert(name.clone(), term.clone());
+                    }
+                }
+                let body = substitute_integer_expression(&arm.body, &substitutions);
+                for mut body_path in evaluate_spec_integer_expression_paths(
+                    state,
+                    &body,
+                    loop_entry_state,
+                    assumptions,
+                    algebraic_bindings,
+                    budget,
+                )? {
+                    body_path.facts.extend(path.facts.clone());
+                    body_path.obligations.extend(path.obligations.clone());
+                    result.push(body_path);
+                }
+            }
+            Ok(result)
+        }
+    }
+}
+
+fn substitute_integer_expression(
+    expression: &SpecIntegerExpression,
+    substitutions: &BTreeMap<String, IntegerTerm>,
+) -> SpecIntegerExpression {
+    match expression {
+        SpecIntegerExpression::Term(term) => substitute_integer_term(term, substitutions),
+        SpecIntegerExpression::FromMachine(value) => {
+            SpecIntegerExpression::FromMachine(value.clone())
+        }
+        SpecIntegerExpression::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
+            substitute_integer_expression(inner, substitutions),
+        )),
+        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
+            Box::new(substitute_integer_expression(left, substitutions)),
+            Box::new(substitute_integer_expression(right, substitutions)),
+        ),
+        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
+            Box::new(substitute_integer_expression(left, substitutions)),
+            Box::new(substitute_integer_expression(right, substitutions)),
+        ),
+        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
+            Box::new(substitute_integer_expression(left, substitutions)),
+            Box::new(substitute_integer_expression(right, substitutions)),
+        ),
+        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+            SpecIntegerExpression::AlgebraicMatch {
+                scrutinee: scrutinee.clone(),
+                arms: arms.clone(),
+            }
+        }
+    }
+}
+
+fn substitute_integer_term(
+    term: &IntegerTerm,
+    substitutions: &BTreeMap<String, IntegerTerm>,
+) -> SpecIntegerExpression {
+    match term {
+        IntegerTerm::Variable(_) => SpecIntegerExpression::Term(term.clone()),
+        IntegerTerm::Constant(_) => SpecIntegerExpression::Term(term.clone()),
+        IntegerTerm::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
+            substitute_integer_term(inner.as_ref(), substitutions),
+        )),
+        IntegerTerm::Add(left, right) => SpecIntegerExpression::Add(
+            Box::new(substitute_integer_term(left.as_ref(), substitutions)),
+            Box::new(substitute_integer_term(right.as_ref(), substitutions)),
+        ),
+        IntegerTerm::Subtract(left, right) => SpecIntegerExpression::Subtract(
+            Box::new(substitute_integer_term(left.as_ref(), substitutions)),
+            Box::new(substitute_integer_term(right.as_ref(), substitutions)),
+        ),
+        IntegerTerm::Multiply(left, right) => SpecIntegerExpression::Multiply(
+            Box::new(substitute_integer_term(left.as_ref(), substitutions)),
+            Box::new(substitute_integer_term(right.as_ref(), substitutions)),
+        ),
+        IntegerTerm::Machine(_) => SpecIntegerExpression::Term(term.clone()),
     }
 }
 

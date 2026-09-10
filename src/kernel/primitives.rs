@@ -872,6 +872,18 @@ pub enum SpecIntegerExpression {
     Add(Box<Self>, Box<Self>),
     Subtract(Box<Self>, Box<Self>),
     Multiply(Box<Self>, Box<Self>),
+    AlgebraicMatch {
+        scrutinee: Box<SpecAlgebraicExpression>,
+        arms: Vec<SpecIntegerMatchArm>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SpecIntegerMatchArm {
+    pub variant: String,
+    pub bindings: Vec<String>,
+    pub binding_types: Vec<AlgebraicValueType>,
+    pub body: Box<SpecIntegerExpression>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
