@@ -171,9 +171,11 @@ aggregate objects and aggregate arrays, plus initialized-definition precedence.
 aggregate-array bounds remaining rejected during linking.
 `mdtests/file_scope_duplicate_aggregate_link_errors.md` covers multiple
 initialized aggregate definitions remaining rejected during linking.
-The three
-`string_literals` tests for stable read-only literal storage, call-summary
-propagation, and indirect-write rejection.
+The three `string_literals` tests for stable read-only literal storage,
+call-summary propagation, and indirect-write rejection, plus
+`mdtests/concatenated_string_literals.md` and
+`mdtests/concatenated_string_literals_rejected.md` for C's adjacent-literal
+concatenation and the retained escape boundary.
 
 ## Acceptance criteria
 

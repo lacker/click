@@ -15164,9 +15164,22 @@ impl Parser {
                 }
             }
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
-            Some(Token::StringLiteral(bytes)) => Ok(C0Expression::Variable(
-                self.fresh_string_literal_name(bytes),
-            )),
+            Some(Token::StringLiteral(mut bytes)) => {
+                // C concatenates adjacent string-literal tokens during
+                // translation phase 6. Keep this at the source boundary so
+                // one concatenated sequence still gets one stable literal
+                // object, rather than exposing an implementation-dependent
+                // pointer relationship between its pieces.
+                while matches!(self.peek(), Some(Token::StringLiteral(_))) {
+                    let Some(Token::StringLiteral(next)) = self.next() else {
+                        unreachable!("the peeked token was a string literal")
+                    };
+                    bytes.extend(next);
+                }
+                Ok(C0Expression::Variable(
+                    self.fresh_string_literal_name(bytes),
+                ))
+            }
             Some(Token::LParen) => {
                 let expression = self.parse_expression()?;
                 self.expect(Token::RParen)?;

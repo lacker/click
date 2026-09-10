@@ -2698,6 +2698,38 @@ fn c0_collects_string_literals_with_terminators() {
 }
 
 #[test]
+fn c0_concatenates_adjacent_string_literals_before_lowering() {
+    let functions = syntax::parse_functions(
+        r#"
+        uint8* literal() {
+            return "hello, " /* comments do not break C concatenation */ "world";
+        }
+        "#,
+    )
+    .expect("adjacent basic string literals should concatenate");
+
+    let function = &functions[0];
+    assert_eq!(function.string_literals().len(), 1);
+    assert_eq!(function.string_literals()[0].bytes(), b"hello, world\0");
+}
+
+#[test]
+fn c0_rejects_unsupported_string_literal_escapes_in_concatenated_sequences() {
+    let error = syntax::parse_functions(
+        r#"
+        uint8* literal() {
+            return "hello" "\x20world";
+        }
+        "#,
+    )
+    .expect_err("unsupported escapes must remain rejected in concatenated literals");
+    assert!(
+        error.message().contains("unsupported string escape"),
+        "{error}"
+    );
+}
+
+#[test]
 fn c0_accepts_zero_initialized_static_local_multidimensional_arrays() {
     syntax::parse_functions(
         r#"
