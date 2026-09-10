@@ -2884,17 +2884,53 @@ impl Parser {
                 ));
             }
             self.expect(Token::Colon)?;
-            let parsed_type = self.parse_type()?;
-            if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
-                return Err(self.error("only pointer-to-struct types are supported"));
+            let (click_type, parsed_type) = self.parse_click_type()?;
+            if let Some(parsed_type) = &parsed_type {
+                if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
+                    return Err(self.error("only pointer-to-struct types are supported"));
+                }
             }
-            let c_type = parsed_type.c_type;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
+            let previous_integer_context = self.integer_literal_context;
+            let integer_was_bound = self.current_integer_params.contains(&name);
+            let integer_let_was_bound = self.current_integer_lets.contains(&name);
+            let c_was_bound = self.current_contract_bindings.contains(&name);
+            match &click_type {
+                ClickType::Integer => {
+                    self.current_contract_bindings.remove(&name);
+                    self.current_integer_params.insert(name.clone());
+                    self.integer_literal_context = true;
+                }
+                ClickType::C(_) => {
+                    self.current_integer_params.remove(&name);
+                    self.current_integer_lets.remove(&name);
+                    // Keep C quantifier references on the legacy C-fragment
+                    // path. Inserting a contract binding here changes the
+                    // lowering of existing C quantifier bodies.
+                    self.current_contract_bindings.remove(&name);
+                    self.integer_literal_context = false;
+                }
+                _ => return Err(self.error("quantifier type must be a C type or Integer")),
+            }
             let body = self.parse_proposition()?;
             self.expect(Token::RBrace)?;
+            self.integer_literal_context = previous_integer_context;
+            if integer_was_bound {
+                self.current_integer_params.insert(name.clone());
+            } else {
+                self.current_integer_params.remove(&name);
+            }
+            if integer_let_was_bound {
+                self.current_integer_lets.insert(name.clone());
+            }
+            if c_was_bound {
+                self.current_contract_bindings.insert(name.clone());
+            } else {
+                self.current_contract_bindings.remove(&name);
+            }
             return Ok(ClickProposition::ForAll {
-                click_type: ClickType::C(c_type),
+                click_type,
                 name,
                 body: Box::new(body),
             });
@@ -2910,17 +2946,50 @@ impl Parser {
                 ));
             }
             self.expect(Token::Colon)?;
-            let parsed_type = self.parse_type()?;
-            if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
-                return Err(self.error("only pointer-to-struct types are supported"));
+            let (click_type, parsed_type) = self.parse_click_type()?;
+            if let Some(parsed_type) = &parsed_type {
+                if parsed_type.struct_name.is_some() && !parsed_type.struct_pointer {
+                    return Err(self.error("only pointer-to-struct types are supported"));
+                }
             }
-            let c_type = parsed_type.c_type;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
+            let previous_integer_context = self.integer_literal_context;
+            let integer_was_bound = self.current_integer_params.contains(&name);
+            let integer_let_was_bound = self.current_integer_lets.contains(&name);
+            let c_was_bound = self.current_contract_bindings.contains(&name);
+            match &click_type {
+                ClickType::Integer => {
+                    self.current_contract_bindings.remove(&name);
+                    self.current_integer_params.insert(name.clone());
+                    self.integer_literal_context = true;
+                }
+                ClickType::C(_) => {
+                    self.current_integer_params.remove(&name);
+                    self.current_integer_lets.remove(&name);
+                    self.current_contract_bindings.remove(&name);
+                    self.integer_literal_context = false;
+                }
+                _ => return Err(self.error("quantifier type must be a C type or Integer")),
+            }
             let body = self.parse_proposition()?;
             self.expect(Token::RBrace)?;
+            self.integer_literal_context = previous_integer_context;
+            if integer_was_bound {
+                self.current_integer_params.insert(name.clone());
+            } else {
+                self.current_integer_params.remove(&name);
+            }
+            if integer_let_was_bound {
+                self.current_integer_lets.insert(name.clone());
+            }
+            if c_was_bound {
+                self.current_contract_bindings.insert(name.clone());
+            } else {
+                self.current_contract_bindings.remove(&name);
+            }
             return Ok(ClickProposition::Exists {
-                click_type: ClickType::C(c_type),
+                click_type,
                 name,
                 body: Box::new(body),
             });
@@ -6932,5 +7001,54 @@ fn requirement_object_alignment_facts(
         }
         Requirement::Resource(clause) => out.extend(object_alignment_fact(clause, struct_layouts)),
         Requirement::LoadableSegment { .. } | Requirement::Proposition(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod integer_quantifier_parser_tests {
+    use super::*;
+
+    #[test]
+    fn parses_integer_forall_and_restores_literal_context() {
+        let mut parser =
+            Parser::new("forall (z: Integer) { z + 100000000000000000000 > z }").unwrap();
+        let proposition = parser.parse_proposition().unwrap();
+        assert!(matches!(
+            proposition,
+            ClickProposition::ForAll {
+                click_type: ClickType::Integer,
+                ..
+            }
+        ));
+        assert!(parser.current_integer_params.is_empty());
+        assert!(!parser.integer_literal_context);
+    }
+
+    #[test]
+    fn nested_c_binder_restores_integer_shadowing() {
+        let mut parser =
+            Parser::new("forall (z: Integer) { exists (z: int32) { z == 0 } }").unwrap();
+        let proposition = parser.parse_proposition().unwrap();
+        assert!(matches!(
+            proposition,
+            ClickProposition::ForAll {
+                click_type: ClickType::Integer,
+                ..
+            }
+        ));
+        assert!(parser.current_integer_params.is_empty());
+        assert!(parser.current_contract_bindings.is_empty());
+    }
+
+    #[test]
+    fn c_shadow_rejects_wide_literal_but_outer_integer_remains_visible() {
+        let mut rejected =
+            Parser::new("forall (z: Integer) { exists (z: int32) { z == 100000000000000000000 } }")
+                .unwrap();
+        assert!(rejected.parse_proposition().is_err());
+
+        let mut restored =
+            Parser::new("forall (z: Integer) { exists (z: int32) { z == 0 } and z > 0 }").unwrap();
+        assert!(restored.parse_proposition().is_ok());
     }
 }

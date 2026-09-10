@@ -1,9 +1,6 @@
 //! Contextual Surface Click lowering for checked proof operations.
 
-use super::pure_theorems::{
-    lower_pure_theorem_proposition, lower_pure_theorem_proposition_with_algebraic_values,
-    lower_pure_theorem_proposition_with_integer_values,
-};
+use super::pure_theorems::lower_pure_theorem_proposition_with_algebraic_and_integer_values;
 use super::*;
 
 pub(super) fn proposition_uses_integer(
@@ -81,33 +78,22 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                if proposition_uses_integer(surface, &integer_values) {
-                    lower_pure_theorem_proposition_with_integer_values(
-                        context.claim_label,
-                        surface,
-                        &context.theorem_context.values,
-                        &integer_values,
-                        &context.theorem_context.array_refs,
-                        &context.theorem_context.memory,
-                        context.predicate_environment,
-                        context.click_function_environment,
-                    )
-                } else {
-                    lower_pure_theorem_proposition_with_algebraic_values(
-                        context.claim_label,
-                        surface,
-                        &context.theorem_context.values,
-                        &context.theorem_context.array_refs,
-                        context
-                            .structural_induction_setup
-                            .as_ref()
-                            .map(|setup| &setup.algebraic_values)
-                            .unwrap_or(&BTreeMap::new()),
-                        &context.theorem_context.memory,
-                        context.predicate_environment,
-                        context.click_function_environment,
-                    )
-                }
+                let empty_algebraic_values = BTreeMap::new();
+                lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+                    context.claim_label,
+                    surface,
+                    &context.theorem_context.values,
+                    &context.theorem_context.array_refs,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&empty_algebraic_values),
+                    integer_values,
+                    &context.theorem_context.memory,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
@@ -233,32 +219,26 @@ impl<'a> Proof<'a> {
                     .proposition_obligation()
                     .map(|goal| &goal.integer_values)
                     .unwrap_or(&context.theorem_context.integer_values);
-                let result = if proposition_uses_integer(surface, &integer_values) {
-                    lower_pure_theorem_proposition_with_integer_values(
-                        context.claim_label,
-                        surface,
-                        &context.theorem_context.values,
-                        &integer_values,
-                        &context.theorem_context.array_refs,
-                        &context.theorem_context.memory,
-                        context.predicate_environment,
-                        context.click_function_environment,
-                    )
-                } else {
-                    lower_pure_theorem_proposition(
-                        context.claim_label,
-                        surface,
-                        &context.theorem_context.values,
-                        &context.theorem_context.array_refs,
-                        &context.theorem_context.memory,
-                        context.predicate_environment,
-                        context.click_function_environment,
-                    )
-                };
-                result.map_err(|message| {
-                    self.step_error(format!("could not lower {description}: {message}"))
-                })
+                let empty_algebraic_values = BTreeMap::new();
+                lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+                    context.claim_label,
+                    surface,
+                    &context.theorem_context.values,
+                    &context.theorem_context.array_refs,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&empty_algebraic_values),
+                    integer_values,
+                    &context.theorem_context.memory,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
             }
+            .map_err(|message| {
+                self.step_error(format!("could not lower {description}: {message}"))
+            }),
             ProofContext::FixedState(context) => {
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
                 lower_fixed_state_proposition_with_assumptions(

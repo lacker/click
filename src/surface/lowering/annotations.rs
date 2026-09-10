@@ -736,6 +736,22 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
     let mut context = context;
     context.algebraic_values = algebraic_values.into_iter().collect();
     context.integer_values = integer_values.clone();
+    // Reserve only captured Integer values referenced by this proposition.
+    // This one source walk keeps nested binders from rescanning the context.
+    let mut referenced = BTreeSet::new();
+    collect_click_proposition_referenced_names(proposition, &mut referenced);
+    for name in referenced {
+        if let Some(crate::kernel::SpecIntegerExpression::Term(term)) = integer_values.get(&name)
+            && let Some(variable) = term.max_variable()
+        {
+            lowerer.next_quantifier_variable = lowerer.next_quantifier_variable.max(
+                variable
+                    .0
+                    .checked_add(1)
+                    .ok_or("quantifier variable identity exhausted")?,
+            );
+        }
+    }
     lowerer.click_proposition_to_spec_proposition(proposition, &context)
 }
 
@@ -1714,7 +1730,30 @@ impl AnnotationLowerer<'_> {
                 body,
             } => {
                 let variable = Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable += 1;
+                self.next_quantifier_variable = self
+                    .next_quantifier_variable
+                    .checked_add(1)
+                    .ok_or("quantifier variable identity exhausted")?;
+                let mut body_environment = environment.clone();
+                body_environment.integer_values.remove(name);
+                body_environment.values.remove(name);
+                body_environment.algebraic_values.remove(name);
+                body_environment.array_refs.remove(name);
+                if *c_type == ClickType::Integer {
+                    body_environment.integer_values.insert(
+                        name.clone(),
+                        crate::kernel::SpecIntegerExpression::Term(
+                            crate::kernel::IntegerTerm::var(variable),
+                        ),
+                    );
+                    let body =
+                        self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                    return Ok(SpecProposition::ForAllInteger {
+                        name: name.clone(),
+                        variable,
+                        body: Box::new(body),
+                    });
+                }
                 let c_type = c_type
                     .c_type()
                     .ok_or("only C quantifier binders are currently supported")?
@@ -1730,7 +1769,6 @@ impl AnnotationLowerer<'_> {
                     }
                     _ => return Err("only int32 and pointer binders are supported".to_string()),
                 };
-                let mut body_environment = environment.clone();
                 body_environment
                     .values
                     .insert(name.clone(), SpecExpression::Value(value.clone()));
@@ -1776,7 +1814,30 @@ impl AnnotationLowerer<'_> {
                 body,
             } => {
                 let variable = Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable += 1;
+                self.next_quantifier_variable = self
+                    .next_quantifier_variable
+                    .checked_add(1)
+                    .ok_or("quantifier variable identity exhausted")?;
+                let mut body_environment = environment.clone();
+                body_environment.integer_values.remove(name);
+                body_environment.values.remove(name);
+                body_environment.algebraic_values.remove(name);
+                body_environment.array_refs.remove(name);
+                if *c_type == ClickType::Integer {
+                    body_environment.integer_values.insert(
+                        name.clone(),
+                        crate::kernel::SpecIntegerExpression::Term(
+                            crate::kernel::IntegerTerm::var(variable),
+                        ),
+                    );
+                    let body =
+                        self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                    return Ok(SpecProposition::ExistsInteger {
+                        name: name.clone(),
+                        variable,
+                        body: Box::new(body),
+                    });
+                }
                 let c_type = c_type
                     .c_type()
                     .ok_or("only C quantifier binders are currently supported")?
@@ -1792,7 +1853,6 @@ impl AnnotationLowerer<'_> {
                     }
                     _ => return Err("only int32 and pointer binders are supported".to_string()),
                 };
-                let mut body_environment = environment.clone();
                 body_environment
                     .values
                     .insert(name.clone(), SpecExpression::Value(value.clone()));
@@ -4085,5 +4145,60 @@ fn instantiate_algebraic_kernel_field_type(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         }),
+    }
+}
+
+#[cfg(test)]
+mod integer_source_quantifier_tests {
+    use super::*;
+    use crate::kernel::{IntegerTerm, SpecIntegerExpression};
+
+    #[test]
+    fn integer_quantifier_does_not_capture_a_caller_binding() {
+        let file = crate::surface::parse(
+            "theorem capture(x: Integer) { ensures forall (z: Integer) { x == z }; }",
+        )
+        .unwrap();
+        let Ensure::Proposition(proposition) = file.theorem_definitions()[0].ensures()[0].ensure()
+        else {
+            panic!("expected proposition")
+        };
+        let integer_values = [(
+            "x".to_string(),
+            SpecIntegerExpression::Term(IntegerTerm::var(Variable(2_000_000))),
+        )]
+        .into_iter()
+        .collect();
+        let state = CState::new();
+        let lowered = elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
+            proposition,
+            BTreeMap::new(),
+            &state,
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &integer_values,
+            None,
+            &RecordedSnapshots::new(),
+            &PureFactContext::new(),
+            &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(&[]),
+            BTreeSet::new(),
+        )
+        .unwrap();
+        let SpecProposition::ForAllInteger { variable, body, .. } = lowered else {
+            panic!("expected Integer forall")
+        };
+        assert_ne!(variable, Variable(2_000_000));
+        let SpecProposition::IntegerComparison {
+            left: SpecIntegerExpression::Term(left),
+            right: SpecIntegerExpression::Term(right),
+            ..
+        } = *body
+        else {
+            panic!("expected Integer comparison")
+        };
+        assert_eq!(left, IntegerTerm::var(Variable(2_000_000)));
+        assert_eq!(right, IntegerTerm::var(variable));
     }
 }

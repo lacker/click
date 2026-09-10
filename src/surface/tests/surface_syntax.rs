@@ -2658,3 +2658,41 @@ fn parses_sequence_literals_snapshots_and_concatenation() {
         "([dst[0], dst[1]] ++ [dst[2]])"
     );
 }
+
+#[test]
+fn integer_source_quantifier_assumptions_are_sorted_and_scoped() {
+    let source = r#"
+        theorem universal_assumption() {
+            requires forall (z: Integer) { z + 1 > z };
+            ensures forall (z: Integer) { z + 1 > z } by { assumption(); }
+        }
+        theorem existential_assumption() {
+            requires exists (z: Integer) { z == 1000000000000000000000000 };
+            ensures exists (z: Integer) { z == 1000000000000000000000000 } by { assumption(); }
+        }
+        theorem shadow_c(z: int32) {
+            requires forall (z: Integer) { z == z };
+            ensures forall (z: Integer) { z == z } by { assumption(); }
+        }
+        theorem shadow_integer(z: Integer) {
+            requires forall (z: int32) { z == z };
+            ensures forall (z: int32) { z == z } by { assumption(); }
+        }
+    "#;
+    verify_c0_sources(source, &[]).unwrap();
+}
+
+#[test]
+fn integer_source_quantifier_rejects_mixed_comparisons() {
+    let source = r#"
+        theorem mixed(x: int32) {
+            ensures forall (z: Integer) { x == z } by { simp(); }
+        }
+    "#;
+    let error = verify_c0_sources(source, &[]).unwrap_err();
+    assert!(
+        error.message().contains("cannot be compared with C values"),
+        "{}",
+        error.message()
+    );
+}
