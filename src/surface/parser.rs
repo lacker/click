@@ -20,6 +20,16 @@ pub(super) struct QualifiedCObject {
 pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
 pub(super) const MATCH_NESTING_LIMIT: usize = 16;
 
+/// The index shape and scalar element type of a C global or static array
+/// visible to one function's contract. Resource lowering only knows parameter
+/// types, so the element type travels with the name to give a byte or
+/// halfword slice its physical element width instead of the `int32` default.
+#[derive(Clone, Debug)]
+pub(super) struct GlobalArrayShape {
+    pub(super) shape: Vec<u32>,
+    pub(super) element_type: CType,
+}
+
 pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
     Parser::new(source)?.parse_file()
 }
@@ -30,7 +40,7 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
-    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
+    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
     qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
 ) -> Result<ClickFile, ClickError> {
     let mut parser = Parser::new_with_layouts_and_aggregate_objects(
@@ -185,10 +195,10 @@ struct Parser {
     current_struct_params: BTreeMap<String, String>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
-    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
+    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
     current_aggregate_objects: BTreeMap<String, String>,
     current_struct_array_params: BTreeSet<String>,
-    current_global_array_shapes: BTreeMap<String, Vec<u32>>,
+    current_global_array_shapes: BTreeMap<String, GlobalArrayShape>,
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
     current_click_type_parameters: BTreeSet<String>,
     current_contract_bindings: BTreeSet<String>,
@@ -362,7 +372,7 @@ impl Parser {
         union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
         aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
         aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
-        global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, Vec<u32>>>,
+        global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
     ) -> Result<Self, ClickError> {
         let (tokens, positions) = tokenize(source)?;
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
@@ -788,10 +798,32 @@ impl Parser {
             ));
         }
         let expression = self.parse_ensure_primary()?.to_kernel_expression();
-        Ok((
-            ContractExpression::CFragment(expression.clone()),
-            expression,
-        ))
+        // Keep the source spelling, but give a global array's pointer its
+        // scalar element type. Resource lowering otherwise knows only
+        // parameter types and would default a global byte slice to `int32`
+        // cells, letting `owns bytes[0..1]` authorize the neighboring byte.
+        let lowered = self.retype_global_array_pointer(&expression);
+        Ok((ContractExpression::CFragment(expression), lowered))
+    }
+
+    /// Wraps a bare global-array name in a cast to its element pointer type.
+    /// A parameter shadowing the global is not in the per-function shape map,
+    /// so it keeps the parameter's own type.
+    fn retype_global_array_pointer(&self, expression: &CExpression) -> CExpression {
+        let CExpression::Variable(name) = expression else {
+            return expression.clone();
+        };
+        match self
+            .current_global_array_shapes
+            .get(name)
+            .and_then(|array| array.element_type.pointer_to())
+        {
+            Some(target_type) => CExpression::Cast {
+                expression: Box::new(expression.clone()),
+                target_type,
+            },
+            None => expression.clone(),
+        }
     }
 
     fn parse_predicate_definition(&mut self) -> Result<PredicateDefinition, ClickError> {
@@ -1511,11 +1543,16 @@ impl Parser {
             .unwrap_or_default();
         let previous_aggregate_objects =
             std::mem::replace(&mut self.current_aggregate_objects, aggregate_objects);
+        // A parameter shadowing a file-scope array hides it inside this
+        // function, for indexing shapes and element widths alike.
         let global_array_shapes = self
             .global_array_shapes_by_function
             .get(signature.name())
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(name, _)| !parameter_names.contains(name))
+            .collect();
         let previous_global_array_shapes =
             std::mem::replace(&mut self.current_global_array_shapes, global_array_shapes);
         let mut visible_struct_array_params = struct_array_params;
@@ -4318,7 +4355,7 @@ impl Parser {
             | ContractExpression::CFragment(CExpression::Variable(name)) => self
                 .current_global_array_shapes
                 .get(name)
-                .cloned()
+                .map(|array| array.shape.clone())
                 .or_else(|| {
                     self.qualified_object(name)
                         .and_then(|object| object.array_shape.clone())
@@ -5309,9 +5346,10 @@ impl Parser {
                 .qualified_object(name)
                 .and_then(|object| object.array_shape.clone()),
             ContractExpression::Binding(name)
-            | ContractExpression::CFragment(CExpression::Variable(name)) => {
-                self.current_global_array_shapes.get(name).cloned()
-            }
+            | ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .current_global_array_shapes
+                .get(name)
+                .map(|array| array.shape.clone()),
             _ => None,
         };
         loop {

@@ -50,6 +50,7 @@ pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::initialize_c_program_storage;
 pub(crate) use functions::modified_by_value_aggregate_parameter_with_current_ensure_in_source;
 pub(crate) use functions::stable_symbolic_pointer_cell_value;
+pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use loops::{c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge};

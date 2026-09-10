@@ -1187,11 +1187,69 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             &resource_environment,
             !has_frontier_loop_rules,
         )?;
+        // A resource-bearing contract without an effect clause frames caller
+        // memory through the resource transition at each store, but file-scope
+        // and static storage is not external memory: its writes must lie inside
+        // the owned footprint (startup resources, owned ranges, and composite
+        // bodies). Otherwise a view, or ownership of a neighboring cell, would
+        // authorize a store into storage the contract does not own.
+        if function_block.effects().is_empty()
+            && (!contract_function.contract_mutable().is_empty()
+                || contract_function.resource_derived_mutable_frame())
+        {
+            for verified in &function_verified {
+                for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
+                    let Proposition::CFunctionVerifies { outcome, .. } =
+                        implication_body(path.theorem().proposition())
+                    else {
+                        return Err(ClickError::new(format!(
+                            "could not check storage writes for `{}`: checked path has no function outcome",
+                            function_block.signature.name()
+                        )));
+                    };
+                    if !matches!(outcome, CFunctionOutcome::Return { .. }) {
+                        continue;
+                    }
+                    let mut available_pure_facts = certification_facts.clone();
+                    available_pure_facts
+                        .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                    let assumptions = assumptions_from_propositions(&available_pure_facts);
+                    match crate::kernel::storage_writes_outside_owned_footprint(
+                        &contract_function,
+                        &certification_state,
+                        path.effect_facts(),
+                        &assumptions,
+                    ) {
+                        Ok(Some(outside)) if outside.is_empty() => {}
+                        Ok(Some(outside)) => {
+                            return Err(ClickError::new(format!(
+                                "`{}` path {path_index}: write to storage outside the owned footprint: {}; own the written cells or declare them in a `mutable` clause",
+                                function_block.signature.name(),
+                                outside.join(", ")
+                            )));
+                        }
+                        Ok(None) => {
+                            return Err(ClickError::new(format!(
+                                "`{}` path {path_index}: could not evaluate the owned footprint to check its storage writes",
+                                function_block.signature.name()
+                            )));
+                        }
+                        Err(error) => {
+                            return Err(ClickError::new(format!(
+                                "`{}` path {path_index}: storage write check failed: {error:?}",
+                                function_block.signature.name()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
         // An omitted function-level effect clause is an empty footprint. The
         // Check the same write-footprint obligation here so a violation is
         // reported at the write that crossed the boundary, like an explicit
         // `immutable` clause. Resource-derived frames are checked by their
-        // resource transition and intentionally do not enter this path.
+        // resource transition and, for storage, by the owned-footprint check
+        // above; they intentionally do not enter this path.
         if function_block.effects().is_empty()
             && contract_function.contract_mutable().is_empty()
             && !contract_function.resource_derived_mutable_frame()
@@ -2259,7 +2317,7 @@ pub(in crate::surface) fn parse_c_layouts(
         BTreeMap<String, syntax::C0UnionLayout>,
         BTreeMap<String, BTreeMap<String, String>>,
         BTreeMap<String, BTreeSet<String>>,
-        BTreeMap<String, BTreeMap<String, Vec<u32>>>,
+        BTreeMap<String, BTreeMap<String, parser::GlobalArrayShape>>,
         BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
     ),
     ClickError,
@@ -2542,13 +2600,26 @@ pub(in crate::surface) fn parse_c_layouts(
             let function_global_array_shapes = function
                 .global_arrays()
                 .iter()
-                .filter_map(|(name, array)| array.index_shape().map(|shape| (name.clone(), shape)))
-                .chain(
-                    function
-                        .static_arrays()
-                        .values()
-                        .map(|array| (array.name().to_string(), array.shape().to_vec())),
-                )
+                .filter_map(|(name, array)| {
+                    array.index_shape().map(|shape| {
+                        (
+                            name.clone(),
+                            parser::GlobalArrayShape {
+                                shape,
+                                element_type: array.element_type().to_kernel_type(),
+                            },
+                        )
+                    })
+                })
+                .chain(function.static_arrays().values().map(|array| {
+                    (
+                        array.name().to_string(),
+                        parser::GlobalArrayShape {
+                            shape: array.shape().to_vec(),
+                            element_type: array.element_type().to_kernel_type(),
+                        },
+                    )
+                }))
                 .collect();
             global_array_shapes.insert(function.name().to_string(), function_global_array_shapes);
         }

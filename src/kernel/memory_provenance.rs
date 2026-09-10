@@ -2813,7 +2813,6 @@ pub(crate) fn resolve_load_along_memory_derivations(
                 ))
                 .map(|(variable, _)| Bitvector32Term::Variable(variable))
             }
-            _ => None,
         }
     });
     EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));

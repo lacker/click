@@ -3158,10 +3158,12 @@ impl AnnotationLowerer<'_> {
             CExpression::Cast {
                 expression,
                 target_type,
-            } if *target_type == CType::UInt32 => Ok(SpecExpression::Cast(
-                Box::new(self.lower_c_fragment_to_spec(expression, environment)?),
-                *target_type,
-            )),
+            } if *target_type == CType::UInt32 || target_type.is_pointer() => {
+                Ok(SpecExpression::Cast(
+                    Box::new(self.lower_c_fragment_to_spec(expression, environment)?),
+                    *target_type,
+                ))
+            }
             CExpression::Index(base, index) => {
                 let element_type = self
                     .c_expression_array_element_type(base, environment)
@@ -3486,6 +3488,7 @@ impl AnnotationLowerer<'_> {
     ) -> Option<CType> {
         match expression {
             CExpression::Value(CValue::Pointer(pointer)) => pointer.c_type().pointee_type(),
+            CExpression::Cast { target_type, .. } => target_type.pointee_type(),
             CExpression::Variable(name) => environment
                 .array_refs
                 .get(name)

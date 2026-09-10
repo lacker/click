@@ -2265,6 +2265,74 @@ fn predicate_interfaces_are_explicitly_compatible(
         .all(|unfolding| permitted(unfolding))
 }
 
+/// Writes to file-scope or static storage that a checked path performs outside
+/// the contract's owned footprint, described for diagnostics. `None` when an
+/// owned segment could not be evaluated at entry. Caller memory reached through
+/// a pointer is checked by the resource transition at each store; storage is
+/// not external memory, so a contract that declares resources but no effect
+/// clause is framed here instead: its storage writes must lie inside the owned
+/// ranges (startup resources, owned raw ranges, and composite bodies).
+pub(crate) fn storage_writes_outside_owned_footprint(
+    contract: &CFunction,
+    entry: &CState,
+    facts: &[ExecutionPureFact],
+    assumptions: &PureFactContext,
+) -> ExecutionResult<Option<Vec<String>>> {
+    let is_storage = |pointer: &Pointer| {
+        pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
+    };
+    let storage_writes: Vec<Pointer> =
+        crate::kernel::reasoning::memory_effect_write_pointers(facts)
+            .into_iter()
+            .filter(is_storage)
+            .collect();
+    let storage_summaries: Vec<&CMemoryRange> = facts
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::CMemoryEffectSummary { mutable_ranges, .. } => Some(mutable_ranges),
+            _ => None,
+        })
+        .flatten()
+        .filter(|range| is_storage(range.base()))
+        .collect();
+    // Most contracts never touch storage; do not evaluate their owned
+    // footprint at all.
+    if storage_writes.is_empty() && storage_summaries.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let mut budget = ExecutionBudget::default();
+    let Some(owned) =
+        evaluate_contract_mutable_ranges(contract, entry, assumptions, &mut budget, false)?
+    else {
+        return Ok(None);
+    };
+    let mut outside = Vec::new();
+    for pointer in &storage_writes {
+        let covered = owned.iter().any(|range| {
+            super::assumptions::pointer_in_memory_range_shallow(pointer, range)
+                || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
+                    pointer,
+                    range.base(),
+                    range.start(),
+                    range.end(),
+                    range.element_width(),
+                )
+        });
+        if !covered {
+            outside.push(format!("{pointer:?}"));
+        }
+    }
+    for range in storage_summaries {
+        if !owned
+            .iter()
+            .any(|parent| super::assumptions::memory_range_shallowly_contained(range, parent))
+        {
+            outside.push(format!("{range:?}"));
+        }
+    }
+    Ok(Some(outside))
+}
+
 fn evaluate_contract_mutable_ranges(
     contract: &CFunction,
     entry: &CState,

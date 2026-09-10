@@ -1614,5 +1614,12 @@ memory across a read-only callee without a synthesized `immutable` clause.
 Memory frames derived from transferred owned resources are checked by the
 resource transition instead.
 
+File-scope and static storage is not caller memory, so a contract that
+declares resources but no effect clause may store into such storage only
+inside the cells it owns: a `views` clause, or ownership of a neighboring
+cell, does not authorize the store. Resource slices of global and static
+arrays use the array's declared element width, so `owns bytes[0..1]` on a
+`uint8` array covers one byte.
+
 Loop-level and step-level effects are described in [proof-workflow.md](../../concepts/proof-workflow.md)
 and [memory-model.md](../../concepts/memory-model.md).

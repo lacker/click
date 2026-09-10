@@ -1654,6 +1654,7 @@ fn contract_expression_element_type(
 ) -> Option<CType> {
     match expression {
         CExpression::Value(value) => value.c_type().pointee_type(),
+        CExpression::Cast { target_type, .. } => target_type.pointee_type(),
         CExpression::Variable(name) => parameters
             .iter()
             .find(|parameter| parameter.name() == name)
@@ -1682,6 +1683,7 @@ pub(in crate::surface) fn contract_expression_element_width(
 ) -> Option<u32> {
     match expression {
         CExpression::Value(value) => value.c_type().pointee_type().map(CType::byte_width),
+        CExpression::Cast { target_type, .. } => target_type.pointee_type().map(CType::byte_width),
         CExpression::Variable(name) => parameters
             .iter()
             .find(|parameter| parameter.name() == name)

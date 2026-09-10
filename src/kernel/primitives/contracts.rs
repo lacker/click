@@ -183,7 +183,13 @@ impl CGlobalArray {
         assert!(
             matches!(
                 element_type,
-                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+                CType::Int16
+                    | CType::Int32
+                    | CType::UInt8
+                    | CType::UInt16
+                    | CType::UInt32
+                    | CType::Int64
+                    | CType::UInt64
             ),
             "C global arrays currently support scalar integer element types only"
         );
@@ -458,7 +464,13 @@ impl CStaticArray {
         assert!(
             matches!(
                 element_type,
-                CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32
+                CType::Int16
+                    | CType::Int32
+                    | CType::UInt8
+                    | CType::UInt16
+                    | CType::UInt32
+                    | CType::Int64
+                    | CType::UInt64
             ),
             "C static local arrays currently support scalar integer element types only"
         );
