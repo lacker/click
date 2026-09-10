@@ -54,19 +54,16 @@ verifying "uninitialized_callee_resource_transfer.c";
 
 int32 same_twice(int32* p) {
     views p[0..1];
-    immutable;
     ensures result == 1 by auto;
 }
 
 int32 same_owned(int32* p) {
     owns p[0..1];
-    immutable;
     ensures result == 1 by auto;
 }
 
 void initialize(int32* p) {
     owns p[0..1];
-    mutable p[0..1];
     ensures p[0] == 7 by auto;
 }
 

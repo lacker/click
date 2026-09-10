@@ -85,7 +85,7 @@ fn branch_interface_fixture_proofs_verify_expand_and_recheck() {
 }
 
 #[test]
-fn branch_interface_service_frame_expands_and_rechecks() {
+fn branch_interface_service_simp_expands_and_rechecks() {
     let source = include_str!("../../../examples/perpetual-service/perpetual_service.click");
     let sources = [
         (
@@ -103,7 +103,7 @@ fn branch_interface_service_frame_expands_and_rechecks() {
     ];
     verify_c0_sources(source, &sources).unwrap();
     let start = source.find("int32 service_step").unwrap();
-    let offset = start + source[start..].find("frame();").unwrap();
+    let offset = start + source[start..].find("simp();").unwrap();
     let position = expansion::position_at_offset(source, offset);
     let expanded =
         expand_c0_tactic_source_at(source, &sources, position.line, position.column).unwrap();

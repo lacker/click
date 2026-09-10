@@ -29,9 +29,9 @@ int32 service_init(struct service* owner, int32 cell[]) {
 
 int32 service_step(struct service* owner) {
     owns service(owner);
-    mutable owner->phase, owner->cell[0..1];
 
     ensures result == owner->phase;
+    ensures owner->cell == old(owner->cell);
     ensures 0 <= owner->phase;
     ensures owner->phase <= 1;
     ensures owner->cell[0] == owner->phase;
@@ -60,7 +60,6 @@ int32 service_step(struct service* owner) {
     fold(service(owner));
     observe(service(owner));
     step();
-    frame();
     simp();
 }
 
