@@ -3084,6 +3084,9 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                     });
                     continue;
                 }
+                if path.value.as_const().is_some() {
+                    return Err(ExecutionLimit::Paths);
+                }
                 let path_assumptions =
                     assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
                 let mut obligations = path.obligations;
@@ -5158,15 +5161,43 @@ mod integer_budget_tests {
         let variable = Variable(990);
         let value = IntegerTerm::Variable(variable);
         let cases = [
-            MachineIntegerType::Int16,
-            MachineIntegerType::Int32,
-            MachineIntegerType::UInt8,
-            MachineIntegerType::UInt16,
-            MachineIntegerType::UInt32,
-            MachineIntegerType::Int64,
-            MachineIntegerType::UInt64,
+            (
+                MachineIntegerType::Int16,
+                BigInt::from(i16::MIN),
+                BigInt::from(i16::MAX),
+            ),
+            (
+                MachineIntegerType::Int32,
+                BigInt::from(i32::MIN),
+                BigInt::from(i32::MAX),
+            ),
+            (
+                MachineIntegerType::UInt8,
+                BigInt::from(0),
+                BigInt::from(u8::MAX),
+            ),
+            (
+                MachineIntegerType::UInt16,
+                BigInt::from(0),
+                BigInt::from(u16::MAX),
+            ),
+            (
+                MachineIntegerType::UInt32,
+                BigInt::from(0),
+                BigInt::from(u32::MAX),
+            ),
+            (
+                MachineIntegerType::Int64,
+                BigInt::from(i64::MIN),
+                BigInt::from(i64::MAX),
+            ),
+            (
+                MachineIntegerType::UInt64,
+                BigInt::from(0),
+                BigInt::from(u64::MAX),
+            ),
         ];
-        for destination in cases {
+        for (destination, expected_lower, expected_upper) in cases {
             let expression = SpecExpression::IntegerToMachine {
                 value: Box::new(SpecIntegerExpression::Term(value.clone())),
                 destination,
@@ -5180,6 +5211,7 @@ mod integer_budget_tests {
             )
             .expect("symbolic conversion should produce a path");
             assert_eq!(paths.len(), 1);
+            assert!(paths[0].facts.is_empty());
             assert!(matches!(
                 &paths[0].value,
                 CValue::Int16(Bitvector32Term::IntegerToMachine { destination: d, .. })
@@ -5192,7 +5224,8 @@ mod integer_budget_tests {
                     if *d == destination
             ));
             assert_eq!(paths[0].obligations.len(), 2);
-            let (lower, upper) = integer_machine_bounds(destination);
+            let lower = IntegerTerm::constant(expected_lower);
+            let upper = IntegerTerm::constant(expected_upper);
             assert!(paths[0].obligations.iter().any(|obligation| {
                 *obligation.proposition()
                     == Proposition::ConditionIs(
@@ -5208,5 +5241,34 @@ mod integer_budget_tests {
                     )
             }));
         }
+
+        let left = Variable(991);
+        let right = Variable(992);
+        let state = CState::new()
+            .with_local("left", int32(Bitvector32Term::Variable(left)))
+            .with_local("right", int32(Bitvector32Term::Variable(right)));
+        let expression = SpecExpression::IntegerToMachine {
+            value: Box::new(SpecIntegerExpression::FromMachine(Box::new(
+                SpecExpression::CExpression(c_add(c_variable("left"), c_variable("right"))),
+            ))),
+            destination: MachineIntegerType::Int32,
+        };
+        let paths = evaluate_spec_expression_paths_with_loop_entry(
+            &state,
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("child expression effects should be preserved");
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].facts.contains(&ExecutionPureFact::condition(
+            ConditionTerm::signed_add_overflows(
+                Bitvector32Term::Variable(left),
+                Bitvector32Term::Variable(right),
+            ),
+            false,
+        )));
+        assert_eq!(paths[0].obligations.len(), 2);
     }
 }

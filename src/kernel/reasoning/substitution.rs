@@ -6198,36 +6198,6 @@ fn substitute_pointer_variable_in_spec_expression(
     }
 }
 
-fn substitute_pointer_variable_in_spec_integer(
-    expression: &SpecIntegerExpression,
-    from: Variable,
-    to: &Pointer,
-) -> SpecIntegerExpression {
-    match expression {
-        SpecIntegerExpression::Term(term) => SpecIntegerExpression::Term(term.clone()),
-        SpecIntegerExpression::FromMachine(machine) => {
-            SpecIntegerExpression::FromMachine(Box::new(
-                substitute_pointer_variable_in_spec_expression(machine, from, to),
-            ))
-        }
-        SpecIntegerExpression::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
-            substitute_pointer_variable_in_spec_integer(inner, from, to),
-        )),
-        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
-            Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
-            Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
-        ),
-        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
-            Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
-            Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
-        ),
-        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
-            Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
-            Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
-        ),
-    }
-}
-
 fn substitute_pointer_variable_in_spec_function_argument(
     argument: &SpecPureFunctionArgument,
     from: Variable,
