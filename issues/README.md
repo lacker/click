@@ -58,7 +58,7 @@ Soundness and kernel shape:
 - [Keep loop-entry snapshots stable during preservation](loop-entry-snapshot.md)
 - [Keep modified by-value struct copies out of caller postconditions](by-value-struct-postconditions.md)
 - [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
-- [Preserve initialization requirements across resource transfers](uninitialized-callee-resource-transfer.md)
+- [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Keep proof search out of kernel authority](simplify-kernel.md)
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)

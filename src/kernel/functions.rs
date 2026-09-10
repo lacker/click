@@ -1640,10 +1640,24 @@ fn prepare_verified_function_call<'a>(
         }));
     }
 
-    let effective_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+    let call_entry_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
     let mut effective_assumptions =
-        assumptions_with_propositions(&effective_assumptions, &established_requirements)
+        assumptions_with_propositions(&call_entry_assumptions, &established_requirements)
             .transport_memory_load_condition_facts();
+
+    if let Some(undefined_behavior) = verified_call_uninitialized_read(
+        &entry_contract_state,
+        function,
+        &call_entry_assumptions.transport_memory_load_condition_facts(),
+        budget,
+    )? {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+            facts,
+            obligations,
+        }));
+    }
+
     let footprint_state = entry_contract_state.clone();
     let mut mutable_ranges = Vec::new();
     let mut footprint_error = None;
@@ -5401,6 +5415,259 @@ fn append_string_literal_loadable_facts(
             facts.push(ExecutionPureFact::certified(proposition));
         }
     }
+}
+
+/// Collect the expressions that read memory when a function body is executed.
+///
+/// A verified call normally applies the function's contract without executing
+/// its body. That is sound for external memory, whose initialization is part
+/// of the caller's loadability authority, but a caller's automatic object has
+/// a separate initialization history. Keeping the read expressions lets the
+/// call boundary recheck that history without rerunning the body or treating a
+/// resource transfer as an initialization event.
+fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CExpression>) {
+    fn values(expression: &CExpression, reads: &mut Vec<CExpression>) {
+        match expression {
+            CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
+            CExpression::Cast { expression, .. }
+            | CExpression::FloatNegate(expression)
+            | CExpression::FloatClassification { expression, .. }
+            | CExpression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | CExpression::Not(expression)
+            | CExpression::BitwiseNot(expression) => values(expression, reads),
+            CExpression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                values(condition, reads);
+                values(then_branch, reads);
+                values(else_branch, reads);
+            }
+            CExpression::AddressOf(target) => lvalue_address(target, reads),
+            CExpression::Load(pointer) => {
+                reads.push(expression.clone());
+                values(pointer, reads);
+            }
+            CExpression::TypedLoad {
+                pointer,
+                value_type,
+            } => {
+                if !matches!(
+                    value_type,
+                    CType::Int32Array(_)
+                        | CType::UInt8Array(_)
+                        | CType::Int16Array(_)
+                        | CType::UInt16Array(_)
+                        | CType::UInt32Array(_)
+                        | CType::Int64Array(_)
+                        | CType::UInt64Array(_)
+                        | CType::Float32Array(_)
+                        | CType::Float64Array(_)
+                ) {
+                    reads.push(expression.clone());
+                }
+                values(pointer, reads);
+            }
+            CExpression::Index(base, index) => {
+                reads.push(expression.clone());
+                values(base, reads);
+                values(index, reads);
+            }
+            CExpression::LessThan(left, right)
+            | CExpression::LessEqual(left, right)
+            | CExpression::GreaterThan(left, right)
+            | CExpression::GreaterEqual(left, right)
+            | CExpression::Equal(left, right)
+            | CExpression::NotEqual(left, right)
+            | CExpression::And(left, right)
+            | CExpression::Or(left, right)
+            | CExpression::Add(left, right)
+            | CExpression::Subtract(left, right)
+            | CExpression::Multiply(left, right)
+            | CExpression::Divide(left, right)
+            | CExpression::Remainder(left, right)
+            | CExpression::ShiftLeft(left, right)
+            | CExpression::ShiftRight(left, right)
+            | CExpression::BitwiseAnd(left, right)
+            | CExpression::BitwiseOr(left, right)
+            | CExpression::BitwiseXor(left, right) => {
+                values(left, reads);
+                values(right, reads);
+            }
+        }
+    }
+
+    fn lvalue_address(expression: &CExpression, reads: &mut Vec<CExpression>) {
+        match expression {
+            CExpression::Variable(_) => {}
+            CExpression::Load(pointer) | CExpression::TypedLoad { pointer, .. } => {
+                values(pointer, reads)
+            }
+            CExpression::Index(base, index) => {
+                values(base, reads);
+                values(index, reads);
+            }
+            _ => values(expression, reads),
+        }
+    }
+
+    match statement {
+        CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => {}
+        CStatement::ContinueWithStep { step } => collect_c_memory_read_expressions(step, reads),
+        CStatement::CopyAggregate { target, source, .. } => {
+            lvalue_address(target, reads);
+            values(source, reads);
+        }
+        CStatement::Assign { expression, .. } => values(expression, reads),
+        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+            for argument in arguments {
+                values(argument, reads);
+            }
+        }
+        CStatement::HeapAllocate { bytes, .. } => values(bytes, reads),
+        CStatement::HeapFree { pointer } => values(pointer, reads),
+        CStatement::Assert { condition, .. } => values(condition, reads),
+        CStatement::Seq(first, second) => {
+            collect_c_memory_read_expressions(first, reads);
+            collect_c_memory_read_expressions(second, reads);
+        }
+        CStatement::Return(expression) => values(expression, reads),
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            lvalue_address(pointer, reads);
+            values(value, reads);
+        }
+        CStatement::Update {
+            target, operand, ..
+        } => {
+            values(target, reads);
+            values(operand, reads);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            values(condition, reads);
+            collect_c_memory_read_expressions(then_branch, reads);
+            collect_c_memory_read_expressions(else_branch, reads);
+        }
+        CStatement::While {
+            condition, body, ..
+        } => {
+            values(condition, reads);
+            collect_c_memory_read_expressions(body, reads);
+        }
+        CStatement::Switch { expression, cases } => {
+            values(expression, reads);
+            for case in cases {
+                collect_c_memory_read_expressions(&case.body, reads);
+            }
+        }
+    }
+}
+
+fn c_expression_mentions_pointer_parameter(
+    expression: &CExpression,
+    pointer_parameters: &BTreeSet<String>,
+) -> bool {
+    match expression {
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => false,
+        CExpression::Variable(name) => pointer_parameters.contains(name),
+        CExpression::Cast { expression, .. }
+        | CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. }
+        | CExpression::AddressOf(expression)
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::Not(expression)
+        | CExpression::BitwiseNot(expression)
+        | CExpression::Load(expression) => {
+            c_expression_mentions_pointer_parameter(expression, pointer_parameters)
+        }
+        CExpression::TypedLoad { pointer, .. } => {
+            c_expression_mentions_pointer_parameter(pointer, pointer_parameters)
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_mentions_pointer_parameter(condition, pointer_parameters)
+                || c_expression_mentions_pointer_parameter(then_branch, pointer_parameters)
+                || c_expression_mentions_pointer_parameter(else_branch, pointer_parameters)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            c_expression_mentions_pointer_parameter(left, pointer_parameters)
+                || c_expression_mentions_pointer_parameter(right, pointer_parameters)
+        }
+    }
+}
+
+fn verified_call_uninitialized_read(
+    entry_state: &CState,
+    function: &CFunction,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<CUndefinedBehavior>> {
+    // Aggregate copies have their own field-by-field initialization checks at
+    // execution time. Their lowered lvalues also include typed array views
+    // that are not scalar reads of a transferred pointer parameter.
+    if function
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.aggregate_layout().is_some())
+    {
+        return Ok(None);
+    }
+    let mut reads = Vec::new();
+    collect_c_memory_read_expressions(function.body(), &mut reads);
+    let pointer_parameters = function
+        .parameters()
+        .iter()
+        .filter(|parameter| parameter.c_type().is_pointer())
+        .map(|parameter| parameter.name().to_string())
+        .collect::<BTreeSet<_>>();
+    for read in reads
+        .into_iter()
+        .filter(|read| c_expression_mentions_pointer_parameter(read, &pointer_parameters))
+    {
+        for path in evaluate_c_expression_paths(entry_state, &read, assumptions, budget)? {
+            if let CExpressionOutcome::UndefinedBehavior(undefined_behavior) = path.outcome
+                && undefined_behavior == CUndefinedBehavior::UninitializedRead
+            {
+                return Ok(Some(undefined_behavior));
+            }
+        }
+    }
+    Ok(None)
 }
 
 pub(super) fn bind_c_function_arguments(
@@ -10892,5 +11159,109 @@ mod provisional_ensure_obligation_tests {
             largest <= baseline * 2,
             "provisional ensure work should be independent of unrelated facts: {work_by_size:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod verified_call_initialization_tests {
+    use super::*;
+
+    fn local_pointer() -> Pointer {
+        Pointer {
+            block: PointerBlock::Concrete("local:caller:x".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn owned_cell_spec() -> CResourceSpec {
+        CResourceSpec::OwnMemory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))
+    }
+
+    fn caller_state(pointer: &Pointer) -> CState {
+        let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
+            CResource::Memory(CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+        ));
+        CState::new()
+            .with_memory(CMemory::new().with_block(pointer.block.clone(), 4))
+            .with_resource_context(resources)
+    }
+
+    fn apply(function: CFunction, state: &CState, pointer: &Pointer) -> Vec<CFunctionPath> {
+        let environment =
+            CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+                function: function.clone(),
+            });
+        execute_c_function_call_paths(
+            state,
+            &function,
+            &[c_pointer_value(pointer.clone())],
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .expect("verified call should execute")
+    }
+
+    #[test]
+    fn owned_read_does_not_treat_ownership_as_initialization() {
+        let pointer = local_pointer();
+        let function = c_function(
+            CType::Int32,
+            "read_owned",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_index(c_variable("p"), c_int32_literal(0))),
+        )
+        .with_resource_summary(vec![owned_cell_spec()], Vec::new());
+        let paths = apply(function, &caller_state(&pointer), &pointer);
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn owned_write_keeps_an_uninitialized_output_writable() {
+        let pointer = local_pointer();
+        let function = c_function(
+            CType::Void,
+            "write_owned",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_store(
+                c_index(c_variable("p"), c_int32_literal(0)),
+                c_int32_literal(7),
+            ),
+        )
+        .with_resource_summary(vec![owned_cell_spec()], Vec::new())
+        .with_contract(
+            Vec::new(),
+            Vec::new(),
+            vec![CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            )],
+            Vec::new(),
+            true,
+        );
+        let paths = apply(function, &caller_state(&pointer), &pointer);
+        assert!(matches!(
+            paths.as_slice(),
+            [CFunctionPath {
+                outcome: CFunctionOutcome::Return { .. },
+                ..
+            }]
+        ));
     }
 }

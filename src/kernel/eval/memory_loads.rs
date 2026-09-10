@@ -320,7 +320,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // Unlike external argument memory, a fresh heap block has a known
     // initialization history. Permission authorizes a read but cannot turn a
     // never-written heap cell into an unconstrained initialized value.
-    if memory.is_uninitialized_heap_address(&pointer, value_type.byte_width()) {
+    if memory.is_uninitialized_heap_address(&pointer, value_type.byte_width())
+        && !load_has_established_value(memory, &pointer, value_type, assumptions)
+    {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
             facts,
@@ -583,6 +585,36 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         facts,
         obligations,
     }]
+}
+
+/// A verified call may leave a mutable cell initialized only when an
+/// established value fact survives the call boundary. The call transition
+/// havocs concrete cells, so ownership or loadability alone is not an
+/// initialization marker. The normalization walk is deliberately limited to
+/// values represented by the shared 32-bit term arena; the indexed condition
+/// witness also accepts a proven symbolic value such as a resource invariant.
+fn load_has_established_value(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+    assumptions: &PureFactContext,
+) -> bool {
+    if !matches!(
+        value_type,
+        CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32 | CType::Float32
+    ) {
+        return false;
+    }
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(memory),
+        Box::new(pointer.clone()),
+    );
+    assumptions
+        .known_signed_constant_after_normalization(&load)
+        .is_some()
+        || assumptions
+            .exact_memory_load_condition_candidates(pointer)
+            .any(|(_, value)| value)
 }
 
 /// Reinterprets an int cell's loaded value as a pointer without letting the
