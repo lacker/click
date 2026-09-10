@@ -2341,10 +2341,12 @@ impl AnnotationLowerer<'_> {
             lowered.push(crate::kernel::PureFunctionArgument::Integer(value.into()));
         }
         Ok(crate::kernel::SpecIntegerExpression::Term(
-            crate::kernel::IntegerTerm::PureFunctionApplication {
-                name: definition.name().to_string(),
-                arguments: lowered,
-            },
+            crate::kernel::IntegerTerm::PureFunctionApplication(
+                crate::kernel::SharedIntegerApplication::intern(
+                    definition.name().to_string(),
+                    lowered,
+                ),
+            ),
         ))
     }
 

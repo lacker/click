@@ -48,10 +48,43 @@ pub enum IntegerTerm {
     Multiply(SharedIntegerTerm, SharedIntegerTerm),
     /// An opaque pure specification function application.  The body is
     /// exposed only by the checked `unfold` rule.
-    PureFunctionApplication {
-        name: String,
-        arguments: Vec<PureFunctionArgument>,
-    },
+    PureFunctionApplication(SharedIntegerApplication),
+}
+
+/// Canonical shallow node for an opaque Integer function application.
+#[derive(Clone)]
+pub struct SharedIntegerApplication(Arc<SharedIntegerApplicationNode>);
+
+struct SharedIntegerApplicationNode {
+    id: u64,
+    name: String,
+    arguments: Vec<PureFunctionArgument>,
+}
+
+impl SharedIntegerApplication {
+    pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
+        static INTERNER: OnceLock<Mutex<HashMap<u64, Vec<(String, Vec<PureFunctionArgument>, Weak<SharedIntegerApplicationNode>)>>>> = OnceLock::new();
+        let mut hasher = DefaultHasher::new();
+        name.hash(&mut hasher);
+        arguments.hash(&mut hasher);
+        let key = hasher.finish();
+        let interner = INTERNER.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut interner = interner.lock().expect("Integer application interner lock poisoned");
+        if let Some(bucket) = interner.get(&key) {
+            for (old_name, old_arguments, node) in bucket {
+                if old_name == &name && old_arguments == &arguments && let Some(node) = node.upgrade() {
+                    return Self(node);
+                }
+            }
+        }
+        let id = interner.values().map(Vec::len).sum::<usize>() as u64;
+        let node = Arc::new(SharedIntegerApplicationNode { id, name: name.clone(), arguments: arguments.clone() });
+        interner.entry(key).or_default().push((name, arguments, Arc::downgrade(&node)));
+        Self(node)
+    }
+    pub(crate) fn id(&self) -> u64 { self.0.id }
+    pub(crate) fn name(&self) -> &str { &self.0.name }
+    pub(crate) fn arguments(&self) -> &[PureFunctionArgument] { &self.0.arguments }
 }
 
 impl Clone for IntegerTerm {
@@ -64,10 +97,7 @@ impl Clone for IntegerTerm {
             Self::Add(left, right) => Self::Add(left.clone(), right.clone()),
             Self::Subtract(left, right) => Self::Subtract(left.clone(), right.clone()),
             Self::Multiply(left, right) => Self::Multiply(left.clone(), right.clone()),
-            Self::PureFunctionApplication { name, arguments } => Self::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments.clone(),
-            },
+            Self::PureFunctionApplication(application) => Self::PureFunctionApplication(application.clone()),
         }
     }
 }
@@ -338,10 +368,9 @@ impl fmt::Debug for IntegerTerm {
                 .field(&left.id())
                 .field(&right.id())
                 .finish(),
-            Self::PureFunctionApplication { name, arguments } => formatter
+            Self::PureFunctionApplication(application) => formatter
                 .debug_struct("PureFunctionApplication")
-                .field("name", name)
-                .field("arguments", arguments)
+                .field("id", &application.id())
                 .finish(),
         }
     }
@@ -363,7 +392,7 @@ enum IntegerShallowKey {
     Add(u64, u64),
     Subtract(u64, u64),
     Multiply(u64, u64),
-    PureFunctionApplication(String, Vec<PureFunctionArgument>),
+    PureFunctionApplication(u64),
 }
 
 impl IntegerTerm {
@@ -406,9 +435,7 @@ impl IntegerTerm {
             Self::Add(left, right) => IntegerShallowKey::Add(left.id(), right.id()),
             Self::Subtract(left, right) => IntegerShallowKey::Subtract(left.id(), right.id()),
             Self::Multiply(left, right) => IntegerShallowKey::Multiply(left.id(), right.id()),
-            Self::PureFunctionApplication { name, arguments } => {
-                IntegerShallowKey::PureFunctionApplication(name.clone(), arguments.clone())
-            }
+            Self::PureFunctionApplication(application) => IntegerShallowKey::PureFunctionApplication(application.id()),
         }
     }
 }
@@ -627,7 +654,9 @@ fn fmt_integer_term(
             fmt_integer_shared(right, formatter, seen)?;
             write!(formatter, ")")
         }
-        IntegerTerm::PureFunctionApplication { name, arguments } => {
+        IntegerTerm::PureFunctionApplication(application) => {
+            let name = application.name();
+            let arguments = application.arguments();
             write!(formatter, "{name}(")?;
             for (index, argument) in arguments.iter().enumerate() {
                 if index != 0 { write!(formatter, ", ")?; }
@@ -738,6 +767,29 @@ mod tests {
             }
         }
         seen.len()
+    }
+
+    #[test]
+    fn integer_function_aliases_keep_shallow_application_identity() {
+        for depth in [8usize, 16, 32, 64] {
+            let mut value = IntegerTerm::var(Variable(71_000)).into();
+            for _ in 0..depth {
+                let application = SharedIntegerApplication::intern(
+                    "successor".to_string(),
+                    vec![PureFunctionArgument::Integer(value.clone())],
+                );
+                value = IntegerTerm::PureFunctionApplication(application).into();
+            }
+            let duplicate = SharedIntegerApplication::intern(
+                "successor".to_string(),
+                vec![PureFunctionArgument::Integer(value.clone())],
+            );
+            let duplicate_again = SharedIntegerApplication::intern(
+                "successor".to_string(),
+                vec![PureFunctionArgument::Integer(value)],
+            );
+            assert_eq!(duplicate.id(), duplicate_again.id(), "depth {depth}");
+        }
     }
 
     #[test]
