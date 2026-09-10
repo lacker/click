@@ -7595,14 +7595,6 @@ fn population_quantities_are_equal(
         )
 }
 
-/// Exact lookup first, then the frozen atomic condition checker. Both routes
-/// are indexed in the ambient fact set; neither recurses through logical
-/// structure nor scans unrelated propositions.
-fn quantity_condition_holds(assumptions: &PureFactContext, condition: ConditionTerm) -> bool {
-    assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
-        || assumptions.decide(&condition) == Some(true)
-}
-
 fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
     match resource {
         CResourceSpec::Instance { .. } => false,

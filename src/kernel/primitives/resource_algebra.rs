@@ -2207,12 +2207,21 @@ fn exact_resource_fact_entails(
     }
 }
 
-/// Exact lookup first, then the frozen atomic condition checker. Both routes
-/// are indexed in the ambient fact set; neither recurses through logical
-/// structure nor scans unrelated propositions. A quantity relation that only
-/// follows logically is not decided here: it becomes an explicit obligation
-/// at the operation that consumes it.
-fn quantity_condition_holds(assumptions: &PureFactContext, condition: ConditionTerm) -> bool {
+/// Decides one resource-quantity condition by exact routes only.
+///
+/// Exact indexed lookup first, then the retained atomic condition checker on
+/// the bare condition. Neither route recurses through logical structure, tries
+/// alternative rules, nor scans unrelated propositions, so the work is the
+/// condition's own size plus indexed lookups. A quantity relation that only
+/// follows logically is deliberately not decided here: it becomes an explicit
+/// obligation at the operation that consumes it.
+///
+/// The counted-population helpers in `functions.rs` share this routine.
+/// `quantity_relations_ignore_unrelated_facts` is the scaling regression.
+pub(in crate::kernel) fn quantity_condition_holds(
+    assumptions: &PureFactContext,
+    condition: ConditionTerm,
+) -> bool {
     assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
         || assumptions.decide(&condition) == Some(true)
 }
