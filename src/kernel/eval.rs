@@ -42,6 +42,8 @@ pub(crate) use memory_loads::count_canonical_at_creation_violations;
 pub(crate) use memory_loads::is_load_variable;
 pub(crate) use memory_loads::is_load_variable_defining_fact;
 #[cfg(test)]
+pub(crate) use memory_loads::load_variable_for_cell;
+#[cfg(test)]
 pub(crate) use memory_loads::load_variable_for_cell_with_origin;
 pub(crate) use memory_loads::load_variable_for_term;
 pub(crate) use memory_loads::offsets_have_same_canonical_form;
@@ -50,14 +52,21 @@ pub(crate) use memory_loads::registered_load_for_variable;
 pub(crate) use memory_loads::registered_load_origin_for_variable;
 pub(crate) use memory_loads::terms_have_same_canonical_form;
 pub(crate) use memory_loads::viewed_as_memory_load;
-pub(super) use memory_loads::*;
 pub(crate) use memory_loads::{
     begin_load_origin_epoch, clear_load_canonicalization_caches, clear_load_variable_registry,
 };
+pub(super) use memory_loads::{
+    canonical_offset_term, canonicalized_pointer_value_from_int_cell,
+    canonicalized_symbolic_load_value, evaluate_c_memory_load_paths,
+    evaluate_spec_memory_load_paths, symbolic_load_value,
+};
+#[cfg(test)]
+pub(super) use memory_loads::{load_substitution_term_visits, reset_load_substitution_term_visits};
 #[cfg(test)]
 pub(crate) use memory_loads::{load_variable_registry_len, with_load_variable_registry_capacity};
 pub(super) use operators::pointer_offset_by_bytes_paths;
 pub(super) use operators::*;
 pub(super) use statements::execute_c_realloc_assign_paths;
 pub(crate) use statements::resolve_pending_heap_allocations;
-pub(super) use statements::*;
+pub(super) use statements::sync_stack_local;
+pub(super) use statements::{execute_c_statement, execute_c_statement_paths};
