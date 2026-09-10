@@ -3003,6 +3003,129 @@ fn c0_rejects_unknown_gnu_function_attributes() {
 }
 
 #[test]
+fn c0_typeof_preserves_pointer_tags_and_const_qualification() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct node { int32 value; };
+        int32 read(struct node *p) {
+            typeof(*p) *copy = p;
+            typeof(const struct node *) view = p;
+            return copy->value + view->value;
+        }
+        "#,
+    )
+    .expect("GNU typeof should preserve modeled struct-pointer metadata");
+
+    fn find_declaration(
+        statement: &syntax::C0Statement,
+        name: &str,
+    ) -> Option<(syntax::C0Type, bool)> {
+        match statement {
+            syntax::C0Statement::Declare {
+                c_type,
+                name: declared_name,
+                pointee_constant,
+                ..
+            } if declared_name == name => Some((*c_type, *pointee_constant)),
+            syntax::C0Statement::Seq(first, second) => {
+                find_declaration(first, name).or_else(|| find_declaration(second, name))
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                find_declaration(then_branch, name).or_else(|| find_declaration(else_branch, name))
+            }
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                find_declaration(body, name)
+            }
+            syntax::C0Statement::For {
+                initializer,
+                step,
+                body,
+                ..
+            } => find_declaration(initializer, name)
+                .or_else(|| find_declaration(step, name))
+                .or_else(|| find_declaration(body, name)),
+            syntax::C0Statement::Switch { cases, .. } => cases
+                .iter()
+                .find_map(|case| find_declaration(case.body(), name)),
+            _ => None,
+        }
+    }
+
+    assert_eq!(
+        find_declaration(functions[0].body(), "copy"),
+        Some((syntax::C0Type::Int32Pointer, false))
+    );
+    assert_eq!(
+        find_declaration(functions[0].body(), "view"),
+        Some((syntax::C0Type::Int32Pointer, true))
+    );
+}
+
+#[test]
+fn c0_statement_expressions_preserve_order_and_value() {
+    let functions = syntax::parse_functions(
+        "int32 run(int32 value) { return ({ value = value + 1; value * 2; }); }",
+    )
+    .expect("GNU statement expressions should lower to sequenced C0 statements");
+    let debug_body = format!("{:?}", functions[0].body());
+    assert!(debug_body.contains("Assign"), "{debug_body}");
+    assert!(debug_body.contains("value"), "{debug_body}");
+
+    crate::surface::verify_c0_sources(
+        r#"
+        verifying "statement-expression.c";
+        int32 run() { ensures result == 4 by auto; }
+        "#,
+        &[(
+            "statement-expression.c",
+            "int32 run() { int32 value = 1; return ({ value = value + 1; value * 2; }); }",
+        )],
+    )
+    .expect("statement expression assignment and final value should verify");
+}
+
+#[test]
+fn c0_builtin_expect_is_an_identity_and_unknown_builtins_fail() {
+    let functions =
+        syntax::parse_functions("int32 run(int32 value) { return __builtin_expect(value, 1); }")
+            .expect("__builtin_expect should preserve the first operand");
+    assert!(matches!(
+        functions[0].body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Variable(name)) if name == "value"
+    ));
+
+    let error = syntax::parse_functions(
+        "int32 helper() { return 1; } int32 run(int32 value) { return __builtin_expect(value, helper()); }",
+    )
+    .expect_err("the hint operand's effect must not be discarded");
+    assert!(
+        error.message().contains("hint operand"),
+        "{}",
+        error.message()
+    );
+
+    let error = syntax::parse_functions("int32 run(int32 value) { return __builtin_clz(value); }")
+        .expect_err("unsupported GNU builtins must be rejected");
+    assert!(
+        error.message().contains("unsupported GNU builtin"),
+        "{}",
+        error.message()
+    );
+
+    let error = syntax::parse_functions("void helper() {} int32 run() { return ({ helper(); }); }")
+        .expect_err("void statement-expression results must not be lowered as scalar temporaries");
+    assert!(
+        error.message().contains("final value"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_always_inline_header_helpers_parse_as_translation_unit_local_functions() {
     let functions = syntax::parse_functions_for_source(
         "static __always_inline int32 add_one(int32 value) { return value + 1; }\n\

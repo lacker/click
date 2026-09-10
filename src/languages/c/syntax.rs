@@ -24,6 +24,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.struct-value",
     "type.function-pointer",
     "type.struct-pointer",
+    "type.typeof",
     "declaration.function",
     "declaration.struct",
     "declaration.struct-field-list",
@@ -88,6 +89,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.cast",
     "expression.pointer-integer-cast",
     "expression.conditional",
+    "expression.statement-expression",
+    "expression.builtin-expect",
     "expression.sizeof-struct",
     "expression.sizeof-type",
     "expression.call",
@@ -2071,6 +2074,18 @@ pub enum C0Expression {
         then_branch: Box<C0Expression>,
         else_branch: Box<C0Expression>,
     },
+    /// A GNU statement expression before it is lowered to ordinary C0
+    /// statements. Keeping the compound body attached to the value makes its
+    /// sequencing and side effects explicit instead of relying on a textual
+    /// rewrite.
+    StatementExpression {
+        body: Box<C0Statement>,
+        value: Box<C0Expression>,
+        c_type: C0Type,
+        struct_name: Option<String>,
+        function_pointer_signature: Option<C0FunctionPointerSignature>,
+        pointee_constant: bool,
+    },
     FloatNegate(Box<C0Expression>),
     FloatClassification {
         expression: Box<C0Expression>,
@@ -3384,6 +3399,9 @@ impl C0Expression {
             Self::IndirectCall { .. } => {
                 unreachable!("indirect call expressions must be lowered before kernel conversion")
             }
+            Self::StatementExpression { .. } => {
+                unreachable!("statement expressions must be lowered before kernel conversion")
+            }
             Self::FunctionAddress(name) => crate::kernel::c_function_address(name.clone()),
             Self::Cast {
                 expression,
@@ -3691,6 +3709,43 @@ fn validate_function_returns(
         | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. }
         | C0Statement::Assert { .. } => Ok(()),
+    }
+}
+
+fn statement_contains_control_transfer(statement: &C0Statement) -> bool {
+    match statement {
+        C0Statement::Break | C0Statement::Continue | C0Statement::Return(_) => true,
+        C0Statement::Seq(first, second) => {
+            statement_contains_control_transfer(first)
+                || statement_contains_control_transfer(second)
+        }
+        C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_contains_control_transfer(then_branch)
+                || statement_contains_control_transfer(else_branch)
+        }
+        C0Statement::While { body, .. }
+        | C0Statement::DoWhile { body, .. }
+        | C0Statement::For { body, .. } => statement_contains_control_transfer(body),
+        C0Statement::Switch { cases, .. } => cases
+            .iter()
+            .any(|case| statement_contains_control_transfer(&case.body)),
+        C0Statement::Skip
+        | C0Statement::Declare { .. }
+        | C0Statement::DeclareStructValue { .. }
+        | C0Statement::Assign { .. }
+        | C0Statement::CallAssign { .. }
+        | C0Statement::Call { .. }
+        | C0Statement::IndirectCall { .. }
+        | C0Statement::HeapAllocate { .. }
+        | C0Statement::HeapFree { .. }
+        | C0Statement::Assert { .. }
+        | C0Statement::Store { .. }
+        | C0Statement::AggregateCopy { .. }
+        | C0Statement::Update { .. } => false,
     }
 }
 
@@ -4232,6 +4287,7 @@ fn evaluate_static_integer_expression(
         | C0Expression::Field { .. }
         | C0Expression::UnionAddress { .. }
         | C0Expression::UnionField { .. }
+        | C0Expression::StatementExpression { .. }
         | C0Expression::Index(_, _) => Err(StaticIntegerEvaluationError::NotConstant),
     }
 }
@@ -4750,6 +4806,7 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
                 || contains_aggregate_value(then_branch)
                 || contains_aggregate_value(else_branch)
         }
+        C0Expression::StatementExpression { value, .. } => contains_aggregate_value(value),
         C0Expression::LessThan(left, right)
         | C0Expression::LessEqual(left, right)
         | C0Expression::GreaterThan(left, right)
@@ -4819,6 +4876,8 @@ fn is_builtin_type_start(name: &str) -> bool {
             | "float"
             | "double"
             | "volatile"
+            | "typeof"
+            | "__typeof__"
     )
 }
 
@@ -5032,6 +5091,7 @@ impl ErrorContext {
     }
 }
 
+#[derive(Clone)]
 struct Parser {
     tokens: Vec<Token>,
     positions: Vec<SourcePosition>,
@@ -5387,6 +5447,7 @@ impl Parser {
             | C0Expression::UnionAddress { pointer, .. } => {
                 self.expression_is_constant_lvalue(pointer)
             }
+            C0Expression::StatementExpression { .. } => false,
             _ => false,
         }
     }
@@ -5432,6 +5493,9 @@ impl Parser {
                 self.expression_pointee_is_constant(then_branch)
                     || self.expression_pointee_is_constant(else_branch)
             }
+            C0Expression::StatementExpression {
+                pointee_constant, ..
+            } => *pointee_constant,
             _ => false,
         }
     }
@@ -8250,6 +8314,9 @@ impl Parser {
             false
         };
         let parsed = match self.next() {
+            Some(Token::Ident(name)) if name == "typeof" || name == "__typeof__" => {
+                self.parse_typeof_type()?
+            }
             Some(Token::Ident(name)) if name == "struct" => ParsedType {
                 // C0 has no struct-value representation. Keep the tag on the
                 // parsed type while using the scalar slot as an internal
@@ -8463,6 +8530,42 @@ impl Parser {
             ));
         }
         Ok(())
+    }
+
+    /// GNU `typeof` accepts either a type-name or an expression. The
+    /// expression form is inspected only for its already-modeled type; it is
+    /// never emitted as an executable read, which matches the extension's
+    /// unevaluated operand semantics.
+    fn parse_typeof_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
+        self.expect(Token::LParen)?;
+        if self.is_type_start() {
+            let parsed = self.parse_type()?;
+            self.expect(Token::RParen)?;
+            return Ok(parsed);
+        }
+
+        let expression = self.parse_expression_allow_direct_aggregate()?;
+        self.expect(Token::RParen)?;
+        let struct_name = self
+            .struct_pointer_name(&expression)
+            .or_else(|| self.aggregate_struct_name(&expression));
+        let c_type = self
+            .source_expression_type(&expression)
+            .or_else(|| struct_name.as_ref().map(|_| C0Type::Int32));
+        let Some(c_type) = c_type else {
+            return Err(self.error_here(
+                "GNU `typeof` requires an expression with a modeled scalar, pointer, or struct type",
+            ));
+        };
+        Ok(ParsedType {
+            c_type,
+            struct_name,
+            enum_name: None,
+            union_name: None,
+            is_volatile: false,
+            is_constant: self.expression_is_constant_lvalue(&expression),
+            pointee_constant: self.expression_pointee_is_constant(&expression),
+        })
     }
 
     /// Parses the parenthesized declarator in `int32 (*callback)(int32)`.
@@ -11644,6 +11747,11 @@ impl Parser {
                 .function_declaration(function_name)
                 .and_then(|function| function.return_struct_name.clone()),
             C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
+            C0Expression::StatementExpression {
+                c_type: C0Type::Int32,
+                struct_name: Some(struct_name),
+                ..
+            } => Some(struct_name.clone()),
             C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
             C0Expression::Field {
                 field_type: C0Type::Int32,
@@ -11665,6 +11773,7 @@ impl Parser {
             }
             C0Expression::UnionAddress { .. }
             | C0Expression::UnionField { .. }
+            | C0Expression::StatementExpression { .. }
             | C0Expression::Void
             | C0Expression::FunctionAddress(_)
             | C0Expression::Int32Literal(_)
@@ -11717,6 +11826,7 @@ impl Parser {
         match expression {
             C0Expression::Call { .. }
             | C0Expression::IndirectCall { .. }
+            | C0Expression::StatementExpression { .. }
             | C0Expression::AddressOf(_)
             | C0Expression::Void
             | C0Expression::Variable(_)
@@ -12005,7 +12115,9 @@ impl Parser {
                 return true;
             }
             match expression {
-                C0Expression::Call { .. } | C0Expression::IndirectCall { .. } => return true,
+                C0Expression::Call { .. }
+                | C0Expression::IndirectCall { .. }
+                | C0Expression::StatementExpression { .. } => return true,
                 C0Expression::Cast { expression, .. }
                 | C0Expression::FloatNegate(expression)
                 | C0Expression::FloatClassification { expression, .. }
@@ -12068,6 +12180,78 @@ impl Parser {
                 | C0Expression::SizeOfStruct { .. }
                 | C0Expression::SizeOfUnion { .. }
                 | C0Expression::SizeOfType { .. } => {}
+            }
+        }
+        false
+    }
+
+    fn expression_has_runtime_effect(&self, expression: &C0Expression) -> bool {
+        let mut expressions = vec![expression];
+        while let Some(expression) = expressions.pop() {
+            match expression {
+                C0Expression::Call { .. }
+                | C0Expression::IndirectCall { .. }
+                | C0Expression::StatementExpression { .. } => return true,
+                C0Expression::Cast { expression, .. }
+                | C0Expression::FloatNegate(expression)
+                | C0Expression::FloatClassification { expression, .. }
+                | C0Expression::AddressOf(expression)
+                | C0Expression::PointerOffsetBytes {
+                    pointer: expression,
+                    ..
+                }
+                | C0Expression::Not(expression)
+                | C0Expression::BitwiseNot(expression)
+                | C0Expression::Load(expression) => expressions.push(expression),
+                C0Expression::AggregateAddress { pointer, .. }
+                | C0Expression::UnionAddress { pointer, .. }
+                | C0Expression::Field { pointer, .. }
+                | C0Expression::UnionField { pointer, .. } => expressions.push(pointer),
+                C0Expression::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    expressions.push(condition);
+                    expressions.push(then_branch);
+                    expressions.push(else_branch);
+                }
+                C0Expression::LessThan(left, right)
+                | C0Expression::LessEqual(left, right)
+                | C0Expression::GreaterThan(left, right)
+                | C0Expression::GreaterEqual(left, right)
+                | C0Expression::Equal(left, right)
+                | C0Expression::NotEqual(left, right)
+                | C0Expression::And(left, right)
+                | C0Expression::Or(left, right)
+                | C0Expression::Add(left, right)
+                | C0Expression::Subtract(left, right)
+                | C0Expression::Multiply(left, right)
+                | C0Expression::Divide(left, right)
+                | C0Expression::Remainder(left, right)
+                | C0Expression::ShiftLeft(left, right)
+                | C0Expression::ShiftRight(left, right)
+                | C0Expression::BitwiseAnd(left, right)
+                | C0Expression::BitwiseOr(left, right)
+                | C0Expression::BitwiseXor(left, right)
+                | C0Expression::Index(left, right) => {
+                    expressions.push(left);
+                    expressions.push(right);
+                }
+                C0Expression::Void
+                | C0Expression::Variable(_)
+                | C0Expression::FunctionAddress(_)
+                | C0Expression::Int32Literal(_)
+                | C0Expression::UInt8Literal(_)
+                | C0Expression::UInt32Literal(_)
+                | C0Expression::Int64Literal(_)
+                | C0Expression::UInt64Literal(_)
+                | C0Expression::Float32Literal(_)
+                | C0Expression::Float64Literal(_)
+                | C0Expression::SizeOfStruct { .. }
+                | C0Expression::SizeOfUnion { .. }
+                | C0Expression::SizeOfType { .. }
+                | C0Expression::CheckedArrayIndex { .. } => {}
             }
         }
         false
@@ -12596,6 +12780,45 @@ impl Parser {
                     condition,
                     then_branch: Box::new(then_statement),
                     else_branch: Box::new(else_statement),
+                });
+                Ok((prefix, C0Expression::Variable(target)))
+            }
+            C0Expression::StatementExpression {
+                body,
+                value,
+                c_type,
+                struct_name,
+                function_pointer_signature,
+                pointee_constant,
+            } => {
+                let body = self.lower_statement_calls(*body)?;
+                let (value_prefix, value) = self.lower_expression_calls(*value)?;
+                let target = self.fresh_synthesized_call_name();
+                self.variable_types.insert(target.clone(), c_type);
+                if let Some(struct_name) = &struct_name {
+                    self.variable_structs
+                        .insert(target.clone(), struct_name.clone());
+                }
+                if let Some(signature) = &function_pointer_signature {
+                    self.variable_function_pointers
+                        .insert(target.clone(), signature.clone());
+                }
+                if pointee_constant {
+                    self.variable_pointee_constants.insert(target.clone());
+                }
+                let mut prefix = vec![C0Statement::Declare {
+                    c_type,
+                    name: target.clone(),
+                    volatile: false,
+                    pointee_volatile: false,
+                    constant: false,
+                    pointee_constant,
+                }];
+                prefix.push(body);
+                prefix.extend(value_prefix);
+                prefix.push(C0Statement::Assign {
+                    name: target.clone(),
+                    expression: value,
                 });
                 Ok((prefix, C0Expression::Variable(target)))
             }
@@ -13128,6 +13351,10 @@ impl Parser {
                 (then_signature == else_signature).then_some(then_signature)
             }
             C0Expression::Cast { expression, .. } => self.function_pointer_signature(expression),
+            C0Expression::StatementExpression {
+                function_pointer_signature: Some(signature),
+                ..
+            } => Some(signature.clone()),
             C0Expression::Field {
                 function_pointer_signature: Some(signature),
                 ..
@@ -13782,6 +14009,44 @@ impl Parser {
                             .map_err(|reason| self.error_at_position(call_position, reason))?;
                         continue;
                     }
+                    if source_name == "__builtin_expect" {
+                        let [value, hint] = arguments.as_slice() else {
+                            return Err(self.error_at_position(
+                                call_position,
+                                "`__builtin_expect` expects two integer arguments",
+                            ));
+                        };
+                        for (name, operand) in [("value", value), ("hint", hint)] {
+                            if !self
+                                .source_expression_type(operand)
+                                .is_some_and(is_integer_type)
+                            {
+                                return Err(self.error_at_position(
+                                    call_position,
+                                    format!(
+                                        "`__builtin_expect` {name} operand must have an integer type"
+                                    ),
+                                ));
+                            }
+                        }
+                        if self.expression_has_runtime_effect(hint) {
+                            return Err(self.error_at_position(
+                                call_position,
+                                "the hint operand of `__builtin_expect` must be side-effect free",
+                            ));
+                        }
+                        // The hint affects optimization only. Retaining the
+                        // first operand as the C0 expression preserves its
+                        // value and any effects in the existing lowering path.
+                        expression = value.clone();
+                        continue;
+                    }
+                    if source_name.starts_with("__builtin_") {
+                        return Err(self.error_at_position(
+                            call_position,
+                            format!("unsupported GNU builtin `{source_name}`"),
+                        ));
+                    }
                     let function_name = self.resolve_function_name(&source_name);
                     expression = C0Expression::Call {
                         function_name,
@@ -14062,6 +14327,9 @@ impl Parser {
             C0Expression::Cast { c_type, .. } => {
                 matches!(c_type, C0Type::Float32 | C0Type::Float64)
             }
+            C0Expression::StatementExpression { c_type, .. } => {
+                matches!(c_type, C0Type::Float32 | C0Type::Float64)
+            }
             C0Expression::Field { field_type, .. }
             | C0Expression::UnionField { field_type, .. } => {
                 matches!(field_type, C0Type::Float32 | C0Type::Float64)
@@ -14129,6 +14397,7 @@ impl Parser {
             C0Expression::SequentialRead { c_type, .. }
             | C0Expression::SequentialWrite { c_type, .. } => Some(*c_type),
             C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::StatementExpression { c_type, .. } => Some(*c_type),
             C0Expression::Index(base, _) => {
                 return self.expression_pointee_is_float(base);
             }
@@ -14165,6 +14434,11 @@ impl Parser {
                 })
                 .flatten(),
             C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
+            C0Expression::StatementExpression {
+                c_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
+                struct_name,
+                ..
+            } => struct_name.clone(),
             C0Expression::Field {
                 field_type: C0Type::Int32Pointer | C0Type::UInt8Pointer,
                 field_struct_name: Some(struct_name),
@@ -14227,6 +14501,21 @@ impl Parser {
                 })
                 .flatten(),
             C0Expression::IndirectCall { signature, .. } => signature.return_struct_name.clone(),
+            C0Expression::StatementExpression {
+                c_type:
+                    C0Type::Int16PointerPointer
+                    | C0Type::UInt16PointerPointer
+                    | C0Type::Int32PointerPointer
+                    | C0Type::CharPointerPointer
+                    | C0Type::UInt8PointerPointer
+                    | C0Type::UInt32PointerPointer
+                    | C0Type::Int64PointerPointer
+                    | C0Type::UInt64PointerPointer
+                    | C0Type::Float32PointerPointer
+                    | C0Type::Float64PointerPointer,
+                struct_name,
+                ..
+            } => struct_name.clone(),
             C0Expression::Field {
                 field_type:
                     C0Type::Int16PointerPointer
@@ -14326,6 +14615,7 @@ impl Parser {
                 })
             }
             C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::StatementExpression { c_type, .. } => Some(*c_type),
             C0Expression::Field { field_type, .. }
             | C0Expression::UnionField { field_type, .. } => Some(*field_type),
             C0Expression::SequentialRead { c_type, .. }
@@ -14725,6 +15015,9 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        if self.peek() == Some(&Token::LParen) && self.peek_next() == Some(&Token::LBrace) {
+            return self.parse_statement_expression();
+        }
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
             if self.peek_ident() == Some("struct") {
@@ -14832,6 +15125,77 @@ impl Parser {
             }
             Some(token) => Err(at.error(format!("expected expression, got {}", token.describe()))),
             None => Err(at.error("expected expression, got end of input")),
+        }
+    }
+
+    /// Parse the GNU `({ statements; value; })` expression. The final
+    /// expression is kept separate from the compound body until the ordinary
+    /// expression-lowering pass can materialize its value in a temporary.
+    fn parse_statement_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        self.expect(Token::LParen)?;
+        self.expect(Token::LBrace)?;
+        self.push_scope();
+        let mut statements = Vec::new();
+
+        loop {
+            if self.peek().is_none() {
+                return Err(self
+                    .error_here("expected a final expression or `}` in GNU statement expression"));
+            }
+            if self.peek() == Some(&Token::RBrace) {
+                return Err(
+                    self.error_here("GNU statement expressions require a final scalar expression")
+                );
+            }
+
+            // A statement expression's final value is an ordinary C
+            // expression statement. Probe on a cloned parser so a preceding
+            // assignment or control statement can still use the normal C0
+            // statement parser without leaking speculative state.
+            let mut candidate = self.clone();
+            if let Ok(value) = candidate.parse_expression()
+                && candidate.peek() == Some(&Token::Semicolon)
+                && candidate.peek_next() == Some(&Token::RBrace)
+            {
+                candidate.position += 1;
+                let c_type = candidate.source_expression_type(&value).ok_or_else(|| {
+                    candidate.error_here(
+                        "GNU statement expression final values must have a modeled scalar type",
+                    )
+                })?;
+                if !(is_arithmetic_type(c_type) || c_type.is_pointer())
+                    || contains_aggregate_value(&value)
+                    || candidate.aggregate_struct_name(&value).is_some()
+                {
+                    return Err(candidate.error_here(
+                        "GNU statement expressions require a modeled scalar or pointer final value",
+                    ));
+                }
+                let struct_name = candidate.struct_pointer_name(&value);
+                let function_pointer_signature = candidate.function_pointer_signature(&value);
+                let pointee_constant = candidate.expression_pointee_is_constant(&value);
+                *self = candidate;
+                self.expect(Token::RBrace)?;
+                self.expect(Token::RParen)?;
+                let body = balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip);
+                if statement_contains_control_transfer(&body) {
+                    return Err(self.error_here(
+                        "GNU statement expressions cannot contain `return`, `break`, or `continue` in this slice",
+                    ));
+                }
+                let body = self.lower_call_expressions(body)?;
+                self.pop_scope();
+                return Ok(C0Expression::StatementExpression {
+                    body: Box::new(body),
+                    value: Box::new(value),
+                    c_type,
+                    struct_name,
+                    function_pointer_signature,
+                    pointee_constant,
+                });
+            }
+
+            statements.push(self.parse_statement()?);
         }
     }
 
@@ -15658,6 +16022,7 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         } => position
             .or_else(|| first_embedded_call_position(function))
             .or_else(|| arguments.iter().find_map(first_embedded_call_position)),
+        C0Expression::StatementExpression { value, .. } => first_embedded_call_position(value),
         C0Expression::Cast { expression, .. }
         | C0Expression::FloatNegate(expression)
         | C0Expression::FloatClassification { expression, .. }

@@ -1929,6 +1929,9 @@ pub(in crate::surface) fn c0_statement_calls(
                     collect_function_addresses(argument, names);
                 }
             }
+            syntax::C0Expression::StatementExpression { value, .. } => {
+                collect_function_addresses(value, names);
+            }
             syntax::C0Expression::FunctionAddress(name) => {
                 names.insert(name.clone());
             }
