@@ -9855,6 +9855,85 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
     Some(result)
 }
 
+/// Whether a body outcome establishes every resource the contract returns,
+/// by the rule contract certification applies to a `produces` claim: each
+/// returned resource, read as one jointly returned context, is satisfied by
+/// the body's returned context definitionally, so a composite whose pieces
+/// and facts the body holds counts as returned, and a duplicable body such
+/// as a view yields any quantity, while a consumed cell the body no longer
+/// holds does not.
+pub(super) fn function_return_resources_definitionally_established(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+) -> bool {
+    let CFunctionOutcome::Return {
+        value,
+        state: return_state,
+    } = outcome
+    else {
+        return false;
+    };
+    let Some(argument_values) = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let Some(callee_state) = bind_c_function_arguments(caller_state, function, &argument_values)
+    else {
+        return false;
+    };
+    let exit_memory = function_exit_memory(caller_state, return_state, value, function);
+    let mut claim_return_state = return_state.clone();
+    claim_return_state.memory = exit_memory.clone();
+    let definitions = function.composite_resource_definitions();
+    let Some(post_resources) = expand_all_composite_resource_facts(
+        claim_return_state.resources(),
+        definitions,
+        claim_return_state.memory(),
+        assumptions,
+    ) else {
+        return false;
+    };
+    let Ok(post_resource_facts) = post_resources.observable_facts(assumptions) else {
+        return false;
+    };
+    let assumptions = assumptions_with_propositions(assumptions, &post_resource_facts);
+    let mut post_state = callee_state.with_memory(exit_memory);
+    post_state.resources = post_resources;
+    post_state.counted_populations = return_state.counted_populations.clone();
+    if function.return_type() != CType::Void {
+        post_state
+            .locals
+            .set_typed("result".to_string(), value.clone(), function.return_type());
+    }
+    let mut budget = ExecutionBudget::default();
+    let Ok(Ok(expected)) = evaluate_function_resource_context(
+        &post_state,
+        function.resource_ensures(),
+        &assumptions,
+        &mut budget,
+    ) else {
+        return false;
+    };
+    expected.facts().iter().all(|fact| {
+        resource_context_satisfies_definitional_fact(
+            claim_return_state.resources(),
+            fact,
+            definitions,
+            claim_return_state.memory(),
+            &assumptions,
+        )
+    })
+}
+
 pub(super) fn resource_context_satisfies_definitional_fact(
     available: &ResourceContext,
     required: &CResourceFact,

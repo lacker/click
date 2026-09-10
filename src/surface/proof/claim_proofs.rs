@@ -3606,6 +3606,23 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // body's own context in place.
                                 if !resource_transition_applied
                                     && matches!(outcome, CFunctionOutcome::Return { .. })
+                                    && !crate::kernel::c_function_return_resources_definitionally_established(
+                                        pre_state,
+                                        function,
+                                        arguments,
+                                        &outcome,
+                                        &assumptions_from_propositions(&path_requirements),
+                                    )
+                                {
+                                    // The body does not hold what the contract
+                                    // returns; the resource ensures report the
+                                    // missing fact against the body's context.
+                                    pending_resource_transition_error = Some(
+                                        "the body outcome does not establish the contract's returned resources"
+                                            .to_string(),
+                                    );
+                                } else if !resource_transition_applied
+                                    && matches!(outcome, CFunctionOutcome::Return { .. })
                                 {
                                     let mut transitioned = outcome.clone();
                                     match apply_checked_contract_resource_transition(

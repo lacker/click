@@ -1,6 +1,7 @@
 use super::functions::{
     apply_verified_contract_resource_transition,
     construct_c_function_resource as construct_c_function_resource_checked,
+    function_return_resources_definitionally_established,
 };
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
@@ -1393,6 +1394,26 @@ pub fn c_function_contract_entry_state(
             "contract resource preparation hit execution limit {limit:?}"
         )),
     }
+}
+
+/// Whether a body outcome establishes every resource the contract returns,
+/// by the rule contract certification applies to a `produces` claim. A proof
+/// consults this before reading the outcome through the contract's resource
+/// transition, so the surface accepts exactly the exits certification does.
+pub fn c_function_return_resources_definitionally_established(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+) -> bool {
+    function_return_resources_definitionally_established(
+        caller_state,
+        function,
+        arguments,
+        outcome,
+        assumptions,
+    )
 }
 
 /// Applies a function's already-checked resource effect to a concrete body

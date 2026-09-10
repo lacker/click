@@ -11405,7 +11405,6 @@ fn negative_outcome_diagnostic_manifests_have_no_fallbacks() {
             &[
                 "composite_resource_folded_nested_fact_projection.md",
                 "composite_resource_nested_observe_not_automatic.md",
-                "grouped_fold_after_simp_does_not_close.md",
                 "grouped_post_tactics_respect_order.md",
                 "grouped_unfold_respects_order.md",
                 "opaque_call_does_not_preserve_overlapping_field.md",
