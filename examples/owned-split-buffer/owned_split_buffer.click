@@ -67,19 +67,23 @@ int32 owned_split_buffer_set_left(
 ) {
     requires 0 <= index;
     requires index < owner->split;
-    owns owned_split_buffer(owner);
-    mutable owner->data[index..index + 1];
+    requires 0 <= owner->split;
+    requires owner->split <= owner->len;
+    requires separate(
+        memory(object(owner)),
+        memory(owner->data[0..owner->len])
+    );
+    views owner->split;
+    views owner->len;
+    views owner->data;
+    owns owner->data[index..index + 1];
     ensures result == value;
     ensures owner->data[index] == value;
     ensures owner->split == old(owner->split);
     ensures owner->len == old(owner->len);
     ensures owner->data == old(owner->data);
 } by {
-    unfold(owned_split_buffer(owner));
     execute();
-    fold(owned_split_buffer(owner));
-    have index < index + 1 by simp;
-    frame();
     simp();
 }
 
@@ -90,45 +94,39 @@ int32 owned_split_buffer_set_right(
 ) {
     requires owner->split <= index;
     requires index < owner->len;
-    owns owned_split_buffer(owner);
-    mutable owner->data[index..index + 1];
+    requires 0 <= owner->split;
+    requires owner->split <= owner->len;
+    requires separate(
+        memory(object(owner)),
+        memory(owner->data[0..owner->len])
+    );
+    views owner->split;
+    views owner->len;
+    views owner->data;
+    owns owner->data[index..index + 1];
     ensures result == value;
     ensures owner->data[index] == value;
     ensures owner->split == old(owner->split);
     ensures owner->len == old(owner->len);
     ensures owner->data == old(owner->data);
 } by {
-    unfold(owned_split_buffer(owner));
     step();
     step();
-    fold(owned_split_buffer(owner));
-    have index < index + 1 by simp;
-    frame();
     simp();
 }
 
 int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
     requires owner->split < owner->len;
-    owns owned_split_buffer(owner);
-    mutable owner->split;
+    views owner->len;
+    views owner->data;
+    owns owner->split;
     ensures result == old(owner->split) + 1;
     ensures owner->split == old(owner->split) + 1;
     ensures owner->len == old(owner->len);
     ensures owner->data == old(owner->data);
 } by {
-    unfold(owned_split_buffer(owner));
     step();
     step();
-    have 0 <= owner->split by simp;
-    have owner->split <= owner->len by simp;
-    have separate(
-        memory(object(owner)),
-        memory(owner->data[0..owner->len])
-    ) by {
-        simp();
-    }
-    fold(owned_split_buffer(owner));
-    frame();
     simp();
 }
 
@@ -164,6 +162,7 @@ int32 owned_split_buffer_pipeline(
     step();
     step();
     step();
+    unfold(owned_split_buffer(owner));
     step();
     have owner->split == owner->split by {
         normalize();
@@ -262,6 +261,7 @@ int32 owned_split_buffer_pipeline(
     have owner->data == data by simp;
     have data[0] == left_value by simp;
     have data[1] == right_value by simp;
+    fold(owned_split_buffer(owner));
     step();
     have owner->split == 2 by simp;
     have owner->len == length by simp;

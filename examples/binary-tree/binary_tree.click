@@ -87,40 +87,17 @@ int32 tree_make_root(
 
 int32 tree_swap_children(struct node* node) {
     requires node != 0;
-    consumes tree(node);
-    mutable node->left, node->right;
-    produces tree(node);
+    views node->value;
+    owns node->left;
+    owns node->right;
 
     ensures result == old(node->value);
     ensures node->value == old(node->value);
     ensures node->left == old(node->right);
     ensures node->right == old(node->left);
 } by {
-    unfold(tree(node));
-    step();
-    step();
-    step();
-    step();
-    step();
-    fold(tree(node));
-    frame();
-    have result == old(node->value) by {
-        normalize();
-    }
-    have node->value == old(node->value) by {
-        normalize();
-    }
-    have node->left == old(node->right) by {
-        normalize();
-    }
-    have node->right == old(node->left) by {
-        normalize();
-    }
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
+    execute();
+    simp();
 }
 
 int32 tree_leaf_pipeline(struct node* node, int32 value) {
@@ -158,7 +135,9 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
     have made == value by {
         assumption();
     }
+    unfold(tree(node));
     step();
+    fold(tree(node));
     have swapped == node->value by {
         assumption();
     }

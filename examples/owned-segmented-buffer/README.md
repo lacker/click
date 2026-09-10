@@ -1,7 +1,7 @@
 # Owned Segmented Buffer
 
-This project verifies an outer composite resource that contains two independently
-owned inner composite resources.
+This project verifies one composite resource over two independently owned
+backing ranges.
 
 ```c
 struct owned_segmented_buffer {
@@ -12,14 +12,16 @@ struct owned_segmented_buffer {
 };
 ```
 
-`owned_segment(data, length)` owns one backing range and records its
-nonnegative length. `owned_segmented_buffer(owner)` owns the four metadata
-fields, contains two `owned_segment` resources whose parameters depend on that
-metadata, and records that both selectable segments are nonempty.
+`owned_segmented_buffer(owner)` owns the four metadata fields and both backing
+ranges selected by that metadata, records that both segments are nonempty, and
+records that each backing range is separate from the metadata object.
 
-The getter and setters explicitly observe or unfold one composite layer at a
-time. The setters mutate one child while framing the other. The swap operation
-changes only metadata, then refolds the same two child resources in the
+The getter observes the composite. Each setter transfers exactly the cell it
+writes: it views the metadata fields and owns the single element
+`owner->first_data[index..index + 1]` or
+`owner->second_data[index..index + 1]`, so the other segment and the rest of
+its own segment are framed by ownership with no effect clause. The swap
+operation changes only metadata, then refolds the same two ranges in the
 opposite order. The pipeline composes initialization, both child mutations,
 and a first-child read through verified function contracts. The swap remains a
 focused direct proof because transporting its `old(...)` summary through a

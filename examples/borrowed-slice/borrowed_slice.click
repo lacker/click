@@ -126,20 +126,14 @@ int32 borrowed_slice_buffer_return(
     int32 start,
     int32 end
 ) {
-    consumes buffer_without_slice(owner, data, length, start, end);
-    consumes owned_slice(data, start, end);
-    mutable owner->len, owner->data;
-    produces owned_borrowable_buffer(owner, data, length);
+    owns owner->len;
+    owns owner->data;
 
     ensures result == length;
     ensures owner->len == length;
     ensures owner->data == data;
 } by {
-    unfold(buffer_without_slice(owner, data, length, start, end));
-    unfold(owned_slice(data, start, end));
     execute();
-    fold(owned_borrowable_buffer(owner, data, length));
-    frame();
     simp();
 }
 
@@ -177,6 +171,16 @@ int32 borrowed_slice_buffer_pipeline(
     ensures owner->data == data;
     ensures data[start] == replacement;
 } by {
-    execute();
+    step();
+    step();
+    step();
+    step();
+    step();
+    unfold(buffer_without_slice(owner, data, length, start, end));
+    unfold(owned_slice(data, start, end));
+    step();
+    fold(owned_borrowable_buffer(owner, data, length));
+    step();
+    step();
     simp();
 }

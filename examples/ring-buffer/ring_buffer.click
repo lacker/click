@@ -1,27 +1,22 @@
-resource owned_ring_storage(data: int32*) {
-    owns data[0..4];
+resource ring_frame(owner: struct ring_buffer*) {
+    owns owner->head;
+    owns owner->data;
+    owns owner->data[0..4];
+    fact 2 <= owner->head;
+    fact owner->head < 4;
+    fact separate(memory(object(owner)), memory(owner->data[0..4]));
 }
 
 resource linear_ring(owner: struct ring_buffer*) {
-    owns owner->head;
     owns owner->tail;
-    owns owner->data;
-    contains owned_ring_storage(owner->data);
-    fact 2 <= owner->head;
-    fact owner->head < 4;
+    contains ring_frame(owner);
     fact owner->tail == 4;
-    fact separate(memory(object(owner)), memory(owner->data[0..4]));
 }
 
 resource wrapped_ring(owner: struct ring_buffer*) {
-    owns owner->head;
     owns owner->tail;
-    owns owner->data;
-    contains owned_ring_storage(owner->data);
-    fact 2 <= owner->head;
-    fact owner->head < 4;
+    contains ring_frame(owner);
     fact owner->tail == 1;
-    fact separate(memory(object(owner)), memory(owner->data[0..4]));
 }
 
 verifying "ring_init_linear.c";
@@ -47,7 +42,7 @@ int32 ring_buffer_init_linear(
     ensures owner->data == data;
 } by {
     execute();
-    fold(owned_ring_storage(owner->data));
+    fold(ring_frame(owner));
     fold(linear_ring(owner));
     simp();
 }
@@ -56,9 +51,15 @@ int32 ring_buffer_push_wrap(
     struct ring_buffer* owner,
     int32 value
 ) {
-    consumes linear_ring(owner);
-    mutable owner->tail, owner->data[0..1];
-    produces wrapped_ring(owner);
+    requires owner->tail == 4;
+    requires 2 <= owner->head;
+    requires owner->head < 4;
+    requires separate(memory(object(owner)), memory(owner->data[0..4]));
+    views owner->head;
+    views owner->data;
+    views owner->data[1..4];
+    owns owner->tail;
+    owns owner->data[0..1];
 
     ensures result == value;
     ensures owner->data[0] == value;
@@ -66,12 +67,7 @@ int32 ring_buffer_push_wrap(
     ensures owner->tail == 1;
     ensures owner->data == old(owner->data);
 } by {
-    unfold(linear_ring(owner));
-    unfold(owned_ring_storage(owner->data));
     execute();
-    fold(owned_ring_storage(owner->data));
-    fold(wrapped_ring(owner));
-    frame();
     simp();
 }
 
@@ -83,7 +79,7 @@ int32 ring_buffer_wrapped_tail(
     ensures result == owner->data[0];
 } by {
     observe(wrapped_ring(owner));
-    observe(owned_ring_storage(owner->data));
+    observe(ring_frame(owner));
     execute();
     simp();
 }
@@ -91,21 +87,21 @@ int32 ring_buffer_wrapped_tail(
 int32 ring_buffer_pop_to_linear(
     struct ring_buffer* owner
 ) {
-    consumes wrapped_ring(owner);
-    mutable owner->tail;
-    produces linear_ring(owner);
+    requires owner->tail == 1;
+    requires 2 <= owner->head;
+    requires owner->head < 4;
+    requires separate(memory(object(owner)), memory(owner->data[0..4]));
+    views owner->head;
+    views owner->data;
+    views owner->data[0..4];
+    owns owner->tail;
 
     ensures result == old(owner->data[0]);
     ensures owner->head == old(owner->head);
     ensures owner->tail == 4;
     ensures owner->data == old(owner->data);
 } by {
-    unfold(wrapped_ring(owner));
-    unfold(owned_ring_storage(owner->data));
     execute();
-    fold(owned_ring_storage(owner->data));
-    fold(linear_ring(owner));
-    frame();
     simp();
 }
 
@@ -122,7 +118,11 @@ int32 ring_buffer_pipeline(
     ensures owner->data == old(owner->data);
     ensures owner->data[0] == replacement;
 } by {
+    unfold(linear_ring(owner));
+    unfold(ring_frame(owner));
     execute();
+    fold(ring_frame(owner));
+    fold(linear_ring(owner));
     have result == replacement by {
         rewrite(at(statement(4).entry, pushed) ==
             at(statement(4).entry, replacement));

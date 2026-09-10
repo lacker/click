@@ -7,20 +7,23 @@ theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
     }
 }
 
-resource owned_segment(data: int32*, length: int32) {
-    owns data[0..length];
-    fact 0 <= length;
-}
-
 resource owned_segmented_buffer(owner: struct owned_segmented_buffer*) {
     owns owner->first_len;
     owns owner->second_len;
     owns owner->first_data;
     owns owner->second_data;
-    contains owned_segment(owner->first_data, owner->first_len);
-    contains owned_segment(owner->second_data, owner->second_len);
+    owns owner->first_data[0..owner->first_len];
+    owns owner->second_data[0..owner->second_len];
     fact 1 <= owner->first_len;
     fact 1 <= owner->second_len;
+    fact separate(
+        memory(object(owner)),
+        memory(owner->first_data[0..owner->first_len])
+    );
+    fact separate(
+        memory(object(owner)),
+        memory(owner->second_data[0..owner->second_len])
+    );
 }
 
 verifying "owned_segmented_buffer_init.c";
@@ -68,8 +71,6 @@ int32 owned_segmented_buffer_init(
         }
         assumption();
     }
-    fold(owned_segment(owner->first_data, owner->first_len));
-    fold(owned_segment(owner->second_data, owner->second_len));
     have 1 <= owner->first_len by {
         assumption();
     }
@@ -125,7 +126,6 @@ int32 owned_segmented_buffer_get_first(
     ensures result == owner->first_data[index];
 } by {
     observe(owned_segmented_buffer(owner));
-    observe(owned_segment(owner->first_data, owner->first_len));
     step();
     have result == owner->first_data[index] by {
         normalize();
@@ -140,8 +140,15 @@ int32 owned_segmented_buffer_set_first(
 ) {
     requires 0 <= index;
     requires index < owner->first_len;
-    owns owned_segmented_buffer(owner);
-    mutable owner->first_data[index..index + 1];
+    requires separate(
+        memory(object(owner)),
+        memory(owner->first_data[0..owner->first_len])
+    );
+    views owner->first_len;
+    views owner->second_len;
+    views owner->first_data;
+    views owner->second_data;
+    owns owner->first_data[index..index + 1];
     ensures result == value;
     ensures owner->first_data[index] == value;
     ensures owner->first_len == old(owner->first_len);
@@ -149,67 +156,9 @@ int32 owned_segmented_buffer_set_first(
     ensures owner->first_data == old(owner->first_data);
     ensures owner->second_data == old(owner->second_data);
 } by {
-    unfold(owned_segmented_buffer(owner));
-    unfold(owned_segment(owner->first_data, owner->first_len));
     step();
     step();
-    have 0 <= owner->first_len by {
-        assumption();
-    }
-    fold(owned_segment(owner->first_data, owner->first_len));
-    have 1 <= owner->first_len by {
-        assumption();
-    }
-    have 1 <= owner->second_len by {
-        assumption();
-    }
-    fold(owned_segmented_buffer(owner));
-    have index < (index + 1) by {
-        apply(int32_increment_strictly_increases(at(statement(1).entry, index), at(statement(1).entry, owner->first_len))) using {
-            at(statement(1).entry, index) < at(statement(1).entry, owner->first_len);
-        }
-        assumption();
-    }
-    have index <= index by {
-        normalize();
-    }
-    have index < (index + 1) by {
-        apply(int32_increment_strictly_increases(at(statement(1).entry, index), at(statement(1).entry, owner->first_len))) using {
-            at(statement(1).entry, index) < at(statement(1).entry, owner->first_len);
-        }
-        assumption();
-    }
-    frame() using {
-        at(statement(1).entry, 0) <= at(statement(1).entry, index);
-        at(statement(1).entry, index) < at(statement(1).entry, owner->first_len);
-        index <= index;
-        index < (index + 1);
-    }
-    have result == value by {
-        normalize();
-    }
-    have owner->first_data[index] == value by {
-        normalize();
-    }
-    have owner->first_len == old(owner->first_len) by {
-        normalize();
-    }
-    have owner->second_len == old(owner->second_len) by {
-        normalize();
-    }
-    have owner->first_data == old(owner->first_data) by {
-        normalize();
-    }
-    have owner->second_data == old(owner->second_data) by {
-        normalize();
-    }
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
+    simp();
 }
 
 int32 owned_segmented_buffer_set_second(
@@ -219,8 +168,15 @@ int32 owned_segmented_buffer_set_second(
 ) {
     requires 0 <= index;
     requires index < owner->second_len;
-    owns owned_segmented_buffer(owner);
-    mutable owner->second_data[index..index + 1];
+    requires separate(
+        memory(object(owner)),
+        memory(owner->second_data[0..owner->second_len])
+    );
+    views owner->first_len;
+    views owner->second_len;
+    views owner->first_data;
+    views owner->second_data;
+    owns owner->second_data[index..index + 1];
     ensures result == value;
     ensures owner->second_data[index] == value;
     ensures owner->first_len == old(owner->first_len);
@@ -228,67 +184,9 @@ int32 owned_segmented_buffer_set_second(
     ensures owner->first_data == old(owner->first_data);
     ensures owner->second_data == old(owner->second_data);
 } by {
-    unfold(owned_segmented_buffer(owner));
-    unfold(owned_segment(owner->second_data, owner->second_len));
     step();
     step();
-    have 0 <= owner->second_len by {
-        assumption();
-    }
-    fold(owned_segment(owner->second_data, owner->second_len));
-    have 1 <= owner->first_len by {
-        assumption();
-    }
-    have 1 <= owner->second_len by {
-        assumption();
-    }
-    fold(owned_segmented_buffer(owner));
-    have index < (index + 1) by {
-        apply(int32_increment_strictly_increases(at(statement(1).entry, index), at(statement(1).entry, owner->second_len))) using {
-            at(statement(1).entry, index) < at(statement(1).entry, owner->second_len);
-        }
-        assumption();
-    }
-    have index <= index by {
-        normalize();
-    }
-    have index < (index + 1) by {
-        apply(int32_increment_strictly_increases(at(statement(1).entry, index), at(statement(1).entry, owner->second_len))) using {
-            at(statement(1).entry, index) < at(statement(1).entry, owner->second_len);
-        }
-        assumption();
-    }
-    frame() using {
-        at(statement(1).entry, 0) <= at(statement(1).entry, index);
-        at(statement(1).entry, index) < at(statement(1).entry, owner->second_len);
-        index <= index;
-        index < (index + 1);
-    }
-    have result == value by {
-        normalize();
-    }
-    have owner->second_data[index] == value by {
-        normalize();
-    }
-    have owner->first_len == old(owner->first_len) by {
-        normalize();
-    }
-    have owner->second_len == old(owner->second_len) by {
-        normalize();
-    }
-    have owner->first_data == old(owner->first_data) by {
-        normalize();
-    }
-    have owner->second_data == old(owner->second_data) by {
-        normalize();
-    }
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
+    simp();
 }
 
 int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
@@ -381,6 +279,7 @@ int32 owned_segmented_buffer_pipeline(
     step();
     step();
     step();
+    unfold(owned_segmented_buffer(owner));
     have ignored == first_len by {
         assumption();
     }
@@ -467,6 +366,13 @@ int32 owned_segmented_buffer_pipeline(
     transport(at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value), second_data[0] == second_value) using {
         at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value);
     }
+    have 1 <= owner->first_len by {
+        assumption();
+    }
+    have 1 <= owner->second_len by {
+        assumption();
+    }
+    fold(owned_segmented_buffer(owner));
     step();
     have c(result) == first_data[0] by {
         rewrite(at(statement(6).entry, c(result)) == at(statement(6).entry, owner->first_data[0]));
