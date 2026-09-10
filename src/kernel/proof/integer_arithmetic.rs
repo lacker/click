@@ -16,13 +16,21 @@ pub(crate) enum IntegerAffineRelation {
     Equal,
 }
 
+/// A sorted opaque arithmetic atom. Machine observations retain their canonical
+/// typed source identity; no machine arithmetic law is assumed here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) enum IntegerAffineAtom {
+    Variable(Variable),
+    Machine(u64),
+}
+
 /// A claimed local affine result. The checker recomputes this value at every
 /// node, making changes to terms, coefficients, operators, or constants
 /// visible to the certificate boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IntegerAffineClaim {
     pub(crate) relation: IntegerAffineRelation,
-    pub(crate) terms: BTreeMap<Variable, BigInt>,
+    pub(crate) terms: BTreeMap<IntegerAffineAtom, BigInt>,
     pub(crate) constant: BigInt,
 }
 
@@ -451,7 +459,7 @@ pub(crate) fn integer_affine_claim(proposition: &Proposition) -> Option<IntegerA
 fn collect_integer_affine_terms(
     term: &crate::kernel::SharedIntegerTerm,
     coefficient: &BigInt,
-    terms: &mut BTreeMap<Variable, BigInt>,
+    terms: &mut BTreeMap<IntegerAffineAtom, BigInt>,
     constant: &mut BigInt,
 ) -> Option<()> {
     // First collect the reachable DAG in postorder.  The interner gives each
@@ -479,10 +487,7 @@ fn collect_integer_affine_terms(
                 stack.push((right.clone(), false));
                 stack.push((left.clone(), false));
             }
-            IntegerTerm::Constant(_)
-            | IntegerTerm::Variable(_)
-            | IntegerTerm::Machine(_)
-            | IntegerTerm::PureFunctionApplication { .. } => {}
+            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {}
         }
     }
 
@@ -513,20 +518,23 @@ fn collect_integer_affine_terms(
                 }
                 *constant += &weight * value;
             }
-            IntegerTerm::Variable(variable) => {
-                let existing = terms.get(variable).map_or(0, |value| value.bits() as usize);
+            IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {
+                let atom = match node.as_ref() {
+                    IntegerTerm::Variable(variable) => IntegerAffineAtom::Variable(*variable),
+                    IntegerTerm::Machine(source) => IntegerAffineAtom::Machine(source.id()),
+                    _ => unreachable!(),
+                };
+                let existing = terms.get(&atom).map_or(0, |value| value.bits() as usize);
                 if crate::instrumentation::deadline_exceeded_with_work(
                     existing + weight.bits() as usize + 1,
                 ) {
                     return None;
                 }
-                let merged = terms.remove(variable).unwrap_or_else(BigInt::zero) + weight;
+                let merged = terms.remove(&atom).unwrap_or_else(BigInt::zero) + weight;
                 if !merged.is_zero() {
-                    terms.insert(*variable, merged);
+                    terms.insert(atom, merged);
                 }
             }
-            IntegerTerm::Machine(_)
-            | IntegerTerm::PureFunctionApplication { .. } => return None,
             IntegerTerm::Negate(child) => {
                 if !add_weight(&mut weights, child.id(), -weight) {
                     return None;
@@ -549,10 +557,9 @@ fn collect_integer_affine_terms(
             IntegerTerm::Multiply(left, right) => {
                 let (child, factor) = if let Some(value) = left.as_const() {
                     (right, value)
-                } else if let Some(value) = right.as_const() {
-                    (left, value)
                 } else {
-                    return None;
+                    let value = right.as_const()?;
+                    (left, value)
                 };
                 if !charge_integer_product(&weight, factor) {
                     return None;
@@ -609,7 +616,10 @@ mod tests {
                 if is_shared {
                     assert_eq!(
                         result.terms,
-                        BTreeMap::from([(Variable(20_000), BigInt::one() << size)])
+                        BTreeMap::from([(
+                            IntegerAffineAtom::Variable(Variable(20_000)),
+                            BigInt::one() << size
+                        )])
                     );
                 } else {
                     assert_eq!(result.terms.len(), size);
@@ -687,6 +697,47 @@ mod tests {
     }
 
     #[test]
+    fn machine_observations_are_sorted_opaque_affine_atoms() {
+        use crate::kernel::{Bitvector32Term, MachineIntegerType};
+        let observe = |ty, bits| IntegerTerm::from_machine(ty, bits).unwrap();
+        let bits = Bitvector32Term::Variable(Variable(490));
+        let x = observe(MachineIntegerType::Int32, bits.clone());
+        let same = observe(MachineIntegerType::Int32, bits.clone());
+        let unsigned = observe(MachineIntegerType::UInt32, bits.clone());
+        let goal = proposition(ConditionTerm::integer_equal(
+            IntegerTerm::subtract(IntegerTerm::add(x.clone(), variable(491)), same),
+            variable(491),
+        ));
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::Trivial {
+                result: claim(&goal),
+            }],
+            conclusion: 0,
+        };
+        assert!(certificate.check(&goal, &[]).is_ok());
+        let wrong_signedness = proposition(ConditionTerm::integer_equal(x.clone(), unsigned));
+        assert!(certificate.check(&wrong_signedness, &[]).is_err());
+
+        let y_bits = Bitvector32Term::Variable(Variable(492));
+        let y = observe(MachineIntegerType::Int32, y_bits.clone());
+        let machine_sum = observe(
+            MachineIntegerType::Int32,
+            Bitvector32Term::Add(Box::new(bits), Box::new(y_bits)),
+        );
+        let unchecked_distribution = proposition(ConditionTerm::integer_equal(
+            machine_sum,
+            IntegerTerm::add(x, y),
+        ));
+        let forged = IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::Trivial {
+                result: claim(&unchecked_distribution),
+            }],
+            conclusion: 0,
+        };
+        assert!(forged.check(&unchecked_distribution, &[]).is_err());
+    }
+
+    #[test]
     fn context_free_trivial_integer_claims_check() {
         let x = variable(1);
         let successor = IntegerTerm::Add(
@@ -741,7 +792,7 @@ mod tests {
         let upper_node = premise(1, &upper);
         let equality = IntegerAffineClaim {
             relation: IntegerAffineRelation::Equal,
-            terms: BTreeMap::from([(Variable(2), BigInt::one())]),
+            terms: BTreeMap::from([(IntegerAffineAtom::Variable(Variable(2)), BigInt::one())]),
             constant: BigInt::zero(),
         };
         let certificate = IntegerArithmeticCertificate {
@@ -781,8 +832,8 @@ mod tests {
         let direction = IntegerAffineClaim {
             relation: IntegerAffineRelation::LessEqual,
             terms: BTreeMap::from([
-                (Variable(4), BigInt::one()),
-                (Variable(5), BigInt::from(-1)),
+                (IntegerAffineAtom::Variable(Variable(4)), BigInt::one()),
+                (IntegerAffineAtom::Variable(Variable(5)), BigInt::from(-1)),
             ]),
             constant: BigInt::zero(),
         };
@@ -837,7 +888,7 @@ mod tests {
         let source = premise(0, &premise_proposition);
         let scaled_result = IntegerAffineClaim {
             relation: IntegerAffineRelation::LessEqual,
-            terms: BTreeMap::from([(Variable(3), BigInt::from(2))]),
+            terms: BTreeMap::from([(IntegerAffineAtom::Variable(Variable(3)), BigInt::from(2))]),
             constant: BigInt::from(-10),
         };
         let certificate = IntegerArithmeticCertificate {

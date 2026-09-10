@@ -2252,6 +2252,7 @@ impl AnnotationLowerer<'_> {
                 click_type: Some(ClickType::Integer),
                 ..
             } => true,
+            ContractExpression::Call { name, .. } if name == "to_integer" => true,
             ContractExpression::Call { name, .. } => self
                 .click_function_environment
                 .get(name)
@@ -2265,9 +2266,8 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<crate::kernel::SpecIntegerExpression, String> {
-        if let ContractExpression::Call { name, arguments } = expression {
-            return self.lower_click_function_call_to_integer_spec(name, arguments, environment);
-        }
+        use crate::kernel::SpecIntegerExpression;
+        check_integer_lowering_work(1)?;
         if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
             let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
             if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =
@@ -2277,77 +2277,132 @@ impl AnnotationLowerer<'_> {
                     .iter()
                     .find(|arm| arm.variant == *variant)
                     .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
-                let mut values = environment.integer_values.clone();
-                for (name, field) in arm.bindings.iter().zip(fields) {
-                    if let crate::kernel::SpecAlgebraicValue::Integer(value) = field {
-                        values.insert(name.clone(), value.clone());
-                    }
+                if arm.bindings.len() != fields.len() {
+                    return Err("datatype match field count mismatch".into());
                 }
                 let mut body_environment = environment.clone();
-                body_environment.integer_values = values;
+                for (name, field) in arm.bindings.iter().zip(fields) {
+                    body_environment.integer_values.remove(name);
+                    body_environment.values.remove(name);
+                    body_environment.algebraic_values.remove(name);
+                    body_environment.array_refs.remove(name);
+                    match field {
+                        crate::kernel::SpecAlgebraicValue::Integer(value) => {
+                            body_environment
+                                .integer_values
+                                .insert(name.clone(), value.clone());
+                        }
+                        crate::kernel::SpecAlgebraicValue::C(value) => {
+                            body_environment.values.insert(name.clone(), value.clone());
+                        }
+                        crate::kernel::SpecAlgebraicValue::Algebraic(value) => {
+                            body_environment
+                                .algebraic_values
+                                .insert(name.clone(), value.clone());
+                        }
+                    }
+                }
                 return self.lower_contract_integer_to_spec(&arm.body, &body_environment);
             }
-            let mut lowered_arms = Vec::new();
-            for arm in arms {
-                let body = self.lower_contract_integer_to_spec(&arm.body, environment)?;
-                lowered_arms.push(crate::kernel::SpecIntegerMatchArm {
-                    variant: arm.variant.clone(),
-                    bindings: arm.bindings.clone(),
-                    binding_types: Vec::new(),
-                    body: Box::new(body),
-                });
+            return Err("symbolic Integer-valued datatype matches are not supported yet".into());
+        }
+        match expression {
+            ContractExpression::Binding(name) => {
+                let value = environment
+                    .integer_values
+                    .get(name)
+                    .ok_or_else(|| format!("`{name}` is not an Integer binding"))?;
+                if let SpecIntegerExpression::Term(term) = value {
+                    check_integer_lowering_work(integer_root_work(term))?;
+                }
+                Ok(value.clone())
             }
-            return Ok(crate::kernel::SpecIntegerExpression::AlgebraicMatch {
-                scrutinee: Box::new(scrutinee),
-                arms: lowered_arms,
-            });
-        }
-        lower_contract_integer_to_spec(expression, &environment.integer_values)
-    }
-
-    fn lower_click_function_call_to_integer_spec(
-        &mut self,
-        name: &str,
-        arguments: &[ContractExpression],
-        environment: &SpecElaborationContext,
-    ) -> Result<crate::kernel::SpecIntegerExpression, String> {
-        let definition = self
-            .click_function_environment
-            .get(name)
-            .ok_or_else(|| format!("unknown function `{name}`"))?
-            .clone();
-        let definition =
-            self.instantiate_click_function_for_call(&definition, arguments, environment)?;
-        if arguments.len() != definition.parameters().len() {
-            return Err(format!(
-                "function `{}` expects {} argument(s), got {}",
-                definition.name(),
-                definition.parameters().len(),
-                arguments.len()
-            ));
-        }
-        if definition.return_type() != &ClickType::Integer {
-            return Err(format!("function `{name}` does not return an Integer value"));
-        }
-        let mut lowered = Vec::with_capacity(arguments.len());
-        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
-            if parameter.click_type() != &ClickType::Integer {
-                return Err(format!("Integer function `{name}` has a non-Integer parameter"));
+            ContractExpression::Call { name, arguments } if name == "to_integer" => {
+                let argument = integer_conversion_argument(name, arguments)?;
+                let argument = self.lower_contract_expression_to_spec(argument, environment)?;
+                if let SpecExpression::Value(value) = &argument {
+                    let destination = crate::kernel::MachineIntegerType::from_c_type(
+                        value.c_type(),
+                    )
+                    .ok_or_else(|| {
+                        "to_integer expects a signed or unsigned machine integer".to_string()
+                    })?;
+                    let (CValue::Int16(bits)
+                    | CValue::Int32(bits)
+                    | CValue::UInt8(bits)
+                    | CValue::UInt16(bits)
+                    | CValue::UInt32(bits)
+                    | CValue::Int64(bits)
+                    | CValue::UInt64(bits)) = value
+                    else {
+                        return Err(
+                            "to_integer expects a signed or unsigned machine integer".into()
+                        );
+                    };
+                    // An already evaluated value carries no evaluation effects.
+                    // Keep its observation in the shared Integer DAG so aliases
+                    // do not duplicate a deferred conversion tree.
+                    return crate::kernel::IntegerTerm::from_machine(destination, bits.clone())
+                        .map(SpecIntegerExpression::Term)
+                        .ok_or_else(|| "invalid machine integer representation".to_string());
+                }
+                Ok(SpecIntegerExpression::FromMachine(Box::new(argument)))
             }
-            let value = self.lower_contract_integer_to_spec(argument, environment)?;
-            let crate::kernel::SpecIntegerExpression::Term(value) = value else {
-                return Err("Integer function arguments must be symbolic terms".to_string());
-            };
-            lowered.push(crate::kernel::PureFunctionArgument::Integer(value.into()));
+            ContractExpression::Negate(inner) => {
+                let inner = self.lower_contract_integer_to_spec(inner, environment)?;
+                match inner {
+                    SpecIntegerExpression::Term(term) => {
+                        check_integer_lowering_work(integer_root_work(&term))?;
+                        Ok(SpecIntegerExpression::Term(
+                            crate::kernel::IntegerTerm::negate(term),
+                        ))
+                    }
+                    inner => Ok(SpecIntegerExpression::Negate(Box::new(inner))),
+                }
+            }
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right) => {
+                let left = self.lower_contract_integer_to_spec(left, environment)?;
+                let right = self.lower_contract_integer_to_spec(right, environment)?;
+                let operation = match expression {
+                    ContractExpression::Add(..) => IntegerOperation::Add,
+                    ContractExpression::Subtract(..) => IntegerOperation::Subtract,
+                    _ => IntegerOperation::Multiply,
+                };
+                match (&left, &right) {
+                    (SpecIntegerExpression::Term(_), SpecIntegerExpression::Term(_)) => {
+                        lower_integer_operation(left, right, operation)
+                    }
+                    _ => Ok(match operation {
+                        IntegerOperation::Add => {
+                            SpecIntegerExpression::Add(Box::new(left), Box::new(right))
+                        }
+                        IntegerOperation::Subtract => {
+                            SpecIntegerExpression::Subtract(Box::new(left), Box::new(right))
+                        }
+                        IntegerOperation::Multiply => {
+                            SpecIntegerExpression::Multiply(Box::new(left), Box::new(right))
+                        }
+                    }),
+                }
+            }
+            ContractExpression::Let {
+                name,
+                click_type: Some(ClickType::Integer),
+                value,
+                body,
+            } => {
+                let value = self.lower_contract_integer_to_spec(value, environment)?;
+                let mut body_environment = environment.clone();
+                body_environment.values.remove(name);
+                body_environment.algebraic_values.remove(name);
+                body_environment.array_refs.remove(name);
+                body_environment.integer_values.insert(name.clone(), value);
+                self.lower_contract_integer_to_spec(body, &body_environment)
+            }
+            _ => lower_contract_integer_to_spec(expression, &environment.integer_values),
         }
-        Ok(crate::kernel::SpecIntegerExpression::Term(
-            crate::kernel::IntegerTerm::PureFunctionApplication(
-                crate::kernel::SharedIntegerApplication::intern(
-                    definition.name().to_string(),
-                    lowered,
-                ),
-            ),
-        ))
     }
 
     fn lower_contract_expression_to_spec(
@@ -2356,6 +2411,19 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
+            ContractExpression::Call { name, arguments }
+                if integer_conversion_target(name).is_some() =>
+            {
+                let argument = integer_conversion_argument(name, arguments)?;
+                let destination = crate::kernel::MachineIntegerType::from_c_type(
+                    integer_conversion_target(name).unwrap().to_kernel_type(),
+                )
+                .expect("conversion target is an integral machine type");
+                Ok(SpecExpression::IntegerToMachine {
+                    value: Box::new(self.lower_contract_integer_to_spec(argument, environment)?),
+                    destination,
+                })
+            }
             ContractExpression::IntegerLiteral(value) => {
                 let value = value.parse::<u64>().map_err(|_| {
                     "an arbitrary Integer literal requires Integer context".to_string()
@@ -3140,15 +3208,10 @@ impl AnnotationLowerer<'_> {
                     "function `{}` has unresolved type parameter `{name}`",
                     definition.name()
                 )),
-                ClickType::Integer => {
-                    let value = self.lower_contract_integer_to_spec(argument, environment)?;
-                    let crate::kernel::SpecIntegerExpression::Term(value) = value else {
-                        return Err("Integer function arguments must be symbolic terms".to_string());
-                    };
-                    Ok(crate::kernel::SpecPureFunctionArgument::Integer(
-                        crate::kernel::SpecIntegerExpression::Term(value),
-                    ))
-                }
+                ClickType::Integer => Err(format!(
+                    "function `{}` has an unsupported Integer parameter",
+                    definition.name()
+                )),
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),

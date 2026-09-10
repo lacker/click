@@ -199,6 +199,12 @@ impl MachineIntegerInterner {
                 break;
             };
             if let Some(bucket) = self.values.get_mut(&fingerprint) {
+                if bucket
+                    .iter()
+                    .any(|(_, node)| node.as_ptr() as usize == pointer && node.strong_count() != 0)
+                {
+                    self.cleanup_queue.push_back((fingerprint, pointer));
+                }
                 bucket.retain(|(_, node)| {
                     node.as_ptr() as usize != pointer || node.strong_count() != 0
                 });
@@ -421,6 +427,15 @@ impl IntegerTerm {
             {
                 Some(BigInt::from(*v))
             }
+            _ if matches!(
+                value,
+                Bitvector32Term::Constant(_)
+                    | Bitvector32Term::Int64Constant(_)
+                    | Bitvector32Term::UInt64Constant(_)
+            ) =>
+            {
+                return None;
+            }
             _ => return Some(Self::Machine(SharedMachineIntegerTerm::intern(ty, value))),
         };
         constant.map(Self::constant)
@@ -465,6 +480,12 @@ impl IntegerInterner {
                 break;
             };
             if let Some(bucket) = self.nodes.get_mut(&fingerprint) {
+                if bucket
+                    .iter()
+                    .any(|(_, node)| node.as_ptr() as usize == pointer && node.strong_count() != 0)
+                {
+                    self.cleanup_queue.push_back((fingerprint, pointer));
+                }
                 bucket.retain(|(_, node)| {
                     node.as_ptr() as usize != pointer || node.strong_count() != 0
                 });
@@ -846,6 +867,17 @@ mod tests {
             )
             .and_then(|v| v.as_const().cloned()),
             Some(BigInt::from(u64::MAX))
+        );
+        assert!(
+            IntegerTerm::from_machine(MachineIntegerType::UInt8, Bitvector32Term::Constant(256))
+                .is_none()
+        );
+        assert!(
+            IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Int64Constant(i64::MAX)
+            )
+            .is_none()
         );
     }
 

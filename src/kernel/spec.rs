@@ -1,4 +1,5 @@
 use super::prelude::*;
+use num_traits::ToPrimitive;
 
 type EvaluatedSpecResource = (CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>);
 type SpecResourceBuilder = Box<dyn Fn(Vec<CValue>) -> Option<CResource>>;
@@ -699,11 +700,16 @@ fn evaluate_spec_integer_expression_paths(
 ) -> ExecutionResult<Vec<SpecIntegerPath>> {
     budget.consume_expression_step()?;
     match expression {
-        SpecIntegerExpression::Term(term) => Ok(vec![SpecIntegerPath {
-            value: term.clone(),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }]),
+        SpecIntegerExpression::Term(term) => {
+            if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(term)) {
+                return Err(ExecutionLimit::Deadline);
+            }
+            Ok(vec![SpecIntegerPath {
+                value: term.clone(),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -735,14 +741,18 @@ fn evaluate_spec_integer_expression_paths(
             algebraic_bindings,
             budget,
         )
-        .map(|paths| {
-            paths
-                .into_iter()
-                .map(|mut path| {
-                    path.value = IntegerTerm::negate(path.value);
-                    path
-                })
-                .collect()
+        .and_then(|paths| {
+            let mut result = Vec::new();
+            for mut path in paths {
+                if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(
+                    &path.value,
+                )) {
+                    return Err(ExecutionLimit::Deadline);
+                }
+                path.value = IntegerTerm::negate(path.value);
+                result.push(path);
+            }
+            Ok(result)
         }),
         SpecIntegerExpression::Add(left, right) => evaluate_integer_binary_paths(
             state,
@@ -752,7 +762,7 @@ fn evaluate_spec_integer_expression_paths(
             assumptions,
             algebraic_bindings,
             budget,
-            IntegerTerm::add,
+            IntegerBinaryOperation::Add,
         ),
         SpecIntegerExpression::Subtract(left, right) => evaluate_integer_binary_paths(
             state,
@@ -762,7 +772,7 @@ fn evaluate_spec_integer_expression_paths(
             assumptions,
             algebraic_bindings,
             budget,
-            IntegerTerm::subtract,
+            IntegerBinaryOperation::Subtract,
         ),
         SpecIntegerExpression::Multiply(left, right) => evaluate_integer_binary_paths(
             state,
@@ -772,101 +782,8 @@ fn evaluate_spec_integer_expression_paths(
             assumptions,
             algebraic_bindings,
             budget,
-            IntegerTerm::multiply,
+            IntegerBinaryOperation::Multiply,
         ),
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            let mut result = Vec::new();
-            for path in evaluate_spec_algebraic_at_state_with_bindings(
-                state,
-                scrutinee,
-                loop_entry_state,
-                assumptions,
-                algebraic_bindings,
-                budget,
-            )? {
-                let AlgebraicTermNode::Constructor { variant, fields } = &path.value.node else {
-                    return Err(ExecutionLimit::Paths);
-                };
-                let arm = arms
-                    .iter()
-                    .find(|arm| arm.variant == *variant)
-                    .ok_or(ExecutionLimit::Paths)?;
-                let mut substitutions = BTreeMap::new();
-                for (name, field) in arm.bindings.iter().zip(fields) {
-                    if let AlgebraicValue::Integer(term) = field {
-                        substitutions.insert(name.clone(), term.clone());
-                    }
-                }
-                let body = substitute_integer_expression(&arm.body);
-                for mut body_path in evaluate_spec_integer_expression_paths(
-                    state,
-                    &body,
-                    loop_entry_state,
-                    assumptions,
-                    algebraic_bindings,
-                    budget,
-                )? {
-                    body_path.facts.extend(path.facts.clone());
-                    body_path.obligations.extend(path.obligations.clone());
-                    result.push(body_path);
-                }
-            }
-            Ok(result)
-        }
-    }
-}
-
-fn substitute_integer_expression(expression: &SpecIntegerExpression) -> SpecIntegerExpression {
-    match expression {
-        SpecIntegerExpression::Term(term) => substitute_integer_term(term),
-        SpecIntegerExpression::FromMachine(value) => {
-            SpecIntegerExpression::FromMachine(value.clone())
-        }
-        SpecIntegerExpression::Negate(inner) => {
-            SpecIntegerExpression::Negate(Box::new(substitute_integer_expression(inner)))
-        }
-        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
-            Box::new(substitute_integer_expression(left)),
-            Box::new(substitute_integer_expression(right)),
-        ),
-        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
-            Box::new(substitute_integer_expression(left)),
-            Box::new(substitute_integer_expression(right)),
-        ),
-        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
-            Box::new(substitute_integer_expression(left)),
-            Box::new(substitute_integer_expression(right)),
-        ),
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            SpecIntegerExpression::AlgebraicMatch {
-                scrutinee: scrutinee.clone(),
-                arms: arms.clone(),
-            }
-        }
-    }
-}
-
-fn substitute_integer_term(term: &IntegerTerm) -> SpecIntegerExpression {
-    match term {
-        IntegerTerm::Variable(_) => SpecIntegerExpression::Term(term.clone()),
-        IntegerTerm::Constant(_) => SpecIntegerExpression::Term(term.clone()),
-        IntegerTerm::Negate(inner) => {
-            SpecIntegerExpression::Negate(Box::new(substitute_integer_term(inner.as_ref())))
-        }
-        IntegerTerm::Add(left, right) => SpecIntegerExpression::Add(
-            Box::new(substitute_integer_term(left.as_ref())),
-            Box::new(substitute_integer_term(right.as_ref())),
-        ),
-        IntegerTerm::Subtract(left, right) => SpecIntegerExpression::Subtract(
-            Box::new(substitute_integer_term(left.as_ref())),
-            Box::new(substitute_integer_term(right.as_ref())),
-        ),
-        IntegerTerm::Multiply(left, right) => SpecIntegerExpression::Multiply(
-            Box::new(substitute_integer_term(left.as_ref())),
-            Box::new(substitute_integer_term(right.as_ref())),
-        ),
-        IntegerTerm::Machine(_) => SpecIntegerExpression::Term(term.clone()),
-        IntegerTerm::PureFunctionApplication { .. } => SpecIntegerExpression::Term(term.clone()),
     }
 }
 
@@ -878,7 +795,7 @@ fn evaluate_integer_binary_paths(
     assumptions: &PureFactContext,
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
-    combine: fn(IntegerTerm, IntegerTerm) -> IntegerTerm,
+    operation: IntegerBinaryOperation,
 ) -> ExecutionResult<Vec<SpecIntegerPath>> {
     let left_paths = evaluate_spec_integer_expression_paths(
         state,
@@ -909,14 +826,50 @@ fn evaluate_integer_binary_paths(
             ) else {
                 continue;
             };
+            let left_bits = integer_term_bits(&left_path.value);
+            let right_bits = integer_term_bits(&right_path.value);
+            let work = match operation {
+                IntegerBinaryOperation::Multiply => left_bits.saturating_mul(right_bits),
+                IntegerBinaryOperation::Add | IntegerBinaryOperation::Subtract => {
+                    left_bits.saturating_add(right_bits)
+                }
+            };
+            if crate::instrumentation::numeric_operation_work_exceeded(work) {
+                return Err(ExecutionLimit::Deadline);
+            }
+            let value = match operation {
+                IntegerBinaryOperation::Add => {
+                    IntegerTerm::add(left_path.value.clone(), right_path.value)
+                }
+                IntegerBinaryOperation::Subtract => {
+                    IntegerTerm::subtract(left_path.value.clone(), right_path.value)
+                }
+                IntegerBinaryOperation::Multiply => {
+                    IntegerTerm::multiply(left_path.value.clone(), right_path.value)
+                }
+            };
             result.push(SpecIntegerPath {
-                value: combine(left_path.value.clone(), right_path.value),
+                value,
                 facts,
                 obligations,
             });
         }
     }
     Ok(result)
+}
+
+#[derive(Clone, Copy)]
+enum IntegerBinaryOperation {
+    Add,
+    Subtract,
+    Multiply,
+}
+
+fn integer_term_bits(term: &IntegerTerm) -> usize {
+    term.as_const()
+        .and_then(|value| usize::try_from(value.bits()).ok())
+        .unwrap_or(1)
+        .saturating_add(1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3130,6 +3083,27 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
+        SpecExpression::IntegerToMachine { value, destination } => {
+            evaluate_spec_integer_expression_paths(
+                state,
+                value,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| {
+                let value = integer_constant_to_machine(&path.value, *destination)
+                    .ok_or(ExecutionLimit::Paths)?;
+                Ok(SpecExpressionPath {
+                    value,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            })
+            .collect::<ExecutionResult<Vec<_>>>()?
+        }
         SpecExpression::ResourceField { projection, c_type } => {
             let snapshot = if projection.at_entry {
                 loop_entry_state.ok_or(ExecutionLimit::Paths)?
@@ -3896,23 +3870,6 @@ fn evaluate_spec_pure_function_argument_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPureFunctionArgumentPath>> {
     match argument {
-        SpecPureFunctionArgument::Integer(expression) => Ok(
-            evaluate_spec_integer_expression_paths(
-                state,
-                expression,
-                loop_entry_state,
-                assumptions,
-                algebraic_bindings,
-                budget,
-            )?
-            .into_iter()
-            .map(|path| SpecPureFunctionArgumentPath {
-                value: PureFunctionArgument::Integer(path.value.into()),
-                facts: path.facts,
-                obligations: path.obligations,
-            })
-            .collect(),
-        ),
         SpecPureFunctionArgument::Value(expression) => {
             Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -3998,6 +3955,41 @@ fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::Float32(term)
         | CValue::Float64(term) => Some(term.clone()),
         CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
+fn integer_constant_to_machine(
+    value: &IntegerTerm,
+    destination: MachineIntegerType,
+) -> Option<CValue> {
+    let value = value.as_const()?;
+    match destination {
+        MachineIntegerType::Int16 => {
+            let value = i16::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int16(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::Int32 => {
+            let value = i32::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int32(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt8 => {
+            let value = u8::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt8(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt16 => {
+            let value = u16::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt16(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt32 => {
+            let value = u32::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt32(Bitvector32Term::Constant(value)))
+        }
+        MachineIntegerType::Int64 => Some(CValue::Int64(Bitvector32Term::Int64Constant(
+            value.to_i64()?,
+        ))),
+        MachineIntegerType::UInt64 => Some(CValue::UInt64(Bitvector32Term::UInt64Constant(
+            value.to_u64()?,
+        ))),
     }
 }
 
@@ -4885,5 +4877,235 @@ fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt16(value) => Some(Bitvector32Term::uint64_from_int32(value.clone())),
         CValue::UInt32(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
         CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod integer_budget_tests {
+    use super::*;
+    use num_bigint::BigInt;
+    use num_traits::One;
+
+    #[test]
+    fn deferred_integer_multiply_precharges_product_work_without_active_tactic() {
+        // Each operand is individually below the configured setup allowance,
+        // while their product is deliberately above it.  This exercises the
+        // same configured allowance used during setup, without an active
+        // tactic supplying a separate work limit.
+        let operand_bits = 1_000usize;
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 10_000,
+            smart: 10_000,
+            control: 10_000,
+        };
+        let expression = SpecIntegerExpression::Multiply(
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(
+                BigInt::one() << operand_bits,
+            ))),
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(
+                BigInt::one() << operand_bits,
+            ))),
+        );
+
+        let result = crate::instrumentation::with_tactic_work_limits(limits, || {
+            evaluate_spec_integer_expression_paths(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &BTreeMap::new(),
+                &mut ExecutionBudget::default(),
+            )
+        });
+
+        assert_eq!(result, Err(ExecutionLimit::Deadline));
+    }
+
+    #[test]
+    fn from_machine_preserves_c_overflow_path_fact() {
+        let left = Variable(31);
+        let right = Variable(32);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::CExpression(
+            c_add(c_variable("left"), c_variable("right")),
+        )));
+
+        let paths = evaluate_spec_integer_expression_paths(
+            &state,
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("symbolic machine addition should produce paths");
+        let overflow = ConditionTerm::signed_add_overflows(left_bits, right_bits);
+        assert_eq!(paths.len(), 1);
+        assert!(
+            paths[0]
+                .facts
+                .contains(&ExecutionPureFact::condition(overflow, false))
+        );
+        assert_eq!(paths[0].obligations, Vec::<ProofObligation>::new());
+    }
+
+    #[test]
+    fn from_machine_keeps_signed_and_unsigned_values_distinct() {
+        let signed = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(u32::MAX)),
+        )));
+        let unsigned = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+        )));
+        let evaluate = |expression| {
+            evaluate_spec_integer_expression_paths(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &BTreeMap::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap()
+            .pop()
+            .unwrap()
+            .value
+        };
+
+        assert_eq!(evaluate(signed), IntegerTerm::constant_i64(-1));
+        assert_eq!(
+            evaluate(unsigned),
+            IntegerTerm::constant(BigInt::from(u32::MAX))
+        );
+    }
+
+    #[test]
+    fn bitvector_substitution_reaches_machine_integer_proposition() {
+        let variable = Variable(47);
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::integer_equal(
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(variable),
+                )),
+                IntegerTerm::constant_i64(7),
+            ),
+            true,
+        );
+        let substituted = crate::kernel::reasoning::substitute_bitvector_variable_in_proposition(
+            &proposition,
+            variable,
+            &Bitvector32Term::Constant(7),
+        );
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) = substituted
+        else {
+            panic!("machine-backed Integer proposition changed shape");
+        };
+        let IntegerTerm::Machine(machine) = left.as_ref() else {
+            panic!("machine-backed Integer term was not preserved");
+        };
+        assert_eq!(machine.value(), &Bitvector32Term::Constant(7));
+
+        let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(7)),
+        )));
+        let paths = evaluate_spec_integer_expression_paths(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(paths[0].value, IntegerTerm::constant_i64(7));
+    }
+
+    #[test]
+    fn integer_to_machine_converts_exact_boundaries_without_wrapping() {
+        let cases = [
+            (
+                MachineIntegerType::Int16,
+                BigInt::from(i16::MIN),
+                CValue::Int16(Bitvector32Term::Constant(i16::MIN as i32 as u32)),
+            ),
+            (
+                MachineIntegerType::Int32,
+                BigInt::from(i32::MIN),
+                CValue::Int32(Bitvector32Term::Constant(i32::MIN as u32)),
+            ),
+            (
+                MachineIntegerType::UInt8,
+                BigInt::from(u8::MAX),
+                CValue::UInt8(Bitvector32Term::Constant(u8::MAX as u32)),
+            ),
+            (
+                MachineIntegerType::UInt16,
+                BigInt::from(u16::MAX),
+                CValue::UInt16(Bitvector32Term::Constant(u16::MAX as u32)),
+            ),
+            (
+                MachineIntegerType::UInt32,
+                BigInt::from(u32::MAX),
+                CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+            ),
+            (
+                MachineIntegerType::Int64,
+                BigInt::from(i64::MIN),
+                CValue::Int64(Bitvector32Term::Int64Constant(i64::MIN)),
+            ),
+            (
+                MachineIntegerType::UInt64,
+                BigInt::from(u64::MAX),
+                CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+            ),
+        ];
+        for (destination, integer, expected) in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(integer))),
+                destination,
+            };
+            let paths = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .expect("representable Integer constants should convert");
+            assert_eq!(paths.len(), 1);
+            assert_eq!(paths[0].value, expected);
+        }
+    }
+
+    #[test]
+    fn integer_to_machine_rejects_out_of_range_constants() {
+        let cases = [
+            (MachineIntegerType::Int16, BigInt::from(i16::MAX) + 1),
+            (MachineIntegerType::Int32, BigInt::from(i32::MIN) - 1),
+            (MachineIntegerType::UInt8, BigInt::from(-1)),
+            (MachineIntegerType::UInt16, BigInt::from(u16::MAX) + 1),
+            (MachineIntegerType::UInt32, BigInt::from(u32::MAX) + 1),
+            (MachineIntegerType::Int64, BigInt::from(i64::MAX) + 1),
+            (MachineIntegerType::UInt64, BigInt::from(u64::MAX) + 1),
+        ];
+        for (destination, integer) in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(integer))),
+                destination,
+            };
+            let result = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            );
+            assert_eq!(result, Err(ExecutionLimit::Paths));
+        }
     }
 }
