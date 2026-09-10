@@ -438,6 +438,9 @@ impl<'a> Proof<'a> {
         &self,
         witness: &ProofWitness,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
+            return self.apply_pure_integer_witness(witness);
+        }
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A witness refinement on a judgment stated at a function
@@ -559,6 +562,69 @@ impl<'a> Proof<'a> {
         Ok(CheckedFocusedTransition::replacing(
             self.state().locals().clone(),
             Some(self.refined_proposition(context, goal, surface_goal)),
+            Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn apply_pure_integer_witness(
+        &self,
+        witness: &ProofWitness,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let goal = self
+            .proposition_goal("`witness` requires a proposition goal")?
+            .clone();
+        let Proposition::Exists {
+            name,
+            var,
+            sort: Sort::Integer,
+            body,
+        } = goal
+        else {
+            return Err(self.step_error(
+                "pure `witness` currently requires an Integer existential proposition",
+            ));
+        };
+        if name != witness.name {
+            return Err(self.step_error(format!(
+                "`witness` binds `{name}`, but proof provided `{}`",
+                witness.name
+            )));
+        }
+        let integer_values = self
+            .proposition_obligation()
+            .map(|goal| &goal.integer_values)
+            .ok_or_else(|| self.step_error("pure `witness` lost its Integer environment"))?;
+        let value = crate::surface::lowering::lower_contract_integer_to_spec(
+            &witness.value,
+            integer_values,
+        )
+        .map_err(|message| {
+            self.step_error(format!("could not lower Integer witness: {message}"))
+        })?;
+        let crate::kernel::SpecIntegerExpression::Term(value) = value;
+        let proposition =
+            crate::kernel::substitute_integer_variable_in_pure_proposition(&body, var, &value)
+                .map_err(|error| {
+                    self.step_error(format!("could not apply Integer witness: {error:?}"))
+                })?;
+        let surface_goal = match self.surface_goal() {
+            Some(ClickProposition::Exists { name, body, .. }) if name == &witness.name => {
+                let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
+                Some(
+                    substitute_click_proposition(body, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Integer witness goal: {message}"
+                        ))
+                    })?,
+                )
+            }
+            _ => None,
+        };
+        let context = self.refined_branch_state(self.facts().clone());
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals().clone(),
+            Some(self.refined_proposition(context, proposition, surface_goal)),
             Vec::new(),
             Vec::new(),
         ))

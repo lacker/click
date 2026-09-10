@@ -71,10 +71,15 @@ impl<'a> Proof<'a> {
                     .proposition_obligation()
                     .map(|goal| &goal.integer_values)
                     .unwrap_or(&context.theorem_context.integer_values);
-                if let Some(recorded) = context
-                    .theorem_context
-                    .surface_requirements
-                    .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
+                let cache_has_same_bindings = self.proposition_obligation().is_none_or(|goal| {
+                    goal.surface_bindings.is_empty()
+                        && goal.integer_values == context.theorem_context.integer_values
+                });
+                if cache_has_same_bindings
+                    && let Some(recorded) = context
+                        .theorem_context
+                        .surface_requirements
+                        .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
                 {
                     return Ok(recorded.clone());
                 }
