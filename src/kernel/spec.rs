@@ -797,7 +797,7 @@ fn evaluate_spec_integer_expression_paths(
                         substitutions.insert(name.clone(), term.clone());
                     }
                 }
-                let body = substitute_integer_expression(&arm.body, &substitutions);
+                let body = substitute_integer_expression(&arm.body);
                 for mut body_path in evaluate_spec_integer_expression_paths(
                     state,
                     &body,
@@ -816,29 +816,26 @@ fn evaluate_spec_integer_expression_paths(
     }
 }
 
-fn substitute_integer_expression(
-    expression: &SpecIntegerExpression,
-    substitutions: &BTreeMap<String, IntegerTerm>,
-) -> SpecIntegerExpression {
+fn substitute_integer_expression(expression: &SpecIntegerExpression) -> SpecIntegerExpression {
     match expression {
         SpecIntegerExpression::Term(term) => substitute_integer_term(term),
         SpecIntegerExpression::FromMachine(value) => {
             SpecIntegerExpression::FromMachine(value.clone())
         }
-        SpecIntegerExpression::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
-            substitute_integer_expression(inner, substitutions),
-        )),
+        SpecIntegerExpression::Negate(inner) => {
+            SpecIntegerExpression::Negate(Box::new(substitute_integer_expression(inner)))
+        }
         SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
-            Box::new(substitute_integer_expression(left, substitutions)),
-            Box::new(substitute_integer_expression(right, substitutions)),
+            Box::new(substitute_integer_expression(left)),
+            Box::new(substitute_integer_expression(right)),
         ),
         SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
-            Box::new(substitute_integer_expression(left, substitutions)),
-            Box::new(substitute_integer_expression(right, substitutions)),
+            Box::new(substitute_integer_expression(left)),
+            Box::new(substitute_integer_expression(right)),
         ),
         SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
-            Box::new(substitute_integer_expression(left, substitutions)),
-            Box::new(substitute_integer_expression(right, substitutions)),
+            Box::new(substitute_integer_expression(left)),
+            Box::new(substitute_integer_expression(right)),
         ),
         SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
             SpecIntegerExpression::AlgebraicMatch {
