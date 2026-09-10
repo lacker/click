@@ -73,7 +73,21 @@ enum MacroDefinition {
     FunctionLike {
         parameters: Vec<String>,
         replacement: String,
+        primitive: Option<KernelPrimitive>,
     },
+}
+
+/// Kernel-header macros whose semantics are modeled directly by the checked
+/// C0 lowering.  Keeping these as source-level operations is important: the
+/// GNU replacement text commonly contains statement expressions and helper
+/// macros that are outside the ordinary C0 preprocessor subset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KernelPrimitive {
+    ReadOnce,
+    WriteOnce,
+    Likely,
+    Unlikely,
+    RcuAssignPointer,
 }
 
 impl MacroDefinition {
@@ -1110,7 +1124,10 @@ fn parse_directive<'a>(
         };
         if trailing.starts_with('(') {
             return Ok(Some(match parse_function_macro_definition(trailing) {
-                Ok(definition) => SourceDirective::MacroDefinition { name, definition },
+                Ok(definition) => SourceDirective::MacroDefinition {
+                    name: name.clone(),
+                    definition: definition.with_kernel_primitive(&name),
+                },
                 Err(message) => SourceDirective::Unsupported(message.to_string()),
             }));
         }
@@ -1460,7 +1477,73 @@ fn parse_function_macro_definition(input: &str) -> Result<MacroDefinition, &'sta
     Ok(MacroDefinition::FunctionLike {
         parameters: parameter_names,
         replacement,
+        primitive: None,
     })
+}
+
+impl MacroDefinition {
+    fn with_kernel_primitive(self, name: &str) -> Self {
+        let Self::FunctionLike {
+            parameters,
+            replacement,
+            primitive: _,
+        } = self
+        else {
+            return self;
+        };
+        let primitive = kernel_primitive_for_macro(name, &parameters, &replacement);
+        Self::FunctionLike {
+            parameters,
+            replacement,
+            primitive,
+        }
+    }
+}
+
+fn kernel_primitive_for_macro(
+    name: &str,
+    parameters: &[String],
+    replacement: &str,
+) -> Option<KernelPrimitive> {
+    let has = |spelling: &str| replacement.contains(spelling);
+    match name {
+        "READ_ONCE"
+            if parameters.len() == 1
+                && (has("typeof")
+                    || has("__typeof")
+                    || has("volatile")
+                    || has("READ_ONCE")
+                    || has("__READ_ONCE")) =>
+        {
+            Some(KernelPrimitive::ReadOnce)
+        }
+        "WRITE_ONCE"
+            if parameters.len() == 2
+                && (has("typeof")
+                    || has("__typeof")
+                    || has("volatile")
+                    || has("WRITE_ONCE")
+                    || has("__WRITE_ONCE")) =>
+        {
+            Some(KernelPrimitive::WriteOnce)
+        }
+        "likely" if parameters.len() == 1 && has("__builtin_expect") => {
+            Some(KernelPrimitive::Likely)
+        }
+        "unlikely" if parameters.len() == 1 && has("__builtin_expect") => {
+            Some(KernelPrimitive::Unlikely)
+        }
+        "rcu_assign_pointer"
+            if parameters.len() == 2
+                && (has("rcu")
+                    || has("WRITE_ONCE")
+                    || has("smp_store_release")
+                    || has("volatile")) =>
+        {
+            Some(KernelPrimitive::RcuAssignPointer)
+        }
+        _ => None,
+    }
 }
 
 fn preprocessor_literal_value(literal: &str) -> Option<u64> {
@@ -1693,7 +1776,34 @@ fn expand_macro_text(
                 }
                 MacroDefinition::FunctionLike {
                     parameters,
+                    primitive: Some(primitive),
+                    ..
+                } if chars.get(index) == Some(&'(') => {
+                    let (arguments, end) = parse_macro_arguments(&chars, index, &name)?;
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| {
+                            let mut argument_comments = false;
+                            expand_macro_text(
+                                argument.trim(),
+                                macros,
+                                &mut argument_comments,
+                                state,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let replacement = format!(
+                        "{}({})",
+                        kernel_primitive_spelling(primitive),
+                        arguments.join(", ")
+                    );
+                    append_macro_tokens(&mut expanded, &replacement, chars.get(end).copied());
+                    index = end;
+                }
+                MacroDefinition::FunctionLike {
+                    parameters,
                     replacement,
+                    ..
                 } if chars.get(index) == Some(&'(') => {
                     let (arguments, end) = parse_macro_arguments(&chars, index, &name)?;
                     let replacement = expand_function_macro(
@@ -1720,6 +1830,16 @@ fn expand_macro_text(
         return Err("macro expansion exceeds the one-megabyte output limit".to_string());
     }
     Ok(expanded)
+}
+
+fn kernel_primitive_spelling(primitive: KernelPrimitive) -> &'static str {
+    match primitive {
+        KernelPrimitive::ReadOnce => "READ_ONCE",
+        KernelPrimitive::WriteOnce => "WRITE_ONCE",
+        KernelPrimitive::Likely => "likely",
+        KernelPrimitive::Unlikely => "unlikely",
+        KernelPrimitive::RcuAssignPointer => "rcu_assign_pointer",
+    }
 }
 
 /// Substitution retains preprocessing-token boundaries: `PLUS+` with a
@@ -2249,6 +2369,7 @@ mod tests {
                 MacroDefinition::FunctionLike {
                     parameters: vec!["x".to_string()],
                     replacement: String::new(),
+                    primitive: None,
                 },
             ),
             (
@@ -2277,6 +2398,34 @@ mod tests {
         let source = "#define PLUS +\n#define SLASH /\n#define xFF 2\n#define L 1\nPLUS+ SLASH* 0xFF L\"wide\"\n";
         let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
         assert!(expanded.source().contains("+ + / * 0xFF L\"wide\""));
+    }
+
+    #[test]
+    fn linux_style_kernel_access_macros_preserve_checked_spellings() {
+        let source = r#"
+#define __READ_ONCE(x) ({ typeof(x) __value; __value = x; __value; })
+#define READ_ONCE(x) __READ_ONCE(x)
+#define __WRITE_ONCE(x, value) ({ typeof(x) __value = (value); (*(volatile typeof(x) *)&(x)) = __value; __value; })
+#define WRITE_ONCE(x, value) __WRITE_ONCE(x, value)
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#define rcu_assign_pointer(p, v) ({ typeof(*(p)) __value = (v); WRITE_ONCE(*(p), __value); })
+int32 run(int32 value) {
+    value = WRITE_ONCE(value, likely(value) + 1);
+    rcu_assign_pointer(value, value);
+    if (unlikely(value == 2)) return READ_ONCE(value);
+    return 0;
+}
+"#;
+        let expanded = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap();
+        assert!(
+            expanded
+                .source()
+                .contains("WRITE_ONCE(value, likely(value) + 1)")
+        );
+        assert!(expanded.source().contains("READ_ONCE(value)"));
+        assert!(expanded.source().contains("rcu_assign_pointer"));
+        assert!(!expanded.source().contains("typeof(x)"));
     }
 
     #[test]

@@ -76,7 +76,6 @@ C import and execution:
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 - [Model sequential scalar and pointer-qualified volatile objects](volatile-objects.md)
 - [Model volatile accesses to pointer-valued objects](volatile-pointer-objects.md)
-- [Give kernel access primitives a checked sequential projection](sequential-kernel-access-primitives.md)
 
 Specification and proof:
 

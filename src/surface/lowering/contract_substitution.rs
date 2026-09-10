@@ -2421,9 +2421,11 @@ pub(in crate::surface) fn substitute_c_fragment(
         CExpression::TypedLoad {
             pointer,
             value_type,
+            volatile,
         } => Ok(CExpression::TypedLoad {
             pointer: Box::new(substitute_c_fragment(pointer, substitutions)?),
             value_type: *value_type,
+            volatile: *volatile,
         }),
         CExpression::Index(base, index) => Ok(CExpression::Index(
             Box::new(substitute_c_fragment(base, substitutions)?),

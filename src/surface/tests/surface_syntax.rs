@@ -1381,6 +1381,7 @@ fn qualified_storage_source_index_preserves_forks_and_scales() {
                     crate::kernel::CPointerValue::new(pointer.clone(), CType::UInt64Pointer),
                 ))),
                 value_type: CType::UInt64,
+                volatile: false,
             },
         };
         let surface = ClickProposition::Comparison {

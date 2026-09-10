@@ -169,6 +169,7 @@ fn stored_child_arguments_require_owned_memory() {
     arm.children[0].arguments = vec![CExpression::TypedLoad {
         pointer: Box::new(c_variable("p")),
         value_type: CType::Int32Pointer,
+        volatile: false,
     }];
     let children = vec![
         ("left".into(), Variable(501)),
@@ -229,6 +230,7 @@ fn stored_child_arguments_require_owned_memory() {
         vec![CExpression::TypedLoad {
             pointer: Box::new(c_pointer_value(concrete.clone())),
             value_type: CType::Int32Pointer,
+            volatile: false,
         }];
     // A materialized C block is not authority to read a link outside the
     // resource body, even though ordinary C execution can access that block.

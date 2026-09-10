@@ -56,6 +56,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.for-init-list",
     "statement.for-declaration-list",
     "statement.store",
+    "statement.sequential-kernel-store",
     "statement.malloc",
     "statement.calloc",
     "statement.realloc",
@@ -93,6 +94,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.index",
     "expression.field",
     "expression.dereference",
+    "expression.sequential-kernel-read",
+    "expression.sequential-kernel-write",
     "expression.pointer-arithmetic",
     "operator.logical-not",
     "operator.unary-plus",
@@ -1743,6 +1746,16 @@ fn is_arithmetic_type(c_type: C0Type) -> bool {
     is_integer_type(c_type) || matches!(c_type, C0Type::Float32 | C0Type::Float64)
 }
 
+fn is_unsupported_concurrency_builtin(name: &str) -> bool {
+    name.starts_with("__atomic_")
+        || name.starts_with("__sync_")
+        || name == "smp_load_acquire"
+        || name == "smp_store_release"
+        || name == "smp_mb"
+        || name == "smp_rmb"
+        || name == "smp_wmb"
+}
+
 fn integer_promotion_type(c_type: C0Type) -> Option<C0Type> {
     match c_type {
         C0Type::Int16 | C0Type::Char | C0Type::UInt8 | C0Type::UInt16 => Some(C0Type::Int32),
@@ -1903,6 +1916,15 @@ pub enum C0Statement {
         value: C0Expression,
         value_type: Option<C0Type>,
     },
+    /// A checked sequential access primitive imported from the Linux-style
+    /// READ_ONCE/WRITE_ONCE/RCU macro family. The kernel records the access as
+    /// observable and ordered, but this node does not assert atomicity,
+    /// inter-thread visibility, release/acquire ordering, or grace periods.
+    SequentialStore {
+        target: C0Expression,
+        value: C0Expression,
+        value_type: C0Type,
+    },
     /// Copy an address-backed aggregate whose layout includes overlapping
     /// union storage. Ordinary scalar stores cannot represent this copy
     /// without losing the member views, so the kernel receives the complete
@@ -2054,6 +2076,22 @@ pub enum C0Expression {
     BitwiseXor(Box<C0Expression>, Box<C0Expression>),
     BitwiseNot(Box<C0Expression>),
     Load(Box<C0Expression>),
+    /// One observable sequential read of the source lvalue. `struct_name`
+    /// carries nominal pointer provenance through the lowering boundary.
+    SequentialRead {
+        target: Box<C0Expression>,
+        c_type: C0Type,
+        struct_name: Option<String>,
+    },
+    /// Expression form of a sequential write. Lowering materializes its
+    /// result after the ordered store so the target and value are evaluated
+    /// once, as required by the checked primitive contract.
+    SequentialWrite {
+        target: Box<C0Expression>,
+        value: Box<C0Expression>,
+        c_type: C0Type,
+        struct_name: Option<String>,
+    },
     /// Address of an embedded struct field. Aggregate objects have no
     /// runtime `CValue`; this node carries the aggregate place through nested
     /// member selection until a scalar field is selected.
@@ -3201,6 +3239,15 @@ impl C0Statement {
                     value.to_kernel_expression(),
                 ),
             },
+            Self::SequentialStore {
+                target,
+                value,
+                value_type,
+            } => crate::kernel::c_volatile_typed_store(
+                C0Expression::AddressOf(Box::new(target.clone())).to_kernel_expression(),
+                value.to_kernel_expression(),
+                value_type.to_kernel_type(),
+            ),
             Self::AggregateCopy {
                 target,
                 source,
@@ -3416,6 +3463,15 @@ impl C0Expression {
                 crate::kernel::c_bitwise_not(expression.to_kernel_expression())
             }
             Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
+            Self::SequentialRead { target, c_type, .. } => crate::kernel::c_volatile_typed_load(
+                C0Expression::AddressOf(Box::new(target.as_ref().clone())).to_kernel_expression(),
+                c_type.to_kernel_type(),
+            ),
+            Self::SequentialWrite { .. } => {
+                unreachable!(
+                    "sequential write expressions must be lowered before kernel conversion"
+                )
+            }
             Self::Field {
                 pointer,
                 field_type,
@@ -3576,6 +3632,7 @@ fn validate_function_returns(
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
+        | C0Statement::SequentialStore { .. }
         | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. }
         | C0Statement::Assert { .. } => Ok(()),
@@ -4114,6 +4171,8 @@ fn evaluate_static_integer_expression(
         | C0Expression::Float32Literal(_)
         | C0Expression::Float64Literal(_)
         | C0Expression::Load(_)
+        | C0Expression::SequentialRead { .. }
+        | C0Expression::SequentialWrite { .. }
         | C0Expression::AggregateAddress { .. }
         | C0Expression::Field { .. }
         | C0Expression::UnionAddress { .. }
@@ -4623,6 +4682,10 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
         | C0Expression::CheckedArrayIndex {
             index: expression, ..
         } => contains_aggregate_value(expression),
+        C0Expression::SequentialRead { target, .. } => contains_aggregate_value(target),
+        C0Expression::SequentialWrite { target, value, .. } => {
+            contains_aggregate_value(target) || contains_aggregate_value(value)
+        }
         C0Expression::Conditional {
             condition,
             then_branch,
@@ -9019,6 +9082,11 @@ impl Parser {
                         }
                         let arguments = self.parse_call_arguments(Some(&source_name))?;
                         self.expect(Token::Semicolon)?;
+                        if let Some(statement) =
+                            self.parse_kernel_primitive_statement(&source_name, &arguments)?
+                        {
+                            return Ok(statement);
+                        }
                         Ok(C0Statement::Call {
                             function_name: self.resolve_function_name(&source_name),
                             arguments,
@@ -10383,7 +10451,16 @@ impl Parser {
                     let call_start = self.position;
                     let source_name = self.expect_ident("function name")?;
                     let arguments = self.parse_call_arguments(Some(&source_name))?;
-                    if matches!(self.peek(), Some(Token::Comma | Token::Semicolon)) {
+                    let is_kernel_primitive = self
+                        .parse_kernel_primitive_expression(
+                            &source_name,
+                            &arguments,
+                            self.positions.get(call_start).copied(),
+                        )?
+                        .is_some();
+                    if !is_kernel_primitive
+                        && matches!(self.peek(), Some(Token::Comma | Token::Semicolon))
+                    {
                         let call = self.call_assignment_statement(
                             name.clone(),
                             self.resolve_function_name(&source_name),
@@ -11013,7 +11090,14 @@ impl Parser {
                     let call_start = self.position;
                     let source_name = self.expect_ident("function name")?;
                     let arguments = self.parse_call_arguments(Some(&source_name))?;
-                    if self.peek() == Some(&Token::Semicolon) {
+                    let is_kernel_primitive = self
+                        .parse_kernel_primitive_expression(
+                            &source_name,
+                            &arguments,
+                            self.positions.get(call_start).copied(),
+                        )?
+                        .is_some();
+                    if !is_kernel_primitive && self.peek() == Some(&Token::Semicolon) {
                         return self.call_assignment_statement(
                             name,
                             self.resolve_function_name(&source_name),
@@ -11545,6 +11629,8 @@ impl Parser {
             | C0Expression::BitwiseOr(_, _)
             | C0Expression::BitwiseXor(_, _)
             | C0Expression::BitwiseNot(_)
+            | C0Expression::SequentialRead { .. }
+            | C0Expression::SequentialWrite { .. }
             | C0Expression::Index(_, _)
             | C0Expression::CheckedArrayIndex { .. } => None,
         }
@@ -11575,6 +11661,13 @@ impl Parser {
             | C0Expression::AggregateAddress { .. }
             | C0Expression::UnionAddress { .. }
             | C0Expression::UnionField { .. } => false,
+            C0Expression::SequentialRead { target, .. } => {
+                self.expression_contains_aggregate(target)
+            }
+            C0Expression::SequentialWrite { target, value, .. } => {
+                self.expression_contains_aggregate(target)
+                    || self.expression_contains_aggregate(value)
+            }
             C0Expression::Cast { expression, .. }
             | C0Expression::FloatNegate(expression)
             | C0Expression::FloatClassification { expression, .. }
@@ -11756,6 +11849,13 @@ impl Parser {
                         return true;
                     }
                 }
+                C0Statement::SequentialStore { target, value, .. } => {
+                    if self.expression_contains_lowerable_expression(target)
+                        || self.expression_contains_lowerable_expression(value)
+                    {
+                        return true;
+                    }
+                }
                 C0Statement::AggregateCopy { target, source, .. } => {
                     if self.expression_contains_lowerable_expression(target)
                         || self.expression_contains_lowerable_expression(source)
@@ -11844,6 +11944,8 @@ impl Parser {
                 | C0Expression::Not(expression)
                 | C0Expression::BitwiseNot(expression)
                 | C0Expression::Load(expression) => expressions.push(expression),
+                C0Expression::SequentialRead { target, .. } => expressions.push(target),
+                C0Expression::SequentialWrite { .. } => return true,
                 C0Expression::AggregateAddress { pointer, .. }
                 | C0Expression::UnionAddress { pointer, .. }
                 | C0Expression::Field { pointer, .. }
@@ -12026,6 +12128,27 @@ impl Parser {
                     prefix,
                     C0Statement::Store {
                         pointer,
+                        value,
+                        value_type,
+                    },
+                ))
+            }
+            C0Statement::SequentialStore {
+                target,
+                value,
+                value_type,
+            } => {
+                // The macro contract evaluates the value into a temporary
+                // before evaluating the destination access. This makes the
+                // one-access guarantee explicit even if either argument
+                // contains a lowerable call or checked index.
+                let (mut prefix, value) = self.lower_expression_calls(value)?;
+                let (target_prefix, target) = self.lower_expression_calls(target)?;
+                prefix.extend(target_prefix);
+                Ok(prepend_statements(
+                    prefix,
+                    C0Statement::SequentialStore {
+                        target,
                         value,
                         value_type,
                     },
@@ -12443,6 +12566,59 @@ impl Parser {
             C0Expression::Load(pointer) => {
                 let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
                 Ok((prefix, C0Expression::Load(Box::new(pointer))))
+            }
+            C0Expression::SequentialRead {
+                target,
+                c_type,
+                struct_name,
+            } => {
+                let (prefix, target) = self.lower_expression_calls(*target)?;
+                Ok((
+                    prefix,
+                    C0Expression::SequentialRead {
+                        target: Box::new(target),
+                        c_type,
+                        struct_name,
+                    },
+                ))
+            }
+            C0Expression::SequentialWrite {
+                target,
+                value,
+                c_type,
+                struct_name,
+            } => {
+                // WRITE_ONCE is expression-valued in the Linux headers. Keep
+                // its value result while making the ordered store a statement
+                // transition, with a synthesized local preventing a second
+                // evaluation of either macro argument.
+                let (mut prefix, value) = self.lower_expression_calls(*value)?;
+                let (target_prefix, target) = self.lower_expression_calls(*target)?;
+                prefix.extend(target_prefix);
+                let temporary = self.fresh_synthesized_call_name();
+                self.variable_types.insert(temporary.clone(), c_type);
+                if let Some(struct_name) = &struct_name {
+                    self.variable_structs
+                        .insert(temporary.clone(), struct_name.clone());
+                }
+                prefix.push(C0Statement::Declare {
+                    c_type,
+                    name: temporary.clone(),
+                    volatile: false,
+                    pointee_volatile: false,
+                    constant: false,
+                    pointee_constant: false,
+                });
+                prefix.push(C0Statement::Assign {
+                    name: temporary.clone(),
+                    expression: value,
+                });
+                prefix.push(C0Statement::SequentialStore {
+                    target,
+                    value: C0Expression::Variable(temporary.clone()),
+                    value_type: c_type,
+                });
+                Ok((prefix, C0Expression::Variable(temporary)))
             }
             C0Expression::AggregateAddress {
                 pointer,
@@ -13257,6 +13433,224 @@ impl Parser {
         self.parse_postfix()
     }
 
+    /// Recognize the small, explicitly checked projection of Linux-style
+    /// access macros. The macro expander preserves these calls instead of
+    /// feeding their GNU statement-expression bodies to the ordinary C0
+    /// parser. Direct spellings are accepted as well, which keeps the
+    /// imported semantics stable when a header only declares the macros.
+    fn parse_kernel_primitive_expression(
+        &self,
+        source_name: &str,
+        arguments: &[C0Expression],
+        position: Option<SourcePosition>,
+    ) -> Result<Option<C0Expression>, C0SyntaxError> {
+        let wrong_arity = |expected: usize| {
+            self.error_at_position(
+                position,
+                format!(
+                    "`{source_name}` expects {expected} argument{}",
+                    if expected == 1 { "" } else { "s" }
+                ),
+            )
+        };
+        match source_name {
+            "READ_ONCE" => {
+                let [target] = arguments else {
+                    return Err(wrong_arity(1));
+                };
+                let (c_type, struct_name) =
+                    self.sequential_access_target(target, source_name, position)?;
+                Ok(Some(C0Expression::SequentialRead {
+                    target: Box::new(target.clone()),
+                    c_type,
+                    struct_name,
+                }))
+            }
+            "WRITE_ONCE" => {
+                let [target, value] = arguments else {
+                    return Err(wrong_arity(2));
+                };
+                let (c_type, struct_name) =
+                    self.sequential_access_target(target, source_name, position)?;
+                self.validate_sequential_store_value(
+                    target,
+                    value,
+                    c_type,
+                    struct_name.as_deref(),
+                )?;
+                Ok(Some(C0Expression::SequentialWrite {
+                    target: Box::new(target.clone()),
+                    value: Box::new(value.clone()),
+                    c_type,
+                    struct_name,
+                }))
+            }
+            "likely" | "unlikely" => {
+                let [condition] = arguments else {
+                    return Err(wrong_arity(1));
+                };
+                self.validate_kernel_condition(condition, source_name, position)?;
+                Ok(Some(condition.clone()))
+            }
+            "__builtin_expect" => {
+                let [condition, expected] = arguments else {
+                    return Err(wrong_arity(2));
+                };
+                self.validate_kernel_condition(condition, source_name, position)?;
+                let Some(expected_type) = self.source_expression_type(expected) else {
+                    return Err(self.error_at_position(
+                        position,
+                        "`__builtin_expect` requires an integer constant prediction",
+                    ));
+                };
+                if !is_integer_type(expected_type)
+                    || evaluate_static_integer_expression(expected).is_err()
+                {
+                    return Err(self.error_at_position(
+                        position,
+                        "`__builtin_expect` requires an integer constant prediction",
+                    ));
+                }
+                Ok(Some(condition.clone()))
+            }
+            "rcu_assign_pointer" => Err(self.error_at_position(
+                position,
+                "`rcu_assign_pointer` is supported only as a statement-form sequential store; the selected profile does not model release/acquire or grace-period semantics",
+            )),
+            name if is_unsupported_concurrency_builtin(name) => Err(self.error_at_position(
+                position,
+                format!(
+                    "unsupported concurrency builtin `{name}`: the selected profile provides sequential access primitives only"
+                ),
+            )),
+            _ => Ok(None),
+        }
+    }
+
+    fn sequential_access_target(
+        &self,
+        target: &C0Expression,
+        primitive: &str,
+        position: Option<SourcePosition>,
+    ) -> Result<(C0Type, Option<String>), C0SyntaxError> {
+        if !matches!(
+            target,
+            C0Expression::Variable(_)
+                | C0Expression::Load(_)
+                | C0Expression::Field { .. }
+                | C0Expression::UnionField { .. }
+                | C0Expression::Index(_, _)
+        ) {
+            return Err(self.error_at_position(
+                position,
+                format!("`{primitive}` requires a scalar or pointer lvalue"),
+            ));
+        }
+        if matches!(target, C0Expression::UnionField { .. }) && primitive == "WRITE_ONCE" {
+            return Err(self.error_at_position(
+                position,
+                "writing tagged union members through `WRITE_ONCE` is not supported",
+            ));
+        }
+        let Some(c_type) = self.source_expression_type(target) else {
+            return Err(self.error_at_position(
+                position,
+                format!("`{primitive}` target has no supported C0 type"),
+            ));
+        };
+        if !c_type.is_supported_static_scalar() {
+            return Err(self.error_at_position(
+                position,
+                format!(
+                    "`{primitive}` supports only modeled scalar and object-pointer cells, got `{c_type:?}`"
+                ),
+            ));
+        }
+        let struct_name = if c_type.is_object_pointer() {
+            self.struct_pointer_name(target)
+                .or_else(|| self.struct_pointer_pointer_name(target))
+        } else {
+            None
+        };
+        Ok((c_type, struct_name))
+    }
+
+    fn validate_sequential_store_value(
+        &self,
+        target: &C0Expression,
+        value: &C0Expression,
+        c_type: C0Type,
+        struct_name: Option<&str>,
+    ) -> Result<(), C0SyntaxError> {
+        self.reject_constant_lvalue_write(target)?;
+        self.validate_char_pointer_assignment(c_type, value)?;
+        if let Some(struct_name) = struct_name {
+            let expected_struct = struct_name.to_string();
+            self.validate_struct_pointer_assignment(Some(&expected_struct), Some(c_type), value)?;
+        }
+        Ok(())
+    }
+
+    fn validate_kernel_condition(
+        &self,
+        condition: &C0Expression,
+        primitive: &str,
+        position: Option<SourcePosition>,
+    ) -> Result<(), C0SyntaxError> {
+        let Some(c_type) = self.source_expression_type(condition) else {
+            return Err(self.error_at_position(
+                position,
+                format!("`{primitive}` requires a scalar condition"),
+            ));
+        };
+        if !is_arithmetic_type(c_type) && !c_type.is_object_pointer() {
+            return Err(self.error_at_position(
+                position,
+                format!("`{primitive}` requires a scalar condition, got `{c_type:?}`"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn parse_kernel_primitive_statement(
+        &self,
+        source_name: &str,
+        arguments: &[C0Expression],
+    ) -> Result<Option<C0Statement>, C0SyntaxError> {
+        match source_name {
+            "WRITE_ONCE" | "rcu_assign_pointer" => {
+                if arguments.len() != 2 {
+                    return Err(self.error_here(format!(
+                        "`{source_name}` expects 2 arguments, got {}",
+                        arguments.len()
+                    )));
+                }
+                let target = &arguments[0];
+                let value = &arguments[1];
+                let (c_type, struct_name) =
+                    self.sequential_access_target(target, source_name, None)?;
+                self.validate_sequential_store_value(
+                    target,
+                    value,
+                    c_type,
+                    struct_name.as_deref(),
+                )?;
+                Ok(Some(C0Statement::SequentialStore {
+                    target: target.clone(),
+                    value: value.clone(),
+                    value_type: c_type,
+                }))
+            }
+            "READ_ONCE" | "likely" | "unlikely" | "__builtin_expect" => Err(
+                self.error_here(format!("`{source_name}` result may not be discarded")),
+            ),
+            name if is_unsupported_concurrency_builtin(name) => Err(self.error_here(format!(
+                "unsupported concurrency builtin `{name}`: the selected profile provides sequential access primitives only"
+            ))),
+            _ => Ok(None),
+        }
+    }
+
     fn parse_postfix(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut expression = self.parse_primary()?;
         loop {
@@ -13288,6 +13682,14 @@ impl Parser {
                         }
                     };
                     let arguments = self.parse_call_arguments(Some(&source_name))?;
+                    if let Some(result) = self.parse_kernel_primitive_expression(
+                        &source_name,
+                        &arguments,
+                        call_position,
+                    )? {
+                        expression = result;
+                        continue;
+                    }
                     if let Some(result) = parse_float_classification_call(&source_name, &arguments)
                     {
                         expression = result
@@ -13578,6 +13980,10 @@ impl Parser {
                 matches!(field_type, C0Type::Float32 | C0Type::Float64)
             }
             C0Expression::Load(pointer) => self.expression_pointee_is_float(pointer),
+            C0Expression::SequentialRead { c_type, .. }
+            | C0Expression::SequentialWrite { c_type, .. } => {
+                matches!(c_type, C0Type::Float32 | C0Type::Float64)
+            }
             C0Expression::Index(base, _) | C0Expression::CheckedArrayIndex { index: base, .. } => {
                 self.expression_pointee_is_float(base)
             }
@@ -13633,6 +14039,8 @@ impl Parser {
             C0Expression::Variable(name) => self.variable_types.get(name).copied(),
             C0Expression::Field { field_type, .. }
             | C0Expression::UnionField { field_type, .. } => Some(*field_type),
+            C0Expression::SequentialRead { c_type, .. }
+            | C0Expression::SequentialWrite { c_type, .. } => Some(*c_type),
             C0Expression::Cast { c_type, .. } => Some(*c_type),
             C0Expression::Index(base, _) => {
                 return self.expression_pointee_is_float(base);
@@ -13676,6 +14084,8 @@ impl Parser {
                 ..
             } => Some(struct_name.clone()),
             C0Expression::Load(pointer) => self.struct_pointer_pointer_name(pointer),
+            C0Expression::SequentialRead { struct_name, .. }
+            | C0Expression::SequentialWrite { struct_name, .. } => struct_name.clone(),
             C0Expression::AddressOf(target) => match target.as_ref() {
                 C0Expression::AggregateAddress { struct_name, .. } => Some(struct_name.clone()),
                 C0Expression::Variable(name) => self.variable_struct_values.get(name).cloned(),
@@ -13762,6 +14172,8 @@ impl Parser {
                 C0Expression::Load(_) => self.struct_pointer_name(target),
                 _ => None,
             },
+            C0Expression::SequentialRead { struct_name, .. }
+            | C0Expression::SequentialWrite { struct_name, .. } => struct_name.clone(),
             C0Expression::Cast { expression, .. } => self.struct_pointer_pointer_name(expression),
             C0Expression::Add(left, _) | C0Expression::Subtract(left, _) => {
                 self.struct_pointer_pointer_name(left)
@@ -13829,6 +14241,8 @@ impl Parser {
             C0Expression::Cast { c_type, .. } => Some(*c_type),
             C0Expression::Field { field_type, .. }
             | C0Expression::UnionField { field_type, .. } => Some(*field_type),
+            C0Expression::SequentialRead { c_type, .. }
+            | C0Expression::SequentialWrite { c_type, .. } => Some(*c_type),
             C0Expression::Load(pointer) | C0Expression::Index(pointer, _) => {
                 self.source_expression_type(pointer)?.pointee_type()
             }
@@ -14093,6 +14507,16 @@ impl Parser {
                 (field_struct_name.clone(), None)
             }
             C0Expression::Load(_) => (self.struct_pointer_name(base), None),
+            C0Expression::SequentialRead {
+                c_type,
+                struct_name,
+                ..
+            }
+            | C0Expression::SequentialWrite {
+                c_type,
+                struct_name,
+                ..
+            } if c_type.is_object_pointer() => (struct_name.clone(), None),
             C0Expression::AggregateAddress { struct_name, .. } => (Some(struct_name.clone()), None),
             C0Expression::UnionAddress { union_name, .. } => (None, Some(union_name)),
             C0Expression::Cast {
@@ -15040,6 +15464,7 @@ fn statement_continues_enclosing_loop(statement: &C0Statement) -> bool {
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
+        | C0Statement::SequentialStore { .. }
         | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. }
         | C0Statement::Assert { .. } => false,
@@ -15120,6 +15545,7 @@ fn prepend_condition_check_before_loop_continues(
         | C0Statement::HeapFree { .. }
         | C0Statement::Return(_)
         | C0Statement::Store { .. }
+        | C0Statement::SequentialStore { .. }
         | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. }
         | C0Statement::Assert { .. }) => statement,
@@ -15152,6 +15578,10 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
         | C0Expression::Not(expression)
         | C0Expression::BitwiseNot(expression)
         | C0Expression::Load(expression) => first_embedded_call_position(expression),
+        C0Expression::SequentialRead { target, .. } => first_embedded_call_position(target),
+        C0Expression::SequentialWrite { target, value, .. } => {
+            first_embedded_call_position(target).or_else(|| first_embedded_call_position(value))
+        }
         C0Expression::AggregateAddress { pointer, .. }
         | C0Expression::Field { pointer, .. }
         | C0Expression::UnionField { pointer, .. }

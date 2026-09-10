@@ -634,6 +634,9 @@ pub enum CExpression {
     TypedLoad {
         pointer: Box<CExpression>,
         value_type: CType,
+        /// A sequential kernel access primitive forces one observable access
+        /// even when the source lvalue itself was not declared volatile.
+        volatile: bool,
     },
     Index(Box<CExpression>, Box<CExpression>),
 }
@@ -1571,6 +1574,8 @@ pub enum CStatement {
         pointer: CExpression,
         value: CExpression,
         value_type: CType,
+        /// See [`CExpression::TypedLoad::volatile`].
+        volatile: bool,
     },
     /// Evaluate a compound-assignment or increment target as one lvalue,
     /// read it, apply the operator with the operand, and write the result back.

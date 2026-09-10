@@ -4898,6 +4898,7 @@ impl Parser {
                 base: CExpression::TypedLoad {
                     pointer: Box::new(field_base),
                     value_type: field.c_type.to_kernel_type(),
+                    volatile: false,
                 },
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(
@@ -4948,6 +4949,7 @@ impl Parser {
         Ok(CExpression::TypedLoad {
             pointer: Box::new(self.offset_field_pointer(base, field.offset_bytes)),
             value_type: field.c_type.to_kernel_type(),
+            volatile: false,
         })
     }
 
@@ -5913,6 +5915,7 @@ impl Parser {
             return Ok(ContractExpression::CFragment(CExpression::TypedLoad {
                 pointer: Box::new(pointer),
                 value_type,
+                volatile: false,
             }));
         }
 
@@ -6635,6 +6638,7 @@ fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExp
         CExpression::TypedLoad {
             pointer: Box::new(pointer),
             value_type: field.c_type.to_kernel_type(),
+            volatile: false,
         }
     }
 }

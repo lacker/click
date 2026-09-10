@@ -322,6 +322,11 @@ pub(in crate::surface) fn collect_c0_loop_modified_locals(
         | syntax::C0Statement::Store { .. }
         | syntax::C0Statement::AggregateCopy { .. }
         | syntax::C0Statement::Assert { .. } => {}
+        syntax::C0Statement::SequentialStore { target, .. } => {
+            if let syntax::C0Expression::Variable(name) = target {
+                names.insert(name.clone());
+            }
+        }
         syntax::C0Statement::Update { target, .. } => {
             if let syntax::C0Expression::Variable(name) = target {
                 names.insert(name.clone());

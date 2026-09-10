@@ -1312,6 +1312,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                 | CType::UInt32Array(_)
                 | CType::Int64Array(_)
                 | CType::UInt64Array(_),
+            ..
         } => evaluate_c_expression_paths(state, pointer, assumptions, budget)?,
         CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
@@ -1638,6 +1639,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
         CExpression::TypedLoad {
             pointer: pointer_expression,
             value_type,
+            volatile,
         } => {
             let mut paths = Vec::new();
             for pointer_path in
@@ -1649,7 +1651,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                             CLValue::memory_with_volatile(
                                 pointer.pointer().clone(),
                                 *value_type,
-                                pointer.pointee_volatile(),
+                                *volatile || pointer.pointee_volatile(),
                             )
                             .with_constant(pointer.pointee_constant()),
                         ),

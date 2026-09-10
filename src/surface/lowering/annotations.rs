@@ -3279,10 +3279,12 @@ impl AnnotationLowerer<'_> {
             CExpression::TypedLoad {
                 pointer,
                 value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+                ..
             } => self.lower_c_fragment_to_spec(pointer, environment),
             CExpression::TypedLoad {
                 pointer,
                 value_type,
+                ..
             } => Ok(SpecExpression::MemoryLoad {
                 memory: environment.current_memory.clone(),
                 pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
@@ -3693,9 +3695,11 @@ impl AnnotationLowerer<'_> {
             CExpression::TypedLoad {
                 pointer,
                 value_type,
+                volatile,
             } => Ok(CExpression::TypedLoad {
                 pointer: Box::new(self.lower_current_invariant_c_expression(pointer)?),
                 value_type: *value_type,
+                volatile: *volatile,
             }),
             CExpression::Index(base, index) => Ok(CExpression::Index(
                 Box::new(self.lower_current_invariant_c_expression(base)?),

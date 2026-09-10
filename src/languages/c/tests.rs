@@ -1,6 +1,103 @@
 use super::*;
 
 #[test]
+fn c0_linux_sequential_access_primitives_lower_to_ordered_kernel_accesses() {
+    let source = r#"
+#define READ_ONCE(x) ({ typeof(x) __value; __value = x; __value; })
+#define WRITE_ONCE(x, value) ({ typeof(x) __value = (value); (*(volatile typeof(x) *)&(x)) = __value; __value; })
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#define rcu_assign_pointer(p, v) ({ typeof(*(p)) __value = (v); WRITE_ONCE(*(p), __value); })
+int32 run(int32 value) {
+    value = WRITE_ONCE(value, likely(value) + 1);
+    rcu_assign_pointer(value, value);
+    if (unlikely(value == 2)) return READ_ONCE(value);
+    return 0;
+}
+"#;
+    let expanded = source::expand_includes(
+        "main.c",
+        &std::collections::BTreeMap::from([("main.c", source)]),
+    )
+    .expect("Linux-style access macros should expand to checked spellings");
+    let functions = syntax::parse_functions_for_source(expanded.source(), "main.c")
+        .expect("sequential access primitives should parse");
+    let body = functions[0].body();
+    let rendered = format!("{body:?}");
+    assert!(rendered.contains("SequentialStore"));
+    assert!(rendered.contains("SequentialRead"));
+    let kernel_rendered = format!("{:?}", functions[0].body_kernel_statement());
+    assert!(kernel_rendered.contains("volatile: true"));
+    let execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        functions[0].to_kernel_function(),
+        vec![crate::kernel::c_int32_literal(1)],
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(execution.paths().len(), 1);
+    let accesses = execution.paths()[0]
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            crate::kernel::Proposition::Predicate { name, .. }
+                if name.starts_with("__click_volatile_") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 3);
+    assert!(accesses[0].starts_with("__click_volatile_write_"));
+    assert!(accesses[1].starts_with("__click_volatile_write_"));
+    assert!(accesses[2].starts_with("__click_volatile_read_"));
+}
+
+#[test]
+fn c0_sequential_pointer_primitives_preserve_struct_pointer_identity() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct node { int32 value; struct node *next; };
+        int32 update(struct node *root, struct node *replacement) {
+            WRITE_ONCE(root->next, replacement);
+            return READ_ONCE(root->next)->value;
+        }
+        "#,
+    )
+    .expect("pointer-valued sequential accesses should parse");
+    let function = &functions[0];
+    let rendered = format!("{:?}", function.body());
+    assert!(rendered.contains("SequentialStore"));
+    assert!(rendered.contains("SequentialRead"));
+    assert!(rendered.contains("struct_name: Some(\"node\")"));
+
+    let kernel_rendered = format!("{:?}", function.body_kernel_statement());
+    assert!(kernel_rendered.contains("value_type: Int32Pointer"));
+    assert!(kernel_rendered.contains("volatile: true"));
+}
+
+#[test]
+fn c0_sequential_profile_rejects_concurrency_builtins() {
+    for source in [
+        "int32 bad(int32 value) { return __atomic_load_n(&value, 0); }",
+        "int32 bad(int32 value) { __atomic_store_n(&value, 1, 0); return value; }",
+        "int32 bad(int32 value) { return smp_load_acquire(&value); }",
+        "int32 bad(int32 value) { smp_store_release(&value, 1); return value; }",
+        "int32 bad(int32 value) { return rcu_assign_pointer(value, value); }",
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("concurrency-only operations must not enter the sequential profile");
+        assert!(
+            error.message().contains("sequential")
+                || error.message().contains("statement-form sequential store"),
+            "{}: {}",
+            source,
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn c0_wide_static_initializers_use_checked_wide_values() {
     use crate::kernel::{Bitvector32Term, CValue};
     let unit = syntax::parse_translation_unit_for_source(
@@ -3665,6 +3762,7 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
+            | syntax::C0Statement::SequentialStore { .. }
             | syntax::C0Statement::AggregateCopy { .. }
             | syntax::C0Statement::Update { .. }
             | syntax::C0Statement::Assert { .. } => false,
@@ -4262,6 +4360,7 @@ fn c0_tagged_union_member_addresses_preserve_member_type_and_offset() {
     let crate::kernel::CExpression::TypedLoad {
         pointer,
         value_type: crate::kernel::CType::Int32,
+        ..
     } = target.as_ref()
     else {
         panic!("scalar union member address should preserve the member lvalue type")
@@ -8158,6 +8257,7 @@ fn c0_struct_field_lowering_uses_explicit_byte_offsets() {
     let crate::kernel::CStatement::Return(crate::kernel::CExpression::TypedLoad {
         pointer,
         value_type: crate::kernel::CType::Int32Pointer,
+        ..
     }) = function.body_kernel_statement()
     else {
         panic!("field load should retain its value type")
@@ -8252,6 +8352,7 @@ fn c0_struct_field_address_lowering_preserves_nested_byte_offset() {
     let crate::kernel::CExpression::TypedLoad {
         pointer,
         value_type: crate::kernel::CType::Int32,
+        ..
     } = target.as_ref()
     else {
         panic!("nested field address should preserve the leaf load type")

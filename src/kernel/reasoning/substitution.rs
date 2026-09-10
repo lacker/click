@@ -1619,11 +1619,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
         CExpression::TypedLoad {
             pointer,
             value_type,
+            volatile,
         } => CExpression::TypedLoad {
             pointer: Box::new(substitute_bitvector_variable_in_c_expression(
                 pointer, from, to,
             )),
             value_type: *value_type,
+            volatile: *volatile,
         },
         CExpression::LessThan(left, right) => CExpression::LessThan(
             Box::new(substitute_bitvector_variable_in_c_expression(
@@ -1871,10 +1873,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             pointer,
             value,
             value_type,
+            volatile,
         } => CStatement::TypedStore {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
             value_type: *value_type,
+            volatile: *volatile,
         },
         CStatement::CopyAggregate {
             target,
@@ -4441,11 +4445,13 @@ fn substitute_pointer_variable_in_c_expression(
         CExpression::TypedLoad {
             pointer,
             value_type,
+            volatile,
         } => CExpression::TypedLoad {
             pointer: Box::new(substitute_pointer_variable_in_c_expression(
                 pointer, from, to,
             )),
             value_type: *value_type,
+            volatile: *volatile,
         },
         CExpression::Not(body) | CExpression::BitwiseNot(body) => {
             let body = Box::new(substitute_pointer_variable_in_c_expression(body, from, to));
@@ -4573,10 +4579,12 @@ fn substitute_pointer_variable_in_c_statement(
             pointer,
             value,
             value_type,
+            volatile,
         } => CStatement::TypedStore {
             pointer: substitute_pointer_variable_in_c_expression(pointer, from, to),
             value: substitute_pointer_variable_in_c_expression(value, from, to),
             value_type: *value_type,
+            volatile: *volatile,
         },
         CStatement::CopyAggregate {
             target,
