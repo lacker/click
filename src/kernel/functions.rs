@@ -3918,6 +3918,7 @@ fn spec_expression_constant(expression: &SpecExpression) -> Option<u32> {
         | CValue::Int64(term)
         | CValue::UInt64(term) => term.as_const(),
         CValue::Void | CValue::Float32(_) | CValue::Float64(_) | CValue::Pointer(_) => None,
+        CValue::Bool(term) => term.as_const(),
     }
 }
 
@@ -5197,6 +5198,7 @@ fn symbolic_function_result(function: &CFunction, variable: Variable) -> CValue 
 pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
         CType::Void => CValue::Void,
+        CType::Bool => crate::kernel::bool_value(Bitvector32Term::Variable(variable)),
         CType::VoidPointer => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
         CType::Int16 => CValue::Int16(Bitvector32Term::Variable(variable)),
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
@@ -6542,6 +6544,7 @@ fn zero_aggregate_fields(
             _ => continue,
         };
         let zero = match element_type {
+            CType::Bool => CValue::Bool(Bitvector32Term::Constant(0)),
             CType::Int16 => int16(0),
             CType::Int32 => int32(0),
             CType::UInt8 => uint8(0),

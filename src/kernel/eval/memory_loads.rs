@@ -2313,6 +2313,17 @@ pub(in crate::kernel) fn symbolic_load_value(
 ) -> Option<CValue> {
     match value_type {
         CType::Void | CType::VoidPointer => None,
+        CType::Bool => {
+            let load = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory.clone()),
+                Box::new(pointer.clone()),
+            );
+            Some(CValue::Bool(Bitvector32Term::if_then_else(
+                ConditionTerm::equal(load, Bitvector32Term::Constant(0)),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )))
+        }
         CType::Int16 => Some(memory.symbolic_int16_load(pointer)),
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),

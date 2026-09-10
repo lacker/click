@@ -1293,7 +1293,8 @@ pub(in crate::kernel) fn collect_c_value_bitvector_variables(
 ) {
     match value {
         CValue::Void => {}
-        CValue::Int16(bits)
+        CValue::Bool(bits)
+        | CValue::Int16(bits)
         | CValue::Int32(bits)
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)

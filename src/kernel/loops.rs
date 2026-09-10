@@ -2803,6 +2803,7 @@ pub(super) fn havoc_loop_modified_locals(
         };
         let value = match c_type {
             CType::Void => continue,
+            CType::Bool => CValue::Bool(Bitvector32Term::Variable(variables.next())),
             CType::VoidPointer => {
                 CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
             }

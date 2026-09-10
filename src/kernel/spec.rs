@@ -3635,6 +3635,7 @@ fn evaluate_spec_pure_function_argument_paths(
 
 fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::Bool(term) => Some(term.clone()),
         CValue::Int16(term)
         | CValue::Int32(term)
         | CValue::UInt8(term)
@@ -4578,7 +4579,8 @@ pub(super) fn c_value_comparison_proposition(
 
 fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
-        CValue::Int16(value)
+        CValue::Bool(value)
+        | CValue::Int16(value)
         | CValue::Int32(value)
         | CValue::UInt8(value)
         | CValue::UInt16(value)
@@ -4595,6 +4597,7 @@ fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
 fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Int64(value) => Some(value.clone()),
+        CValue::Bool(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
         CValue::Int16(value)
         | CValue::Int32(value)
         | CValue::UInt8(value)
@@ -4611,6 +4614,7 @@ fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
 fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::UInt64(value) => Some(value.clone()),
+        CValue::Bool(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
         CValue::Int64(value) => Some(Bitvector32Term::uint64_from_int64(value.clone())),
         CValue::Int16(value)
         | CValue::Int32(value)

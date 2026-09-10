@@ -69,7 +69,6 @@ C import and execution:
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify inline function definitions reached through headers](inline-functions-in-headers.md)
 - [Model the GNU C expression and declaration forms used by rbtree](gnu-c-extensions.md)
-- [Model C `_Bool` and `bool`](c-bool.md)
 - [Preserve `const` qualification in C types](const-qualified-types.md)
 - [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
 - [Widen the struct model](struct-model.md)

@@ -764,7 +764,8 @@ fn collect_sequence_bound_variables(sequence: &SequenceTerm, variables: &mut BTr
 
 fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
     match value {
-        CValue::Int16(bits)
+        CValue::Bool(bits)
+        | CValue::Int16(bits)
         | CValue::Int32(bits)
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)
@@ -3820,6 +3821,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
 ) -> CValue {
     match value {
         CValue::Void => CValue::Void,
+        CValue::Bool(bits) => CValue::Bool(substitute_bitvector_variable(bits, from, to)),
         CValue::Int16(bits) => int16(substitute_bitvector_variable(bits, from, to)),
         CValue::Int32(bits) => int32(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt8(bits) => uint8(substitute_bitvector_variable(bits, from, to)),
@@ -4349,6 +4351,7 @@ fn substitute_pointer_variable_in_c_value(value: &CValue, from: Variable, to: &P
         .with_pointer_pointee_volatile(pointer.pointee_volatile())
         .with_pointer_pointee_constant(pointer.pointee_constant()),
         CValue::Void
+        | CValue::Bool(_)
         | CValue::Int16(_)
         | CValue::Int32(_)
         | CValue::UInt8(_)

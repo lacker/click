@@ -473,6 +473,7 @@ impl<'a> Proof<'a> {
                 pointer.pointer(),
             ),
             CValue::Void
+            | CValue::Bool(_)
             | CValue::Int16(_)
             | CValue::UInt8(_)
             | CValue::UInt16(_)

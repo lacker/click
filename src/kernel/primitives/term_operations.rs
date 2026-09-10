@@ -2332,7 +2332,7 @@ impl CType {
         return_constant: bool,
         parameters: &[(Self, bool)],
     ) -> CallbackSignature {
-        // Exact base-40 digits: twenty modeled types, each with a pointee-const
+        // Exact base-42 digits: twenty-one modeled types, each with a pointee-const
         // bit. The leading one distinguishes arities. Fourteen digits plus
         // the sentinel use fewer than 76 bits, preserving the 13-parameter
         // capacity without truncation or probabilistic identities.
@@ -2343,7 +2343,8 @@ impl CType {
             Some(
                 match c_type {
                     CType::Void => 0,
-                    CType::VoidPointer => 19,
+                    CType::Bool => 19,
+                    CType::VoidPointer => 20,
                     CType::Int32 => 1,
                     CType::UInt8 => 2,
                     CType::UInt32 => 3,
@@ -2393,12 +2394,12 @@ impl CType {
         let Some(return_code) = code(return_type, return_constant) else {
             return CallbackSignature::UNSPECIFIED;
         };
-        let mut signature = 40 + return_code;
+        let mut signature = 42 + return_code;
         for &(parameter_type, constant) in parameters {
             let Some(parameter_code) = code(parameter_type, constant) else {
                 return CallbackSignature::UNSPECIFIED;
             };
-            signature = signature * 40 + parameter_code;
+            signature = signature * 42 + parameter_code;
         }
         CallbackSignature::from_encoded(signature)
     }
@@ -2421,6 +2422,7 @@ impl CType {
 
     pub(crate) fn pointer_to(self) -> Option<Self> {
         match self {
+            Self::Bool => None,
             Self::Int16 => Some(Self::Int16Pointer),
             Self::Int32 => Some(Self::Int32Pointer),
             Self::UInt8 => Some(Self::UInt8Pointer),
@@ -2466,6 +2468,7 @@ impl CType {
     pub(crate) fn accepts(self, value: &CValue) -> bool {
         match (self, value) {
             (Self::Void, CValue::Void)
+            | (Self::Bool, CValue::Bool(_))
             | (Self::Int16, CValue::Int16(_))
             | (Self::Int32, CValue::Int32(_))
             | (Self::UInt8, CValue::UInt8(_))
@@ -2503,6 +2506,7 @@ impl CType {
     pub fn byte_width(self) -> u32 {
         match self {
             Self::Void => 0,
+            Self::Bool => 1,
             Self::VoidPointer => C_POINTER_BYTE_WIDTH,
             Self::Int16 => 2,
             Self::Int32 => 4,
@@ -2624,6 +2628,7 @@ impl CValue {
     pub(crate) fn c_type(&self) -> CType {
         match self {
             Self::Void => CType::Void,
+            Self::Bool(_) => CType::Bool,
             Self::Int16(_) => CType::Int16,
             Self::Int32(_) => CType::Int32,
             Self::UInt8(_) => CType::UInt8,
@@ -2640,6 +2645,7 @@ impl CValue {
     pub(in crate::kernel) fn byte_width(&self) -> u32 {
         match self {
             Self::Void => 0,
+            Self::Bool(_) => 1,
             Self::Int16(_) => 2,
             Self::Int32(_) => 4,
             Self::UInt8(_) => 1,

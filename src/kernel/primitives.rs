@@ -479,6 +479,10 @@ impl std::fmt::Display for PointerBlock {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
     Void,
+    /// C `_Bool` values are represented by a 32-bit term whose value is
+    /// always normalized to zero or one.  The storage width remains the
+    /// ABI-defined one byte width exposed by `CType::Bool`.
+    Bool(Bitvector32Term),
     Int16(Bitvector32Term),
     Int32(Bitvector32Term),
     UInt8(Bitvector32Term),
@@ -496,6 +500,7 @@ pub enum CValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CType {
     Void,
+    Bool,
     /// An opaque object pointer with provenance but no modeled pointee type.
     /// It is valid for identity-preserving casts and comparisons, but not for
     /// dereference, indexing, or pointer arithmetic.
@@ -1147,6 +1152,7 @@ impl AlgebraicTerm {
                 },
                 Node::Value(value) => match value {
                     CValue::Void => {}
+                    CValue::Bool(v) => visit(v),
                     CValue::Pointer(v) => pending.push(Node::Offset(&v.pointer().offset)),
                     CValue::Int16(v)
                     | CValue::UInt16(v)

@@ -18,7 +18,8 @@ fn collect_offset_load_variables_from_value(
 ) {
     match value {
         CValue::Void => {}
-        CValue::Int16(term)
+        CValue::Bool(term)
+        | CValue::Int16(term)
         | CValue::Int32(term)
         | CValue::UInt8(term)
         | CValue::UInt16(term)

@@ -346,12 +346,12 @@ fn expand_source<'a>(
             }
             SourceDirective::Include(_) => expanded.push('\n'),
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
-                if !matches!(header.as_str(), "stdint.h" | "inttypes.h") {
+                if !matches!(header.as_str(), "stdint.h" | "inttypes.h" | "stdbool.h") {
                     return Err(CSourceError::new(
                         source_path,
                         line_number,
                         format!(
-                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>` and `<inttypes.h>` are modeled"
+                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>`, `<inttypes.h>`, and `<stdbool.h>` are modeled"
                         ),
                     ));
                 }
@@ -502,12 +502,12 @@ fn collect_local_include_paths(
             }
             SourceDirective::Include(_) => {}
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
-                if !matches!(header.as_str(), "stdint.h" | "inttypes.h") {
+                if !matches!(header.as_str(), "stdint.h" | "inttypes.h" | "stdbool.h") {
                     return Err(CSourceError::new(
                         source_path,
                         line_number,
                         format!(
-                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>` and `<inttypes.h>` are modeled"
+                            "system header `<{header}>` is not supported; only the integer type spellings from `<stdint.h>`, `<inttypes.h>`, and `<stdbool.h>` are modeled"
                         ),
                     ));
                 }
@@ -1030,7 +1030,7 @@ fn parse_directive<'a>(
                     ));
                 };
                 let header = &rest[1..end];
-                if matches!(header, "stdint.h" | "inttypes.h")
+                if matches!(header, "stdint.h" | "inttypes.h" | "stdbool.h")
                     && trailing_comments_only(&rest[end + 1..])
                 {
                     return Ok(Some(SourceDirective::SystemInclude(header.to_string())));

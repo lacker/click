@@ -82,7 +82,8 @@ impl CGlobal {
         assert!(
             matches!(
                 c_type,
-                CType::Int16
+                CType::Bool
+                    | CType::Int16
                     | CType::Int32
                     | CType::UInt8
                     | CType::UInt16
@@ -375,7 +376,8 @@ impl CStaticLocal {
         assert!(
             matches!(
                 c_type,
-                CType::Int16
+                CType::Bool
+                    | CType::Int16
                     | CType::Int32
                     | CType::UInt8
                     | CType::UInt16

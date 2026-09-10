@@ -291,6 +291,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
     ) -> CValue {
         match value {
             CValue::Void => CValue::Void,
+            CValue::Bool(term) => CValue::Bool(rewrite_term(term)),
             CValue::Int16(term) => CValue::Int16(rewrite_term(term)),
             CValue::Int32(term) => CValue::Int32(rewrite_term(term)),
             CValue::UInt8(term) => CValue::UInt8(rewrite_term(term)),

@@ -1696,7 +1696,8 @@ fn synthesize_local_aggregate_field(
                         return None;
                     };
                     let value_term = match value {
-                        CValue::Int16(value)
+                        CValue::Bool(value)
+                        | CValue::Int16(value)
                         | CValue::Int32(value)
                         | CValue::UInt8(value)
                         | CValue::UInt16(value)

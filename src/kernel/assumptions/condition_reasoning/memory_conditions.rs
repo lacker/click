@@ -183,7 +183,8 @@ impl PureFactContext {
             return None;
         };
         let value = match self.resolve_memory_load_value(memory, pointer)? {
-            CValue::Int16(value)
+            CValue::Bool(value)
+            | CValue::Int16(value)
             | CValue::Int32(value)
             | CValue::UInt8(value)
             | CValue::UInt16(value)

@@ -54,7 +54,8 @@ fn scalar_width(left: &CValue, right: &CValue) -> Option<ScalarWidth> {
     let is_scalar = |value: &CValue| {
         matches!(
             value,
-            CValue::Int16(_)
+            CValue::Bool(_)
+                | CValue::Int16(_)
                 | CValue::Int32(_)
                 | CValue::UInt8(_)
                 | CValue::UInt16(_)
@@ -1453,13 +1454,15 @@ fn pointer_index_term(
     assumptions: &PureFactContext,
 ) -> Option<(Bitvector32Term, bool, bool)> {
     match value {
-        value @ (CValue::Int16(_) | CValue::Int32(_) | CValue::UInt8(_) | CValue::UInt16(_)) => {
-            Some((
-                promote_c_int32_path_value(value, facts, assumptions)?,
-                false,
-                false,
-            ))
-        }
+        value @ (CValue::Bool(_)
+        | CValue::Int16(_)
+        | CValue::Int32(_)
+        | CValue::UInt8(_)
+        | CValue::UInt16(_)) => Some((
+            promote_c_int32_path_value(value, facts, assumptions)?,
+            false,
+            false,
+        )),
         CValue::UInt32(value) => Some((Bitvector32Term::uint64_from_32(value), true, true)),
         CValue::Int64(value) => Some((value, false, true)),
         CValue::UInt64(value) => Some((value, true, true)),
@@ -2462,6 +2465,7 @@ fn promote_c_shift_count(
     assumptions: &PureFactContext,
 ) -> Option<(Bitvector32Term, bool)> {
     match value {
+        CValue::Bool(value) => Some((value, false)),
         CValue::UInt32(value) => Some((value, true)),
         CValue::Int32(value) => Some((value, false)),
         CValue::UInt8(value) => {
@@ -2530,7 +2534,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
                 }]
             },
         ),
-        CValue::Int32(left) => apply_c_int32_with_valid_shift_count(
+        CValue::Bool(left) | CValue::Int32(left) => apply_c_int32_with_valid_shift_count(
             left,
             right,
             facts,
@@ -2635,7 +2639,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 }]
             },
         ),
-        CValue::Int32(left) => apply_c_int32_with_valid_shift_count(
+        CValue::Bool(left) | CValue::Int32(left) => apply_c_int32_with_valid_shift_count(
             left,
             right,
             facts,

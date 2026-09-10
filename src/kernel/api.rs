@@ -43,6 +43,15 @@ pub fn int32(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int32(bits.into())
 }
 
+pub fn bool_value(bits: impl Into<Bitvector32Term>) -> CValue {
+    let bits = bits.into();
+    CValue::Bool(Bitvector32Term::if_then_else(
+        ConditionTerm::equal(bits, Bitvector32Term::Constant(0)),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ))
+}
+
 pub fn int16(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int16(bits.into())
 }
@@ -542,6 +551,11 @@ fn abstract_c_state_for_join_across_with_policy(
         } else {
             match c_type {
                 CType::Void => continue,
+                CType::Bool => CValue::Bool(Bitvector32Term::if_then_else(
+                    ConditionTerm::Variable(variables.next()),
+                    Bitvector32Term::Constant(1),
+                    Bitvector32Term::Constant(0),
+                )),
                 CType::VoidPointer => {
                     CValue::typed_pointer(Pointer::symbolic(variables.next()), *c_type)
                 }

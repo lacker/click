@@ -874,6 +874,10 @@ struct AllocationSize {
 /// cannot be safely narrowed into a memory block extent yet.
 fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option<AllocationSize> {
     match value {
+        CValue::Bool(term) => Some(AllocationSize {
+            term,
+            unsigned: true,
+        }),
         CValue::Int16(term) | CValue::UInt8(term) | CValue::UInt16(term) => Some(AllocationSize {
             term,
             unsigned: false,
@@ -2745,6 +2749,7 @@ pub(in crate::kernel) fn declare_local(
     register_block_alignment(&pointer.block, c_type.abi_alignment());
     let byte_width = match c_type {
         CType::Void => unreachable!("void local objects are not supported"),
+        CType::Bool => 1,
         CType::VoidPointer => C_POINTER_BYTE_WIDTH,
         CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,

@@ -42,6 +42,11 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.name()
                 )));
             }
+            C0Type::Bool => {
+                arguments.push(CExpression::Value(crate::kernel::bool_value(
+                    Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
             C0Type::VoidPointer => {
                 arguments.push(c_typed_pointer_value(
                     Pointer {
@@ -1738,6 +1743,11 @@ pub(in crate::surface) fn symbolic_value_from_load(
     load: Bitvector32Term,
 ) -> CValue {
     match element_type {
+        CType::Bool => CValue::Bool(Bitvector32Term::if_then_else(
+            ConditionTerm::Bitvector32Equal(Box::new(load), Box::new(Bitvector32Term::Constant(0))),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )),
         CType::Int16 => CValue::Int16(load),
         CType::Int32 => CValue::Int32(load),
         CType::UInt8 => CValue::UInt8(load),

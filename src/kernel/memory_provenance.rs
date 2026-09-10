@@ -318,6 +318,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
         let key = canonicalize_pointer_loads(&pointer);
         let value = match value {
             CValue::Void => CValue::Void,
+            CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(&term)),
             CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(&term)),
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
@@ -339,6 +340,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
         let key = canonicalize_pointer_loads(pointer);
         let value = match value {
             CValue::Void => CValue::Void,
+            CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(term)),
             CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
@@ -4477,7 +4479,8 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
         .filter_map(|fact| {
             let store = fact.certified_store_data()?;
             let value = match &store.value {
-                CValue::Int16(term)
+                CValue::Bool(term)
+                | CValue::Int16(term)
                 | CValue::Int32(term)
                 | CValue::UInt8(term)
                 | CValue::UInt16(term)
@@ -4509,6 +4512,7 @@ pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> 
             let store = fact.certified_store_data()?;
             let byte_width = match store.value {
                 CValue::Void => return None,
+                CValue::Bool(_) => 1,
                 CValue::UInt8(_) => 1,
                 CValue::Int16(_) | CValue::UInt16(_) => 2,
                 CValue::Int32(_) | CValue::UInt32(_) => 4,

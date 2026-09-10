@@ -10439,3 +10439,165 @@ fn c0_struct_pointer_return_boundaries_reject_incompatible_tags() {
             .contains("cannot use `struct left *` where `struct right *` is required")
     );
 }
+
+#[test]
+fn c0_bool_objects_normalize_values_and_keep_abi_metadata() {
+    let functions = syntax::parse_functions(
+        r#"
+        bool global_flag = 7;
+        struct flags { bool enabled; int32 count; };
+        bool normalize(int32 input) {
+            bool result;
+            result = input;
+            return result;
+        }
+        int32 read_flag() {
+            struct flags value;
+            value.enabled = 7;
+            return value.enabled;
+        }
+        "#,
+    )
+    .expect("C bool objects should parse");
+
+    assert_eq!(functions[0].return_type(), syntax::C0Type::Bool);
+    assert_eq!(
+        functions[0].globals()["global_flag"].c_type(),
+        syntax::C0Type::Bool
+    );
+    assert_eq!(
+        functions[0].to_kernel_function().global_variables()[0].initial_value(),
+        &crate::kernel::bool_value(1)
+    );
+    let layout = functions[0]
+        .structs()
+        .get("flags")
+        .expect("bool struct layout");
+    assert_eq!(layout.size_bytes(), 8);
+    assert_eq!(layout.alignment_bytes(), 4);
+    assert_eq!(layout.field("enabled").expect("bool field").byte_width(), 1);
+    assert_eq!(
+        layout.field("enabled").expect("bool field").c_type(),
+        syntax::C0Type::Bool
+    );
+
+    let normalize = functions
+        .iter()
+        .find(|function| function.name() == "normalize")
+        .expect("normalize function")
+        .to_kernel_function();
+    for (input, expected) in [(0, 0), (7, 1)] {
+        let execution = crate::kernel::prove_symbolic_c_function_execution(
+            crate::kernel::CState::new(),
+            normalize.clone(),
+            vec![crate::kernel::c_int32_literal(input)],
+            Default::default(),
+        )
+        .expect("integer-to-bool conversion should execute");
+        assert!(matches!(
+            execution.proposition(),
+            crate::kernel::Proposition::CFunctionExecutes {
+                outcome: crate::kernel::CFunctionOutcome::Return {
+                    value: crate::kernel::CValue::Bool(crate::kernel::Bitvector32Term::Constant(value)),
+                    ..
+                },
+                ..
+            } if *value == expected
+        ));
+    }
+
+    let read_flag = functions
+        .iter()
+        .find(|function| function.name() == "read_flag")
+        .expect("read_flag function")
+        .to_kernel_function();
+    let execution = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        read_flag,
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("bool struct field should execute");
+    assert!(matches!(
+        execution.proposition(),
+        crate::kernel::Proposition::CFunctionExecutes {
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Int32(crate::kernel::Bitvector32Term::Constant(1)),
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn c0_bool_header_constants_pointer_conversion_and_callbacks_are_typed() {
+    let sources = std::collections::BTreeMap::from([(
+        "bool.c",
+        "#include <stdbool.h>\nbool constants() { return true && !false; }\n",
+    )]);
+    let expanded = source::expand_includes("bool.c", &sources)
+        .expect("stdbool.h should be a modeled system header");
+    let constants = syntax::parse_function(expanded.source()).expect("bool constants should parse");
+    assert_eq!(constants.return_type(), syntax::C0Type::Bool);
+
+    let pointer_function = syntax::parse_function(
+        "int32 present(int32* pointer) { bool result; result = pointer; return result; }",
+    )
+    .expect("pointer-to-bool conversion should parse")
+    .to_kernel_function();
+    let null = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        pointer_function.clone(),
+        vec![crate::kernel::c_pointer_value(crate::kernel::Pointer {
+            block: crate::kernel::PointerBlock::Concrete("null".to_string()),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        })],
+        Default::default(),
+    )
+    .expect("null pointer should convert to false");
+    assert!(matches!(
+        null.proposition(),
+        crate::kernel::Proposition::CFunctionExecutes {
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Int32(crate::kernel::Bitvector32Term::Constant(0)),
+                ..
+            },
+            ..
+        }
+    ));
+    let non_null = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        pointer_function,
+        vec![crate::kernel::c_pointer_value(crate::kernel::Pointer {
+            block: crate::kernel::PointerBlock::Concrete("object".to_string()),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        })],
+        Default::default(),
+    )
+    .expect("non-null pointer should convert to true");
+    assert!(matches!(
+        non_null.proposition(),
+        crate::kernel::Proposition::CFunctionExecutes {
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Int32(crate::kernel::Bitvector32Term::Constant(1)),
+                ..
+            },
+            ..
+        }
+    ));
+
+    let bool_callback = syntax::parse_function(
+        "bool invoke(bool (*callback)(bool), bool value) { return callback(value); }",
+    )
+    .expect("bool callback should parse");
+    let int_callback = syntax::parse_function(
+        "int32 invoke(int32 (*callback)(int32), int32 value) { return callback(value); }",
+    )
+    .expect("integer callback should parse");
+    assert_ne!(
+        bool_callback.parameters()[0].c_type(),
+        int_callback.parameters()[0].c_type(),
+        "callback signatures must distinguish bool from int32"
+    );
+}

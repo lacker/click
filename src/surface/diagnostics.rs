@@ -745,6 +745,7 @@ pub(super) fn describe_pointer(
 pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter) -> i64 {
     match parameter.c_type() {
         C0Type::Void => 0,
+        C0Type::Bool => 1,
         C0Type::VoidPointer => 8,
         C0Type::CharPointer
         | C0Type::CharArray(_)
@@ -857,6 +858,10 @@ pub(super) fn describe_c_value(
 ) -> String {
     match value {
         CValue::Void => "void".to_string(),
+        CValue::Bool(value) => format!(
+            "{}bool",
+            describe_bitvector_with_context(value, parameters, arguments)
+        ),
         CValue::Int16(value) => {
             format!(
                 "{}i16",
@@ -1033,6 +1038,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         } => {
             let name = match value_type {
                 CType::Void => "load_void",
+                CType::Bool => "load_bool",
                 CType::VoidPointer => "load_void_pointer",
                 CType::Int16 => "load_int16",
                 CType::Int32 => "load_int32",

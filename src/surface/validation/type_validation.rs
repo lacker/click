@@ -691,6 +691,7 @@ pub(in crate::surface) fn describe_resource_clause(resource: &ResourceClause) ->
 
 pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
     match c_type {
+        C0Type::Bool => "bool".to_string(),
         C0Type::Void => "void".to_string(),
         C0Type::VoidPointer => "void*".to_string(),
         C0Type::Int16 => "int16".to_string(),
@@ -772,6 +773,7 @@ pub(in crate::surface) fn click_types_compatible(actual: C0Type, expected: C0Typ
         | (C0Type::Float32Pointer, C0Type::Float32Array(_))
         | (C0Type::Float64Array(_), C0Type::Float64Pointer)
         | (C0Type::Float64Pointer, C0Type::Float64Array(_)) => true,
+        (actual, C0Type::Bool) if actual.is_pointer() => true,
         (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
         (actual, expected)
             if actual.is_object_pointer()
@@ -1032,6 +1034,7 @@ fn infer_c_expression_type(
 ) -> Option<C0Type> {
     match expression {
         CExpression::Value(CValue::Void) => Some(C0Type::Void),
+        CExpression::Value(CValue::Bool(_)) => Some(C0Type::Bool),
         CExpression::Value(CValue::Int16(_)) => Some(C0Type::Int16),
         CExpression::Value(CValue::Int32(_)) => Some(C0Type::Int32),
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
@@ -1048,6 +1051,7 @@ fn infer_c_expression_type(
             target_type,
             ..
         } => match target_type {
+            CType::Bool => Some(C0Type::Bool),
             CType::Int16 => Some(C0Type::Int16),
             CType::Int32 => Some(C0Type::Int32),
             CType::UInt8 => Some(C0Type::UInt8),
@@ -1151,6 +1155,7 @@ fn infer_c_expression_type(
         }
         CExpression::TypedLoad { value_type, .. } => Some(match value_type {
             CType::Void => return None,
+            CType::Bool => C0Type::Bool,
             CType::VoidPointer => C0Type::VoidPointer,
             CType::Int16 => C0Type::Int16,
             CType::Int32 => C0Type::Int32,
@@ -1324,7 +1329,8 @@ fn infer_contract_shift_type(
 fn type_is_scalar(c_type: C0Type) -> bool {
     matches!(
         c_type,
-        C0Type::Int16
+        C0Type::Bool
+            | C0Type::Int16
             | C0Type::Int32
             | C0Type::Char
             | C0Type::UInt8

@@ -880,6 +880,9 @@ fn kernel_integer_literal_value(
     initializer: &C0Expression,
 ) -> Option<crate::kernel::CValue> {
     Some(match c_type {
+        C0Type::Bool => {
+            crate::kernel::bool_value(u32::from(initializer_integer_bits(initializer)? != 0))
+        }
         C0Type::Float32 => match initializer {
             C0Expression::Float32Literal(bits) => {
                 crate::kernel::float32(crate::kernel::Bitvector32Term::Constant(*bits))
@@ -997,6 +1000,7 @@ fn kernel_aggregate_initializer_value(
             ))
         }
         C0Type::Int16
+        | C0Type::Bool
         | C0Type::Int32
         | C0Type::Char
         | C0Type::UInt8
@@ -1203,6 +1207,9 @@ impl C0StaticLocal {
                 }
                 _ => return None,
             },
+            C0Type::Bool => crate::kernel::bool_value(u32::from(
+                initializer_integer_bits(&self.initializer)? != 0,
+            )),
             C0Type::Int16 => crate::kernel::int16(initializer_integer_bits(&self.initializer)?),
             C0Type::Int32 => crate::kernel::int32(initializer_integer_bits(&self.initializer)?),
             C0Type::Char => crate::kernel::uint8(initializer_integer_bits(&self.initializer)?),
@@ -1663,6 +1670,7 @@ pub enum C0Type {
     CharPointerPointer,
     CharArray(u32),
     Void,
+    Bool,
     /// An opaque pointer to an object of unknown type. It preserves pointer
     /// identity and provenance but deliberately has no pointee width, so it
     /// cannot be indexed, dereferenced, or used in pointer arithmetic until
@@ -1721,6 +1729,7 @@ impl CAbi {
     fn size_and_alignment(self, c_type: C0Type) -> (u32, u32) {
         match (self, c_type) {
             (Self::Lp64, C0Type::Void) => (0, 1),
+            (Self::Lp64, C0Type::Bool) => (1, 1),
             (Self::Lp64, C0Type::VoidPointer) => (8, 8),
             (Self::Lp64, C0Type::Int16) => (2, 2),
             (Self::Lp64, C0Type::Int32) => (4, 4),
@@ -1778,7 +1787,8 @@ impl C0Type {
 fn is_integer_type(c_type: C0Type) -> bool {
     matches!(
         c_type,
-        C0Type::Int16
+        C0Type::Bool
+            | C0Type::Int16
             | C0Type::Int32
             | C0Type::UInt8
             | C0Type::UInt16
@@ -1805,7 +1815,9 @@ fn is_unsupported_concurrency_builtin(name: &str) -> bool {
 
 fn integer_promotion_type(c_type: C0Type) -> Option<C0Type> {
     match c_type {
-        C0Type::Int16 | C0Type::Char | C0Type::UInt8 | C0Type::UInt16 => Some(C0Type::Int32),
+        C0Type::Bool | C0Type::Int16 | C0Type::Char | C0Type::UInt8 | C0Type::UInt16 => {
+            Some(C0Type::Int32)
+        }
         C0Type::Int32 | C0Type::UInt32 | C0Type::Int64 | C0Type::UInt64 => Some(c_type),
         _ => None,
     }
@@ -3046,7 +3058,8 @@ impl C0Type {
     fn is_supported_static_scalar(self) -> bool {
         matches!(
             self,
-            Self::Int16
+            Self::Bool
+                | Self::Int16
                 | Self::Int32
                 | Self::Char
                 | Self::UInt8
@@ -3103,6 +3116,7 @@ impl C0Type {
             Self::Float64PointerPointer => Some(Self::Float64Pointer),
             Self::Void
             | Self::VoidPointer
+            | Self::Bool
             | Self::Int16
             | Self::Int32
             | Self::Char
@@ -3141,6 +3155,7 @@ impl C0Type {
             Self::Float64Pointer => Self::Float64PointerPointer,
             Self::Void
             | Self::VoidPointer
+            | Self::Bool
             | Self::Int16PointerPointer
             | Self::UInt16PointerPointer
             | Self::Int32PointerPointer
@@ -3169,6 +3184,7 @@ impl C0Type {
         assert!(!super::target::CTarget::SUPPORTED.plain_char_is_signed());
         match self {
             Self::Void => crate::kernel::CType::Void,
+            Self::Bool => crate::kernel::CType::Bool,
             Self::VoidPointer => crate::kernel::CType::VoidPointer,
             Self::Int16 => crate::kernel::CType::Int16,
             Self::Int32 => crate::kernel::CType::Int32,
@@ -3782,6 +3798,7 @@ fn validate_global_initializer(
         }
     };
     let valid = match c_type {
+        C0Type::Bool => true,
         C0Type::Int16 => bits <= i16::MAX as u64,
         C0Type::Int32 => bits <= i32::MAX as u64,
         C0Type::Char => bits <= u8::MAX as u64,
@@ -4434,6 +4451,7 @@ fn validate_static_initializer(
         }
     };
     let valid = match c_type {
+        C0Type::Bool => true,
         C0Type::Int16 => bits <= i16::MAX as u64,
         C0Type::Int32 => bits <= i32::MAX as u64,
         C0Type::Char => bits <= u8::MAX as u64,
@@ -4565,7 +4583,8 @@ fn zero_initializer_value(c_type: C0Type) -> C0Expression {
         C0Type::UInt32 => C0Expression::UInt32Literal(0),
         C0Type::Int64 => C0Expression::Int64Literal(0),
         C0Type::UInt64 => C0Expression::UInt64Literal(0),
-        C0Type::Int16
+        C0Type::Bool
+        | C0Type::Int16
         | C0Type::Int32
         | C0Type::UInt16
         | C0Type::Int16Pointer
@@ -4849,6 +4868,8 @@ fn is_builtin_type_start(name: &str) -> bool {
     matches!(
         name,
         "void"
+            | "_Bool"
+            | "bool"
             | "struct"
             | "union"
             | "enum"
@@ -5860,7 +5881,8 @@ impl Parser {
                 || (field.struct_name.is_some() && !field.c_type.is_pointer())
                 || !matches!(
                     field.c_type,
-                    C0Type::Int16
+                    C0Type::Bool
+                        | C0Type::Int16
                         | C0Type::Int32
                         | C0Type::Char
                         | C0Type::UInt8
@@ -8048,7 +8070,8 @@ impl Parser {
 
         if !matches!(
             c_type,
-            C0Type::Int16
+            C0Type::Bool
+                | C0Type::Int16
                 | C0Type::Int32
                 | C0Type::Char
                 | C0Type::UInt8
@@ -8412,6 +8435,11 @@ impl Parser {
             self.position += 1;
             volatile_levels <<= 1;
             c_type = match c_type {
+                C0Type::Bool => {
+                    return Err(self.error_at_previous(
+                        "pointers to `_Bool` are not supported in the current C0 pointer model",
+                    ));
+                }
                 C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::Char => C0Type::CharPointer,
@@ -8686,6 +8714,7 @@ impl Parser {
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
         let c_type = match name.as_str() {
             "void" => C0Type::Void,
+            "_Bool" | "bool" => C0Type::Bool,
             "int16" | "short" | "int16_t" => C0Type::Int16,
             "int32" | "int" | "int32_t" => C0Type::Int32,
             "uint8" | "uint8_t" => C0Type::UInt8,
@@ -11040,7 +11069,8 @@ impl Parser {
         let mut stores = Vec::new();
         for field in layout.aggregate_fields() {
             let (element_type, element_count) = match field.c_type {
-                C0Type::Int16
+                C0Type::Bool
+                | C0Type::Int16
                 | C0Type::Int32
                 | C0Type::Char
                 | C0Type::UInt8
@@ -15092,6 +15122,11 @@ impl Parser {
         let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) => match name.as_str() {
+                // `<stdbool.h>` defines these macros as integer constants;
+                // retain that source-level meaning and let assignment or a
+                // cast perform `_Bool` normalization when required.
+                "true" => Ok(C0Expression::Int32Literal(1)),
+                "false" => Ok(C0Expression::Int32Literal(0)),
                 // These C library-style constants give the value slice a
                 // source-level way to exercise exceptional IEEE classes
                 // without importing a host-specific math header.

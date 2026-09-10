@@ -294,6 +294,7 @@ impl<'a> TermRewrite<'a> {
     fn value(&mut self, v: &CValue) -> CValue {
         match v {
             CValue::Void => CValue::Void,
+            CValue::Bool(v) => CValue::Bool(self.bits(v)),
             CValue::Int16(v) => CValue::Int16(self.bits(v)),
             CValue::UInt16(v) => CValue::UInt16(self.bits(v)),
             CValue::UInt8(v) => CValue::UInt8(self.bits(v)),

@@ -166,6 +166,7 @@ pub(super) fn apply_choose_tactic(
             crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer.pointer())
         }
         CValue::Void
+        | CValue::Bool(_)
         | CValue::Int16(_)
         | CValue::UInt8(_)
         | CValue::UInt16(_)

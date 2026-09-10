@@ -149,7 +149,8 @@ pub(in crate::surface) fn spec_range_membership_proposition(
 
 pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
-        CValue::Int16(bits)
+        CValue::Bool(bits)
+        | CValue::Int16(bits)
         | CValue::Int32(bits)
         | CValue::UInt8(bits)
         | CValue::UInt16(bits)
@@ -166,6 +167,7 @@ pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvecto
 fn promoted_int64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Int64(bits) => Some(bits.clone()),
+        CValue::Bool(bits) => Some(Bitvector32Term::int64_from_32(bits.clone())),
         CValue::Int16(bits) | CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt16(bits) => {
             Some(Bitvector32Term::int64_from_32(bits.clone()))
         }
@@ -181,6 +183,7 @@ fn promoted_int64_term(value: &CValue) -> Option<Bitvector32Term> {
 fn promoted_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::UInt64(bits) => Some(bits.clone()),
+        CValue::Bool(bits) => Some(Bitvector32Term::uint64_from_32(bits.clone())),
         CValue::Int64(bits) => Some(Bitvector32Term::uint64_from_int64(bits.clone())),
         CValue::Int16(bits) | CValue::Int32(bits) | CValue::UInt8(bits) | CValue::UInt16(bits) => {
             Some(Bitvector32Term::uint64_from_int32(bits.clone()))
