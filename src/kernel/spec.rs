@@ -547,28 +547,26 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             budget,
         )?
         .into_iter()
-        .map(|path| SpecPropositionPath {
-            proposition: Proposition::Exists {
-                name: name.clone(),
-                var: *variable,
-                sort: Sort::Integer,
-                body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
-            },
-            facts: Vec::new(),
-            obligations: path
-                .obligations
-                .into_iter()
-                .map(|obligation| {
-                    obligation.map_proposition(|proposition| Proposition::Exists {
-                        name: name.clone(),
-                        var: *variable,
-                        sort: Sort::Integer,
-                        body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
-                    })
-                })
-                .collect(),
+        .map(|path| {
+            // An existential witness cannot soundly absorb path guards or
+            // evaluation obligations: existentially quantifying an
+            // implication would make a false guard vacuously prove the body.
+            // The pure Integer fragment currently accepts only total bodies.
+            if !path.facts.is_empty() || !path.obligations.is_empty() {
+                return Err(ExecutionLimit::Paths);
+            }
+            Ok(SpecPropositionPath {
+                proposition: Proposition::Exists {
+                    name: name.clone(),
+                    var: *variable,
+                    sort: Sort::Integer,
+                    body: Box::new(path.proposition),
+                },
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            })
         })
-        .collect()),
+        .collect::<Result<Vec<_>, _>>()?),
         SpecProposition::ExistsPointer {
             name,
             variable,
@@ -4649,5 +4647,102 @@ fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt16(value) => Some(Bitvector32Term::uint64_from_int32(value.clone())),
         CValue::UInt32(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
         CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod integer_quantifier_tests {
+    use super::*;
+    use crate::kernel::reasoning::substitute_integer_variable_in_pure_proposition;
+
+    fn integer_comparison(variable: Variable) -> SpecProposition {
+        SpecProposition::IntegerComparison {
+            left: SpecIntegerExpression::Term(IntegerTerm::var(variable)),
+            operator: IntegerComparisonOperator::Equal,
+            right: SpecIntegerExpression::Term(IntegerTerm::constant_i64(0)),
+        }
+    }
+
+    #[test]
+    fn integer_quantifiers_lower_to_sorted_kernel_quantifiers() {
+        let variable = Variable(700);
+        let state = CState::new();
+        let assumptions = PureFactContext::new();
+        for (quantifier, expected_sort) in [(true, Sort::Integer), (false, Sort::Integer)] {
+            let proposition = if quantifier {
+                SpecProposition::ForAllInteger {
+                    name: "z".into(),
+                    variable,
+                    body: Box::new(integer_comparison(variable)),
+                }
+            } else {
+                SpecProposition::ExistsInteger {
+                    name: "z".into(),
+                    variable,
+                    body: Box::new(integer_comparison(variable)),
+                }
+            };
+            let paths = lower_spec_proposition_at_state_with_loop_entry(
+                &state,
+                &proposition,
+                None,
+                &assumptions,
+                &mut ExecutionBudget::default(),
+            )
+            .expect("Integer quantifier should lower");
+            assert_eq!(paths.len(), 1);
+            assert!(paths[0].facts.is_empty());
+            assert!(paths[0].obligations.is_empty());
+            match &paths[0].proposition {
+                Proposition::ForAll { sort, var, .. } | Proposition::Exists { sort, var, .. } => {
+                    assert_eq!(*sort, expected_sort);
+                    assert_eq!(*var, variable);
+                }
+                other => panic!("unexpected lowered proposition: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn integer_substitution_is_capture_avoiding_through_nested_binders() {
+        let source = Proposition::ForAll {
+            var: Variable(1),
+            sort: Sort::Integer,
+            body: Box::new(Proposition::Exists {
+                name: "inner".into(),
+                var: Variable(2),
+                sort: Sort::Integer,
+                body: Box::new(Proposition::Equal(
+                    Term::Integer(IntegerTerm::var(Variable(9))),
+                    Term::Integer(IntegerTerm::var(Variable(2))),
+                )),
+            }),
+        };
+        let substituted = substitute_integer_variable_in_pure_proposition(
+            &source,
+            Variable(9),
+            &IntegerTerm::var(Variable(1)),
+        )
+        .expect("pure Integer substitution should accept nested binders");
+        let Proposition::ForAll { var, body, .. } = substituted else {
+            panic!("substitution changed the outer quantifier carrier");
+        };
+        assert_ne!(
+            var,
+            Variable(1),
+            "replacement variable must not be captured"
+        );
+        let Proposition::Exists {
+            var: inner, body, ..
+        } = *body
+        else {
+            panic!("substitution changed the inner quantifier carrier");
+        };
+        assert_eq!(inner, Variable(2));
+        let Proposition::Equal(Term::Integer(left), Term::Integer(right)) = *body else {
+            panic!("substitution changed the pure Integer proposition");
+        };
+        assert_eq!(left, IntegerTerm::var(Variable(1)));
+        assert_eq!(right, IntegerTerm::var(Variable(2)));
     }
 }
