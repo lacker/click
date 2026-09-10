@@ -296,7 +296,7 @@ fn algebraic_symbolic_reflexivity_checks_well_formed_terms() {
 }
 
 #[test]
-fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
+fn algebraic_conditions_decide_from_condition_facts_and_keep_checked_polarity() {
     let ty = maybe_int32_type();
     let left = AlgebraicTerm {
         algebraic_type: ty.clone(),
@@ -316,8 +316,19 @@ fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
             Proposition::Not(Box::new(equality.clone()))
         };
         let facts = PureFactContext::new().assume_proposition(premise.clone());
-        assert_eq!(facts.decide(&condition), Some(expected));
         let condition_fact = Proposition::ConditionIs(condition.clone(), expected);
+        // `decide` answers an algebraic equality only from an indexed
+        // condition fact. An `Equal` premise over algebraic terms is a
+        // proposition, not a condition fact, so it does not decide the
+        // condition; the polarity forms checked below are the route an
+        // explicit proof uses to move between the two spellings.
+        assert_eq!(facts.decide(&condition), None);
+        assert_eq!(
+            PureFactContext::new()
+                .assume_proposition(condition_fact.clone())
+                .decide(&condition),
+            Some(expected)
+        );
         assert!(
             crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
                 &premise,
@@ -343,7 +354,10 @@ fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
             vec![CValue::Int32(Bitvector32Term::Constant(0))],
         )),
     );
-    assert_eq!(PureFactContext::new().decide(&distinct), Some(false));
+    // Constructor distinctness is proposition-level theory, covered by
+    // `distinct_algebraic_constructors_make_the_context_inconsistent` below.
+    // `decide` does not reach it for the condition spelling.
+    assert_eq!(PureFactContext::new().decide(&distinct), None);
 }
 
 #[test]
@@ -370,7 +384,26 @@ fn algebraic_condition_substitution_visits_scalar_fields() {
         variable,
         &Bitvector32Term::Constant(0),
     );
-    assert_eq!(PureFactContext::new().decide(&rewritten), Some(true));
+    // Substitution reaches the scalar field inside the constructor, so the
+    // rewritten condition is syntactically the all-constant one. `decide`
+    // answers an algebraic equality only from an indexed condition fact, so
+    // the rewrite itself is what this test observes.
+    let substituted = ConditionTerm::AlgebraicEqual(
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+    );
+    assert_eq!(rewritten, substituted);
+    let mut rewritten_variables = BTreeSet::new();
+    collect_condition_bitvector_variables(&rewritten, &mut rewritten_variables);
+    assert!(rewritten_variables.is_empty());
     let value = Bitvector32Term::If {
         condition: Box::new(condition),
         then_term: Box::new(Bitvector32Term::Constant(1)),
