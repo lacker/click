@@ -648,6 +648,17 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         .then(|| self.closed_focused())
     }
 
+    pub(super) fn apply_resource_delta(&self) -> Option<Self> {
+        let (goal, _) = self.focused_proposition()?;
+        let Proposition::Implies(source, conclusion) = goal.proposition() else {
+            return None;
+        };
+        (super::execution::resource_read_preserves_range(source, conclusion)
+            || matches!(conclusion.as_ref(), Proposition::Implies(equality, goal)
+                if super::execution::resource_delta_uses_exact_equality(source, equality, goal)))
+        .then(|| self.closed_focused())
+    }
+
     pub(crate) fn apply_normalize(&self) -> Result<Self, PropositionCloseError> {
         let (goal, _) = self
             .focused_proposition()

@@ -2462,6 +2462,44 @@ pub struct CMemory {
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
+/// A pinned, shallow identity for the allocation metadata relevant to a read.
+/// Empty retirement sets are equivalent; nonempty sets must share storage.
+/// Keeping the heap alive prevents allocation-address reuse in an index.
+#[derive(Clone)]
+pub(in crate::kernel) struct ReadRegionIdentity {
+    block_size: Option<Bitvector32Term>,
+    heap: Arc<CHeapMemory>,
+}
+
+impl ReadRegionIdentity {
+    fn retirement_identity(&self) -> usize {
+        if self.heap.deallocated_allocations.is_empty() {
+            0
+        } else {
+            Arc::as_ptr(&self.heap) as usize
+        }
+    }
+}
+
+impl PartialEq for ReadRegionIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+impl Eq for ReadRegionIdentity {}
+impl PartialOrd for ReadRegionIdentity {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ReadRegionIdentity {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.block_size
+            .cmp(&other.block_size)
+            .then_with(|| self.retirement_identity().cmp(&other.retirement_identity()))
+    }
+}
+
 impl std::hash::Hash for CMemory {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Keep the hash of memories without union overlays identical to the

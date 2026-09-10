@@ -279,7 +279,7 @@ while still violating the search/checking boundary.
 
 | Consumer / source anchor | Authority currently decided by general reasoning | Disposition |
 | --- | --- | --- |
-| Proof-object events: `proof/execution.rs` resource rewrite/observation `check` | Resource deltas still use contextual proof. Branch-interface judgments now retain completed local proofs, including load-definition and exported-resource read evidence. General fallbacks for theorem premises, common successor facts, and split obligations are also removed. | Retain selected resource-delta derivations; the census below identifies the surviving dependencies. |
+| Proof-object events: `proof/execution.rs` resource rewrite/observation `check` | Pure resource deltas now use exact availability or retained local proofs. Branch-interface judgments retain completed local proofs, including load-definition and exported-resource read evidence. General fallbacks for theorem premises, common successor facts, and split obligations are also removed. | Complete for these pure-delta fallbacks; broader resource matching/ownership and definition instantiation still need their own migration. |
 | Fact availability: `proof/facts.rs::matching_quantified_facts` and `proof/fact_reasoning.rs::quantified_equivalent_available_fact` | After binder equivalence fails, tries simp in both directions for a candidate quantified fact. Reached by pure `assumption` and cross-effect availability, not only smart planning. Indexed candidate selection does not remove this recursive proof attempt. | Keep exact/binder matching; surface should select and prove a nontrivial conversion explicitly. |
 | Context-free closure: `proof/fact_reasoning.rs::normalizes_context_free`, used by `proof/object.rs::apply_normalize` and quantified guard/instance checks | Tries atomic derivation, then general derivation, even though the ambient context is empty. | Distinguish input-bounded definitional normalization from logical proof construction. Keep the former; expose explicit logical steps for the latter. Empty context alone is not a search-free guarantee. |
 | Pure-theorem authority: `api.rs::prove_universally_quantified_pure_implication` and its `_by_int32_rewrites` variant | General constructor proves the conclusion from requirements. Rewrite constructor names an ordered rewrite list but still proves each equality from requirements and calls the general boolean prover for final context-free closure. Both have surface consumers in `proof/pure_theorems.rs`. | Accept the already constructed proof and checked rewrite premises; an explicit rewrite order is only part of the required evidence. |
@@ -338,10 +338,9 @@ Completed loop migration:
 Recommended remaining migration sequence:
 
 1. The checked-event premise, common-arm-fact, and split-obligation fallbacks
-   below are removed. Continue with resource deltas and checked interface
-   lowering separately. Reject omitted,
-   unrelated, and wrong-arm evidence; add scaling tests with growing unrelated
-   fact histories so exact validation does not become an ambient scan.
+   below are removed. Resource pure deltas and checked interface lowering are
+   also migrated. Preserve rejection of omitted, unrelated, and wrong-arm
+   evidence and the scaling tests for retained premises and local read rules.
 2. Separate quantified conversion and context-free normalization from implicit
    proof construction, then migrate pure-theorem authority, call/refinement
    guards and quantities, and termination by their own evidence types.
@@ -450,11 +449,46 @@ rewrite-derived route makes `binary-tree` fail promptly in
 `tree_rotate_left.contract` at `unfold`, with an unchecked pure-fact delta.
 This is an actual dependency, not merely an observed call.
 
-Next resource chunk: replace observation's general fallback with exact
-availability, and retain selected loadability evidence for rewrite deltas
-before deleting their fallback. Preserve checked load-equality evidence and
-the original C; a zero count for observation does not justify deleting the
-rewrite route.
+**Pure resource-delta migration complete:** observation uses exact availability
+instead of its general fallback. Rewrites preserve direct body-fact membership,
+exact context availability, and the existing resource-composition check, then
+retain a completed local proof for any additional delta. The observed read
+dependencies name the exact same address and byte count at different memory
+snapshots. Their proof is an implication from one explicitly instantiated body
+read premise to the destination read. The checker compares block extents and
+pinned allocation-retirement metadata; it does not compare stored values,
+search for arithmetic/alias proofs, or walk memory history. Nonempty retirement
+metadata must share storage; two empty retirement sets match directly. Changed
+retirement metadata is conservatively rejected, not searched around.
+
+The premise index is built once over the explicit allowed body facts, using
+exact address/width and a shallow, pinned lifetime identity rather than entire
+memory snapshots. Completion retains the implication and checks its exact
+source/conclusion binding, without reconstructing a proof. Unit tests also
+exercised a reflexive equality delta absent from the fixture census; it now has
+a completed intrinsic proof rather than a general-prover result. Checked
+load-equality evidence remains unchanged. No C or example proof-body changes
+are needed for this migration.
+
+Regressions reject unrecorded logical consequences, missing read premises,
+changed widths/addresses/extents, retired allocations (including external
+allocations whose broad block survives `free`), and substituted completed
+goals. A unit-only alias case (`unfold(cell(right))` with `cell(left)` and
+`left == right`) also needs an exact pointer-equality premise. A unique body
+read or containment range can retain that premise and a completed substitution
+implication; ambiguous candidates are not searched. The containment rule keeps
+the parent, range bounds, and element width exact. No resource ownership is
+created by this substitution. Four-size curves cover explicit premise indexing,
+unrelated memory blocks, and unrelated facts around the exact equality lookup.
+Broader resource matching, ownership, and definition-evaluation
+checks are **not** claimed search-free by removing these two delta fallbacks.
+
+The expansion audit also exposed a pre-existing failure at the deferred
+`simp` in `vector_copy`'s explicit preservation body (reproduced at `461bad5b`).
+The deferred driver never activates the old capture flag, so completion now
+matches the selected proof site and source index directly, as explicit steps
+already do. A regression expands that original occurrence and independently
+rechecks the resulting `vector_copy` proof.
 
 | Branch general-prover site | Calls | Exact-check successes | Other successes | Rejected queries |
 | --- | ---: | ---: | ---: | ---: |
@@ -514,9 +548,10 @@ the explicit resource clauses. The original branch fixtures verify and their
 expansions recheck. The `perpetual-service` frame round-trip also exposed and fixed
 printing population patterns with a `view` qualifier, which is not count syntax.
 
-**Next:** the resource observation/rewrite deltas described above. Their
-contextual checks, and the broader resource matching/ownership rules in the
-authority inventory, are not covered by this branch-interface completion.
+The pure resource observation/rewrite deltas above are now migrated as well.
+**Next:** quantified conversion and context-free normalization, followed by the
+other authority consumers in the inventory. Broader resource matching/ownership
+and definition-evaluation rules remain separate work.
 
 ### Pointer-offset effect-equality census (2026-09-09)
 

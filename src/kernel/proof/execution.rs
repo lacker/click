@@ -384,6 +384,7 @@ pub(crate) struct CheckedResourceRewrite {
     instance: Option<crate::kernel::ResourceInstance>,
     selected_children: Option<Arc<[(String, Variable)]>>,
     load_equalities: Vec<crate::kernel::CheckedLoadEquality>,
+    delta_proofs: Arc<Vec<CheckedResourceDeltaProof>>,
 }
 
 impl CheckedResourceRewrite {
@@ -470,6 +471,7 @@ impl CheckedResourceRewrite {
                 instance: Some(instance.clone()),
                 selected_children,
                 load_equalities: load_equality_capture.finish(),
+                delta_proofs: Arc::new(Vec::new()),
             });
         }
         if before_state
@@ -610,6 +612,7 @@ impl CheckedResourceRewrite {
                 .resources()
                 .observable_facts_assuming_valid(after_facts.assumptions()),
         );
+        let mut body_premises = Vec::new();
         let relation_authority = CResourceFact::own(selected.resource().clone());
         if let Some(propositions) =
             crate::kernel::functions::evaluate_composite_resource_relation_propositions(
@@ -619,6 +622,7 @@ impl CheckedResourceRewrite {
                 assumptions,
             )
         {
+            body_premises.extend(propositions.iter().cloned());
             allowed.extend(propositions);
         }
         if let Some(propositions) =
@@ -629,8 +633,10 @@ impl CheckedResourceRewrite {
                 assumptions,
             )
         {
+            body_premises.extend(propositions.iter().cloned());
             allowed.extend(propositions);
         }
+        let delta_premises = ResourceDeltaPremises::new(&body_premises);
         if let Some(propositions) =
             crate::kernel::functions::evaluate_composite_resource_fact_propositions(
                 selected,
@@ -645,12 +651,19 @@ impl CheckedResourceRewrite {
         let allowed_assumptions = allowed.iter().fold(assumptions.clone(), |facts, fact| {
             facts.assume_proposition(fact.clone())
         });
-        if introduced.iter().any(|fact| {
-            !allowed.contains(fact)
-                && !resource_composition_is_supported_by(fact, &child_context, assumptions)
-                && !allowed_assumptions.proves(fact)
-        }) {
-            return Err("resource rewrite produced an unchecked pure-fact delta");
+        let allowed = allowed.iter().collect::<std::collections::BTreeSet<_>>();
+        let mut delta_proofs = Vec::new();
+        for fact in &introduced {
+            if allowed.contains(fact)
+                || allowed_assumptions.proves_exact(fact)
+                || resource_composition_is_supported_by(fact, &child_context, assumptions)
+            {
+                continue;
+            }
+            let proof = delta_premises
+                .prove_with_facts(fact, &allowed_assumptions)
+                .ok_or("resource rewrite produced an unchecked pure-fact delta")?;
+            delta_proofs.push(proof);
         }
 
         let load_equalities = load_equality_capture.finish();
@@ -663,6 +676,7 @@ impl CheckedResourceRewrite {
             instance: None,
             selected_children: None,
             load_equalities,
+            delta_proofs: Arc::new(delta_proofs),
         })
     }
 
@@ -674,6 +688,10 @@ impl CheckedResourceRewrite {
     ) -> Option<ProofFacts> {
         if state != &self.before_state
             || facts.introduced_since(&self.before_facts).is_none()
+            || self
+                .delta_proofs
+                .iter()
+                .any(|read| !read.matches_completed_goal())
             || self.load_equalities.iter().any(|equality| {
                 !equality.checks_with_call_events(self.before_facts.assumptions(), call_events)
             })
@@ -697,6 +715,255 @@ impl CheckedResourceRewrite {
     /// The registered composite definition the event applied.
     pub(crate) fn definition(&self) -> &CCompositeResourceDefinition {
         &self.definition
+    }
+}
+
+type ResourceReadKey = (
+    crate::kernel::Pointer,
+    Bitvector32Term,
+    crate::kernel::primitives::ReadRegionIdentity,
+);
+
+fn resource_read_key(proposition: &Proposition) -> Option<ResourceReadKey> {
+    let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = proposition
+    else {
+        return None;
+    };
+    Some((
+        base.clone(),
+        bytes.clone(),
+        memory.read_region_identity(base),
+    ))
+}
+
+/// One exact read-range rule, with no value equality, arithmetic, memory-DAG
+/// walk, or ambient premise search. The identity pins its retirement metadata.
+pub(super) fn resource_read_preserves_range(source: &Proposition, goal: &Proposition) -> bool {
+    resource_read_key(source)
+        .zip(resource_read_key(goal))
+        .is_some_and(|(source, goal)| source == goal)
+}
+
+fn resource_delta_pointer_equality(
+    source: &Proposition,
+    goal: &Proposition,
+) -> Option<Proposition> {
+    if let (
+        Proposition::CResourceContains {
+            child: CResource::Memory(source_range),
+            ..
+        },
+        Proposition::CResourceContains {
+            child: CResource::Memory(goal_range),
+            ..
+        },
+    ) = (source, goal)
+    {
+        return (resource_containment_key(source) == resource_containment_key(goal)).then(|| {
+            Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::pointer_equal(
+                    source_range.base().clone(),
+                    goal_range.base().clone(),
+                ),
+                true,
+            )
+        });
+    }
+    let (source_base, source_bytes, source_lifetime) = resource_read_key(source)?;
+    let (goal_base, goal_bytes, goal_lifetime) = resource_read_key(goal)?;
+    (source_base.block == goal_base.block
+        && source_bytes == goal_bytes
+        && source_lifetime == goal_lifetime)
+        .then(|| {
+            Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::pointer_equal(source_base, goal_base),
+                true,
+            )
+        })
+}
+
+type ResourceContainmentKey = (CResource, Bitvector32Term, Bitvector32Term, u32);
+
+fn resource_containment_key(proposition: &Proposition) -> Option<ResourceContainmentKey> {
+    let Proposition::CResourceContains {
+        parent,
+        child: CResource::Memory(range),
+    } = proposition
+    else {
+        return None;
+    };
+    Some((
+        parent.clone(),
+        range.start().clone(),
+        range.end().clone(),
+        range.element_width(),
+    ))
+}
+
+pub(super) fn resource_delta_uses_exact_equality(
+    source: &Proposition,
+    equality: &Proposition,
+    goal: &Proposition,
+) -> bool {
+    resource_delta_pointer_equality(source, goal).as_ref() == Some(equality)
+}
+
+struct CheckedResourceDeltaProof {
+    source: Option<Proposition>,
+    equality: Option<Proposition>,
+    goal: Proposition,
+    proof: super::CheckedProposition,
+}
+
+impl CheckedResourceDeltaProof {
+    fn matches_completed_goal(&self) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        match (&self.source, self.proof.proposition()) {
+            (Some(source), Proposition::Implies(premise, conclusion)) => {
+                source == premise.as_ref()
+                    && match (&self.equality, conclusion.as_ref()) {
+                        (Some(equality), Proposition::Implies(selected, goal)) => {
+                            equality == selected.as_ref() && &self.goal == goal.as_ref()
+                        }
+                        (None, goal) => &self.goal == goal,
+                        _ => false,
+                    }
+            }
+            (None, proposition) => self.equality.is_none() && proposition == &self.goal,
+            _ => false,
+        }
+    }
+}
+
+/// Only the explicitly instantiated body facts are indexed, once per event.
+/// The key excludes stored values and pins allocation metadata rather than
+/// hashing or comparing whole snapshots. Duplicate keys are interchangeable
+/// premises of the same local rule.
+struct ResourceDeltaPremises {
+    by_range: std::collections::BTreeMap<ResourceReadKey, Proposition>,
+    unique_by_layout: std::collections::BTreeMap<
+        (
+            Bitvector32Term,
+            crate::kernel::primitives::ReadRegionIdentity,
+        ),
+        Option<Proposition>,
+    >,
+    unique_containment: std::collections::BTreeMap<ResourceContainmentKey, Option<Proposition>>,
+}
+
+impl ResourceDeltaPremises {
+    fn new(allowed: &[Proposition]) -> Self {
+        let mut by_range = std::collections::BTreeMap::new();
+        let mut unique_by_layout = std::collections::BTreeMap::new();
+        let mut unique_containment = std::collections::BTreeMap::new();
+        for premise in allowed {
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(key) = resource_read_key(premise) {
+                if !by_range.contains_key(&key) {
+                    unique_by_layout
+                        .entry((key.1.clone(), key.2.clone()))
+                        .and_modify(|source| *source = None)
+                        .or_insert_with(|| Some(premise.clone()));
+                }
+                by_range.insert(key, premise.clone());
+            }
+            if let Some(key) = resource_containment_key(premise) {
+                unique_containment
+                    .entry(key)
+                    .and_modify(|source: &mut Option<Proposition>| {
+                        if source.as_ref() != Some(premise) {
+                            *source = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(premise.clone()));
+            }
+        }
+        Self {
+            by_range,
+            unique_by_layout,
+            unique_containment,
+        }
+    }
+
+    #[cfg(test)]
+    fn prove(&self, goal: &Proposition) -> Option<CheckedResourceDeltaProof> {
+        self.prove_with_facts(goal, &PureFactContext::new())
+    }
+
+    fn prove_with_facts(
+        &self,
+        goal: &Proposition,
+        facts: &PureFactContext,
+    ) -> Option<CheckedResourceDeltaProof> {
+        use super::{
+            OutcomeProofState, ProofBranch, ProofBranchState, ProofObject, ProofObligation,
+            PropositionObligation,
+        };
+        type Leaf = ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()>;
+        let root = |proposition| {
+            Leaf::root(
+                (),
+                ProofBranch::new(
+                    ProofObligation::Proposition(PropositionObligation::new(proposition, ())),
+                    ProofBranchState {
+                        facts: ProofFacts::default(),
+                        unfolded_predicates: Default::default(),
+                        execution: None,
+                    },
+                ),
+            )
+        };
+        if matches!(goal, Proposition::ConditionIs(..))
+            && let Some(closed) = root(goal.clone()).apply_interface_leaf(None, None)
+        {
+            return Some(CheckedResourceDeltaProof {
+                source: None,
+                equality: None,
+                goal: goal.clone(),
+                proof: closed.completed_proposition()?,
+            });
+        }
+        let source = if let Some(key) = resource_read_key(goal) {
+            self.by_range
+                .get(&key)
+                .or_else(|| self.unique_by_layout.get(&(key.1, key.2))?.as_ref())?
+        } else {
+            self.unique_containment
+                .get(&resource_containment_key(goal)?)?
+                .as_ref()?
+        };
+        // A unique explicitly named range needs no candidate search.
+        // Ambiguous layouts are not resolved by trying pointer pairs.
+        let equality = if resource_read_preserves_range(source, goal) {
+            None
+        } else {
+            let equality = resource_delta_pointer_equality(source, goal)?;
+            if !facts.proves_exact(&equality) {
+                return None;
+            }
+            Some(equality)
+        };
+        // Prove the implication directly, rather than rebuilding a fact
+        // index containing a snapshot for every read. The event already
+        // checked this exact source as an instantiated body premise.
+        let conclusion = equality.as_ref().map_or_else(
+            || goal.clone(),
+            |equality| Proposition::Implies(Box::new(equality.clone()), Box::new(goal.clone())),
+        );
+        let implication = Proposition::Implies(Box::new(source.clone()), Box::new(conclusion));
+        let proof = root(implication)
+            .apply_resource_delta()?
+            .completed_proposition()?;
+        Some(CheckedResourceDeltaProof {
+            source: Some(source.clone()),
+            equality,
+            goal: goal.clone(),
+            proof,
+        })
     }
 }
 
@@ -869,7 +1136,7 @@ impl CheckedResourceObservation {
         if introduced.iter().any(|fact| {
             !allowed.contains(fact)
                 && !resource_composition_is_supported_by(fact, &child_context, assumptions)
-                && !allowed_assumptions.proves(fact)
+                && !allowed_assumptions.proves_exact(fact)
         }) {
             return Err("resource observation produced an unchecked pure-fact delta");
         }
@@ -5933,6 +6200,263 @@ mod tests {
     }
 
     #[test]
+    fn resource_read_evidence_pins_range_lifetime_and_completed_goal() {
+        let pointer = Pointer {
+            block: "region".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("region", 8);
+        let written = memory.clone().store(pointer.clone(), int32(7));
+        let read = |memory: CMemory, base: Pointer, bytes| Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        };
+        let source = read(
+            memory.clone(),
+            pointer.clone(),
+            Bitvector32Term::Constant(4),
+        );
+        let goal = read(written, pointer.clone(), Bitvector32Term::Constant(4));
+        let index = ResourceDeltaPremises::new(std::slice::from_ref(&source));
+        let mut retained = index.prove(&goal).unwrap();
+        assert!(retained.matches_completed_goal());
+        retained.source = None;
+        assert!(!retained.matches_completed_goal());
+        retained.source = Some(source.clone());
+        assert!(ResourceDeltaPremises::new(&[]).prove(&goal).is_none());
+        for wrong in [
+            read(
+                memory.clone(),
+                pointer.clone(),
+                Bitvector32Term::Constant(8),
+            ),
+            read(
+                memory.clone(),
+                Pointer {
+                    block: "other".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                Bitvector32Term::Constant(4),
+            ),
+            read(
+                memory.clone().with_block("region", 2),
+                pointer.clone(),
+                Bitvector32Term::Constant(4),
+            ),
+            read(
+                memory.without_local_block(&pointer.block),
+                pointer.clone(),
+                Bitvector32Term::Constant(4),
+            ),
+        ] {
+            assert!(index.prove(&wrong).is_none());
+            retained.goal = wrong;
+            assert!(!retained.matches_completed_goal());
+        }
+        // External allocations keep their broad block on free: a block-only
+        // check would unsoundly transport this read past retirement.
+        let external = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let live = CMemory::new()
+            .with_heap_allocation_claim(external.clone(), Bitvector32Term::Constant(8))
+            .unwrap();
+        let freed = live.clone().free_heap_block(&external).unwrap();
+        let live_read = read(live, external.clone(), Bitvector32Term::Constant(4));
+        let dead_read = read(freed.clone(), external, Bitvector32Term::Constant(4));
+        assert!(!resource_read_preserves_range(&live_read, &dead_read));
+        assert!(!resource_read_preserves_range(&dead_read, &live_read));
+        let survivor = freed.with_block("region", 8);
+        let source = read(
+            survivor.clone(),
+            pointer.clone(),
+            Bitvector32Term::Constant(4),
+        );
+        let target = read(
+            survivor.store(pointer.clone(), int32(9)),
+            pointer,
+            Bitvector32Term::Constant(4),
+        );
+        assert!(
+            ResourceDeltaPremises::new(&[source])
+                .prove(&target)
+                .unwrap()
+                .matches_completed_goal(),
+            "shared nonempty retirement metadata still permits writes to a surviving range"
+        );
+    }
+
+    #[test]
+    fn resource_read_alias_retains_only_an_exact_named_equality() {
+        let pointer = |i| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(i))),
+                byte_width: 4,
+            },
+        };
+        let read = |i| Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: pointer(i),
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let source = read(20);
+        let goal = read(21);
+        let index = ResourceDeltaPremises::new(std::slice::from_ref(&source));
+        let equality = resource_delta_pointer_equality(&source, &goal).unwrap();
+        let facts = PureFactContext::new().assume_proposition(equality.clone());
+        assert!(index.prove(&goal).is_none());
+        let mut retained = index.prove_with_facts(&goal, &facts).unwrap();
+        assert!(retained.matches_completed_goal());
+        assert!(retained.equality.as_ref() == Some(&equality));
+        retained.equality = None;
+        assert!(!retained.matches_completed_goal());
+        assert!(!resource_delta_uses_exact_equality(
+            &source,
+            &equality,
+            &read(22)
+        ));
+        assert!(
+            ResourceDeltaPremises::new(&[source.clone(), read(22)])
+                .prove_with_facts(&goal, &facts)
+                .is_none(),
+            "ambiguous body reads must not launch pair search"
+        );
+        // Duplicate exact ranges are interchangeable, not ambiguity.
+        assert!(
+            ResourceDeltaPremises::new(&[source.clone(), source])
+                .prove_with_facts(&goal, &facts)
+                .is_some()
+        );
+        let contains = |i, end| Proposition::CResourceContains {
+            parent: CResourceFact::own_composite("cell".into(), Vec::new())
+                .resource()
+                .clone(),
+            child: CResource::Memory(crate::kernel::CMemoryRange::new(
+                pointer(i),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(end),
+            )),
+        };
+        let relation_index = ResourceDeltaPremises::new(&[contains(20, 1)]);
+        assert!(relation_index.prove(&contains(21, 1)).is_none());
+        assert!(
+            relation_index
+                .prove_with_facts(&contains(21, 1), &facts)
+                .unwrap()
+                .matches_completed_goal()
+        );
+        assert!(
+            relation_index
+                .prove_with_facts(&contains(21, 2), &facts)
+                .is_none()
+        );
+        let wrong_parent = Proposition::CResourceContains {
+            parent: CResourceFact::own_composite("other".into(), Vec::new())
+                .resource()
+                .clone(),
+            child: CResource::Memory(crate::kernel::CMemoryRange::new(
+                pointer(21),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+        };
+        assert!(
+            relation_index
+                .prove_with_facts(&wrong_parent, &facts)
+                .is_none()
+        );
+        let samples = [16, 32, 64, 128].map(|size| {
+            let mut context = facts.clone();
+            for i in 0..size {
+                context = context.assume_proposition(Proposition::Predicate {
+                    name: format!("unrelated_{i}"),
+                    arguments: vec![],
+                });
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(
+                    index
+                        .prove_with_facts(&goal, &context)
+                        .unwrap()
+                        .matches_completed_goal()
+                );
+                assert!(
+                    relation_index
+                        .prove_with_facts(&contains(21, 1), &context)
+                        .unwrap()
+                        .matches_completed_goal()
+                );
+            });
+            work
+        });
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] + 8),
+            "exact alias evidence inspected unrelated premises: {samples:?}"
+        );
+    }
+
+    #[test]
+    fn resource_read_evidence_scales_with_explicit_premises_not_memory_contents() {
+        let pointer = Pointer {
+            block: "selected".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let mut samples = Vec::new();
+        for size in [16, 32, 64, 128] {
+            let mut memory = CMemory::new().with_block("selected", 8);
+            for i in 0..size {
+                memory = memory.with_block(format!("unrelated_{i}"), 8);
+            }
+            let source = Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: pointer.clone(),
+                bytes: Bitvector32Term::Variable(Variable(42)),
+            };
+            let goal = Proposition::CMemoryLoadable {
+                memory: memory.store(pointer.clone(), int32(7)),
+                base: pointer.clone(),
+                bytes: Bitvector32Term::Variable(Variable(42)),
+            };
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let index = ResourceDeltaPremises::new(std::slice::from_ref(&source));
+                assert!(index.prove(&goal).unwrap().matches_completed_goal());
+            });
+            samples.push(work);
+        }
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] + 8),
+            "read transport inspected unrelated memory: {samples:?}"
+        );
+        let samples = [16, 32, 64, 128].map(|size| {
+            let allowed = (0..size)
+                .map(|i| Proposition::CMemoryLoadable {
+                    memory: CMemory::new(),
+                    base: Pointer {
+                        block: format!("range_{i}").into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    bytes: Bitvector32Term::Constant(4),
+                })
+                .collect::<Vec<_>>();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let index = ResourceDeltaPremises::new(&allowed);
+                for goal in &allowed {
+                    assert!(index.prove(goal).unwrap().matches_completed_goal());
+                }
+            });
+            work
+        });
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] * 2 + 16),
+            "explicit read premise index: {samples:?}"
+        );
+    }
+
+    #[test]
     fn checked_composite_events_reject_forged_resources_facts_memory_and_definitions() {
         let child_spec = CResourceSpec::Token {
             access: CResourceAccessMode::Own,
@@ -6053,6 +6577,52 @@ mod tests {
             &CheckedCallEvents::default(),
         )
         .expect("the exact folded-to-body representation change should check");
+        let variable = Bitvector32Term::Variable(Variable(400));
+        let strong = Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::signed_greater_than(
+                variable.clone(),
+                Bitvector32Term::Constant(0),
+            ),
+            true,
+        );
+        let weak = Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::signed_greater_equal(
+                variable,
+                Bitvector32Term::Constant(0),
+            ),
+            true,
+        );
+        let premise = facts.with_fact(strong);
+        let derivable_delta = premise.with_fact(weak.clone());
+        assert!(premise.assumptions().proves(&weak));
+        assert!(!premise.assumptions().proves_exact(&weak));
+        assert!(
+            CheckedResourceObservation::check(
+                &function,
+                &before,
+                &premise,
+                &selected,
+                &observed,
+                &derivable_delta,
+                &PersistentOrderedSet::default(),
+                &CheckedCallEvents::default(),
+            )
+            .is_err(),
+            "observation must not discover an unrecorded implication"
+        );
+        assert!(
+            CheckedResourceRewrite::check(
+                &function,
+                &before,
+                &premise,
+                &selected,
+                &unfolded,
+                &derivable_delta,
+                &CheckedCallEvents::default(),
+            )
+            .is_err(),
+            "rewrite must not discover an unrecorded implication"
+        );
         let forged_unfold = unfolded.clone().with_resource_context(
             unfolded
                 .resources()

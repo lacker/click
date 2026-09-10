@@ -352,16 +352,6 @@ pub(super) fn tactic_expansion_capture_is_active(capture: Option<&ExpansionCaptu
     capture.is_some_and(|capture| capture.active)
 }
 
-pub(super) fn tactic_expansion_capture_matches(
-    capture: Option<&ExpansionCapture>,
-    site: Option<&ProofSite>,
-    source_index: usize,
-) -> bool {
-    capture.is_some_and(|capture| {
-        capture.active && site == Some(&capture.site) && capture.source_index == Some(source_index)
-    })
-}
-
 /// Takes one path-local selected-tactic expansion while leaving the capture
 /// installed for a sibling execution path. Frontier-local `branch` uses this
 /// to collect the certificate produced at one shared source occurrence under

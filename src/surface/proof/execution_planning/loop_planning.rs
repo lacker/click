@@ -1654,11 +1654,13 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             .is_some_and(|source| source.preserve_source_index.is_none());
         if !omitted_frontier_preservation
             && region_simp.is_some_and(|(_, source_index)| {
-                tactic_expansion_capture_matches(
-                    expansion_capture.as_deref(),
-                    proof_site.as_ref(),
-                    source_index,
-                )
+                // Region simp is deferred by the preservation driver, so it
+                // never opens an active tactic capture. Match its selected
+                // source occurrence just as the driver's explicit steps do.
+                proof_site.as_ref().is_some_and(|site| {
+                    selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                        == Some(source_index)
+                })
             })
         {
             let capture = ProofCertificateBuilder {

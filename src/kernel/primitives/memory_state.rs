@@ -2387,6 +2387,17 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
+    /// A sufficient, search-free condition for transporting loadability of
+    /// an exact range. Unlike value equality, this ignores writes, but never
+    /// ignores changed block extents or allocation retirement metadata.
+    pub(in crate::kernel) fn read_region_identity(&self, base: &Pointer) -> ReadRegionIdentity {
+        crate::instrumentation::record_deterministic_work(1);
+        ReadRegionIdentity {
+            block_size: self.block_size(&base.block).cloned(),
+            heap: self.heap.clone(),
+        }
+    }
+
     pub(in crate::kernel) fn has_call_memory_havoc(&self) -> bool {
         // Call-havoc markers are concrete blocks with this prefix. Bound the
         // B-tree query to that lexical interval so a load does not scan

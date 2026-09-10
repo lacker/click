@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn deferred_preservation_simp_expands_at_its_original_source_site() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/owned-vector/vector.click");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let sources = crate::cli::read_verifying_sources(&path, &source).unwrap();
+    let c_sources = crate::cli::source_refs(&sources);
+    verify_c0_sources_functions(&source, &c_sources, vec!["vector_copy".into()]).unwrap();
+    let function = source.find("int32 vector_copy(").unwrap();
+    let preserve = function + source[function..].find("preserve by {").unwrap();
+    let offset = preserve + source[preserve..].find("simp();").unwrap();
+    let position = expansion::position_at_offset(&source, offset);
+    let expanded =
+        expand_c0_tactic_source_at(&source, &c_sources, position.line, position.column).unwrap();
+    assert_ne!(source, expanded);
+    verify_c0_sources_functions(&expanded, &c_sources, vec!["vector_copy".into()]).unwrap();
+}
+
+#[test]
 fn branch_interface_fixture_proofs_verify_expand_and_recheck() {
     for name in [
         "frontier_branch_return.md",
