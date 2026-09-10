@@ -440,14 +440,6 @@ pub(super) enum MemoryDagHopJustification {
     LoopHavocRanges {
         ranges: Vec<RangeDisjointFromPointerEvidence>,
     },
-    /// The havoc edge's frozen context proves the pointer outside the
-    /// callee's mutable ranges by range reasoning or ownership.
-    CallHavocFrozenContext,
-    /// The store edge's frozen context records a strict order separating
-    /// the written index from the loaded one.
-    StoreFrozenOrder {
-        condition: ConditionTerm,
-    },
     AssumptionDependent(MemoryDagAssumptionKind),
 }
 
@@ -663,52 +655,9 @@ impl MemoryDagHopJustification {
                         .zip(mutable_ranges)
                         .all(|(evidence, range)| evidence.checks(range, pointer, assumptions))
             }
-            Self::CallHavocFrozenContext => {
-                let CMemoryDerivation::CallHavoc {
-                    mutable_ranges,
-                    context,
-                    base,
-                    ..
-                } = derivation
-                else {
-                    return false;
-                };
-                context.ranges_proven_disjoint_from_pointer_for_frame(
-                    mutable_ranges,
-                    pointer,
-                    base.memory(),
-                )
-            }
-            Self::StoreFrozenOrder { condition } => {
-                let CMemoryDerivation::Store {
-                    pointer: write,
-                    context,
-                    ..
-                } = derivation
-                else {
-                    return false;
-                };
-                store_frozen_order_condition(context, write, pointer).as_ref() == Some(condition)
-            }
             Self::AssumptionDependent(_) => false,
         }
     }
-}
-
-/// The common-base distinctness condition of a store and a load that the
-/// store edge's frozen context refutes by one recorded strict order.
-fn store_frozen_order_condition(
-    context: &PureFactContext,
-    write: &Pointer,
-    pointer: &Pointer,
-) -> Option<ConditionTerm> {
-    let condition = pointer_offsets_with_common_base_distinctness_condition(write, pointer)?;
-    let ConditionTerm::Bitvector32Equal(left, right) = &condition else {
-        return None;
-    };
-    context
-        .direct_strict_order_recorded(left, right)
-        .then_some(condition)
 }
 
 impl PositiveTermEvidence {
@@ -2305,8 +2254,7 @@ pub(crate) fn cell_epoch_for_load_variable(
     pointer: &Pointer,
 ) -> Option<SharedCMemory> {
     // Assumption-free and a function of the interned snapshot, the pointer,
-    // and the recorded edges (a havoc edge's frozen context included), so
-    // the answer is memoized per query.
+    // and the recorded edges, so the answer is memoized per query.
     let key = (memory.clone(), pointer.clone());
     if let Some(hit) = CELL_EPOCH_MEMO.with(|memo| memo.borrow().get(&key).cloned()) {
         return hit;
@@ -2335,40 +2283,7 @@ pub(crate) fn cell_epoch_for_load_variable(
     epoch
 }
 
-/// Whether a call-havoc edge's frozen context proves `pointer` outside the
-/// callee's mutable ranges. The answer is a function of the edge (its
-/// derived snapshot identifies it) and the pointer, so it is memoized per
-/// edge rather than per querying snapshot: every later snapshot's naming
-/// walk crosses the same edge for the same cells.
-fn call_havoc_frozen_context_crosses(
-    derived: &crate::kernel::SharedCMemory,
-    mutable_ranges: &[CMemoryRange],
-    context: &PureFactContext,
-    pointer: &Pointer,
-) -> bool {
-    let key = (derived.clone(), pointer.clone());
-    if let Some(hit) = FROZEN_CROSSING_MEMO.with(|memo| memo.borrow().get(&key).copied()) {
-        return hit;
-    }
-    let crosses = context.ranges_proven_disjoint_from_pointer_for_frame(
-        mutable_ranges,
-        pointer,
-        derived.memory(),
-    );
-    FROZEN_CROSSING_MEMO.with(|memo| {
-        let mut memo = memo.borrow_mut();
-        if memo.len() >= 100_000 {
-            memo.clear();
-        }
-        memo.insert(key, crosses);
-    });
-    crosses
-}
-
 thread_local! {
-    static FROZEN_CROSSING_MEMO: std::cell::RefCell<
-        std::collections::HashMap<(crate::kernel::SharedCMemory, Pointer), bool>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
     static CELL_EPOCH_MEMO: std::cell::RefCell<
         std::collections::HashMap<(crate::kernel::SharedCMemory, Pointer), Option<crate::kernel::SharedCMemory>>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -2415,7 +2330,6 @@ fn memory_dag_cell_source_walk(
             CMemoryDerivation::Store {
                 pointer: write,
                 value,
-                context,
                 ..
             } => {
                 if write == pointer
@@ -2448,10 +2362,6 @@ fn memory_dag_cell_source_walk(
                 // must check byte-for-byte.
                 if write.blocks_proven_distinct(pointer) {
                     MemoryDagHopJustification::StoreDistinctBlocks
-                } else if let Some(condition) =
-                    store_frozen_order_condition(context, write, pointer)
-                {
-                    MemoryDagHopJustification::StoreFrozenOrder { condition }
                 } else if pointer_offsets_with_common_base_proven_distinct(
                     write,
                     pointer,
@@ -2575,26 +2485,13 @@ fn memory_dag_cell_source_walk(
                     };
                 }
             }
-            CMemoryDerivation::CallHavoc {
-                mutable_ranges,
-                context,
-                ..
-            } => {
+            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
                 if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
                     mutable_ranges,
                     pointer,
                     assumptions,
                 ) {
                     MemoryDagHopJustification::CallHavocRanges { ranges }
-                } else if call_havoc_frozen_context_crosses(
-                    &current,
-                    mutable_ranges,
-                    context,
-                    pointer,
-                ) {
-                    // Decided by the edge's own frozen context: checkable
-                    // from the edge and the pointer alone.
-                    MemoryDagHopJustification::CallHavocFrozenContext
                 } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
                     mutable_ranges,
                     pointer,
@@ -2878,6 +2775,85 @@ pub(super) fn atomic_memory_load_equality_evidence(
 /// no-op block declarations and stores whose distinctness follows from the
 /// certificate's separation facts; every crossed edge remains justified by
 /// exact facts and the bounded DAG walk.
+/// The form this context decides for one load: the integer a store or
+/// snapshot cell provides, or else the load of the oldest snapshot the walk
+/// proves the cell unchanged from, named by the assumption-free naming walk
+/// so that facts spelled with that older name apply exactly.
+pub(crate) fn resolve_load_along_memory_derivations(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    let _assumptions_id_scope = assumptions.enter_id_scope();
+    let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
+    let result = with_extended_dag_bridging(|| {
+        match memory_dag_cell_source(memory, pointer, assumptions, true)? {
+            MemoryDagCell::Stored { value, .. } => match value {
+                CValue::Int16(value)
+                | CValue::Int32(value)
+                | CValue::UInt8(value)
+                | CValue::UInt16(value)
+                | CValue::UInt32(value) => Some(value),
+                _ => None,
+            },
+            MemoryDagCell::Unwritten { node, .. } => {
+                if let Some(value) = node.memory().known_value(pointer) {
+                    return match value {
+                        CValue::Int16(value)
+                        | CValue::Int32(value)
+                        | CValue::UInt8(value)
+                        | CValue::UInt16(value)
+                        | CValue::UInt32(value) => Some(value),
+                        _ => None,
+                    };
+                }
+                crate::kernel::eval::load_variable_for_term(&Bitvector32Term::MemoryLoad(
+                    node,
+                    Box::new(pointer.clone()),
+                ))
+                .map(|(variable, _)| Bitvector32Term::Variable(variable))
+            }
+            _ => None,
+        }
+    });
+    EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
+    result
+}
+
+/// Rewrites `proposition` with each registered load variable replaced by the
+/// form [`resolve_load_along_memory_derivations`] decides for it from its
+/// origin snapshot under `assumptions`. Returns `None` when nothing changes.
+/// Work is one bounded DAG query per load variable of the proposition;
+/// nothing else is visited.
+pub(crate) fn resolve_prerequisite_loads_along_memory_derivations(
+    proposition: &Proposition,
+    assumptions: &PureFactContext,
+) -> Option<Proposition> {
+    let mut resolved = proposition.clone();
+    let mut changed = false;
+    for variable in crate::kernel::proposition_variables(proposition) {
+        if !crate::kernel::is_load_variable(&variable) {
+            continue;
+        }
+        let Some((origin, pointer)) = crate::kernel::registered_load_origin_for_variable(&variable)
+        else {
+            continue;
+        };
+        let Some(form) = resolve_load_along_memory_derivations(&origin, &pointer, assumptions)
+        else {
+            continue;
+        };
+        if form == Bitvector32Term::Variable(variable) {
+            continue;
+        }
+        resolved = crate::kernel::reasoning::substitute_bitvector_variable_in_proposition(
+            &resolved, variable, &form,
+        );
+        changed = true;
+    }
+    changed.then_some(resolved)
+}
+
 pub(crate) fn explicit_atomic_equality_from_memory_derivations(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
@@ -3411,7 +3387,6 @@ pub(crate) fn clear_canonical_form_caches() {
     DEEP_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
     ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().clear());
     CELL_EPOCH_MEMO.with(|memo| memo.borrow_mut().clear());
-    FROZEN_CROSSING_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
 /// Recursive `Hash` and `Eq` implementations make a whole-term cache key

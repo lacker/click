@@ -33,7 +33,7 @@ kinds:
 
 | Edge | Meaning |
 | --- | --- |
-| `Store` | One pointer was assigned a value. The transition's fact context is frozen on the edge. |
+| `Store` | One pointer was assigned a value. No fact context is recorded on the edge. |
 | `LoopHavoc` | A loop may have changed memory; verified whole-loop effects carry a checked write set. |
 | `CallHavoc` | A call may have changed declared mutable ranges. |
 | `BlockDeclared` | A new non-havoc block entered the memory model. |
@@ -60,12 +60,14 @@ when an edge is missing or can't be crossed safely.
 The graph never treats a lifetime boundary or an unknown write as an ordinary
 unchanged store. In particular:
 
-- a `Store` edge is crossed only with sufficient pointer-distinctness evidence:
-  distinct blocks, a decided common-base offset inequality, or one strict
-  order recorded in the edge's frozen context that separates the two
-  indexes (an indexed lookup, never a derivation, so the assumption-free
-  naming walk can use it);
-- a `CallHavoc` edge is crossed only with sufficient range-disjointness evidence;
+- a `Store` edge is crossed only with sufficient pointer-distinctness evidence
+  checked in the querying proof context: distinct blocks or a decided
+  common-base offset inequality. No assumptions are captured on the edge,
+  because first-wins interning lets paths with different assumptions share
+  one edge, and one path's `length == 0` must not preserve another path's
+  load;
+- a `CallHavoc` edge is crossed only with sufficient range-disjointness
+  evidence, likewise checked in the querying context;
 - a `LoopHavoc` edge with no checked footprint isn't crossed; a verified
   footprint is crossed only with range-disjointness evidence;
 - allocation and free preserve unrelated locations but don't preserve a load

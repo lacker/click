@@ -2072,7 +2072,6 @@ impl CMemory {
                     base,
                     variable,
                     mutable_ranges: mutable_ranges.to_vec(),
-                    context: assumptions.clone(),
                 },
             );
         }
@@ -2146,14 +2145,14 @@ impl CMemory {
         self.store_with_context(pointer, value, &PureFactContext::new())
     }
 
-    /// Writes one cell, freezing `context` on the store edge: a later load of
-    /// another cell of the same base crosses the edge when a strict order
-    /// recorded in that context separates the two indexes.
+    /// Writes one cell. The transition's fact context is not recorded on the
+    /// store edge: a later load of another cell of the same base crosses the
+    /// edge only with distinctness evidence checked in the querying context.
     pub fn store_with_context(
         mut self,
         pointer: Pointer,
         value: CValue,
-        context: &PureFactContext,
+        _context: &PureFactContext,
     ) -> Self {
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
@@ -2165,7 +2164,6 @@ impl CMemory {
                 base,
                 pointer,
                 value,
-                context: context.clone(),
             },
         );
         self

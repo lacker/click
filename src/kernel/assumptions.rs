@@ -68,6 +68,29 @@ fn terms_equal_with_load_atoms(
         (Bitvector32Term::MemoryLoad(_, _), Bitvector32Term::MemoryLoad(_, _)) => {
             loads_match(left, right)
         }
+        // A registered load variable is a load atom too: the same cell named
+        // at two snapshots has two variables when the edge between them is
+        // crossed only in context. Compare through the first-seen origin
+        // snapshots, which are DAG-connected; the canonical placeholder form
+        // is unsuited to frame checks.
+        (Bitvector32Term::Variable(a), Bitvector32Term::Variable(b))
+            if a != b
+                && crate::kernel::is_load_variable(a)
+                && crate::kernel::is_load_variable(b) =>
+        {
+            match (
+                crate::kernel::registered_load_origin_for_variable(a),
+                crate::kernel::registered_load_origin_for_variable(b),
+            ) {
+                (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) => {
+                    loads_match(
+                        &Bitvector32Term::MemoryLoad(left_memory, Box::new(left_pointer)),
+                        &Bitvector32Term::MemoryLoad(right_memory, Box::new(right_pointer)),
+                    )
+                }
+                _ => false,
+            }
+        }
         (Bitvector32Term::Add(ll, lr), Bitvector32Term::Add(rl, rr))
         | (Bitvector32Term::Subtract(ll, lr), Bitvector32Term::Subtract(rl, rr))
         | (Bitvector32Term::Multiply(ll, lr), Bitvector32Term::Multiply(rl, rr)) => {

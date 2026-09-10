@@ -77,12 +77,18 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
         let chain_assumptions = chain_facts
             .iter()
             .filter(|fact| {
+                // Separations are frame justification too: crossing a call's
+                // havoc edge for a load outside the callee's footprint is
+                // decided by exactly these facts, checked in this context.
                 matches!(
                     fact,
                     Proposition::ConditionIs(_, _)
                         | Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
                         | Proposition::CHeapAllocationFreed { .. }
+                        | Proposition::CResourceSeparate { .. }
+                        | Proposition::CMemoryDisjoint { .. }
+                        | Proposition::CResourceComposition(_)
                 )
             })
             .fold(transport_assumptions.clone(), |assumptions, fact| {
@@ -380,6 +386,17 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
         let chain_facts: Vec<Proposition> = {
             let mut chain_facts = available.to_vec();
             chain_facts.push(source.clone());
+            // The frontier's certified effect facts (call postconditions and
+            // effect summaries) may relate a load at one snapshot to the same
+            // cell at another: load names are not preserved across call-havoc
+            // and store edges by path assumptions (see `CMemoryDerivation`).
+            // They are certified facts, not user premises.
+            chain_facts.extend(
+                effect_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone())
+                    .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _))),
+            );
             chain_facts
         };
         // The origins-unchanged frame evidence may consult every certified
@@ -391,12 +408,18 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
         let chain_assumptions = chain_facts
             .iter()
             .filter(|fact| {
+                // Separations are frame justification too: crossing a call's
+                // havoc edge for a load outside the callee's footprint is
+                // decided by exactly these facts, checked in this context.
                 matches!(
                     fact,
                     Proposition::ConditionIs(_, _)
                         | Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
                         | Proposition::CHeapAllocationFreed { .. }
+                        | Proposition::CResourceSeparate { .. }
+                        | Proposition::CMemoryDisjoint { .. }
+                        | Proposition::CResourceComposition(_)
                 )
             })
             .fold(transport_assumptions.clone(), |assumptions, fact| {

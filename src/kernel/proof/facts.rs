@@ -489,12 +489,15 @@ impl ProofFacts {
         if self.pure_assumption_available(goal)
             || !matches!(
                 goal,
-                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(_, _) | ConditionTerm::PointerOffsetEqual(_, _),
+                    true
+                )
             )
         {
             return self.clone();
         }
-        let candidates = self.bitvector_equalities_mentioning(goal);
+        let candidates = self.load_equalities_mentioning(goal);
         if !candidates.is_empty()
             && premise_bridged_by_load_variable_chain_with_origins(
                 goal,
@@ -713,6 +716,7 @@ impl ProofFacts {
             return false;
         }
         separation_bridged_fact_is_available(required, &candidates, &self.assumptions, framing)
+            || condition_bridged_fact_is_available(required, &candidates, &self.assumptions)
     }
 
     pub(crate) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {
@@ -726,6 +730,25 @@ impl ProofFacts {
         &self,
         proposition: &Proposition,
     ) -> Vec<Proposition> {
+        self.load_equalities_mentioning(proposition)
+            .into_iter()
+            .filter(|equality| {
+                matches!(
+                    equality,
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(_, _)
+                            | ConditionTerm::Bitvector64Equal(_, _),
+                        true
+                    )
+                )
+            })
+            .collect()
+    }
+
+    /// Like [`Self::bitvector_equalities_mentioning`], also returning indexed
+    /// pointer-offset equalities between scaled offsets, for the pointer side
+    /// of the load-variable chain bridge.
+    fn load_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
         let mut atoms = BTreeSet::new();
         collect_proposition_bitvector_atoms(proposition, &mut atoms);
         let mut equalities = Vec::new();
@@ -871,14 +894,27 @@ fn index_bitvector_equality_fact(
     mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
     fact: &Proposition,
 ) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32Equal(left, right) | ConditionTerm::Bitvector64Equal(left, right),
-        true,
-    ) = fact
-    else {
-        return index;
+    let (left, right) = match fact {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right),
+            true,
+        ) => (left.as_ref(), right.as_ref()),
+        // A pointer-offset equality between two scaled offsets (how a
+        // pointer-valued field's preservation is recorded) is indexed by the
+        // same atoms so the load-variable chain bridge can select it.
+        Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
+            match (left.as_ref(), right.as_ref()) {
+                (
+                    PointerOffsetTerm::Int32Scaled { value: left, .. },
+                    PointerOffsetTerm::Int32Scaled { value: right, .. },
+                ) => (left.as_ref(), right.as_ref()),
+                _ => return index,
+            }
+        }
+        _ => return index,
     };
-    for term in [left.as_ref(), right.as_ref()] {
+    for term in [left, right] {
         let Some(key) = bitvector_equality_atom_key(term) else {
             continue;
         };
