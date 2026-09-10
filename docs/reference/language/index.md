@@ -252,8 +252,19 @@ those pure theorems, and explicitly typed specification `let` bindings.
 Applications support exact Integer guards, explicit `using` premises, and
 mixed Integer/C parameters. Unsuffixed decimal literals take their
 type from an Integer expression, including values larger than 64 bits.
-Machine variables and suffixed machine literals require explicit conversions;
-those conversions are not yet available in this initial scalar slice.
+Machine variables and suffixed machine literals require explicit conversions.
+`to_integer(value)` preserves the numeric value of each supported machine
+integer type: `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, and `uint64`.
+Signed `-1` and unsigned `4294967295u32` therefore produce different Integers.
+Evaluating the argument retains its C definedness obligations; converting an
+overflowing C addition does not make the addition valid.
+
+The reverse names are `to_int16`, `to_int32`, `to_uint8`, `to_uint16`,
+`to_uint32`, `to_int64`, and `to_uint64`. The current checkpoint accepts exact
+Integer constants within the destination's range and rejects values outside it.
+Symbolic reverse conversions with explicit range proofs are still being
+implemented. No conversion wraps, truncates, or implicitly mixes the two types.
+See [conversion examples](https://github.com/lacker/click/blob/master/mdtests/integer_machine_conversions.md).
 
 <!-- verified-example: mdtests/integer_successor.md -->
 ```click
@@ -272,7 +283,7 @@ evidence for ordinary verification to check.
 
 Integer values have no C storage or runtime representation. The initial slice
 does not yet support Integer quantifiers, pure-function signatures, datatype
-or resource fields, folds, or conversions to machine integers and `Nat`. Division,
+or resource fields, folds, or conversions to `Nat`. Division,
 remainder, and bitwise operators are also unavailable. `Nat` remains the
 existing [structural natural-number datatype](../library/index.md#natural-numbers).
 
