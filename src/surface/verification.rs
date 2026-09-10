@@ -1781,6 +1781,10 @@ pub fn c0_external_dependencies(
     Ok(dependencies)
 }
 
+fn is_c0_builtin_function(name: &str) -> bool {
+    matches!(name, "malloc" | "calloc" | "realloc" | "free")
+}
+
 pub(in crate::surface) fn c0_statement_calls(
     function: &syntax::C0Function,
 ) -> Vec<BTreeSet<String>> {
@@ -2005,7 +2009,9 @@ pub(in crate::surface) fn c0_statement_calls(
                 ..
             } => {
                 let mut dependencies = BTreeSet::new();
-                if !function_pointer_names.contains(function_name) {
+                if !function_pointer_names.contains(function_name)
+                    && !is_c0_builtin_function(function_name)
+                {
                     dependencies.insert(function_name.clone());
                 }
                 for argument in arguments {
@@ -2018,7 +2024,9 @@ pub(in crate::surface) fn c0_statement_calls(
                 arguments,
             } => {
                 let mut dependencies = BTreeSet::new();
-                if !function_pointer_names.contains(function_name) {
+                if !function_pointer_names.contains(function_name)
+                    && !is_c0_builtin_function(function_name)
+                {
                     dependencies.insert(function_name.clone());
                 }
                 for argument in arguments {

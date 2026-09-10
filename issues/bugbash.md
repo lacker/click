@@ -1,6 +1,6 @@
 # Bug bash: open tooling failures
 
-Five remaining tooling failures are tracked here. They reject supported inputs
+Four remaining tooling failures are tracked here. They reject supported inputs
 or expose verifier reliability gaps.
 
 This is deliberately a bundle rather than one file per problem, so the set
@@ -14,19 +14,7 @@ Several entries say what *not* to do: those directions were built and
 measured, and each broke sound proofs elsewhere or lost a capability the tree
 uses. Read them before starting.
 
-## 1. `click verify` rejects every source that calls `realloc`
-
-Extracting
-the checked-in `mdtests/realloc_preserves_calloc_prefix.md` (expect: pass) into
-a directory and running `click verify t.click` gives
-`click: no C source defines realloc` and exit 1. The CLI's callee closure
-(`src/surface/verification.rs:1440-1458`, `c0_statement_calls`) treats the
-`realloc` builtin as an ordinary callee, while `malloc`, `calloc`, and `free`
-are dedicated statement forms; the harness entry point does not compute that
-closure. Documented `realloc` support is unreachable from the CLI. Acceptance:
-that mdtest's sources verify through `click verify`, and a CLI test pins it.
-
-## 2. `--changed-since` cannot resolve project-local headers
+## 1. `--changed-since` cannot resolve project-local headers
 
 A project with
 `cap.h`, `m.c` containing `#include "cap.h"`, and a sidecar verifies with
@@ -36,7 +24,7 @@ change in the tree. Incremental mode builds its source bundle without headers.
 Acceptance: incremental verification of a project with local headers works, and
 a header edit selects the functions whose translation units include it.
 
-## 3. A trivial theorem produces a smart proof with no certificate
+## 2. A trivial theorem produces a smart proof with no certificate
 
 `theorem small(x: int32) { requires x < 10; ensures x < 20; }` under the default
 prover fails with `smart proof for small.ensures_0 succeeded but did not
@@ -45,12 +33,12 @@ produce a pure surface certificate`. `ensures x <= 10` works. This is the
 feature work. Acceptance: the theorem verifies, or the search declines promptly
 with an actionable diagnostic.
 
-## 4. `execute()` emits a certificate the checker rejects
+## 3. `execute()` emits a certificate the checker rejects
 
 This occurs for `break` inside an `if` inside a nested `while`, in the same
-class as item 3.
+class as item 2.
 
-## 5. Panic (`unreachable!`) when a local struct initializer zero-fills a
+## 4. Panic (`unreachable!`) when a local struct initializer zero-fills a
 `float`/`double` field
 
 A crash, not a wrong answer. Acceptance: the initializer is either supported

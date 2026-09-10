@@ -803,6 +803,48 @@ mod tests {
     }
 
     #[test]
+    fn verify_accepts_realloc_as_a_builtin() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!(
+            "click-verify-realloc-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temporary verification directory should be creatable");
+        fs::write(
+            root.join("realloc.c"),
+            "int32 realloc_preserves_calloc_prefix() {\n\
+                int32* p = calloc(2, sizeof(int32));\n\
+                if (p == 0) { return -1; }\n\
+                int32* q = realloc(p, 3 * sizeof(int32));\n\
+                if (q == 0) { free(p); return -1; }\n\
+                int32 result = q[1];\n\
+                free(q);\n\
+                return result;\n\
+            }\n",
+        )
+        .expect("C source should be writable");
+        let click_path = root.join("realloc.click");
+        fs::write(
+            &click_path,
+            "verifying \"realloc.c\";\n\
+                int32 realloc_preserves_calloc_prefix() {\n\
+                    ensures result == 0 or result == -1 by auto;\n\
+                }\n",
+        )
+        .expect("Click sidecar should be writable");
+
+        let result = entry_with([click_path.display().to_string()]);
+        fs::remove_dir_all(&root).expect("temporary verification directory should be removable");
+        assert!(
+            result.is_ok(),
+            "click verify should accept realloc: {result:?}"
+        );
+    }
+
+    #[test]
     fn corrupted_or_mismatched_incremental_markers_are_cache_misses() {
         let path = Path::new("examples/sample.click");
         let valid = marker_contents("abc123", path, "verifier-a", &environment_switches());
