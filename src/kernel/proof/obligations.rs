@@ -73,35 +73,47 @@ pub(crate) struct OutcomeProofCore {
 
 /// Durable kernel evidence that one exact proposition judgment was closed.
 ///
-/// The proposition and optional function outcome come from the root semantic
-/// obligation retained by [`ProofObject`](super::ProofObject); surface
-/// provenance cannot manufacture or retarget this value after completion.
+/// The proposition, the root assumptions it was closed under, and the optional
+/// function outcome all come from the root semantic obligation retained by
+/// [`ProofObject`](super::ProofObject); surface provenance cannot manufacture
+/// or retarget this value after completion. Retaining the root facts lets a
+/// theorem constructor check which assumptions the proof actually stood on
+/// instead of re-proving its conclusion. The fact store is persistent, so
+/// keeping it costs a shared reference, not a copy of the context.
 #[derive(Clone)]
 pub(crate) struct CheckedProposition {
     proposition: Arc<Proposition>,
+    root_assumptions: super::ProofFacts,
     outcome: Option<OutcomeProofCore>,
-    closed: bool,
 }
 
 impl CheckedProposition {
     pub(super) fn new(
         proposition: Proposition,
+        root_assumptions: super::ProofFacts,
         outcome: Option<OutcomeProofCore>,
-        closed: bool,
     ) -> Self {
         Self {
             proposition: Arc::new(proposition),
+            root_assumptions,
             outcome,
-            closed,
         }
     }
 
+    /// Whether the completed proof stood on no root assumption at all.
     pub(crate) fn is_closed(&self) -> bool {
-        self.closed
+        self.root_assumptions.is_empty()
     }
 
     pub(crate) fn proposition(&self) -> &Proposition {
         &self.proposition
+    }
+
+    /// The exact facts the root branch assumed. A constructor that turns this
+    /// completion into an implication must check them against its own
+    /// explicit premises.
+    pub(crate) fn root_assumptions(&self) -> &super::ProofFacts {
+        &self.root_assumptions
     }
 
     pub(crate) fn outcome(&self) -> Option<&OutcomeProofCore> {

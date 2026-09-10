@@ -549,13 +549,8 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         };
         Some(super::CheckedProposition::new(
             goal.proposition().clone(),
+            self.state.open_branches.root_branch().state.facts.clone(),
             goal.outcome.as_deref().map(|outcome| outcome.core.clone()),
-            self.state
-                .open_branches
-                .root_branch()
-                .state
-                .facts
-                .is_empty(),
         ))
     }
 

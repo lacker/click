@@ -4544,12 +4544,51 @@ pub fn prove_int32_increment_below_max_is_defined(value: Bitvector32Term) -> The
     ))
 }
 
-/// Independently proves and universally closes a pure int32 implication.
+/// Universally closes a pure int32 implication that a checked proof already
+/// established.
 ///
-/// Every free bitvector variable in the requirements and conclusion must be
-/// listed exactly once. This is the sole constructor for authority that lets
+/// The kernel does not re-prove the conclusion. `completion` is the durable
+/// record a completed [`ProofObject`](crate::kernel::proof::ProofObject)
+/// issues for its root judgment, and this constructor checks only that the
+/// record is the one the claimed implication describes: the proof's goal is
+/// exactly `conclusion`, the facts its root branch assumed are exactly
+/// `requirements`, and every free bitvector variable of both is listed exactly
+/// once in `variables`. This is the sole constructor for authority that lets
 /// a Click pure theorem participate in whole-contract certification.
-pub fn prove_universally_quantified_pure_implication(
+pub(crate) fn prove_universally_quantified_pure_implication(
+    requirements: Vec<Proposition>,
+    conclusion: Proposition,
+    variables: Vec<Variable>,
+    completion: &crate::kernel::proof::CheckedProposition,
+) -> Option<CVerifiedPureTheorem> {
+    checked_pure_implication_matches(&requirements, &conclusion, completion)
+        .then(|| universally_close_pure_implication(requirements, conclusion, variables))?
+}
+
+/// Whether one completed proof is exactly a proof of `conclusion` from
+/// `requirements`.
+///
+/// Both checks are exact: proposition identity, and set identity between the
+/// root branch's assumed facts and the explicit requirements. The fact store
+/// deduplicates equal top-level facts at construction, so a repeated
+/// requirement is not a mismatch.
+fn checked_pure_implication_matches(
+    requirements: &[Proposition],
+    conclusion: &Proposition,
+    completion: &crate::kernel::proof::CheckedProposition,
+) -> bool {
+    completion.proposition() == conclusion
+        && completion
+            .root_assumptions()
+            .to_vec()
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            == requirements.iter().cloned().collect::<BTreeSet<_>>()
+}
+
+/// Folds the explicit requirements and binders around an established
+/// conclusion. Every caller must already have checked the completion.
+fn universally_close_pure_implication(
     requirements: Vec<Proposition>,
     conclusion: Proposition,
     variables: Vec<Variable>,
@@ -4563,10 +4602,6 @@ pub fn prove_universally_quantified_pure_implication(
         collect_proposition_bitvector_variables(proposition, &mut occurring);
     }
     if occurring != declared {
-        return None;
-    }
-    let assumptions = assumptions_with_propositions(&PureFactContext::new(), &requirements);
-    if !assumptions.proves(&conclusion) {
         return None;
     }
     let implication = requirements
@@ -5000,24 +5035,30 @@ fn rewrite_int32_term_by_exact_equality(
     }
 }
 
-/// Independently checks an explicit sequence of int32 equality rewrites and
-/// context-free normalization before issuing whole-contract authority.
+/// Universally closes a pure int32 implication whose checked proof rewrote the
+/// conclusion by an explicit ordered list of int32 equalities.
 ///
-/// This is deliberately a certificate validator, not an algebraic search: each
-/// supplied equality must follow from the theorem requirements, must occur in
-/// the current equality goal, and is applied in the supplied orientation.
-pub fn prove_universally_quantified_pure_implication_by_int32_rewrites(
+/// This is deliberately a certificate validator, and it neither proves the
+/// conclusion nor proves a rewrite. `completion` carries the closed judgment,
+/// exactly as in [`prove_universally_quantified_pure_implication`]. Each
+/// supplied equality is *cited*: it must be exactly available among the
+/// requirements (a requirement, or a conjunct of one), must actually rewrite
+/// the equality goal reached so far, and is applied in the supplied
+/// orientation. Reordering the list, dropping one, or naming an equality the
+/// requirements do not contain is therefore rejected.
+pub(crate) fn prove_universally_quantified_pure_implication_by_int32_rewrites(
     requirements: Vec<Proposition>,
     conclusion: Proposition,
     variables: Vec<Variable>,
     rewrites: Vec<Proposition>,
+    completion: &crate::kernel::proof::CheckedProposition,
 ) -> Option<CVerifiedPureTheorem> {
-    let assumptions = assumptions_with_propositions(&PureFactContext::new(), &requirements);
+    if !checked_pure_implication_matches(&requirements, &conclusion, completion) {
+        return None;
+    }
     let mut goal = conclusion.clone();
     for rewrite in rewrites {
-        if !assumptions.proves(&rewrite) {
-            return None;
-        }
+        crate::kernel::proof::fact_reasoning::exactly_available_fact(&rewrite, &requirements)?;
         let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(from, to), true) = rewrite
         else {
             return None;
@@ -5036,38 +5077,7 @@ pub fn prove_universally_quantified_pure_implication_by_int32_rewrites(
             true,
         );
     }
-    if !PureFactContext::new().proves(&goal) {
-        return None;
-    }
-    let declared = variables.iter().copied().collect::<BTreeSet<_>>();
-    if declared.len() != variables.len() {
-        return None;
-    }
-    let mut occurring = BTreeSet::new();
-    for proposition in requirements.iter().chain(std::iter::once(&conclusion)) {
-        collect_proposition_bitvector_variables(proposition, &mut occurring);
-    }
-    if occurring != declared {
-        return None;
-    }
-    let implication = requirements
-        .into_iter()
-        .rev()
-        .fold(conclusion, |body, requirement| {
-            Proposition::Implies(Box::new(requirement), Box::new(body))
-        });
-    let proposition =
-        variables
-            .into_iter()
-            .rev()
-            .fold(implication, |body, var| Proposition::ForAll {
-                var,
-                sort: Sort::CInt32,
-                body: Box::new(body),
-            });
-    Some(CVerifiedPureTheorem {
-        theorem: Theorem::new(proposition),
-    })
+    universally_close_pure_implication(requirements, conclusion, variables)
 }
 
 /// Adding one on the left of a signed int32 value below the maximum is
