@@ -1137,7 +1137,11 @@ fn lower_pure_simp_certificate(
 ) -> Option<Vec<ProofTactic>> {
     let tactic = match certificate {
         SimpEvidence::Assumption => ProofTactic::Assumption,
-        SimpEvidence::Normalize => ProofTactic::Normalize,
+        SimpEvidence::Normalize => {
+            let tactics = plan_context_free_normalization(goal)?;
+            ProofCertificate::from_proof_tactics(&tactics).ok()?;
+            return Some(tactics);
+        }
         SimpEvidence::Derivation(derivation) => {
             if derivation
                 .algebraic_constructor_injectivity_source()
@@ -1169,7 +1173,9 @@ fn lower_pure_simp_certificate(
                 return Some(vec![tactic]);
             }
             if premise_pairs.is_empty() {
-                ProofTactic::Normalize
+                let tactics = plan_context_free_normalization(goal)?;
+                ProofCertificate::from_proof_tactics(&tactics).ok()?;
+                return Some(tactics);
             } else if let Some(ordered) = recorded_signed_order_pairs(derivation, &premise_pairs)
                 && let Some(tactics) = plan_recorded_signed_order_path(goal, &ordered)
             {
@@ -2226,13 +2232,16 @@ fn pure_theorem_surface_certificate(
         );
     }
     if matches!(normalize_proposition(goal), SimpProposition::True) {
-        return ProofCertificate::from_proof_tactics(&[ProofTactic::Normalize]).map_err(
-            |error| {
+        let tactics = plan_context_free_normalization(goal).ok_or_else(|| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` could not transcribe normalization as explicit structure"
+            ))
+        })?;
+        return ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid normalization certificate: {error:?}"
                 ))
-            },
-        );
+            });
     }
     let restricted_simp = source_tactics.and_then(|tactics| {
         let (last, prefix) = tactics.split_last()?;

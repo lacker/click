@@ -1,5 +1,16 @@
 use super::*;
 
+pub(super) fn plan_context_free_normalization(goal: &Proposition) -> Option<Vec<ProofTactic>> {
+    match goal {
+        Proposition::And(left, right) => Some(vec![ProofTactic::Both(ProofBoth {
+            left_tactics: plan_context_free_normalization(left)?,
+            right_tactics: plan_context_free_normalization(right)?,
+        })]),
+        _ => crate::kernel::proof::fact_reasoning::normalizes_context_free_without_top_level_conjunction(goal)
+            .then(|| vec![ProofTactic::Normalize]),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_surface_atomic_derivation(
     view: ExecutionView<'_>,
@@ -795,10 +806,12 @@ pub(super) fn lower_surface_atomic_derivation(
         )));
     }
     if premise_pairs.is_empty() && surface_normalizes_context_free {
-        return Ok((
-            conclusion,
-            SourceProof::Script(vec![ProofTactic::Normalize]),
-        ));
+        let tactics = plan_context_free_normalization(&lowered_conclusion).ok_or_else(|| {
+            ClickError::new(
+                "context-free derivation could not be transcribed as explicit structural normalization",
+            )
+        })?;
+        return Ok((conclusion, SourceProof::Script(tactics)));
     }
     if let Proposition::Not(body) = &lowered_conclusion
         && let Proposition::ConditionIs(condition, expected) = body.as_ref()

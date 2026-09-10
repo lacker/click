@@ -1172,6 +1172,37 @@ theorem impossible_interval() {
 }
 
 #[test]
+fn normalization_does_not_hide_context_free_conjunction_derivation() {
+    let opaque = r#"
+theorem reflexive_pair() {
+    ensures 1 == 1 and 2 == 2 by { normalize(); }
+}
+"#;
+    let error = verify_c0_sources(opaque, &[])
+        .expect_err("normalize must not construct a conjunction proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+
+    let explicit = r#"
+theorem reflexive_pair() {
+    ensures 1 == 1 and 2 == 2 by {
+        both { normalize(); } and { normalize(); }
+    }
+}
+"#;
+    verify_c0_sources(explicit, &[]).expect("the explicit conjunction proof should verify");
+
+    let opaque_using = r#"
+theorem cited_pair(x: int32) {
+    requires x == 0;
+    ensures x == 0 and x == x by { normalize() using { x == 0; } }
+}
+"#;
+    let error = verify_c0_sources(opaque_using, &[])
+        .expect_err("normalize using must not construct a conjunction proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+}
+
+#[test]
 fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     let current = ClickProposition::Comparison {
         left: current_var("x"),

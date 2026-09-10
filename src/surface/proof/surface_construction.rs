@@ -2048,7 +2048,30 @@ pub(super) fn surface_simp_plan_proof(
     };
     let proof = match plan {
         SimpEvidence::Assumption => SourceProof::Script(vec![ProofTactic::Assumption]),
-        SimpEvidence::Normalize => SourceProof::Script(vec![ProofTactic::Normalize]),
+        SimpEvidence::Normalize => {
+            let lowered_goal = lower_fixed_state_proposition(
+                &active_surface_goal,
+                available,
+                parameters,
+                arguments,
+                view.old_reference_state(state),
+                state,
+                None,
+                &view.recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not lower the context-free smart proof goal: {message}"
+                ))
+            })?;
+            SourceProof::Script(plan_context_free_normalization(&lowered_goal).ok_or_else(|| {
+                ClickError::new(
+                    "could not transcribe the context-free smart proof as explicit structural normalization",
+                )
+            })?)
+        }
         SimpEvidence::Derivation(derivation) => {
             let (_, proof) = lower_surface_atomic_derivation(
                 view,

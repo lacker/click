@@ -138,7 +138,15 @@ void pool_checkout(struct pool* pool, struct object* object) {
             (at(statement(0).entry, count(pool_slot(pool))) - 1));
         rewrite(at(statement(0).entry, pool->checked_out) ==
             at(statement(0).entry, count(pool_object(pool, _))));
-        normalize();
+        both {
+            both {
+                normalize();
+            } and {
+                normalize();
+            }
+        } and {
+            normalize();
+        }
     }
     assumption();
     assumption();

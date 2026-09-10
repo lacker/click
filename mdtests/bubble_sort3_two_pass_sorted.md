@@ -68,7 +68,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
         initialize by {
             have j >= 0 and j <= 2 by {
                 unfold(all_le_range);
-                normalize();
+                both {
+                    normalize();
+                } and {
+                    normalize();
+                }
             }
             have all_le_range(p, 0, j, p[j]) by {
                 unfold(all_le_range);
@@ -350,7 +354,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
         initialize by {
             have j >= 0 and j <= 1 by {
                 unfold(all_le_range);
-                normalize();
+                both {
+                    normalize();
+                } and {
+                    normalize();
+                }
             }
             have all_le_range(p, 0, 2, p[2]) by {
                 unfold(all_le_range);
@@ -436,7 +444,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 close_invariants by {
                     both {
                         rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
-                        normalize();
+                        both {
+                            normalize();
+                        } and {
+                            normalize();
+                        }
                     } and {
                         both {
                             have loadable((p + 0)[0..1]) by {
@@ -577,7 +589,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 close_invariants by {
                     both {
                         rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
-                        normalize();
+                        both {
+                            normalize();
+                        } and {
+                            normalize();
+                        }
                     } and {
                         both {
                             have loadable((p + 0)[0..1]) by {

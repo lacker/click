@@ -989,6 +989,16 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
         .is_some()
 }
 
+/// Transitional leaf check for the first structural-normalization migration:
+/// top-level conjunction construction must be explicit, while the remaining
+/// logical constructors continue through the compatibility path below.
+pub(crate) fn normalizes_context_free_without_top_level_conjunction(goal: &Proposition) -> bool {
+    if matches!(goal, Proposition::And(_, _)) {
+        return false;
+    }
+    normalizes_context_free(goal)
+}
+
 /// Reduce only checked, explicitly cited conditions; never search ambient facts.
 pub(crate) fn normalize_using_conditions(
     goal: &Proposition,
@@ -1013,7 +1023,7 @@ pub(crate) fn normalize_using_conditions(
         }
     }
     let reduced = super::term_rewrite::TermRewrite::for_conditions(&conditions).proposition(goal);
-    normalizes_context_free(&reduced)
+    normalizes_context_free_without_top_level_conjunction(&reduced)
         .then_some(())
         .ok_or(ConditionalNormalizationError::DoesNotNormalize)
 }
