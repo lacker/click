@@ -827,6 +827,65 @@ fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
 }
 
 #[test]
+fn call_havoc_cannot_reuse_another_paths_frozen_empty_range() {
+    // Reuse the same source identities in independent sessions as well as
+    // both construction orders within each session. Neither arena insertion
+    // order nor a previous verification may supply preservation evidence.
+    for empty_first in [true, false, true, false] {
+        let _session = crate::kernel::VerificationSession::enter();
+        check_call_havoc_path_local_evidence(empty_first);
+    }
+}
+
+fn check_call_havoc_path_local_evidence(empty_first: bool) {
+    let before = CMemory::new().with_block("arg-memory", 32);
+    let length = Bitvector32Term::Variable(Variable(70_021));
+    let range = CMemoryRange::new(arc_pointer(0), Bitvector32Term::Constant(0), length.clone());
+    let empty = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(length.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let positive = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(length, Bitvector32Term::Constant(1)),
+        true,
+    );
+    let make_call = |context: &PureFactContext| {
+        before.clone().with_call_memory_havoc(
+            Variable(70_020),
+            std::slice::from_ref(&range),
+            context,
+        )
+    };
+    let load = |memory: &CMemory| {
+        canonicalize_atomic_loads_deep(&Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(arc_pointer(0)),
+        ))
+    };
+    let (first_context, second_context) = if empty_first {
+        (&empty, &positive)
+    } else {
+        (&positive, &empty)
+    };
+    let first = make_call(first_context);
+    let first_load = load(&first);
+    let second = make_call(second_context);
+    let second_load = load(&second);
+    // Context-free canonicalization must not use either path's assumptions.
+    // A valid empty-range crossing instead requires checked contextual proof.
+    assert_ne!(
+        first_load,
+        load(&before),
+        "context-free loads cannot inherit a path's empty-range evidence"
+    );
+    assert_ne!(
+        second_load,
+        load(&before),
+        "a later path cannot inherit the first path's empty-range evidence"
+    );
+}
+
+#[test]
 fn call_havoc_marker_identity_includes_symbolic_write_set() {
     let base = CMemory::new().with_block("arg-memory", 32);
     let first_range = CMemoryRange::new(
@@ -1227,11 +1286,10 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
         }
     ));
     assert!(offset_derivation.check(&assumptions));
-    // The call-havoc edge froze the context in force when it was recorded,
-    // so crossing it is checked from the edge alone.
+    // The snapshot is not a certificate for another path's assumptions.
     assert!(
-        offset_derivation.check(&PureFactContext::new()),
-        "the havoc edge's frozen context decides the crossing without ambient premises"
+        !offset_derivation.check(&PureFactContext::new()),
+        "pointer-offset certificate checking must also require the separation and order premises"
     );
 }
 
@@ -1459,7 +1517,7 @@ fn symbolic_element_pointer(index: &Bitvector32Term) -> Pointer {
 }
 
 #[test]
-fn a_store_at_a_symbolic_index_keeps_a_cell_its_frozen_order_separates() {
+fn a_symbolic_store_requires_the_current_paths_separation_order() {
     let index = Bitvector32Term::Variable(Variable(91_001));
     let length = Bitvector32Term::Variable(Variable(91_002));
     let written = symbolic_element_pointer(&index);
@@ -1475,23 +1533,25 @@ fn a_store_at_a_symbolic_index_keeps_a_cell_its_frozen_order_separates() {
     let separated = base
         .clone()
         .store_with_context(written.clone(), int32(7), &ordered);
-    assert_eq!(
-        crate::kernel::eval::canonical_form_of_load(
-            crate::kernel::intern_c_memory_ref(&separated),
-            kept.clone()
-        ),
-        crate::kernel::eval::canonical_form_of_load(
-            crate::kernel::intern_c_memory_ref(&base),
-            kept.clone()
-        ),
-        "the frozen order `index < length` separates the loaded cell from the written one"
-    );
+    let load = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(kept.clone()),
+        )
+    };
+    let evidence = with_extended_dag_bridging(|| {
+        atomic_memory_load_equality_evidence(&load(&separated), &load(&base), &ordered)
+    })
+    .expect("the current path's strict order proves preservation");
+    let goal = Proposition::ConditionIs(ConditionTerm::equal(load(&separated), load(&base)), true);
+    assert!(evidence.checks(&goal, &ordered));
+    assert!(!evidence.checks(&goal, &PureFactContext::new()));
 
-    // Interning is first-wins on equal content, so the unordered store
-    // writes a different value to get its own edge.
+    // Equal stored values must not import another path's order through the
+    // arena's first-wins derivation. Keep the exact same endpoint shape.
     let unordered = base
         .clone()
-        .store_with_context(written, int32(8), &PureFactContext::new());
+        .store_with_context(written, int32(7), &PureFactContext::new());
     assert_ne!(
         crate::kernel::eval::canonical_form_of_load(
             crate::kernel::intern_c_memory_ref(&unordered),
@@ -1526,7 +1586,7 @@ fn direct_strict_order_is_an_indexed_lookup() {
 }
 
 #[test]
-fn frozen_order_store_crossing_ignores_unrelated_order_facts() {
+fn checked_order_store_crossing_ignores_unrelated_order_facts() {
     let samples = [16_u64, 64, 256, 1024, 4096]
         .into_iter()
         .map(|size| {
@@ -1548,18 +1608,19 @@ fn frozen_order_store_crossing_ignores_unrelated_order_facts() {
                 context.assume_condition(ConditionTerm::signed_less_than(index, length), true);
             let base = CMemory::new().with_block(format!("arg-memory-{size}"), 64);
             let separated = base.clone().store_with_context(written, int32(7), &context);
-            let expected = crate::kernel::eval::canonical_form_of_load(
-                crate::kernel::intern_c_memory_ref(&base),
-                kept.clone(),
-            );
-            let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
-                crate::kernel::eval::canonical_form_of_load(
-                    crate::kernel::intern_c_memory_ref(&separated),
-                    kept.clone(),
+            let load = |memory: &CMemory| {
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory_ref(memory),
+                    Box::new(kept.clone()),
                 )
+            };
+            let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                with_extended_dag_bridging(|| {
+                    atomic_memory_load_equality_evidence(&load(&separated), &load(&base), &context)
+                })
             });
-            assert_eq!(
-                resolved, expected,
+            assert!(
+                resolved.is_some(),
                 "the store must be crossed at size {size}"
             );
             (size, work)

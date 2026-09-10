@@ -19,6 +19,39 @@ impl PureFactContext {
         })
     }
 
+    /// Like [`Self::conditions_equal_modulo_proven_snapshots`], additionally
+    /// accepting two loads of one pointer whose snapshots the recorded memory
+    /// DAG proves agree at that pointer under these assumptions, crossing
+    /// call-havoc and store edges by the separation and ownership facts in
+    /// this context. This is the checked replacement for load names that
+    /// were once shared across such edges by a recording path's assumptions;
+    /// it is reserved for target-selected candidates, not broad matching.
+    pub(crate) fn conditions_equal_modulo_origin_unchanged(
+        &self,
+        left: &ConditionTerm,
+        right: &ConditionTerm,
+    ) -> bool {
+        conditions_equal_with_load_atoms(left, right, &|left, right| {
+            // The recorded-DAG check runs first: the broad fact-matching
+            // check below records generation-scoped negative answers for the
+            // same query, which would otherwise shadow this stronger one.
+            left == right
+                || match (left, right) {
+                    (
+                        Bitvector32Term::MemoryLoad(_, left_pointer),
+                        Bitvector32Term::MemoryLoad(_, right_pointer),
+                    ) => {
+                        left_pointer == right_pointer
+                            && crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                                left, right, self,
+                            )
+                    }
+                    _ => false,
+                }
+                || self.memory_loads_proven_equal(left, right)
+        })
+    }
+
     pub(crate) fn proves_condition_exact_or_snapshot(
         &self,
         condition: &ConditionTerm,

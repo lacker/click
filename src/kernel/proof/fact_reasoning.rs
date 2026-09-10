@@ -1596,7 +1596,7 @@ pub(crate) fn exact_fact_is_available(required: &Proposition, available: &[Propo
 /// kernel's snapshot bridge: two forms of one compound fact whose load
 /// atoms carry different certified snapshots. Structure must match exactly,
 /// so this never accepts a weaker or stronger proposition.
-fn propositions_equal_modulo_proven_snapshots(
+pub(crate) fn propositions_equal_modulo_proven_snapshots(
     left: &Proposition,
     right: &Proposition,
     assumptions: &PureFactContext,
@@ -1689,8 +1689,7 @@ fn expand_offset_load_variables_shallow(value: &PointerOffsetTerm) -> PointerOff
 /// whether two forms denote one fact.
 /// A separation required at one snapshot is available when an available
 /// separation names the same regions modulo the certified frame. Condition
-/// facts need no such bridge: terms are canonical at creation, so one fact
-/// has one form.
+/// facts use [`condition_bridged_fact_is_available`] for the same purpose.
 pub(crate) fn separation_bridged_fact_is_available(
     required: &Proposition,
     available: &[Proposition],
@@ -2720,6 +2719,85 @@ pub(crate) fn premise_bridged_by_load_variable_chain_with_origins(
         }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true) => {
             bridged_with_origins::<Bitvector32Term>(premise, facts, assumptions)
+        }
+        _ => false,
+    }
+}
+
+/// The condition branch of bridged availability. A load named at one
+/// snapshot and the same cell named at a later snapshot are different load
+/// variables whenever the edge between them is crossed only in context:
+/// call-havoc and store edges carry no path assumptions (see
+/// `CMemoryDerivation`). A required condition is therefore available when an
+/// already-selected candidate is the same condition with each pair of load
+/// atoms proven equal under these assumptions.
+/// Candidate selection remains the caller's snapshot-blind bucket; nothing is
+/// searched, and structurally different propositions never match.
+pub(crate) fn condition_bridged_fact_is_available(
+    required: &Proposition,
+    available: &[Proposition],
+    assumptions: &PureFactContext,
+) -> bool {
+    if matches!(required, Proposition::CResourceSeparate { .. }) || available.is_empty() {
+        return false;
+    }
+    available.iter().any(|candidate| {
+        propositions_equal_modulo_origin_unchanged(candidate, required, assumptions)
+    })
+}
+
+/// [`condition_bridged_fact_is_available`] over an unindexed fact slice:
+/// candidates are the facts sharing the required proposition's snapshot-blind
+/// key, selected by one pass over the slice, as the exact slice checks beside
+/// it already do.
+pub(crate) fn condition_bridged_fact_is_available_among(
+    required: &Proposition,
+    facts: &[Proposition],
+    assumptions: &PureFactContext,
+) -> bool {
+    if matches!(required, Proposition::CResourceSeparate { .. }) {
+        return false;
+    }
+    let key = super::fact_keys::snapshot_blind_proposition_key(required);
+    let candidates: Vec<Proposition> = facts
+        .iter()
+        .filter(|fact| {
+            *fact != required && super::fact_keys::snapshot_blind_proposition_key(fact) == key
+        })
+        .cloned()
+        .collect();
+    condition_bridged_fact_is_available(required, &candidates, assumptions)
+}
+
+/// [`propositions_equal_modulo_proven_snapshots`] for the condition bridge:
+/// load atoms additionally match when the memory DAG proves the two loads
+/// unchanged between their snapshots under `assumptions`. Separations keep
+/// their own branch.
+fn propositions_equal_modulo_origin_unchanged(
+    left: &Proposition,
+    right: &Proposition,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) => {
+            left_value == right_value
+                && assumptions
+                    .conditions_equal_modulo_origin_unchanged(left_condition, right_condition)
+        }
+        (Proposition::Implies(left_a, left_b), Proposition::Implies(right_a, right_b))
+        | (Proposition::And(left_a, left_b), Proposition::And(right_a, right_b))
+        | (Proposition::Or(left_a, left_b), Proposition::Or(right_a, right_b)) => {
+            propositions_equal_modulo_origin_unchanged(left_a, right_a, assumptions)
+                && propositions_equal_modulo_origin_unchanged(left_b, right_b, assumptions)
+        }
+        (Proposition::Not(left_body), Proposition::Not(right_body)) => {
+            propositions_equal_modulo_origin_unchanged(left_body, right_body, assumptions)
         }
         _ => false,
     }

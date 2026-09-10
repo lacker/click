@@ -2734,15 +2734,15 @@ impl From<&CMemory> for SharedCMemory {
 /// upstream of any snapshot comparison (see conventions.md's soundness trap).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CMemoryDerivation {
-    /// `base` with one cell written. `context` is the fact context the
-    /// transition executed the store in, frozen on the edge so the
-    /// assumption-free naming walk can refute an offset equality from a
-    /// recorded strict order (an indexed lookup, never a derivation).
+    /// `base` with one cell written. Aliasing between the written cell and
+    /// a later load is decided in the querying proof context, never from
+    /// facts captured on the edge: interning is first-wins on equal
+    /// snapshots, so an edge can be shared by paths with different
+    /// assumptions.
     Store {
         base: SharedCMemory,
         pointer: Pointer,
         value: CValue,
-        context: PureFactContext,
     },
     /// `base` with one block declared; no cell changes, so every load reads
     /// exactly what it read in `base`. This fourth edge kind was added after
@@ -2808,17 +2808,14 @@ pub enum CMemoryDerivation {
     },
     /// `base` after a call that may write only within `mutable_ranges`.
     ///
-    /// `context` is the pure fact context in force when the havoc was
-    /// recorded, frozen on the edge. A cell absent from `base` (an earlier
-    /// callee's write) is named later by the assumption-free naming walk;
-    /// that walk may cross this edge for a pointer this context proves
-    /// outside the mutable ranges by ownership, because the decision is a
-    /// function of the edge alone.
+    /// Preservation of a load outside those ranges must be justified in the
+    /// querying proof context. Two paths with different assumptions (for
+    /// example `length == 0` and `length == 1`) can produce this exact
+    /// snapshot, so no path's assumptions may be attached to the edge.
     CallHavoc {
         base: SharedCMemory,
         variable: Variable,
         mutable_ranges: Vec<CMemoryRange>,
-        context: PureFactContext,
     },
 }
 

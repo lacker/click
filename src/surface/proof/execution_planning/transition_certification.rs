@@ -792,9 +792,32 @@ fn certified_transitions_from_execution(
                         // rules the explicit law used do (a listed premise
                         // covering a loadability, a matching separation, an
                         // atomic derivation over the context).
+                        // Load names are not preserved across call-havoc and
+                        // store edges by path assumptions (see
+                        // `CMemoryDerivation`). A prerequisite naming a cell
+                        // whose load the assumption-free naming walk left
+                        // symbolic is checked in the form this context
+                        // decides: each such load is resolved along the
+                        // recorded memory DAG, crossing edges only where the
+                        // context proves the cell untouched.
+                        let resolved =
+                            crate::kernel::resolve_prerequisite_loads_along_memory_derivations(
+                                proposition,
+                                &prerequisite_assumptions,
+                            );
+                        let proposition = resolved.as_ref().unwrap_or(proposition);
                         if prerequisite_assumptions.proves(proposition)
                             || exact_fact_is_available(proposition, pure_facts)
                             || exactly_available_fact(proposition, pure_facts).is_some()
+                            // The same rule for a prerequisite the resolution
+                            // above leaves symbolic: an earlier fact about the
+                            // same cells, load atoms proven unchanged in
+                            // context.
+                            || crate::kernel::proof::fact_reasoning::condition_bridged_fact_is_available_among(
+                                proposition,
+                                pure_facts,
+                                &prerequisite_assumptions,
+                            )
                             || directly_matching_separation_fact(proposition, pure_facts).is_some()
                             || directly_covering_loadability_fact(proposition, pure_facts).is_some()
                             || prerequisite_assumptions

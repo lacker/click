@@ -974,6 +974,33 @@ impl<'a> Proof<'a> {
                 }
             }
         }
+        // A `have` at the frontier may also consume a fact available across
+        // the frontier's certified effects, exactly as a statement step's
+        // prerequisite may. Load names are not preserved across call-havoc and
+        // store edges by path assumptions (see `CMemoryDerivation`), so the
+        // cell an earlier fact names can carry a different load variable at
+        // the frontier; the equality is proved in this path's context from the
+        // goal's own snapshot-blind candidates, never by search.
+        if at_frontier
+            && !body_facts.contains(&body_kernel)
+            && let Some(execution) = self.execution()
+            && body_facts.exact_available_across_effects(&body_kernel, &execution.core.effect_facts)
+        {
+            body_facts = body_facts.with_kernel_checked_fact(body_kernel.clone());
+        }
+        // A pointer-valued field's load can be minted from a load-path pruned
+        // snapshot, which records no DAG edge by design, so its renaming
+        // across a call is proved only by the explicit preservation equality a
+        // callee's postcondition states. The indexed load-variable chain is
+        // the checked bridge for that; integer goals keep the exact rule above.
+        if at_frontier
+            && matches!(
+                &body_kernel,
+                Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
+            )
+        {
+            body_facts = body_facts.with_selected_load_equality_bridge(&body_kernel);
+        }
         let selected_surface_separation = match &structural_proposition {
             ClickProposition::Separate { .. } => true,
             ClickProposition::At { proposition, .. } => {
