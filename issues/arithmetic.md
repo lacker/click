@@ -1,5 +1,14 @@
 # Make `arithmetic` a smart tactic with an explicit certificate
 
+## Priority and relationship
+
+This is P1 and is a blocking companion to
+[simplify-kernel.md](simplify-kernel.md). It remains a separate implementation
+issue because its certificate vocabulary, arithmetic rules, diagnostics, and
+expansion design form one coherent unit. The kernel-search umbrella cannot close
+while `arithmetic()` reconstructs a proof internally or while
+`ARITHMETIC_INTERVAL_DEPTH` can change whether a supported proof succeeds.
+
 ## Violated invariant
 
 The kernel checks an explicitly chosen derivation; it does not reconstruct a
@@ -100,6 +109,12 @@ a sequence of explicit simple proof steps or a typed arithmetic certificate;
 it does not need to expose every implementation detail as a pleasant
 handwritten tactic. In either representation, the evidence must name the
 chosen route so the kernel never has to rediscover it.
+
+A typed certificate must not become an opaque internal-only leaf in
+`ProofCertificate`. It must either have parser-accepted Surface Click syntax of
+its own or lower during expansion to public simple or structural proof steps.
+`click expand` must emit ordinary source that a fresh verification checks
+without invoking the arithmetic planner again.
 
 A likely certificate has three layers:
 
@@ -224,4 +239,3 @@ procedure or its depth limit.
 5. Add the deep-term and multi-size regressions, delete the old decision
    procedure and depth limit, update tactic documentation, and run the complete
    repository gate.
-

@@ -61,7 +61,8 @@ Soundness and kernel shape:
 - [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
 - [Preserve initialization requirements across resource transfers](uninitialized-callee-resource-transfer.md)
 - [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
-- [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
+- [Keep proof search out of kernel authority](simplify-kernel.md)
+- [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
@@ -86,7 +87,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (16)
+## P2: after launch (15)
 
 - [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
 
@@ -115,6 +116,5 @@ Semantics and reasoning:
 Proof language and tooling:
 
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
-- [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
 - [Add modules and imports for Click specifications](specification-imports.md)
