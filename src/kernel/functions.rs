@@ -3260,6 +3260,7 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
     match expression {
         SpecExpression::ResourceField { .. } => false,
         SpecExpression::Value(_) => true,
+        SpecExpression::IntegerToMachine { .. } => false,
         SpecExpression::CExpression(expression) => {
             c_expression_supports_stateful_memory_refinement(expression)
         }
@@ -3524,6 +3525,7 @@ fn spec_expression_reads_current_parameter(
 ) -> bool {
     match expression {
         SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => false,
+        SpecExpression::IntegerToMachine { .. } => false,
         SpecExpression::CExpression(expression) => {
             c_expression_mentions_variable(expression, parameter_name)
         }
@@ -4044,6 +4046,7 @@ fn spec_expression_current_parameter_accesses(
 ) {
     match expression {
         SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => {}
+        SpecExpression::IntegerToMachine { .. } => *unknown_read = true,
         SpecExpression::CExpression(expression) => {
             if c_expression_mentions_variable(expression, parameter_name) {
                 *unknown_read = true;

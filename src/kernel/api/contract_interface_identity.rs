@@ -227,6 +227,7 @@ impl Names {
         match expression {
             // Instance identities are not lexical C parameter names.
             Value(_) | ResourceField { .. } => {}
+            IntegerToMachine { .. } => {}
             CExpression(e) => self.c(e),
             CountedResourceCount { arguments, .. } => {
                 for e in arguments.iter_mut().flatten() {
