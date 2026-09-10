@@ -242,6 +242,13 @@ pub(in crate::surface::proof) struct ProofCaseChoice {
 #[derive(Clone)]
 pub(in crate::surface::proof) struct PathCertificate {
     pub(in crate::surface::proof) case_path: Vec<ProofCaseChoice>,
+    /// For each case of `case_path`, the tactic offset in `certificate` at
+    /// which the leaf took it, when leaf selection recorded every case. The
+    /// merge then keeps each case at that position: the tactics before it are
+    /// shared by both arms and stay before the `if`, and the tactics after it
+    /// stay inside the arms. Without recorded positions a case wraps the whole
+    /// certificate, which is only valid when nothing precedes it.
+    pub(in crate::surface::proof) case_offsets: Option<Vec<usize>>,
     pub(in crate::surface::proof) certificate: ProofCertificate,
 }
 
@@ -276,6 +283,11 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
         {
             for path in &mut paths {
                 path.case_path.remove(0);
+                if let Some(offsets) = &mut path.case_offsets
+                    && !offsets.is_empty()
+                {
+                    offsets.remove(0);
+                }
             }
         }
         if paths.iter().any(|path| path.case_path.is_empty()) {
@@ -292,10 +304,63 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
                 "`{claim_label}` path-aligned certificates have incompatible next branch conditions"
             )));
         }
+        // The case keeps its execution position when every path recorded it
+        // at the same offset: the tactics before it are one shared prefix.
+        let offset = paths
+            .iter()
+            .map(|path| {
+                path.case_offsets
+                    .as_ref()
+                    .and_then(|offsets| offsets.first().copied())
+            })
+            .collect::<Option<Vec<usize>>>()
+            .filter(|offsets| offsets.windows(2).all(|pair| pair[0] == pair[1]))
+            .and_then(|offsets| offsets.first().copied());
+        let mut prefix = Vec::new();
+        if let Some(offset) = offset {
+            let shared = paths[0]
+                .certificate
+                .to_proof_tactics()
+                .get(..offset)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path-aligned certificate case offset exceeds its tactics"
+                    ))
+                })?
+                .to_vec();
+            if paths.iter().any(|path| {
+                path.certificate.to_proof_tactics().get(..offset) != Some(shared.as_slice())
+            }) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path-aligned certificates disagree before their next case `{}`",
+                    describe_click_proposition(&condition)
+                )));
+            }
+            for path in &mut paths {
+                let remaining = path.certificate.to_proof_tactics()[offset..].to_vec();
+                path.certificate =
+                    ProofCertificate::from_proof_tactics(&remaining).map_err(|error| {
+                        ClickError::new(format!(
+                            "`{claim_label}` split an invalid path-aligned certificate: {error:?}"
+                        ))
+                    })?;
+                if let Some(offsets) = &mut path.case_offsets {
+                    for recorded in offsets.iter_mut() {
+                        *recorded -= offset;
+                    }
+                }
+            }
+            prefix = shared;
+        }
         let mut then_paths = Vec::new();
         let mut else_paths = Vec::new();
         for mut path in paths {
             let choice = path.case_path.remove(0);
+            if let Some(offsets) = &mut path.case_offsets
+                && !offsets.is_empty()
+            {
+                offsets.remove(0);
+            }
             if choice.value {
                 then_paths.push(path);
             } else {
@@ -310,12 +375,12 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
         }
         let then_certificate = merge(claim_label, then_paths)?;
         let else_certificate = merge(claim_label, else_paths)?;
-        ProofCertificate::from_proof_tactics(&[ProofTactic::If(ProofIf {
+        prefix.push(ProofTactic::If(ProofIf {
             condition,
             then_tactics: then_certificate.to_proof_tactics().to_vec(),
             else_tactics: else_certificate.to_proof_tactics().to_vec(),
-        })])
-        .map_err(|error| {
+        }));
+        ProofCertificate::from_proof_tactics(&prefix).map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` merged an invalid path-aligned certificate: {error:?}"
             ))
@@ -340,23 +405,39 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
     merge(claim_label, unique)
 }
 
+/// The certificate offsets at which a path took its proof-level cases, as the
+/// split recorded them on the checked derivation, when every case has one.
+pub(in crate::surface::proof) fn recorded_case_offsets(
+    presentation: &ExecutionProofPresentation,
+    cases: usize,
+) -> Option<Vec<usize>> {
+    let choices = &presentation.surface_record.path_choices;
+    (choices.len() == cases).then(|| choices.iter().map(|choice| choice.tactic_offset).collect())
+}
+
+/// Selects the leaf's own arm of every proof `if` along `case_path`, splicing
+/// the arm's tactics in place. Also returns the offset of each case in the
+/// selected tactics, when every case corresponds to a proof `if` (cases taken
+/// at C branches without a proof `if` leave no position to record).
 pub(in crate::surface::proof) fn certificate_leaf_for_case_path(
     claim_label: &str,
     tactics: &[ProofTactic],
     case_path: &[ProofCaseChoice],
-) -> Result<ProofCertificate, ClickError> {
+) -> Result<(ProofCertificate, Option<Vec<usize>>), ClickError> {
     pub(in crate::surface::proof) fn select(
         claim_label: &str,
         tactics: &[ProofTactic],
         case_path: &[ProofCaseChoice],
         next_case: &mut usize,
         selected: &mut Vec<ProofTactic>,
+        offsets: &mut Vec<usize>,
     ) -> Result<(), ClickError> {
         for tactic in tactics {
             let ProofTactic::If(proof_if) = tactic else {
                 selected.push(tactic.clone());
                 continue;
             };
+            offsets.push(selected.len());
             let choice = case_path.get(*next_case).ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` surface certificate has more branches than its validation path"
@@ -378,6 +459,7 @@ pub(in crate::surface::proof) fn certificate_leaf_for_case_path(
                 case_path,
                 next_case,
                 selected,
+                offsets,
             )?;
         }
         Ok(())
@@ -385,18 +467,22 @@ pub(in crate::surface::proof) fn certificate_leaf_for_case_path(
 
     let mut next_case = 0;
     let mut selected = Vec::new();
+    let mut offsets = Vec::new();
     select(
         claim_label,
         tactics,
         case_path,
         &mut next_case,
         &mut selected,
+        &mut offsets,
     )?;
-    ProofCertificate::from_proof_tactics(&selected).map_err(|error| {
+    let certificate = ProofCertificate::from_proof_tactics(&selected).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` selected a non-surface certificate leaf: {error:?}"
         ))
-    })
+    })?;
+    let offsets = (offsets.len() == case_path.len()).then_some(offsets);
+    Ok((certificate, offsets))
 }
 
 #[derive(Clone)]
