@@ -8348,6 +8348,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
                 surface: None,
                 surface_bindings: PersistentMap::default(),
                 integer_values: PersistentMap::default(),
+                integer_values_initialized: false,
             })
             .unwrap();
         let completed = body.apply_normalize().ok().unwrap();

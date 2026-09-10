@@ -70,13 +70,16 @@ impl<'a> Proof<'a> {
                 let integer_values = self
                     .proposition_obligation()
                     .and_then(|goal| {
-                        (!goal.integer_values.is_empty()).then_some(&goal.integer_values)
+                        goal.integer_values_initialized
+                            .then_some(&goal.integer_values)
                     })
                     .unwrap_or(&context.theorem_context.integer_values);
                 let cache_has_same_bindings = self.proposition_obligation().is_none_or(|goal| {
                     goal.surface_bindings.is_empty()
-                        && (goal.integer_values.is_empty()
-                            || goal.integer_values == context.theorem_context.integer_values)
+                        && (!goal.integer_values_initialized
+                            || goal
+                                .integer_values
+                                .shares_root_with(&context.theorem_context.integer_values))
                 });
                 if cache_has_same_bindings
                     && let Some(recorded) = context
@@ -226,7 +229,8 @@ impl<'a> Proof<'a> {
                 let integer_values = self
                     .proposition_obligation()
                     .and_then(|goal| {
-                        (!goal.integer_values.is_empty()).then_some(&goal.integer_values)
+                        goal.integer_values_initialized
+                            .then_some(&goal.integer_values)
                     })
                     .unwrap_or(&context.theorem_context.integer_values);
                 let empty_algebraic_values = BTreeMap::new();

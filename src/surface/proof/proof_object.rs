@@ -854,6 +854,7 @@ pub(in crate::surface::proof) struct PropositionPresentation {
     /// The persistent map is refined per universal-introduction branch.
     pub(in crate::surface::proof) integer_values:
         PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    pub(in crate::surface::proof) integer_values_initialized: bool,
 }
 
 impl KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>> {
@@ -894,6 +895,7 @@ impl OpenBranchConstruction for OpenBranch {
                     surface: None,
                     surface_bindings: PersistentMap::default(),
                     integer_values: PersistentMap::default(),
+                    integer_values_initialized: false,
                 },
             )),
             state,
@@ -920,6 +922,7 @@ impl OpenBranchConstruction for OpenBranch {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
                     integer_values: PersistentMap::default(),
+                    integer_values_initialized: false,
                 },
             )),
             state,
@@ -939,6 +942,7 @@ impl OpenBranchConstruction for OpenBranch {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
                     integer_values,
+                    integer_values_initialized: true,
                 },
             )),
             state,
@@ -960,6 +964,7 @@ impl OpenBranchConstruction for OpenBranch {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
                     integer_values: PersistentMap::default(),
+                    integer_values_initialized: false,
                 },
                 outcome,
             )),
@@ -1189,6 +1194,10 @@ impl<'a> Proof<'a> {
                 Some(Obligation::Proposition(goal)) => goal.integer_values.clone(),
                 _ => PersistentMap::default(),
             },
+            integer_values_initialized: match self.focused_obligation() {
+                Some(Obligation::Proposition(goal)) => goal.integer_values_initialized,
+                _ => false,
+            },
         };
         let obligation = match outcome {
             Some(outcome) => PropositionObligation::at_outcome(kernel, presentation, outcome),
@@ -1289,6 +1298,7 @@ impl<'a> Proof<'a> {
                     surface: surface_goal.map(Arc::new),
                     surface_bindings: PersistentMap::default(),
                     integer_values: PersistentMap::default(),
+                    integer_values_initialized: false,
                 };
                 let obligation = match outcome.clone() {
                     Some(outcome) => PropositionObligation::at_outcome(goal, presentation, outcome),

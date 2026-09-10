@@ -197,6 +197,7 @@ impl<'a> Proof<'a> {
                 .map(Arc::new),
                 surface_bindings: PersistentMap::default(),
                 integer_values: PersistentMap::default(),
+                integer_values_initialized: false,
             })
             .map_err(|message| self.step_error(message))?;
         let root = Self {

@@ -464,6 +464,7 @@ impl<'a> Proof<'a> {
             .apply_intro(|current, introduction| {
                 let mut surface_bindings = current.surface_bindings.clone();
                 let mut integer_values = current.integer_values.clone();
+                let integer_values_initialized = current.integer_values_initialized;
                 let surface = match (introduction, current.surface.as_deref()) {
                     (PropositionIntroduction::Implication, Some(surface)) => {
                         surface_implication_parts(surface)
@@ -507,6 +508,7 @@ impl<'a> Proof<'a> {
                     surface,
                     surface_bindings,
                     integer_values,
+                    integer_values_initialized,
                 }
             })
             .map_err(|error| match error {
