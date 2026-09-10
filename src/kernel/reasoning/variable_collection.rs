@@ -496,6 +496,9 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
 ) {
     match expression {
         SpecExpression::ResourceField { .. } => {}
+        SpecExpression::IntegerToMachine { value, .. } => {
+            collect_spec_integer_variables(value, variables);
+        }
         SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
         SpecExpression::AlgebraicMatch { scrutinee, arms } => {
             collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);

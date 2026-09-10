@@ -1,4 +1,5 @@
 use super::prelude::*;
+use num_traits::ToPrimitive;
 
 type EvaluatedSpecResource = (CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>);
 type SpecResourceBuilder = Box<dyn Fn(Vec<CValue>) -> Option<CResource>>;
@@ -3062,6 +3063,27 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
+        SpecExpression::IntegerToMachine { value, destination } => {
+            evaluate_spec_integer_expression_paths(
+                state,
+                value,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| {
+                let value = integer_constant_to_machine(&path.value, *destination)
+                    .ok_or(ExecutionLimit::Paths)?;
+                Ok(SpecExpressionPath {
+                    value,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            })
+            .collect::<ExecutionResult<Vec<_>>>()?
+        }
         SpecExpression::ResourceField { projection, c_type } => {
             let snapshot = if projection.at_entry {
                 loop_entry_state.ok_or(ExecutionLimit::Paths)?
@@ -3911,6 +3933,45 @@ fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::Float32(term)
         | CValue::Float64(term) => Some(term.clone()),
         CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
+fn integer_constant_to_machine(
+    value: &IntegerTerm,
+    destination: MachineIntegerType,
+) -> Option<CValue> {
+    let value = value.as_const()?;
+    match destination {
+        MachineIntegerType::Int16 => {
+            let value = i16::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int16(Bitvector32Term::Constant(
+                value as i32 as u32,
+            )))
+        }
+        MachineIntegerType::Int32 => {
+            let value = i32::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int32(Bitvector32Term::Constant(
+                value as i32 as u32,
+            )))
+        }
+        MachineIntegerType::UInt8 => {
+            let value = u8::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt8(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt16 => {
+            let value = u16::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt16(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt32 => {
+            let value = u32::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt32(Bitvector32Term::Constant(value)))
+        }
+        MachineIntegerType::Int64 => Some(CValue::Int64(Bitvector32Term::Int64Constant(
+            value.to_i64()?,
+        ))),
+        MachineIntegerType::UInt64 => Some(CValue::UInt64(Bitvector32Term::UInt64Constant(
+            value.to_u64()?,
+        ))),
     }
 }
 
@@ -4944,5 +5005,89 @@ mod integer_budget_tests {
         )
         .unwrap();
         assert_eq!(paths[0].value, IntegerTerm::constant_i64(7));
+    }
+
+    #[test]
+    fn integer_to_machine_converts_exact_boundaries_without_wrapping() {
+        let cases = [
+            (
+                MachineIntegerType::Int16,
+                BigInt::from(i16::MIN),
+                CValue::Int16(Bitvector32Term::Constant(i16::MIN as i32 as u32)),
+            ),
+            (
+                MachineIntegerType::Int32,
+                BigInt::from(i32::MIN),
+                CValue::Int32(Bitvector32Term::Constant(i32::MIN as u32)),
+            ),
+            (
+                MachineIntegerType::UInt8,
+                BigInt::from(u8::MAX),
+                CValue::UInt8(Bitvector32Term::Constant(u8::MAX as u32)),
+            ),
+            (
+                MachineIntegerType::UInt16,
+                BigInt::from(u16::MAX),
+                CValue::UInt16(Bitvector32Term::Constant(u16::MAX as u32)),
+            ),
+            (
+                MachineIntegerType::UInt32,
+                BigInt::from(u32::MAX),
+                CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+            ),
+            (
+                MachineIntegerType::Int64,
+                BigInt::from(i64::MIN),
+                CValue::Int64(Bitvector32Term::Int64Constant(i64::MIN)),
+            ),
+            (
+                MachineIntegerType::UInt64,
+                BigInt::from(u64::MAX),
+                CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+            ),
+        ];
+        for (destination, integer, expected) in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(integer))),
+                destination,
+            };
+            let paths = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .expect("representable Integer constants should convert");
+            assert_eq!(paths.len(), 1);
+            assert_eq!(paths[0].value, expected);
+        }
+    }
+
+    #[test]
+    fn integer_to_machine_rejects_out_of_range_constants() {
+        let cases = [
+            (MachineIntegerType::Int16, BigInt::from(i16::MAX) + 1),
+            (MachineIntegerType::Int32, BigInt::from(i32::MIN) - 1),
+            (MachineIntegerType::UInt8, BigInt::from(-1)),
+            (MachineIntegerType::UInt16, BigInt::from(u16::MAX) + 1),
+            (MachineIntegerType::UInt32, BigInt::from(u32::MAX) + 1),
+            (MachineIntegerType::Int64, BigInt::from(i64::MAX) + 1),
+            (MachineIntegerType::UInt64, BigInt::from(u64::MAX) + 1),
+        ];
+        for (destination, integer) in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(integer))),
+                destination,
+            };
+            let result = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            );
+            assert_eq!(result, Err(ExecutionLimit::Paths));
+        }
     }
 }

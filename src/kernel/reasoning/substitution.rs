@@ -2710,6 +2710,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
 ) -> SpecExpression {
     match expression {
         SpecExpression::ResourceField { .. } => expression.clone(),
+        SpecExpression::IntegerToMachine { value, destination } => {
+            SpecExpression::IntegerToMachine {
+                value: Box::new(substitute_bitvector_variable_in_spec_integer(
+                    value, from, to,
+                )),
+                destination: *destination,
+            }
+        }
         SpecExpression::Value(value) => {
             SpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
@@ -6000,6 +6008,12 @@ fn substitute_pointer_variable_in_spec_expression(
 ) -> SpecExpression {
     match expression {
         SpecExpression::ResourceField { .. } => expression.clone(),
+        SpecExpression::IntegerToMachine { value, destination } => {
+            SpecExpression::IntegerToMachine {
+                value: value.clone(),
+                destination: *destination,
+            }
+        }
         SpecExpression::Value(value) => {
             SpecExpression::Value(substitute_pointer_variable_in_c_value(value, from, to))
         }
