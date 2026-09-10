@@ -4430,10 +4430,11 @@ fn prove_pure_theorem_tactics(
                 let explicit_premises = premises
                     .iter()
                     .map(|premise| {
-                        lower_pure_theorem_proposition(
+                        lower_pure_theorem_proposition_with_integer_values(
                             claim_label,
                             premise,
                             &context.values,
+                            &context.integer_values,
                             &context.array_refs,
                             &context.memory,
                             predicate_environment,

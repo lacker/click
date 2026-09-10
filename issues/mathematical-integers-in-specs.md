@@ -219,7 +219,8 @@ to guard against checking only the final result.
 The exact-value kernel foundation and checked pure Integer universal
 specialization have passed the full gate and are integrated. The scalar source
 stage adds theorem parameters, typed specification aliases, contextual literals,
-and printable linear arithmetic evidence. Symbolic aliases retain sharing
+pure theorem applications (including exact `using` guards and mixed C/Integer
+parameters), and printable linear arithmetic evidence. Symbolic aliases retain sharing
 through validation, lowering, rewriting, substitution, and arithmetic checking;
 the depth-8/16/32/64 regression checks the complete simple-proof path. Alpha keys
 serialize the shared graph with local child indices so equality and hashing
@@ -227,7 +228,7 @@ also avoid tree expansion. Certificate lowering borrows the mathematical
 bindings without cloning unrelated C state for each evidence node.
 
 This is a staged implementation, not completion of this issue. Explicit machine
-conversions, source quantifiers and theorem applications, pure functions,
+conversions, source quantifiers, pure functions,
 datatype/resource fields, `Nat` relationships, typed folds, and the unchanged C
 summation regression remain to be completed. The user documentation states the
 current scalar boundary; the full acceptance criteria below remain open.

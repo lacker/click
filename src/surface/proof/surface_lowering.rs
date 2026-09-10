@@ -1,7 +1,7 @@
 //! Contextual Surface Click lowering for checked proof operations.
 
 use super::pure_theorems::{
-    lower_pure_theorem_proposition, lower_pure_theorem_proposition_with_algebraic_values,
+    lower_pure_theorem_proposition_with_algebraic_values,
     lower_pure_theorem_proposition_with_integer_values,
 };
 use super::*;
@@ -77,7 +77,9 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                if proposition_uses_integer(surface, &context.theorem_context.integer_values) {
+                if proposition_uses_integer(surface, &context.theorem_context.integer_values)
+                    || !context.theorem_context.integer_values.is_empty()
+                {
                     lower_pure_theorem_proposition_with_integer_values(
                         context.claim_label,
                         surface,
@@ -224,10 +226,11 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(context) => lower_pure_theorem_proposition(
+            ProofContext::Pure(context) => lower_pure_theorem_proposition_with_integer_values(
                 context.claim_label,
                 surface,
                 &context.theorem_context.values,
+                &context.theorem_context.integer_values,
                 &context.theorem_context.array_refs,
                 &context.theorem_context.memory,
                 context.predicate_environment,

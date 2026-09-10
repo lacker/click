@@ -247,8 +247,10 @@ arbitrary size. It is separate from the C type `int` (an alias for `int32`).
 Integer addition, subtraction, negation, and multiplication are exact and do
 not generate machine-overflow obligations.
 
-The initial supported use sites are scalar theorem parameters and explicitly
-typed specification `let` bindings. Unsuffixed decimal literals take their
+The initial supported use sites are scalar theorem parameters, applications of
+those pure theorems, and explicitly typed specification `let` bindings.
+Applications support exact Integer guards, explicit `using` premises, and
+mixed Integer/C parameters. Unsuffixed decimal literals take their
 type from an Integer expression, including values larger than 64 bits.
 Machine variables and suffixed machine literals require explicit conversions;
 those conversions are not yet available in this initial scalar slice.
@@ -269,9 +271,8 @@ a general nonlinear arithmetic solver. Expanded proofs retain the arithmetic
 evidence for ordinary verification to check.
 
 Integer values have no C storage or runtime representation. The initial slice
-does not yet support Integer quantifiers, theorem applications, pure-function
-signatures, datatype or resource fields, folds, or conversions to machine
-integers and `Nat`. Division,
+does not yet support Integer quantifiers, pure-function signatures, datatype
+or resource fields, folds, or conversions to machine integers and `Nat`. Division,
 remainder, and bitwise operators are also unavailable. `Nat` remains the
 existing [structural natural-number datatype](../library/index.md#natural-numbers).
 
