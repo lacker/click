@@ -1354,7 +1354,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         // Variable identities are shared by all logical sorts, but a
         // machine substitution must never rewrite an Integer variable with a
         // machine term. Integer binders use the dedicated function below.
-        Term::Integer(integer) => Term::Integer(integer.clone()),
+        Term::Integer(integer) => {
+            Term::Integer(substitute_bitvector_variable_in_integer(integer, from, to))
+        }
         Term::PointerOffset(offset) => Term::PointerOffset(
             substitute_bitvector_variable_in_pointer_offset(offset, from, to),
         ),
@@ -1435,6 +1437,63 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
     }
 }
 
+fn substitute_bitvector_variable_in_integer(
+    term: &IntegerTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> IntegerTerm {
+    let mut memo = std::collections::HashMap::new();
+    substitute_bitvector_variable_in_shared_integer(
+        &crate::kernel::SharedIntegerTerm::from(term.clone()),
+        from,
+        to,
+        &mut memo,
+    )
+    .as_ref()
+    .clone()
+}
+
+fn substitute_bitvector_variable_in_shared_integer(
+    term: &crate::kernel::SharedIntegerTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+    memo: &mut std::collections::HashMap<u64, crate::kernel::SharedIntegerTerm>,
+) -> crate::kernel::SharedIntegerTerm {
+    if let Some(result) = memo.get(&term.id()) {
+        return result.clone();
+    }
+    let result = match term.as_ref() {
+        IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => term.clone(),
+        IntegerTerm::Machine(source) => crate::kernel::SharedIntegerTerm::from(
+            IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
+                source.ty(),
+                substitute_bitvector_variable(source.value(), from, to),
+            )),
+        ),
+        IntegerTerm::Negate(value) => IntegerTerm::Negate(
+            substitute_bitvector_variable_in_shared_integer(value, from, to, memo),
+        )
+        .into(),
+        IntegerTerm::Add(left, right) => IntegerTerm::Add(
+            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
+            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
+        )
+        .into(),
+        IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
+            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
+            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
+        )
+        .into(),
+        IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
+            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
+            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
+        )
+        .into(),
+    };
+    memo.insert(term.id(), result.clone());
+    result
+}
+
 fn collect_integer_bound_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
     let mut seen = BTreeSet::new();
     collect_integer_bound_variables_seen(term, variables, &mut seen);
@@ -1446,7 +1505,7 @@ fn collect_integer_bound_variables_seen(
     seen: &mut BTreeSet<u64>,
 ) {
     match term {
-        IntegerTerm::Constant(_) => {}
+        IntegerTerm::Constant(_) | IntegerTerm::Machine(_) => {}
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1608,6 +1667,7 @@ fn validate_integer_pure_term_seen(
     integer_work(1)?;
     match term {
         IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
+        IntegerTerm::Machine(_) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
             Ok(())
@@ -1945,6 +2005,7 @@ fn substitute_integer_pure_term_dag(
             integer_work(value.bits() as usize + 1)?;
             Ok(IntegerTerm::Constant(value.clone()))
         }
+        IntegerTerm::Machine(value) => Ok(IntegerTerm::Machine(value.clone())),
         IntegerTerm::Variable(variable) => {
             if let Some(renamed) = renamings.get(variable) {
                 Ok(IntegerTerm::Variable(*renamed))
@@ -2903,9 +2964,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
             operator,
             right,
         } => SpecProposition::IntegerComparison {
-            left: left.clone(),
+            left: substitute_bitvector_variable_in_spec_integer(left, from, to),
             operator: *operator,
-            right: right.clone(),
+            right: substitute_bitvector_variable_in_spec_integer(right, from, to),
         },
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             SpecProposition::AlgebraicComparison {
@@ -3046,6 +3107,80 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
             element_width: *element_width,
         },
         proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_spec_integer(
+    expression: &SpecIntegerExpression,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SpecIntegerExpression {
+    match expression {
+        SpecIntegerExpression::Term(term) => {
+            SpecIntegerExpression::Term(substitute_bitvector_variable_in_integer(term, from, to))
+        }
+        SpecIntegerExpression::FromMachine(machine) => {
+            SpecIntegerExpression::FromMachine(Box::new(
+                substitute_bitvector_variable_in_spec_expression(machine, from, to),
+            ))
+        }
+        SpecIntegerExpression::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
+            substitute_bitvector_variable_in_spec_integer(inner, from, to),
+        )),
+        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                right, from, to,
+            )),
+        ),
+        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                right, from, to,
+            )),
+        ),
+        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                right, from, to,
+            )),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod machine_integer_substitution_tests {
+    use super::*;
+
+    #[test]
+    fn machine_backed_integer_substitution_scales_with_shared_dag() {
+        for depth in [8, 16, 32, 64] {
+            let source = crate::kernel::SharedMachineIntegerTerm::intern(
+                crate::kernel::MachineIntegerType::Int32,
+                Bitvector32Term::Variable(Variable(7)),
+            );
+            let mut term = IntegerTerm::Machine(source);
+            for _ in 0..depth {
+                term = IntegerTerm::add(term.clone(), term.clone());
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                substitute_bitvector_variable_in_integer(
+                    &term,
+                    Variable(7),
+                    &Bitvector32Term::Constant(7),
+                )
+            });
+            assert!(
+                work <= (depth + 1) * 32,
+                "unexpected shared DAG work at depth {depth}: {work}"
+            );
+        }
     }
 }
 
@@ -3814,12 +3949,45 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
                 substitute_bitvector_variable(right, from, to),
             )
         }
-        ConditionTerm::IntegerLessThan(_, _)
-        | ConditionTerm::IntegerLessEqual(_, _)
-        | ConditionTerm::IntegerGreaterThan(_, _)
-        | ConditionTerm::IntegerGreaterEqual(_, _)
-        | ConditionTerm::IntegerEqual(_, _)
-        | ConditionTerm::IntegerNotEqual(_, _) => condition.clone(),
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => {
+            let mut memo = std::collections::HashMap::new();
+            let mut rewrite = |term: &IntegerTerm| {
+                substitute_bitvector_variable_in_shared_integer(
+                    &crate::kernel::SharedIntegerTerm::from(term.clone()),
+                    from,
+                    to,
+                    &mut memo,
+                )
+                .as_ref()
+                .clone()
+            };
+            match condition {
+                ConditionTerm::IntegerLessThan(_, _) => {
+                    ConditionTerm::integer_less_than(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerLessEqual(_, _) => {
+                    ConditionTerm::integer_less_equal(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerGreaterThan(_, _) => {
+                    ConditionTerm::integer_greater_than(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerGreaterEqual(_, _) => {
+                    ConditionTerm::integer_greater_equal(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerEqual(_, _) => {
+                    ConditionTerm::integer_equal(rewrite(left), rewrite(right))
+                }
+                ConditionTerm::IntegerNotEqual(_, _) => {
+                    ConditionTerm::integer_not_equal(rewrite(left), rewrite(right))
+                }
+                _ => unreachable!(),
+            }
+        }
         ConditionTerm::Float32(CFloatCondition::Comparison {
             operator,
             left,

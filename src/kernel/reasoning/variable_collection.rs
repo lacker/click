@@ -668,7 +668,9 @@ fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    let SpecIntegerExpression::Term(term) = expression;
+    let SpecIntegerExpression::Term(term) = expression else {
+        return;
+    };
     collect_integer_variables(term, variables);
 }
 
@@ -1140,6 +1142,7 @@ fn collect_integer_variables_seen(
 ) {
     match term {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1163,6 +1166,7 @@ fn collect_shared_integer_variables(
     }
     match term.as_ref() {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }

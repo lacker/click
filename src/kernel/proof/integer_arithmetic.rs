@@ -479,7 +479,7 @@ fn collect_integer_affine_terms(
                 stack.push((right.clone(), false));
                 stack.push((left.clone(), false));
             }
-            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => {}
+            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {}
         }
     }
 
@@ -522,6 +522,7 @@ fn collect_integer_affine_terms(
                     terms.insert(*variable, merged);
                 }
             }
+            IntegerTerm::Machine(_) => return None,
             IntegerTerm::Negate(child) => {
                 if !add_weight(&mut weights, child.id(), -weight) {
                     return None;

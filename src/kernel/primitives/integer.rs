@@ -41,6 +41,7 @@ fn charge_multiply_bits(left: &BigInt, right: &BigInt) {
 pub enum IntegerTerm {
     Constant(BigInt),
     Variable(Variable),
+    Machine(SharedMachineIntegerTerm),
     Negate(SharedIntegerTerm),
     Add(SharedIntegerTerm, SharedIntegerTerm),
     Subtract(SharedIntegerTerm, SharedIntegerTerm),
@@ -52,11 +53,155 @@ impl Clone for IntegerTerm {
         match self {
             Self::Constant(value) => Self::Constant(value.clone()),
             Self::Variable(variable) => Self::Variable(*variable),
+            Self::Machine(value) => Self::Machine(value.clone()),
             Self::Negate(value) => Self::Negate(value.clone()),
             Self::Add(left, right) => Self::Add(left.clone(), right.clone()),
             Self::Subtract(left, right) => Self::Subtract(left.clone(), right.clone()),
             Self::Multiply(left, right) => Self::Multiply(left.clone(), right.clone()),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum MachineIntegerType {
+    Int16,
+    Int32,
+    UInt8,
+    UInt16,
+    UInt32,
+    Int64,
+    UInt64,
+}
+
+impl MachineIntegerType {
+    pub fn from_c_type(c_type: CType) -> Option<Self> {
+        Some(match c_type {
+            CType::Int16 => Self::Int16,
+            CType::Int32 => Self::Int32,
+            CType::UInt8 => Self::UInt8,
+            CType::UInt16 => Self::UInt16,
+            CType::UInt32 => Self::UInt32,
+            CType::Int64 => Self::Int64,
+            CType::UInt64 => Self::UInt64,
+            _ => return None,
+        })
+    }
+
+    pub fn c_type(self) -> CType {
+        match self {
+            Self::Int16 => CType::Int16,
+            Self::Int32 => CType::Int32,
+            Self::UInt8 => CType::UInt8,
+            Self::UInt16 => CType::UInt16,
+            Self::UInt32 => CType::UInt32,
+            Self::Int64 => CType::Int64,
+            Self::UInt64 => CType::UInt64,
+        }
+    }
+}
+
+pub struct SharedMachineIntegerTerm(Arc<SharedMachineIntegerNode>);
+
+struct SharedMachineIntegerNode {
+    id: u64,
+    ty: MachineIntegerType,
+    value: Bitvector32Term,
+}
+
+impl Clone for SharedMachineIntegerTerm {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl SharedMachineIntegerTerm {
+    pub fn intern(ty: MachineIntegerType, value: Bitvector32Term) -> Self {
+        MACHINE_INTEGER_INTERNER
+            .get_or_init(|| Mutex::new(MachineIntegerInterner::default()))
+            .lock()
+            .expect("machine Integer interner lock poisoned")
+            .intern(ty, value)
+    }
+    pub fn id(&self) -> u64 {
+        self.0.id
+    }
+    pub fn ty(&self) -> MachineIntegerType {
+        self.0.ty
+    }
+    pub fn value(&self) -> &Bitvector32Term {
+        &self.0.value
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct MachineIntegerKey {
+    ty: MachineIntegerType,
+    value: Bitvector32Term,
+}
+
+#[derive(Default)]
+struct MachineIntegerInterner {
+    next_id: u64,
+    values: HashMap<u64, Vec<(MachineIntegerKey, Weak<SharedMachineIntegerNode>)>>,
+    cleanup_queue: VecDeque<(u64, usize)>,
+}
+
+static MACHINE_INTEGER_INTERNER: OnceLock<Mutex<MachineIntegerInterner>> = OnceLock::new();
+
+impl MachineIntegerInterner {
+    fn intern(
+        &mut self,
+        ty: MachineIntegerType,
+        value: Bitvector32Term,
+    ) -> SharedMachineIntegerTerm {
+        for _ in 0..8 {
+            let Some((fingerprint, pointer)) = self.cleanup_queue.pop_front() else {
+                break;
+            };
+            if let Some(bucket) = self.values.get_mut(&fingerprint) {
+                if bucket
+                    .iter()
+                    .any(|(_, node)| node.as_ptr() as usize == pointer && node.strong_count() != 0)
+                {
+                    self.cleanup_queue.push_back((fingerprint, pointer));
+                }
+                bucket.retain(|(_, node)| {
+                    node.as_ptr() as usize != pointer || node.strong_count() != 0
+                });
+                if bucket.is_empty() {
+                    self.values.remove(&fingerprint);
+                }
+            }
+        }
+        let key = MachineIntegerKey {
+            ty,
+            value: value.clone(),
+        };
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let fingerprint = hasher.finish();
+        if let Some(bucket) = self.values.get(&fingerprint) {
+            for (candidate, node) in bucket {
+                if candidate == &key
+                    && let Some(node) = node.upgrade()
+                {
+                    return SharedMachineIntegerTerm(node);
+                }
+            }
+        }
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("machine Integer identity exhausted");
+        let node = Arc::new(SharedMachineIntegerNode { id, ty, value });
+        self.values
+            .entry(fingerprint)
+            .or_default()
+            .push((key, Arc::downgrade(&node)));
+        self.cleanup_queue
+            .push_back((fingerprint, Arc::as_ptr(&node) as usize));
+        SharedMachineIntegerTerm(node)
     }
 }
 
@@ -172,6 +317,7 @@ impl fmt::Debug for IntegerTerm {
         match self {
             Self::Constant(value) => formatter.debug_tuple("Constant").field(value).finish(),
             Self::Variable(variable) => formatter.debug_tuple("Variable").field(variable).finish(),
+            Self::Machine(value) => formatter.debug_tuple("Machine").field(&value.id()).finish(),
             Self::Negate(value) => formatter.debug_tuple("Negate").field(&value.id()).finish(),
             Self::Add(left, right) => formatter
                 .debug_tuple("Add")
@@ -203,6 +349,7 @@ impl fmt::Display for SharedIntegerTerm {
 enum IntegerShallowKey {
     Constant(BigInt),
     Variable(Variable),
+    Machine(u64),
     Negate(u64),
     Add(u64, u64),
     Subtract(u64, u64),
@@ -210,10 +357,50 @@ enum IntegerShallowKey {
 }
 
 impl IntegerTerm {
+    pub fn from_machine(ty: MachineIntegerType, value: Bitvector32Term) -> Option<Self> {
+        let constant = match (&ty, &value) {
+            (MachineIntegerType::Int16, Bitvector32Term::Constant(v)) => {
+                i16::try_from(*v as i32).ok().map(BigInt::from)
+            }
+            (MachineIntegerType::Int32, Bitvector32Term::Constant(v)) => {
+                Some(BigInt::from(*v as i32))
+            }
+            (MachineIntegerType::Int64, Bitvector32Term::Int64Constant(v)) => {
+                Some(BigInt::from(*v))
+            }
+            (MachineIntegerType::UInt32, Bitvector32Term::Constant(v)) => Some(BigInt::from(*v)),
+            (MachineIntegerType::UInt64, Bitvector32Term::UInt64Constant(v)) => {
+                Some(BigInt::from(*v))
+            }
+            (MachineIntegerType::UInt8, Bitvector32Term::Constant(v))
+                if *v <= u32::from(u8::MAX) =>
+            {
+                Some(BigInt::from(*v))
+            }
+            (MachineIntegerType::UInt16, Bitvector32Term::Constant(v))
+                if *v <= u32::from(u16::MAX) =>
+            {
+                Some(BigInt::from(*v))
+            }
+            _ if matches!(
+                value,
+                Bitvector32Term::Constant(_)
+                    | Bitvector32Term::Int64Constant(_)
+                    | Bitvector32Term::UInt64Constant(_)
+            ) =>
+            {
+                return None;
+            }
+            _ => return Some(Self::Machine(SharedMachineIntegerTerm::intern(ty, value))),
+        };
+        constant.map(Self::constant)
+    }
+
     fn shallow_key(&self) -> IntegerShallowKey {
         match self {
             Self::Constant(value) => IntegerShallowKey::Constant(value.clone()),
             Self::Variable(variable) => IntegerShallowKey::Variable(*variable),
+            Self::Machine(value) => IntegerShallowKey::Machine(value.id()),
             Self::Negate(value) => IntegerShallowKey::Negate(value.id()),
             Self::Add(left, right) => IntegerShallowKey::Add(left.id(), right.id()),
             Self::Subtract(left, right) => IntegerShallowKey::Subtract(left.id(), right.id()),
@@ -247,6 +434,12 @@ impl IntegerInterner {
                 break;
             };
             if let Some(bucket) = self.nodes.get_mut(&fingerprint) {
+                if bucket
+                    .iter()
+                    .any(|(_, node)| node.as_ptr() as usize == pointer && node.strong_count() != 0)
+                {
+                    self.cleanup_queue.push_back((fingerprint, pointer));
+                }
                 bucket.retain(|(_, node)| {
                     node.as_ptr() as usize != pointer || node.strong_count() != 0
                 });
@@ -409,6 +602,7 @@ fn fmt_integer_term(
     match term {
         IntegerTerm::Constant(value) => write!(formatter, "{value}"),
         IntegerTerm::Variable(variable) => write!(formatter, "i{}", variable.0),
+        IntegerTerm::Machine(value) => write!(formatter, "machine_integer#{}", value.id()),
         IntegerTerm::Negate(value) => {
             write!(formatter, "(-")?;
             fmt_integer_shared(value, formatter, seen)?;
@@ -524,7 +718,7 @@ mod tests {
                 continue;
             }
             match node.as_ref() {
-                IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => {}
+                IntegerTerm::Constant(_) | IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {}
                 IntegerTerm::Negate(value) => pending.push(value.clone()),
                 IntegerTerm::Add(left, right)
                 | IntegerTerm::Subtract(left, right)
@@ -551,6 +745,58 @@ mod tests {
                 SharedIntegerTerm::from(shared.as_ref().clone()).id()
             );
         }
+    }
+
+    #[test]
+    fn typed_machine_observations_are_canonical_but_signedness_is_distinct() {
+        let value = Bitvector32Term::Variable(Variable(77));
+        let signed = SharedMachineIntegerTerm::intern(MachineIntegerType::Int32, value.clone());
+        let signed_again =
+            SharedMachineIntegerTerm::intern(MachineIntegerType::Int32, value.clone());
+        let unsigned = SharedMachineIntegerTerm::intern(MachineIntegerType::UInt32, value);
+        assert_eq!(signed.id(), signed_again.id());
+        assert_ne!(signed.id(), unsigned.id());
+        assert_eq!(signed.ty(), MachineIntegerType::Int32);
+        assert_eq!(signed.value(), signed_again.value());
+    }
+
+    #[test]
+    fn machine_conversion_preserves_width_and_signedness_for_constants() {
+        assert_eq!(
+            IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Constant(u32::MAX)
+            )
+            .and_then(|v| v.as_const().cloned()),
+            Some(BigInt::from(-1))
+        );
+        assert_eq!(
+            IntegerTerm::from_machine(
+                MachineIntegerType::UInt32,
+                Bitvector32Term::Constant(u32::MAX)
+            )
+            .and_then(|v| v.as_const().cloned()),
+            Some(BigInt::from(u32::MAX))
+        );
+        assert_eq!(
+            IntegerTerm::from_machine(
+                MachineIntegerType::UInt64,
+                Bitvector32Term::UInt64Constant(u64::MAX)
+            )
+            .and_then(|v| v.as_const().cloned()),
+            Some(BigInt::from(u64::MAX))
+        );
+        assert!(
+            IntegerTerm::from_machine(MachineIntegerType::UInt8, Bitvector32Term::Constant(256))
+                .is_none()
+        );
+        assert!(
+            IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Int64Constant(i64::MAX)
+            )
+            .is_none()
+        );
     }
 
     #[test]
