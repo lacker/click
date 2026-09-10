@@ -1824,6 +1824,15 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                         obligations,
                     }];
                 }
+                if state.memory.is_ended_local_address(pointer) {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(
+                            CUndefinedBehavior::InvalidMemory,
+                        ),
+                        facts,
+                        obligations,
+                    }];
+                }
                 if state.memory.is_deallocated_heap_address(pointer) {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(

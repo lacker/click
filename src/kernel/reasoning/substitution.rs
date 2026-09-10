@@ -2692,6 +2692,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         ),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
         next_local_frame: state.next_local_frame,
+        next_local_lifetime: state.next_local_lifetime,
         counted_populations: std::sync::Arc::new(
             state
                 .counted_populations
@@ -3701,6 +3702,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                 })
                 .collect(),
         ),
+        ended_local_blocks: memory.ended_local_blocks.clone(),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
@@ -4852,6 +4854,7 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         ),
         resources: substitute_pointer_variable_in_resource_context(&state.resources, from, to),
         next_local_frame: state.next_local_frame,
+        next_local_lifetime: state.next_local_lifetime,
         counted_populations: std::sync::Arc::new(
             state
                 .counted_populations
@@ -4997,6 +5000,13 @@ fn substitute_pointer_variable_in_memory(
                         substitute_pointer_variable_in_c_value(value, from, to),
                     )
                 })
+                .collect(),
+        ),
+        ended_local_blocks: std::sync::Arc::new(
+            memory
+                .ended_local_blocks
+                .iter()
+                .map(|block| substitute_pointer_variable_in_block(block, from, to))
                 .collect(),
         ),
         heap: std::sync::Arc::new(CHeapMemory {

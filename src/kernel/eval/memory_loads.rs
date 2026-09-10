@@ -140,6 +140,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     let use_symbolic_pointer_identity =
         should_use_symbolic_pointer_identity(memory, &pointer, value_type);
     let mut facts = facts;
+    if memory.is_ended_local_address(&pointer) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+            facts,
+            obligations,
+        }];
+    }
     let mut load_assumptions = assumptions.clone();
     let candidates = assumptions
         .should_transport_memory_load_condition_facts()

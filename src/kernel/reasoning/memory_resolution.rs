@@ -859,6 +859,9 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     {
         return false;
     }
+    if left.ended_local_blocks != right.ended_local_blocks {
+        return false;
+    }
     left.cells
         .keys()
         .chain(right.cells.keys())

@@ -433,6 +433,7 @@ pub(super) enum MemoryDagHopJustification {
     },
     IntrinsicNoWrite,
     AllocationOfOtherBlock,
+    LocalLifetimeEndedOfOtherBlock,
     HeapFreeOfDistinctBlock,
     CallHavocRanges {
         ranges: Vec<RangeDisjointFromPointerEvidence>,
@@ -624,6 +625,19 @@ impl MemoryDagHopJustification {
             Self::AllocationOfOtherBlock => matches!(
                 derivation,
                 CMemoryDerivation::HeapAllocated { block, .. } if pointer.block != *block
+            ),
+            Self::LocalLifetimeEndedOfOtherBlock => matches!(
+                derivation,
+                CMemoryDerivation::LocalLifetimeEnded { block, .. }
+                    if pointer.block != *block
+                        && pointers_proven_distinct_for_memory_resolution(
+                            &Pointer {
+                                block: block.clone(),
+                                offset: PointerOffsetTerm::Constant(0),
+                            },
+                            pointer,
+                            assumptions,
+                        )
             ),
             Self::HeapFreeOfDistinctBlock => matches!(
                 derivation,
@@ -2447,6 +2461,25 @@ fn memory_dag_cell_source_walk(
                     };
                 }
                 MemoryDagHopJustification::AllocationOfOtherBlock
+            }
+            CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
+                if pointer.block == *block
+                    || !extended_dag_bridging_active()
+                    || !pointers_proven_distinct_for_memory_resolution(
+                        &Pointer {
+                            block: block.clone(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        },
+                        pointer,
+                        assumptions,
+                    )
+                {
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
+                }
+                MemoryDagHopJustification::LocalLifetimeEndedOfOtherBlock
             }
             CMemoryDerivation::HeapFreed {
                 allocation_base,

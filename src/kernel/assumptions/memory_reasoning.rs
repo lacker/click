@@ -229,6 +229,7 @@ impl PureFactContext {
                 // cannot silently retarget the earlier region.
                 || (fact_memory.blocks.get(&fact_base.block)
                     == memory.blocks.get(&fact_base.block)
+                    && fact_memory.ended_local_blocks == memory.ended_local_blocks
                     && fact_memory.heap == memory.heap)
                 || memory_range_still_available(fact_memory, memory, fact_base)
                 || crate::kernel::api::c_memories_canonically_equal(fact_memory, memory)

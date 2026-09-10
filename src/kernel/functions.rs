@@ -1391,6 +1391,7 @@ fn execute_verified_function_templates(
         return_state.resources = return_resources;
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
+        return_state.next_local_lifetime = post_state.next_local_lifetime;
         let outcome = CFunctionOutcome::Return {
             value: result,
             state: return_state,
@@ -5452,7 +5453,8 @@ pub(super) fn bind_c_function_arguments(
             } else {
                 frame.saturating_add(1)
             },
-        );
+        )
+        .with_next_local_lifetime(caller_state.next_local_lifetime());
     callee_state.counted_populations = caller_state.counted_populations.clone();
     callee_state = initialize_c_function_globals(&callee_state, function);
     for (parameter, value) in function.parameters().iter().zip(values) {
@@ -10526,6 +10528,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state.resources = return_resources;
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
+    return_state.next_local_lifetime = state.next_local_lifetime;
     Ok((
         CFunctionOutcome::Return {
             value,
@@ -10765,6 +10768,7 @@ pub(super) fn function_outcome_from_body(
             caller_state.resources = return_resources.cloned().unwrap_or(state.resources);
             caller_state.counted_populations = state.counted_populations;
             caller_state.next_local_frame = state.next_local_frame;
+            caller_state.next_local_lifetime = state.next_local_lifetime;
             (
                 CFunctionOutcome::Return {
                     value,

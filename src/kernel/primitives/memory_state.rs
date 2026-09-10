@@ -1393,7 +1393,9 @@ impl CMemory {
     }
 
     pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
-        self.blocks == other.blocks && self.heap == other.heap
+        self.blocks == other.blocks
+            && self.ended_local_blocks == other.ended_local_blocks
+            && self.heap == other.heap
     }
 
     pub fn with_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
@@ -1453,17 +1455,29 @@ impl CMemory {
         self
     }
 
-    /// Ends the lifetime of one automatic-storage object at a function exit.
+    /// Ends the lifetime of one automatic-storage object at a function exit
+    /// or before a declaration is re-entered. The tombstone is semantic: it
+    /// makes aliases to the old object invalid instead of merely making an
+    /// eventual load unresolved because the block disappeared.
     pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
-        if !self.blocks.contains_key(block) {
+        if !self.blocks.contains_key(block) && self.ended_local_blocks.contains(block) {
             return self.clone();
         }
 
         let mut memory = self.clone();
+        let base = intern_c_memory_ref(&memory);
         std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
         std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(pointer, _), _| &pointer.block != block);
+        std::sync::Arc::make_mut(&mut memory.ended_local_blocks).insert(block.clone());
+        record_c_memory_derivation(
+            &memory,
+            CMemoryDerivation::LocalLifetimeEnded {
+                base,
+                block: block.clone(),
+            },
+        );
         memory
     }
 
@@ -1899,8 +1913,9 @@ impl CMemory {
     /// state exported by an interface join. A branch may retire an allocation
     /// while its sibling keeps it live; the join must retain the potential
     /// live allocation so a guarded resource can decide whether the
-    /// continuation may use it. Tombstones are retained only when every arm
-    /// agrees that the allocation is retired.
+    /// continuation may use it. Tombstones are unioned because a continuation
+    /// must reject an alias if any incoming arm has ended its automatic
+    /// lifetime.
     ///
     /// This is deliberately separate from loop havoc. The joined heap is the
     /// union of potential live allocations, so making the transition look like
@@ -1918,6 +1933,7 @@ impl CMemory {
         };
 
         let mut blocks = BTreeMap::new();
+        let mut ended_local_blocks = BTreeSet::new();
         for memory in sibling_memories {
             for (block, contents) in memory.blocks.iter() {
                 if let Some(existing) = blocks.insert(block.clone(), contents.clone())
@@ -1928,6 +1944,7 @@ impl CMemory {
                     ));
                 }
             }
+            ended_local_blocks.extend(memory.ended_local_blocks.iter().cloned());
         }
 
         let mut live_allocations = BTreeMap::new();
@@ -2027,6 +2044,7 @@ impl CMemory {
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self.blocks = std::sync::Arc::new(blocks);
+        self.ended_local_blocks = std::sync::Arc::new(ended_local_blocks);
         self.heap = std::sync::Arc::new(CHeapMemory {
             live_allocations,
             deallocated_allocations,
@@ -2342,6 +2360,13 @@ impl CMemory {
         }
     }
 
+    pub(in crate::kernel) fn local_lifetime_pointer(lifetime: u64, name: &str) -> Pointer {
+        Pointer {
+            block: format!("local:lifetime:{lifetime}:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(crate) fn global_pointer(name: &str) -> Pointer {
         Self::global_pointer_named(name)
     }
@@ -2385,6 +2410,10 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
+    pub(in crate::kernel) fn is_ended_local_address(&self, pointer: &Pointer) -> bool {
+        self.ended_local_blocks.contains(&pointer.block)
+    }
+
     /// A sufficient, search-free condition for transporting loadability of
     /// an exact range. Unlike value equality, this ignores writes, but never
     /// ignores changed block extents or allocation retirement metadata.
@@ -2392,6 +2421,7 @@ impl CMemory {
         crate::instrumentation::record_deterministic_work(1);
         ReadRegionIdentity {
             block_size: self.block_size(&base.block).cloned(),
+            local_lifetime_ended: self.ended_local_blocks.contains(&base.block),
             heap: self.heap.clone(),
         }
     }
@@ -2606,6 +2636,15 @@ impl CState {
 
     pub(in crate::kernel) fn with_next_local_frame(mut self, next: u64) -> Self {
         self.next_local_frame = next;
+        self
+    }
+
+    pub(in crate::kernel) fn next_local_lifetime(&self) -> u64 {
+        self.next_local_lifetime
+    }
+
+    pub(in crate::kernel) fn with_next_local_lifetime(mut self, next: u64) -> Self {
+        self.next_local_lifetime = next;
         self
     }
 

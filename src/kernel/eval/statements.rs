@@ -417,6 +417,15 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     obligations,
                 }];
             }
+            if state.memory.is_ended_local_address(&pointer) {
+                return vec![CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::InvalidMemory,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            }
             if state.memory.is_deallocated_heap_address(&pointer) {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::UndefinedBehavior(
@@ -2685,6 +2694,21 @@ pub(in crate::kernel) fn execute_c_while_paths(
     Ok(paths)
 }
 
+fn local_declaration_pointer(state: &mut CState, name: &str) -> Pointer {
+    let previous = state.locals.slot(name).cloned();
+    if let Some(previous) = previous
+        && previous.block.starts_with("local:")
+    {
+        state.memory = state.memory.without_local_block(&previous.block);
+        let lifetime = state.next_local_lifetime();
+        *state = state
+            .clone()
+            .with_next_local_lifetime(lifetime.saturating_add(1));
+        return CMemory::local_lifetime_pointer(lifetime, name);
+    }
+    CMemory::local_pointer(name)
+}
+
 pub(in crate::kernel) fn declare_local(
     state: &CState,
     name: &str,
@@ -2695,10 +2719,11 @@ pub(in crate::kernel) fn declare_local(
     pointee_constant: bool,
 ) -> CState {
     let mut state = state.clone();
+    let pointer = local_declaration_pointer(&mut state, name);
     // A declared local's block is placed at its type's alignment; record it
     // with the block so the alignment decision is intrinsic, as for heap
     // and file-scope blocks, rather than a path fact at each address-of.
-    register_block_alignment(&CMemory::local_pointer(name).block, c_type.abi_alignment());
+    register_block_alignment(&pointer.block, c_type.abi_alignment());
     let byte_width = match c_type {
         CType::Void => unreachable!("void local objects are not supported"),
         CType::VoidPointer => C_POINTER_BYTE_WIDTH,
@@ -2727,7 +2752,6 @@ pub(in crate::kernel) fn declare_local(
         | CType::Float64PointerPointer
         | CType::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(4));
@@ -2741,7 +2765,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt8Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state.memory.with_block(pointer.block.clone(), length);
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -2753,7 +2776,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Int16Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(2));
@@ -2767,7 +2789,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt16Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(2));
@@ -2781,7 +2802,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt32Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(4));
@@ -2795,7 +2815,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Int64Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(8));
@@ -2809,7 +2828,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt64Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(8));
@@ -2823,7 +2841,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Float32Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(4));
@@ -2837,7 +2854,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Float64Array(length) => {
-            let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
                 .with_block(pointer.block.clone(), length.saturating_mul(8));
@@ -2851,7 +2867,6 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
     };
-    let pointer = CMemory::local_pointer(name);
     state.memory = state.memory.with_block(pointer.block.clone(), byte_width);
     if volatile {
         state.locals.set_uninitialized_with_all_qualifiers(
@@ -2883,7 +2898,7 @@ pub(in crate::kernel) fn declare_aggregate_local(
     layout: &CAggregateLayout,
 ) -> CState {
     let mut state = state.clone();
-    let pointer = CMemory::local_pointer(name);
+    let pointer = local_declaration_pointer(&mut state, name);
     register_block_alignment(&pointer.block, layout.alignment_bytes());
     state.memory = state
         .memory

@@ -272,7 +272,8 @@ pub fn c_loadability_obligation_impossible(obligation: &Proposition) -> bool {
             c_loadability_obligation_impossible(left) || c_loadability_obligation_impossible(right)
         }
         Proposition::CMemoryLoadable { memory, base, .. } => {
-            memory.is_deallocated_heap_address(base)
+            memory.is_ended_local_address(base)
+                || memory.is_deallocated_heap_address(base)
                 || memory.freed_heap_allocation_may_contain(base)
         }
         _ => false,
@@ -2091,8 +2092,10 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
                 && canonicalize_atomic_loads(left_bytes)
                     == canonicalize_atomic_loads(right_bytes)
                 // Loadability depends on the snapshot's blocks, not its
-                // cached cell values.
+                // cached cell values. Retired automatic blocks are part of
+                // the snapshot marker too.
                 && left_memory.blocks == right_memory.blocks
+                && left_memory.ended_local_blocks == right_memory.ended_local_blocks
         }
         _ => false,
     }
