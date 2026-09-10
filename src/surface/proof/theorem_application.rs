@@ -472,12 +472,16 @@ pub(super) fn theorem_application_bindings(
     let mut values = BTreeMap::new();
     let mut array_refs = BTreeMap::new();
     let mut algebraic_values = BTreeMap::new();
-    let mut integer_values = context.integer_values.clone();
+    // Callee parameters are substituted simultaneously.  Keep the caller's
+    // bindings as the immutable lookup environment, and accumulate the
+    // resulting parameter bindings separately; otherwise an earlier callee
+    // parameter can capture a later argument with the same spelling.
+    let mut integer_values = crate::persistent::PersistentMap::default();
     for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
         if parameter.click_type() == &ClickType::Integer {
             let value = crate::surface::lowering::lower_contract_integer_to_spec(
                 argument,
-                &integer_values,
+                context.integer_values,
             )?;
             integer_values = integer_values.with_inserted(parameter.name().to_string(), value);
             continue;

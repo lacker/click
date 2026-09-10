@@ -7,13 +7,13 @@ theorem guarded(x: Integer) {
 }
 
 theorem altered_guard(x: Integer) {
-    requires x == x;
+    requires x == 1;
     ensures x + 1 > x by {
-        apply(guarded(x)) using { x == 1; };
+        apply(guarded(x));
     }
 }
 ```
 
 ```expect
-fail: kernel lowering produced 0 paths
+fail: required exact fact
 ```
