@@ -3744,6 +3744,7 @@ fn statement_contains_control_transfer(statement: &C0Statement) -> bool {
         | C0Statement::HeapFree { .. }
         | C0Statement::Assert { .. }
         | C0Statement::Store { .. }
+        | C0Statement::SequentialStore { .. }
         | C0Statement::AggregateCopy { .. }
         | C0Statement::Update { .. } => false,
     }
@@ -8563,6 +8564,7 @@ impl Parser {
             enum_name: None,
             union_name: None,
             is_volatile: false,
+            volatile_levels: 0,
             is_constant: self.expression_is_constant_lvalue(&expression),
             pointee_constant: self.expression_pointee_is_constant(&expression),
         })
@@ -12203,6 +12205,8 @@ impl Parser {
                 | C0Expression::Not(expression)
                 | C0Expression::BitwiseNot(expression)
                 | C0Expression::Load(expression) => expressions.push(expression),
+                C0Expression::SequentialRead { target, .. } => expressions.push(target),
+                C0Expression::SequentialWrite { .. } => return true,
                 C0Expression::AggregateAddress { pointer, .. }
                 | C0Expression::UnionAddress { pointer, .. }
                 | C0Expression::Field { pointer, .. }
@@ -13816,9 +13820,19 @@ impl Parser {
                         "`__builtin_expect` requires an integer constant prediction",
                     ));
                 };
-                if !is_integer_type(expected_type)
-                    || evaluate_static_integer_expression(expected).is_err()
-                {
+                if !is_integer_type(expected_type) {
+                    return Err(self.error_at_position(
+                        position,
+                        "`__builtin_expect` requires an integer constant prediction",
+                    ));
+                }
+                if self.expression_has_runtime_effect(expected) {
+                    return Err(self.error_at_position(
+                        position,
+                        "the hint operand of `__builtin_expect` must be side-effect free",
+                    ));
+                }
+                if evaluate_static_integer_expression(expected).is_err() {
                     return Err(self.error_at_position(
                         position,
                         "`__builtin_expect` requires an integer constant prediction",
