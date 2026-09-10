@@ -1739,7 +1739,7 @@ fn modeled_binary_tree_laws_reject_wrong_mirror_and_size() {
     // This regression is about the generic laws, independent of the C heap
     // resource and initializer contract that now precede them in the example.
     let source = &example[example.find("spec enum Tree<T>").unwrap()..];
-    verify_c0_sources(&source, &[]).expect("generic tree laws should verify");
+    verify_c0_sources(source, &[]).expect("generic tree laws should verify");
     for (from, to) in [("right", "left"), ("left", "right")] {
         let wrong_mirror = source.replacen(
             &format!("tree_mirror({from})"),

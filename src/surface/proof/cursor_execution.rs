@@ -1934,12 +1934,7 @@ fn execute_step_from_frontier_position_selecting_path(
             )
         });
         let mut mapped_invariants = Vec::new();
-        for surface in loop_clause
-            .items()
-            .iter()
-            .filter(|item| item.kind() == StructuralItemKind::Invariant)
-            .filter_map(StructuralItem::proposition)
-        {
+        for surface in loop_clause.items().iter().map(StructuralItem::proposition) {
             let target = if let Some((_, target)) = mapped_invariants
                 .iter()
                 .find(|(mapped_surface, _)| *mapped_surface == surface)
@@ -2991,6 +2986,116 @@ fn set_function_exit_execution(
     Ok(())
 }
 
+/// The driver's account of a refused record call: the proof object's reason,
+/// then what it expected and what it was offered when the judgment concerned
+/// statements or a premise.
+pub(super) fn describe_evidence_refusal(
+    refusal: &crate::kernel::proof::EvidenceRefusal,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let mut text = refusal.reason.to_string();
+    if let Some(expected) = &refusal.expected {
+        text.push_str(&format!(
+            "; the source statement to consume next is `{}`",
+            describe_statement_head(expected)
+        ));
+    }
+    if let Some(proved) = &refusal.proved {
+        text.push_str(&format!(
+            ", the theorem proves `{}`",
+            describe_statement_head(proved)
+        ));
+    }
+    if let Some(premise) = &refusal.premise {
+        text.push_str(&format!(
+            "; the premise is {}",
+            describe_pure_fact(premise, parameters, arguments)
+        ));
+    }
+    text
+}
+
+/// A one-line C spelling of a statement's head, enough to recognize it in
+/// a diagnostic: the first statement of a sequence, a loop or branch by its
+/// condition, a body by its operation.
+fn describe_statement_head(statement: &CStatement) -> String {
+    match statement {
+        CStatement::Seq(first, _) => describe_statement_head(first),
+        CStatement::Skip => "skip".to_string(),
+        CStatement::Break => "break".to_string(),
+        CStatement::Continue => "continue".to_string(),
+        CStatement::ContinueWithStep { .. } => "continue".to_string(),
+        CStatement::Declare { name, .. } => format!("declare {name}"),
+        CStatement::DeclareAggregate { name, .. } => format!("declare aggregate {name}"),
+        CStatement::Assign { name, expression } => {
+            format!("{name} = {}", describe_c_expression(expression))
+        }
+        CStatement::CallAssign {
+            target,
+            function_name,
+            arguments,
+        } => format!(
+            "{target} = {function_name}({})",
+            arguments
+                .iter()
+                .map(describe_c_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => format!(
+            "{function_name}({})",
+            arguments
+                .iter()
+                .map(describe_c_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        CStatement::HeapAllocate {
+            target,
+            bytes,
+            zeroed,
+        } => {
+            let function = if *zeroed { "calloc" } else { "malloc" };
+            format!("{target} = {function}({})", describe_c_expression(bytes))
+        }
+        CStatement::HeapFree { pointer } => format!("free({})", describe_c_expression(pointer)),
+        CStatement::Assert { condition, .. } => {
+            format!("assert({})", describe_c_expression(condition))
+        }
+        CStatement::Return(expression) => format!("return {}", describe_c_expression(expression)),
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            format!(
+                "*{} = {}",
+                describe_c_expression(pointer),
+                describe_c_expression(value)
+            )
+        }
+        CStatement::CopyAggregate { target, source, .. } => format!(
+            "copy aggregate {} <- {}",
+            describe_c_expression(target),
+            describe_c_expression(source)
+        ),
+        CStatement::Update {
+            target, operand, ..
+        } => format!(
+            "update {} with {}",
+            describe_c_expression(target),
+            describe_c_expression(operand)
+        ),
+        CStatement::If { condition, .. } => format!("if ({})", describe_c_expression(condition)),
+        CStatement::While { condition, .. } => {
+            format!("while ({})", describe_c_expression(condition))
+        }
+        CStatement::Switch { expression, .. } => {
+            format!("switch ({})", describe_c_expression(expression))
+        }
+    }
+}
+
 #[cfg(test)]
 mod cursor_sequence_tests {
     use super::*;
@@ -3133,115 +3238,5 @@ mod cursor_sequence_tests {
             .expect("the small-stack cursor thread should start")
             .join()
             .expect("large straight-line cursor advancement should be stack bounded");
-    }
-}
-
-/// The driver's account of a refused record call: the proof object's reason,
-/// then what it expected and what it was offered when the judgment concerned
-/// statements or a premise.
-pub(super) fn describe_evidence_refusal(
-    refusal: &crate::kernel::proof::EvidenceRefusal,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> String {
-    let mut text = refusal.reason.to_string();
-    if let Some(expected) = &refusal.expected {
-        text.push_str(&format!(
-            "; the source statement to consume next is `{}`",
-            describe_statement_head(expected)
-        ));
-    }
-    if let Some(proved) = &refusal.proved {
-        text.push_str(&format!(
-            ", the theorem proves `{}`",
-            describe_statement_head(proved)
-        ));
-    }
-    if let Some(premise) = &refusal.premise {
-        text.push_str(&format!(
-            "; the premise is {}",
-            describe_pure_fact(premise, parameters, arguments)
-        ));
-    }
-    text
-}
-
-/// A one-line C spelling of a statement's head, enough to recognize it in
-/// a diagnostic: the first statement of a sequence, a loop or branch by its
-/// condition, a body by its operation.
-fn describe_statement_head(statement: &CStatement) -> String {
-    match statement {
-        CStatement::Seq(first, _) => describe_statement_head(first),
-        CStatement::Skip => "skip".to_string(),
-        CStatement::Break => "break".to_string(),
-        CStatement::Continue => "continue".to_string(),
-        CStatement::ContinueWithStep { .. } => "continue".to_string(),
-        CStatement::Declare { name, .. } => format!("declare {name}"),
-        CStatement::DeclareAggregate { name, .. } => format!("declare aggregate {name}"),
-        CStatement::Assign { name, expression } => {
-            format!("{name} = {}", describe_c_expression(expression))
-        }
-        CStatement::CallAssign {
-            target,
-            function_name,
-            arguments,
-        } => format!(
-            "{target} = {function_name}({})",
-            arguments
-                .iter()
-                .map(describe_c_expression)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        CStatement::Call {
-            function_name,
-            arguments,
-        } => format!(
-            "{function_name}({})",
-            arguments
-                .iter()
-                .map(describe_c_expression)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        CStatement::HeapAllocate {
-            target,
-            bytes,
-            zeroed,
-        } => {
-            let function = if *zeroed { "calloc" } else { "malloc" };
-            format!("{target} = {function}({})", describe_c_expression(bytes))
-        }
-        CStatement::HeapFree { pointer } => format!("free({})", describe_c_expression(pointer)),
-        CStatement::Assert { condition, .. } => {
-            format!("assert({})", describe_c_expression(condition))
-        }
-        CStatement::Return(expression) => format!("return {}", describe_c_expression(expression)),
-        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
-            format!(
-                "*{} = {}",
-                describe_c_expression(pointer),
-                describe_c_expression(value)
-            )
-        }
-        CStatement::CopyAggregate { target, source, .. } => format!(
-            "copy aggregate {} <- {}",
-            describe_c_expression(target),
-            describe_c_expression(source)
-        ),
-        CStatement::Update {
-            target, operand, ..
-        } => format!(
-            "update {} with {}",
-            describe_c_expression(target),
-            describe_c_expression(operand)
-        ),
-        CStatement::If { condition, .. } => format!("if ({})", describe_c_expression(condition)),
-        CStatement::While { condition, .. } => {
-            format!("while ({})", describe_c_expression(condition))
-        }
-        CStatement::Switch { expression, .. } => {
-            format!("switch ({})", describe_c_expression(expression))
-        }
     }
 }

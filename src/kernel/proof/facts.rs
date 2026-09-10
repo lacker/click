@@ -39,10 +39,6 @@ pub(crate) struct ProofFacts {
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
     by_quantified_equivalence:
         PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<Proposition>>,
-    /// Kernel-certified memory summaries for the selected execution
-    /// frontier. Structural frame checking consumes these as transition
-    /// evidence; they are not user premises and have no Surface spelling.
-    memory_effect_summaries: PersistentSequence<Proposition>,
     /// Selected load identities checked while presenting a rewritten goal.
     rewritten_load_evidence: PersistentSequence<CheckedLoadEquality>,
     /// Universal facts introduced specifically by a checked predicate unfold.
@@ -224,7 +220,6 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
-        let mut memory_effect_summaries = PersistentSequence::default();
         let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
         let mut implicit_transport_assumptions = PureFactContext::new();
@@ -239,9 +234,6 @@ impl ProofFacts {
             ordered.push(fact.clone());
             top_level_exact = top_level_exact.with_value(fact.clone());
             by_quantified_equivalence = index_quantified_fact(by_quantified_equivalence, fact);
-            if matches!(fact, Proposition::CMemoryEffectSummary { .. }) {
-                memory_effect_summaries.push(fact.clone());
-            }
             implications_by_consequent =
                 index_implication_consequents(implications_by_consequent, fact);
             by_predicate = index_predicate_fact(by_predicate, fact);
@@ -274,7 +266,6 @@ impl ProofFacts {
             by_snapshot_blind,
             bitvector_equalities_by_atom,
             by_quantified_equivalence,
-            memory_effect_summaries,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
             rewritten_load_evidence: PersistentSequence::default(),
             implications_by_consequent,
@@ -325,10 +316,6 @@ impl ProofFacts {
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
         let by_quantified_equivalence =
             index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
-        let mut memory_effect_summaries = self.memory_effect_summaries.clone();
-        if matches!(fact, Proposition::CMemoryEffectSummary { .. }) {
-            memory_effect_summaries.push(fact.clone());
-        }
         let implications_by_consequent =
             index_implication_consequents(self.implications_by_consequent.clone(), &fact);
         if matches!(fact, Proposition::And(_, _)) {
@@ -364,7 +351,6 @@ impl ProofFacts {
             by_snapshot_blind,
             bitvector_equalities_by_atom,
             by_quantified_equivalence,
-            memory_effect_summaries,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             rewritten_load_evidence: self.rewritten_load_evidence.clone(),
             implications_by_consequent,
@@ -532,10 +518,6 @@ impl ProofFacts {
 
     pub(crate) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
-    }
-
-    pub(crate) fn memory_effect_summaries(&self) -> impl Iterator<Item = &Proposition> {
-        self.memory_effect_summaries.iter()
     }
 
     /// Exact proper-conjunct membership with the same condition-polarity

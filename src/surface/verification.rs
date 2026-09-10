@@ -134,11 +134,6 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 collect_applied_theorems(&proof_branch.else_tactics, names);
             }
             ProofTactic::Loop(clause) => {
-                for item in &clause.items {
-                    if let SourceProof::Script(tactics) = &item.proof {
-                        collect_applied_theorems(tactics, names);
-                    }
-                }
                 for proof in [
                     clause.initialize_proof.as_ref(),
                     clause.preserve_proof.as_ref(),
@@ -169,13 +164,7 @@ fn collect_function_theorem_dependencies(function: &FunctionBlock, names: &mut B
     for clause in function.ensures() {
         collect_applied_theorems_from_proof(&clause.proof, names);
     }
-    for clause in function.effects() {
-        collect_applied_theorems_from_proof(&clause.proof, names);
-    }
     for clause in function.structural_clauses() {
-        for item in &clause.items {
-            collect_applied_theorems_from_proof(&item.proof, names);
-        }
         for proof in [
             clause.initialize_proof.as_ref(),
             clause.preserve_proof.as_ref(),
@@ -265,7 +254,7 @@ fn verify_click_file_theorems_with_environment(
         .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
-        &combined_algebraic_type_definitions(&file)?,
+        &combined_algebraic_type_definitions(file)?,
     );
     let verified = verify_theorem_definitions(
         &theorem_definitions,
@@ -280,19 +269,12 @@ fn verify_click_file_theorems_with_environment(
         .collect())
 }
 
+#[cfg(test)]
 pub(in crate::surface) fn verify_click_theorems_with_c_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let sources = CSourceContext::bundle(c_sources);
-    verify_click_theorems_with_context(click_source, &sources)
-}
-
-pub(in crate::surface) fn verify_click_theorems_with_prepared(
-    click_source: &str,
-    imports: &[PreparedCImport],
-) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
-    let sources = CSourceContext::prepared(imports);
     verify_click_theorems_with_context(click_source, &sources)
 }
 
@@ -317,7 +299,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         global_array_shapes,
         qualified_objects,
     )?;
-    let parsed_sources = parse_verified_sources_context(&file, &sources)?;
+    let parsed_sources = parse_verified_sources_context(&file, sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -444,9 +426,6 @@ pub(in crate::surface) fn proof_unit_erased_click_file(
         for ensure in &mut function.ensures {
             ensure.proof = SourceProof::Default;
         }
-        for effect in &mut function.effects {
-            effect.proof = SourceProof::Default;
-        }
         for clause in &mut function.structural_clauses {
             // Omitted loop-phase proofs and explicit default/expanded proofs
             // are all syntax for the selected function's proof unit.  Erase
@@ -454,9 +433,6 @@ pub(in crate::surface) fn proof_unit_erased_click_file(
             // omitted phase does not look like an interface change.
             clause.initialize_proof = None;
             clause.preserve_proof = None;
-            for item in &mut clause.items {
-                item.proof = SourceProof::Default;
-            }
         }
     }
     file
@@ -878,7 +854,7 @@ impl C0VerificationSession {
                 VerificationTarget::Function(function_name) => Some(
                     self.verified_function_environment
                         .clone()
-                        .without_verified_function_rule(&function_name),
+                        .without_verified_function_rule(function_name),
                 ),
                 VerificationTarget::Theorem(_) | VerificationTarget::Functions(_) => None,
             };
@@ -993,7 +969,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     c_sources: &[(&str, &str)],
     verification_target: Option<VerificationTarget>,
     initial_function_environment: Option<CExecutionEnvironment>,
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     let sources = CSourceContext::bundle(c_sources);
     verify_c0_sources_with_context(
@@ -1031,7 +1007,7 @@ fn verify_c0_sources_with_context(
             aggregate_array_objects,
             global_array_shapes,
             qualified_objects,
-        ) = parse_c_layouts(click_source, &c_sources)?;
+        ) = parse_c_layouts(click_source, c_sources)?;
         let file = parser::parse_with_layouts_and_aggregate_objects(
             click_source,
             struct_layouts,
@@ -1041,7 +1017,7 @@ fn verify_c0_sources_with_context(
             global_array_shapes,
             qualified_objects,
         )?;
-        let parsed_sources = parse_verified_sources_context(&file, &c_sources)?;
+        let parsed_sources = parse_verified_sources_context(&file, c_sources)?;
         let expansion_functions = expansion_capture
             .as_deref()
             .map(|capture| {
@@ -1351,8 +1327,7 @@ fn verify_c0_sources_with_context(
                     &theorem_environment,
                     tactics,
                 )?,
-                SourceProof::Default
-                | SourceProof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
+                SourceProof::Default | SourceProof::Tactic(SmartTactic::Simp) => {
                     return Err(ClickError::new(format!(
                         "grouped proof for `{}` must use `by auto;` or an explicit `by {{ ... }}` proof script",
                         function_block.signature().name()
@@ -1384,19 +1359,6 @@ fn verify_c0_sources_with_context(
                             &theorem_environment,
                         )?
                     }
-                    SourceProof::Tactic(SmartTactic::Frame) => prove_claim_by_frame(
-                        expansion_capture.as_deref_mut(),
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                    )?,
                     SourceProof::Tactic(SmartTactic::Simp) => prove_claim_by_simp(
                         expansion_capture.as_deref_mut(),
                         source_path,
@@ -1515,7 +1477,6 @@ fn verify_c0_sources_with_context(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
-            !has_frontier_loop_rules,
         )?;
         // A resource-bearing contract without an effect clause frames caller
         // memory through the resource transition at each store, but file-scope
@@ -1523,9 +1484,8 @@ fn verify_c0_sources_with_context(
         // the owned footprint (startup resources, owned ranges, and composite
         // bodies). Otherwise a view, or ownership of a neighboring cell, would
         // authorize a store into storage the contract does not own.
-        if function_block.effects().is_empty()
-            && (!contract_function.contract_mutable().is_empty()
-                || contract_function.resource_derived_mutable_frame())
+        if !contract_function.contract_mutable().is_empty()
+            || contract_function.resource_derived_mutable_frame()
         {
             for verified in &function_verified {
                 for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
@@ -1580,8 +1540,7 @@ fn verify_c0_sources_with_context(
         // `immutable` clause. Resource-derived frames are checked by their
         // resource transition and, for storage, by the owned-footprint check
         // above; they intentionally do not enter this path.
-        if function_block.effects().is_empty()
-            && contract_function.contract_mutable().is_empty()
+        if contract_function.contract_mutable().is_empty()
             && !contract_function.resource_derived_mutable_frame()
         {
             if function_verified.is_empty() {
@@ -1611,12 +1570,11 @@ fn verify_c0_sources_with_context(
                     let mut available_pure_facts = certification_facts.clone();
                     available_pure_facts
                         .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-                    prove_effect_clause_exact(
+                    prove_empty_write_footprint(
                         &format!("{}.implicit_effect", function_block.signature.name()),
                         path_index,
                         path.effect_facts(),
                         &available_pure_facts,
-                        &Effect::Immutable,
                         parsed_function.parameters(),
                         &certification_arguments,
                         &certification_state,
@@ -1819,9 +1777,6 @@ fn verify_c0_sources_with_context(
                             VerifiedClaim::Ensure { index, .. } => {
                                 CFunctionContractClaimKey::Ensure(*index)
                             }
-                            VerifiedClaim::Effect { index, .. } => {
-                                CFunctionContractClaimKey::Effect(*index)
-                            }
                         }
                     } else {
                         CFunctionContractClaimKey::BodySafety
@@ -1923,10 +1878,6 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             .and_then(SourceProof::tactics),
         CProofClaim::Ensure(index) => function_block
             .ensures()
-            .get(index)
-            .and_then(|clause| clause.proof().tactics()),
-        CProofClaim::Effect(index) => function_block
-            .effects()
             .get(index)
             .and_then(|clause| clause.proof().tactics()),
     }
@@ -2109,7 +2060,7 @@ fn c0_external_dependencies_context(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
-    ) = parse_c_layouts(click_source, &sources)?;
+    ) = parse_c_layouts(click_source, sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
@@ -2119,7 +2070,7 @@ fn c0_external_dependencies_context(
         global_array_shapes,
         qualified_objects,
     )?;
-    let parsed_sources = parse_verified_sources_context(&file, &sources)?;
+    let parsed_sources = parse_verified_sources_context(&file, sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
     let external_names = function_blocks
         .iter()
@@ -2160,9 +2111,11 @@ pub(in crate::surface) fn c0_statement_calls(
         names: &mut BTreeSet<String>,
     ) {
         match statement {
-            syntax::C0Statement::Declare { c_type, name, .. }
-                if matches!(c_type, syntax::C0Type::FunctionPointer(_)) =>
-            {
+            syntax::C0Statement::Declare {
+                c_type: syntax::C0Type::FunctionPointer(_),
+                name,
+                ..
+            } => {
                 names.insert(name.clone());
             }
             syntax::C0Statement::Seq(first, second) => {
@@ -2733,62 +2686,6 @@ fn parse_c_source_unit(
     Ok(unit)
 }
 
-#[cfg(test)]
-mod prepared_scaling_tests {
-    use super::*;
-    use crate::languages::c::compiler_import::PreparedCImport;
-
-    fn imports(size: usize) -> Vec<PreparedCImport> {
-        (0..size)
-            .map(|index| {
-                PreparedCImport::for_test(
-                    &format!("unit{index}.c"),
-                    &format!("int unit{index}(int value) {{ return value; }}\n"),
-                )
-            })
-            .collect()
-    }
-
-    fn click(size: usize) -> String {
-        (0..size)
-            .map(|index| format!("verifying \"unit{index}.c\";\n"))
-            .collect()
-    }
-
-    #[test]
-    fn functions_share_one_prepared_parse_across_sizes() {
-        for size in [16usize, 32, 64, 128] {
-            let source = (0..size)
-                .map(|index| format!("int function{index}(int value) {{ return value; }}\n"))
-                .collect::<String>();
-            let imports = [PreparedCImport::for_test("shared.c", &source)];
-            let sources = CSourceContext::prepared(&imports);
-            let click = "verifying \"shared.c\";\n";
-            let file = parse_c0_click_file_context(click, &sources).unwrap();
-            let functions = parse_verified_sources_context(&file, &sources).unwrap();
-            assert_eq!(functions.len(), size);
-            assert_eq!(sources.prepared_parse_count.get(), 1);
-            parse_c_layouts(click, &sources).unwrap();
-            assert_eq!(sources.prepared_parse_count.get(), 1);
-        }
-    }
-
-    #[test]
-    fn prepared_translation_units_parse_once_and_cache_across_sizes() {
-        for size in [16usize, 32, 64, 128] {
-            let imports = imports(size);
-            let sources = CSourceContext::prepared(&imports);
-            parse_c_layouts(&click(size), &sources).expect("prepared layouts parse");
-            assert_eq!(sources.prepared_parse_count.get(), size);
-            let file = parse_c0_click_file_context(&click(size), &sources)
-                .expect("prepared click file parse");
-            parse_verified_sources_context(&file, &sources)
-                .expect("prepared verified sources parse");
-            assert_eq!(sources.prepared_parse_count.get(), size);
-        }
-    }
-}
-
 /// Looks up a C definition using the spelling visible to Click. Header-local
 /// inline bodies have a translation-unit-qualified kernel name, so sidecar
 /// contracts must match `C0Function::source_name()` rather than the execution
@@ -3160,6 +3057,7 @@ pub(in crate::surface) fn parse_c_layouts(
     ))
 }
 
+#[cfg(test)]
 pub(in crate::surface) fn parse_verified_sources(
     file: &ClickFile,
     c_sources: &BTreeMap<&str, &str>,
@@ -3882,7 +3780,6 @@ pub(in crate::surface) fn build_function_environment(
             predicate_environment,
             click_function_environment,
             resource_environment,
-            false,
         )
         .map_err(|error| {
             ClickError::new(format!(
@@ -3935,11 +3832,11 @@ pub(in crate::surface) fn build_function_environment(
                     click_function_environment,
                     resource_environment,
                 )?;
-                let resource_derived_mutable_frame = function_block.effects().is_empty()
-                    && (!contract_mutable.is_empty()
-                        || function_block.requires().iter().any(|requirement| {
-                            matches!(requirement.inner(), Requirement::Resource(_))
-                        }));
+                let resource_derived_mutable_frame = !contract_mutable.is_empty()
+                    || function_block
+                        .requires()
+                        .iter()
+                        .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
@@ -3989,7 +3886,6 @@ pub(in crate::surface) fn build_function_environment(
             predicate_environment,
             click_function_environment,
             resource_environment,
-            false,
         )?;
         let rule = crate::kernel::c_external_function_rule(function.clone()).ok_or_else(|| {
             ClickError::new(format!(
@@ -4524,10 +4420,6 @@ pub(in crate::surface) fn function_claim_label(
             Some(name) => format!("{function_name}.{name}"),
             None => format!("{function_name}.ensures_{index}"),
         },
-        FunctionClaimRef::Effect(index, effect) => match effect.effect() {
-            Effect::Immutable => format!("{function_name}.immutable_{index}"),
-            Effect::Mutable(_) => format!("{function_name}.mutable_{index}"),
-        },
     }
 }
 
@@ -4643,40 +4535,8 @@ pub(in crate::surface) fn validate_region_proof_clauses(
             CodeRegion::Loop(_) => {}
         }
 
-        for (phase, proof) in [
-            ("initialize", region_proof_clause.initialize_proof()),
-            ("preserve", region_proof_clause.preserve_proof()),
-        ] {
-            let Some(proof) = proof else {
-                continue;
-            };
-            if proof.is_frame_tactic() {
-                return Err(ClickError::new(format!(
-                    "`{phase}` must use `auto`, `simp`, or an explicit proof script"
-                )));
-            }
-        }
-
         validate_loop_phase_proof("initialize", region_proof_clause.initialize_proof())?;
         validate_loop_phase_proof("preserve", region_proof_clause.preserve_proof())?;
-
-        for item in region_proof_clause.items() {
-            if item.is_effect_kind() {
-                if !item.proof().is_auto_or_frame_tactic()
-                    && !matches!(
-                        item.proof(),
-                        SourceProof::Script(tactics)
-                            if ProofCertificate::from_proof_tactics(tactics).is_ok()
-                    )
-                {
-                    return Err(ClickError::new(
-                        "`immutable` and `mutable` region proof clauses must use the default prover, `by auto;`, `by frame;`, or a surface certificate",
-                    ));
-                }
-            } else {
-                debug_assert!(item.proof().is_auto_tactic());
-            }
-        }
     }
     Ok(())
 }
@@ -4730,4 +4590,60 @@ pub(in crate::surface) fn validate_loop_initialization_tactics(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod prepared_scaling_tests {
+    use super::*;
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    fn imports(size: usize) -> Vec<PreparedCImport> {
+        (0..size)
+            .map(|index| {
+                PreparedCImport::for_test(
+                    &format!("unit{index}.c"),
+                    &format!("int unit{index}(int value) {{ return value; }}\n"),
+                )
+            })
+            .collect()
+    }
+
+    fn click(size: usize) -> String {
+        (0..size)
+            .map(|index| format!("verifying \"unit{index}.c\";\n"))
+            .collect()
+    }
+
+    #[test]
+    fn functions_share_one_prepared_parse_across_sizes() {
+        for size in [16usize, 32, 64, 128] {
+            let source = (0..size)
+                .map(|index| format!("int function{index}(int value) {{ return value; }}\n"))
+                .collect::<String>();
+            let imports = [PreparedCImport::for_test("shared.c", &source)];
+            let sources = CSourceContext::prepared(&imports);
+            let click = "verifying \"shared.c\";\n";
+            let file = parse_c0_click_file_context(click, &sources).unwrap();
+            let functions = parse_verified_sources_context(&file, &sources).unwrap();
+            assert_eq!(functions.len(), size);
+            assert_eq!(sources.prepared_parse_count.get(), 1);
+            parse_c_layouts(click, &sources).unwrap();
+            assert_eq!(sources.prepared_parse_count.get(), 1);
+        }
+    }
+
+    #[test]
+    fn prepared_translation_units_parse_once_and_cache_across_sizes() {
+        for size in [16usize, 32, 64, 128] {
+            let imports = imports(size);
+            let sources = CSourceContext::prepared(&imports);
+            parse_c_layouts(&click(size), &sources).expect("prepared layouts parse");
+            assert_eq!(sources.prepared_parse_count.get(), size);
+            let file = parse_c0_click_file_context(&click(size), &sources)
+                .expect("prepared click file parse");
+            parse_verified_sources_context(&file, &sources)
+                .expect("prepared verified sources parse");
+            assert_eq!(sources.prepared_parse_count.get(), size);
+        }
+    }
 }

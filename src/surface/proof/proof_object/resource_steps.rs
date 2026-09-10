@@ -588,7 +588,7 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let checked = check_unfold_predicate_in_facts(
-            &self.facts(),
+            self.facts(),
             name,
             predicate_environment,
             click_function_environment,
@@ -708,7 +708,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let checked = check_unfold_predicate_facts(&mut execution, context, &self.facts(), name)?;
+        let checked = check_unfold_predicate_facts(&mut execution, context, self.facts(), name)?;
         let mut unfolded_predicates = self.focused_branch_unfolds().clone();
         for name in &checked.added_unfolded_predicates {
             unfolded_predicates.insert(name.clone());

@@ -1,5 +1,9 @@
 # Import kernel-scale preprocessed translation units
 
+Priority: P2. The user confirmed on 2026-09-10 that the delivered importer
+milestone is sufficient for MVR. Remaining full-Linux import coverage is deferred
+and does not block MVR; this issue stays open for that work.
+
 Found by the 2026-09-04 minimum-viable-rbtree (MVR) audit of Linux
 `lib/rbtree.c` and its public headers. Expanded into an implementation handoff
 on 2026-09-10, based on repository commit

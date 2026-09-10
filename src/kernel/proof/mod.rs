@@ -19,7 +19,7 @@ pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches
 pub(crate) use execution::{
     CheckedBranchSplit, CheckedBranchSplitError, CheckedCallEvent, CheckedCallEvents,
     CheckedExecutionEvent, CheckedProofCasePartition, EvidenceRefusal, ExecutionFrontier,
-    ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal, OutcomeEvidenceFork,
+    ExecutionProofCore, ExecutionRegionKind, FrontierPosition, OutcomeEvidenceFork,
     ProofExecutionContinuation, ProofExecutionState, checked_branch_fact_is_available,
     old_reference_state,
 };
@@ -36,9 +36,8 @@ pub(crate) use object::{
     PropositionSplitError,
 };
 pub(crate) use obligations::{
-    CheckedFrameAuthority, CheckedProposition, EffectGoalSelection, FrontierObligation,
-    FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState, ProofObligation,
-    PropositionObligation,
+    CheckedProposition, FrontierObligation, FunctionOutcomeObligation, OutcomeProofCore,
+    OutcomeProofState, ProofObligation, PropositionObligation,
 };
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,

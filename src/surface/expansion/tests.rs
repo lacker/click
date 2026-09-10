@@ -268,9 +268,7 @@ fn expand_top_level_tactic_for_test(
     let function = find_function(&tokens, function_name)?;
     let proof = match claim {
         CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
-        CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
-            find_claim_proof_span(&tokens, &function, claim)?
-        }
+        CProofClaim::Ensure(_) => find_claim_proof_span(&tokens, &function, claim)?,
     };
     let span = find_tactic_span(&tokens, &proof, tactic_index)?;
     let position = position_at_offset(click_source, span.start);
@@ -314,11 +312,9 @@ verifying "read.c";
 
 int32 read_first(int32 p[1]) {
     views p[0..1];
-    immutable;
     ensures result == p[0];
 } by {
     execute();
-    frame();
     simp();
 }
 "#;
@@ -1123,14 +1119,12 @@ int32 inspect(int32 p[1], int32 x) {
         0 <= k and k < 1 implies x == x
     };
     owns p[0..1];
-    immutable;
     ensures result == 0;
     ensures forall (k: int32) {
         0 <= k and k < 1 implies x == x
     };
 } by {
     execute();
-    frame();
     simp();
 }
 "#;
@@ -1141,7 +1135,7 @@ int32 inspect(int32 p[1], int32 x) {
         &sources,
         "inspect",
         CProofClaim::Grouped,
-        2,
+        1,
     )
     .expect("grouped simp should capture every newly closed claim");
 
@@ -1165,12 +1159,10 @@ verifying "increment.c";
 
 int32 increment_and_return_old(int32 p[1]) {
     owns p[0..1];
-    mutable p[0..1];
     ensures result == old(p[0]);
     ensures p[0] == 0;
 } by {
     execute();
-    frame();
     simp();
 }
 "#;
@@ -1181,7 +1173,7 @@ int32 increment_and_return_old(int32 p[1]) {
         &sources,
         "increment_and_return_old",
         CProofClaim::Grouped,
-        2,
+        1,
     )
     .expect("grouped simp should capture frame-dependent claims");
 
@@ -1253,213 +1245,6 @@ int32 inspect(struct box* owner) {
     assert!(expanded.contains("step();"), "{expanded}");
     verify_c0_sources(&expanded, &[("inspect.c", c_source)])
         .expect("the expansion with unfolded facts in context should verify");
-}
-
-#[test]
-fn expanded_execute_and_frame_check_after_resource_branch() {
-    let get_source = r#"
-struct vector { int32 len; int32 cap; int32* data; };
-int32 vector_get(struct vector* owner, int32 index) {
-    int32* data;
-    data = owner->data;
-    return data[index];
-}
-"#;
-    let set_source = r#"
-struct vector { int32 len; int32 cap; int32* data; };
-int32 vector_set(struct vector* owner, int32 index, int32 value) {
-    int32* data;
-    data = owner->data;
-    data[index] = value;
-    return data[index];
-}
-"#;
-    let replace_source = r#"
-struct vector { int32 len; int32 cap; int32* data; };
-int32 vector_replace_if(
-    struct vector* owner,
-    int32 index,
-    int32 replacement,
-    int32 replace
-) {
-    int32 original;
-    int32 selected;
-    original = vector_get(owner, index);
-    if (replace != 0) {
-        selected = vector_set(owner, index, replacement);
-    } else {
-        selected = vector_set(owner, index, original);
-    }
-    return selected;
-}
-"#;
-    let click_source = r#"
-resource nonempty_vector(owner: struct vector*) {
-    owns owner->len;
-    owns owner->cap;
-    owns owner->data;
-    owns owner->data[0..owner->cap];
-    fact 1 <= owner->len;
-    fact owner->len <= owner->cap;
-    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-}
-
-verifying "vector_get.c";
-verifying "vector_set.c";
-verifying "vector_replace_if.c";
-
-int32 vector_get(struct vector* owner, int32 index) {
-    requires 0 <= index;
-    requires index < owner->len;
-    views nonempty_vector(owner);
-    immutable;
-    ensures result == owner->data[index];
-    ensures result == old(owner->data[index]);
-} by {
-    execute();
-    frame();
-    have result == owner->data[index] by {
-        normalize();
-    }
-    assumption();
-    have result == old(owner->data[index]) by {
-        assumption();
-    }
-    assumption();
-}
-
-int32 vector_set(struct vector* owner, int32 index, int32 value) {
-    requires 0 <= index;
-    requires index < owner->len;
-    mutable owner->data[index..index + 1];
-    owns nonempty_vector(owner);
-    ensures result == value;
-    ensures owner->data[index] == value;
-    ensures owner->len == old(owner->len);
-    ensures owner->cap == old(owner->cap);
-    ensures owner->data == old(owner->data);
-} by {
-    unfold(nonempty_vector(owner));
-    step();
-    step();
-    step();
-    step();
-    fold(nonempty_vector(owner));
-    have index < index + 1 by simp;
-    frame();
-    simp();
-}
-
-int32 vector_replace_if(
-    struct vector* owner,
-    int32 index,
-    int32 replacement,
-    int32 replace
-) {
-    requires 0 <= index;
-    requires index < owner->len;
-    owns nonempty_vector(owner);
-    mutable owner->data[index..index + 1];
-    ensures replace != 0 implies result == replacement;
-} by {
-    step();
-    step();
-    step();
-    have replace == replace by {
-        normalize();
-    }
-    branch {
-        then {
-            step();
-            have replace != 0 implies selected == replacement by simp;
-            have not (replace != 0) implies selected == original by simp;
-            have index < index + 1 by simp;
-        }
-        else {
-            step();
-            have replace != 0 implies selected == replacement by simp;
-            have not (replace != 0) implies selected == original by simp;
-            have index < index + 1 by simp;
-        }
-    }
-    execute();
-    have index < index + 1 by simp;
-    frame();
-    simp();
-}
-"#;
-    let sources = [
-        ("vector_get.c", get_source),
-        ("vector_set.c", set_source),
-        ("vector_replace_if.c", replace_source),
-    ];
-    let (expanded_frame, _events) = crate::instrumentation::collect(|| {
-        expand_top_level_tactic_for_test(
-            click_source,
-            &sources,
-            "vector_replace_if",
-            CProofClaim::Grouped,
-            7,
-        )
-    });
-    let expanded_frame = expanded_frame
-        .expect("smart frame should expand with snapshot-correct loadability premises");
-
-    assert!(
-        expanded_frame.contains("frame() using {"),
-        "{expanded_frame}"
-    );
-    verify_c0_sources(&expanded_frame, &sources)
-        .expect("expanded frame certificate should independently check");
-
-    let expanded_have = expand_top_level_tactic_for_test(
-        click_source,
-        &sources,
-        "vector_set",
-        CProofClaim::Grouped,
-        6,
-    )
-    .expect("the snapshot-sensitive deferred have should expand");
-    let vector_set = expanded_have.find("int32 vector_set").unwrap();
-    let vector_set_end = expanded_have[vector_set..]
-        .find("int32 vector_replace_if")
-        .map(|offset| vector_set + offset)
-        .unwrap();
-    let expanded_have_body = &expanded_have[vector_set..vector_set_end];
-    assert!(
-        expanded_have_body.contains("apply(int32_increment_strictly_increases"),
-        "the deferred have should retain theorem-backed evidence: {expanded_have_body}"
-    );
-    assert!(
-        !expanded_have_body.contains("have index < (index + 1) by {\n        assumption();"),
-        "the deferred have must not cite its own ambient goal fact: {expanded_have_body}"
-    );
-    verify_c0_sources(&expanded_have, &sources)
-        .expect("the theorem-backed deferred have should verify normally");
-    let corrupted_have = expanded_have.replacen(
-        "have index < (index + 1) by {",
-        "have index == (index + 1) by {",
-        1,
-    );
-    assert!(
-        verify_c0_sources(&corrupted_have, &sources).is_err(),
-        "ordinary verification should reject a corrupted deferred have"
-    );
-
-    let execute_offset = expanded_frame
-        .rfind("    execute();")
-        .expect("common execute should exist")
-        + 4;
-    let execute_position = position_at_offset(&expanded_frame, execute_offset);
-    let expanded_execute = expand_c0_tactic_source_at(
-        &expanded_frame,
-        &sources,
-        execute_position.line,
-        execute_position.column,
-    )
-    .expect("common execute should expand after a resource branch");
-    verify_c0_sources(&expanded_execute, &sources)
-        .expect("expanded execute certificate should independently check");
 }
 
 #[test]
@@ -1731,7 +1516,6 @@ fn expansion_retains_callees_used_by_an_earlier_claim() {
 verifying "set_then_read.c";
 int32 set_cell(int32 p[], int32 value) {
     owns p[0..1] by auto;
-    mutable p[0..1] by { execute(); frame(); }
     ensures p[0] == value by auto;
     ensures result == value by auto;
 }
@@ -2066,16 +1850,13 @@ fn expands_selected_tactics_in_branched_execution_by_path() {
     let click_source = r#"verifying "write_selected.c";
 int32 write_selected(int32 p[2], int32 flag) {
     consumes p[0..2];
-    mutable p[0..2];
     ensures result == 0 or result == 1;
 } by {
     execute();
     if result == 0 {
         have result + 1 == 1 by simp;
-        frame();
     } else {
         have result - 1 == 0 by simp;
-        frame();
     }
     simp();
 }
@@ -2331,45 +2112,6 @@ fn pure_nested_have_branch_apply_expands_the_retained_proof_object_scope() {
         .expect("the serialized nested pure branch should independently reverify");
 }
 
-#[test]
-fn expands_qualified_frame_tactic() {
-    let c_source = r#"int32 set_cell(int32 p[], int32 value) {
-    p[0] = value;
-    return value;
-}"#;
-    let click_source = r#"verifying "set_cell.c";
-int32 set_cell(int32 p[], int32 value) {
-    owns p[0..1] by auto;
-    mutable p[0..1] by { execute(); frame(function); }
-    }
-"#;
-    let sources = [("set_cell.c", c_source)];
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
-    verified.expect("qualified frame baseline should verify");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim.starts_with("set_cell.")
-                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
-        )),
-        "the qualified smart frame must apply its selected proof step once through Proof: {events:#?}"
-    );
-    let selected_offset = click_source
-        .find("frame(function)")
-        .expect("qualified frame should exist");
-    let position = position_at_offset(click_source, selected_offset);
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
-            .expect("qualified frame should expand");
-
-    assert!(!expanded.contains("frame(function);"), "{expanded}");
-    assert!(expanded.contains("frame(function) using {"), "{expanded}");
-    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
-        panic!("expanded qualified frame should check:\n{error:?}\n{expanded}")
-    });
-}
 #[test]
 fn smart_inventory_does_not_invent_auto_sites_for_kernel_axiom_declarations() {
     let source = r#"

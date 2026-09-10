@@ -61,7 +61,7 @@ pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
 }
 
 fn is_tactic_name(name: &str) -> bool {
-    matches!(name, "auto" | "frame" | "simp")
+    matches!(name, "auto" | "simp")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -569,10 +569,6 @@ impl Parser {
             || !function_block.constructs().is_empty()
             || function_block
                 .ensures()
-                .iter()
-                .any(|clause| !matches!(clause.proof(), SourceProof::Default))
-            || function_block
-                .effects()
                 .iter()
                 .any(|clause| !matches!(clause.proof(), SourceProof::Default))
         {
@@ -1535,7 +1531,6 @@ impl Parser {
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
         let mut decreases = None;
-        let mut effects = Vec::new();
         let mut constructs = Vec::new();
         let mut ensures = Vec::new();
         let previous_struct_params =
@@ -1706,11 +1701,9 @@ impl Parser {
                     );
                 }
                 Some("immutable" | "mutable") => {
-                    let effect = self.parse_effect_clause()?;
-                    effects.push(
-                        apply_contract_lets_to_effect_clause(effect, &contract_lets)
-                            .map_err(|message| self.error(message))?,
-                    );
+                    return Err(self.error(
+                        "effect clauses were removed; declare ownership with `owns` and `views` (a narrow write is `views X; owns Y;`)",
+                    ));
                 }
                 Some("constructs") => {
                     self.position += 1;
@@ -1730,13 +1723,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `constructs`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -1745,12 +1738,9 @@ impl Parser {
         self.expect(Token::RBrace)?;
         let grouped_proof = if self.peek_ident() == Some("by") {
             let proof = self.parse_by_clause()?;
-            if effects
+            if ensures
                 .iter()
                 .any(|clause| !matches!(clause.proof(), SourceProof::Default))
-                || ensures
-                    .iter()
-                    .any(|clause| !matches!(clause.proof(), SourceProof::Default))
             {
                 return Err(self.error(
                     "a grouped function proof cannot be combined with individual claim proofs",
@@ -1760,19 +1750,16 @@ impl Parser {
         } else {
             None
         };
-        if external {
-            if decreases.is_some()
+        if external
+            && (decreases.is_some()
                 || grouped_proof.is_some()
                 || ensures
                     .iter()
-                    .any(|ensure| !matches!(ensure.proof(), SourceProof::Default))
-                || effects
-                    .iter()
-                    .any(|effect| !matches!(effect.proof(), SourceProof::Default))
-            {
-                return Err(self
-                    .error("external function contracts cannot carry proof or decreases clauses"));
-            }
+                    .any(|ensure| !matches!(ensure.proof(), SourceProof::Default)))
+        {
+            return Err(
+                self.error("external function contracts cannot carry proof or decreases clauses")
+            );
         }
         self.current_struct_params = previous_struct_params;
         self.current_resource_bindings = previous_resource_bindings;
@@ -1824,7 +1811,6 @@ impl Parser {
             requirement_label_indices,
             decreases,
             structural_clauses: Vec::new(),
-            effects,
             constructs,
             ensures,
             grouped_proof,
@@ -2660,87 +2646,23 @@ impl Parser {
                     ));
                 }
                 self.expect(Token::Semicolon)?;
-                Ok(vec![StructuralItem {
-                    kind: StructuralItemKind::Invariant,
-                    claim: StructuralItemClaim::Proposition(proposition),
-                    proof: SourceProof::Tactic(SmartTactic::Auto),
-                }])
+                Ok(vec![StructuralItem { claim: proposition }])
             }
-            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
-                let effect = self.parse_effect_after_keyword(kind)?;
-                let proof = self.parse_proof_clause_or_default()?;
-                Ok(vec![StructuralItem {
-                    kind: StructuralItemKind::Effect,
-                    claim: StructuralItemClaim::Effect(effect),
-                    proof,
-                }])
-            }
-            Some(Token::Ident(kind)) if kind == "step" => {
-                self.expect(Token::LBrace)?;
-                let mut items = Vec::new();
-                while self.peek() != Some(&Token::RBrace) {
-                    let effect_kind = self.expect_ident("step effect")?;
-                    if effect_kind != "immutable" && effect_kind != "mutable" {
-                        return Err(self.error(format!(
-                            "expected `immutable` or `mutable` inside `step`, got `{effect_kind}`"
-                        )));
-                    }
-                    let effect = self.parse_effect_after_keyword(effect_kind)?;
-                    let proof = self.parse_proof_clause_or_default()?;
-                    items.push(StructuralItem {
-                        kind: StructuralItemKind::StepEffect,
-                        claim: StructuralItemClaim::Effect(effect),
-                        proof,
-                    });
-                }
-                self.expect(Token::RBrace)?;
-                if items.is_empty() {
-                    return Err(self.error("`step` block must contain at least one effect"));
-                }
-                Ok(items)
+            Some(Token::Ident(kind))
+                if kind == "immutable" || kind == "mutable" || kind == "step" =>
+            {
+                Err(self.error(
+                    "loop effect clauses were removed; a loop frames by ownership by default, or declares `owns`/`views` of its own",
+                ))
             }
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected `invariant`, `immutable`, `mutable`, or `step`, got `{kind}`"
+                "expected `invariant`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected `invariant`, `immutable`, `mutable`, or `step`, got {token:?}"
+                "expected `invariant`, got {token:?}"
             ))),
-            None => Err(self.error(
-                "expected `invariant`, `immutable`, `mutable`, or `step`, got end of input",
-            )),
+            None => Err(self.error("expected `invariant`, got end of input")),
         }
-    }
-
-    fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
-        let effect = match self.next() {
-            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
-                self.parse_effect_after_keyword(kind)?
-            }
-            Some(Token::Ident(kind)) => {
-                return Err(self.error(format!("expected `immutable` or `mutable`, got `{kind}`")));
-            }
-            Some(token) => {
-                return Err(self.error(format!("expected `immutable` or `mutable`, got {token:?}")));
-            }
-            None => {
-                return Err(self.error("expected `immutable` or `mutable`, got end of input"));
-            }
-        };
-        let proof = self.parse_proof_clause_or_default()?;
-        Ok(EffectClause { effect, proof })
-    }
-
-    fn parse_effect_after_keyword(&mut self, kind: String) -> Result<Effect, ClickError> {
-        if kind == "immutable" {
-            return Ok(Effect::Immutable);
-        }
-
-        let mut segments = vec![self.parse_contract_segment()?];
-        while self.peek() == Some(&Token::Comma) {
-            self.position += 1;
-            segments.push(self.parse_contract_segment()?);
-        }
-        Ok(Effect::Mutable(segments))
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
@@ -3704,25 +3626,9 @@ impl Parser {
                 ProofTactic::ExecuteUntil(region_ref)
             }
             "frame" => {
-                self.expect(Token::LParen)?;
-                let region_ref = if self.peek() == Some(&Token::RParen) {
-                    None
-                } else {
-                    Some(self.parse_code_region_ref()?)
-                };
-                self.expect(Token::RParen)?;
-                if self.peek_ident() != Some("using") {
-                    ProofTactic::SmartFrame(region_ref)
-                } else {
-                    let premises = self.parse_exact_premises()?;
-                    if self.peek() == Some(&Token::Semicolon) {
-                        self.position += 1;
-                    }
-                    return Ok(ProofTactic::FrameUsing {
-                        region: region_ref,
-                        premises,
-                    });
-                }
+                return Err(self.error(
+                    "`frame` was removed; ownership frames untouched memory with no tactic",
+                ));
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
@@ -4167,7 +4073,11 @@ impl Parser {
     fn parse_tactic(&mut self) -> Result<SmartTactic, ClickError> {
         let tactic = match self.next() {
             Some(Token::Ident(name)) if name == "auto" => SmartTactic::Auto,
-            Some(Token::Ident(name)) if name == "frame" => SmartTactic::Frame,
+            Some(Token::Ident(name)) if name == "frame" => {
+                return Err(self.error(
+                    "`frame` was removed; ownership frames untouched memory with no tactic",
+                ));
+            }
             Some(Token::Ident(name)) if name == "simp" => SmartTactic::Simp,
             Some(Token::Ident(name)) => {
                 return Err(self.error(format!("expected tactic, got `{name}`")));
@@ -5122,27 +5032,27 @@ impl Parser {
         ) {
             if field.slot_end_bytes < field.offset_bytes
                 || (matches!(field.c_type, C0Type::Int32Array(_))
-                    && (field.slot_end_bytes - field.offset_bytes) % 4 != 0)
+                    && !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(4))
             {
                 return Err(self.error("inline array field has an invalid resource extent"));
             }
             return Ok(());
         }
         if matches!(field.c_type, C0Type::Int16 | C0Type::UInt16) {
-            if field.offset_bytes % 2 != 0
+            if !field.offset_bytes.is_multiple_of(2)
                 || field.byte_width != 2
                 || field.slot_end_bytes < field.offset_bytes
-                || (field.slot_end_bytes - field.offset_bytes) % 2 != 0
+                || !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(2)
             {
                 return Err(self.error("16-bit field places require two-byte alignment and width"));
             }
             return Ok(());
         }
         if matches!(field.c_type, C0Type::Int64 | C0Type::UInt64) {
-            if field.offset_bytes % 8 != 0
+            if !field.offset_bytes.is_multiple_of(8)
                 || field.byte_width != 8
                 || field.slot_end_bytes < field.offset_bytes
-                || (field.slot_end_bytes - field.offset_bytes) % 8 != 0
+                || !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(8)
             {
                 return Err(
                     self.error("64-bit field places require eight-byte alignment and width")
@@ -5156,7 +5066,9 @@ impl Parser {
             }
             return Ok(());
         }
-        if field.offset_bytes % 4 != 0 || field.byte_width % 4 != 0 || field.slot_end_bytes % 4 != 0
+        if !field.offset_bytes.is_multiple_of(4)
+            || !field.byte_width.is_multiple_of(4)
+            || !field.slot_end_bytes.is_multiple_of(4)
         {
             return Err(
                 self.error("field places currently require int32-aligned offsets and widths")
@@ -5250,10 +5162,7 @@ impl Parser {
 
     fn parse_contract_multiply(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_unary()?;
-        loop {
-            let Some(operator) = self.peek() else {
-                break;
-            };
+        while let Some(operator) = self.peek() {
             let constructor = match operator {
                 Token::Star => ContractExpression::Multiply,
                 Token::Slash => ContractExpression::Divide,
@@ -5705,10 +5614,10 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        return Ok(ContractExpression::AlgebraicMatch {
+        Ok(ContractExpression::AlgebraicMatch {
             scrutinee: Box::new(scrutinee),
             arms,
-        });
+        })
     }
 
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
@@ -6218,10 +6127,7 @@ impl Parser {
 
     fn parse_ensure_multiply(&mut self) -> Result<C0Expression, ClickError> {
         let mut expression = self.parse_ensure_unary()?;
-        loop {
-            let Some(operator) = self.peek() else {
-                break;
-            };
+        while let Some(operator) = self.peek() {
             let constructor = match operator {
                 Token::Star => C0Expression::Multiply,
                 Token::Slash => C0Expression::Divide,

@@ -701,7 +701,7 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
         let source = load_audit_source(&canonical_path)?;
         let AuditSource {
             click_source,
-            c_sources,
+            c_sources: _,
             inputs,
             line_offset,
             ..
@@ -1342,6 +1342,7 @@ fn audit_artifact_path(source: &Path) -> PathBuf {
     source.with_file_name(format!("{stem}.audit-expanded.{extension}"))
 }
 
+#[cfg(test)]
 fn expand_location(location: &str) -> Result<String, String> {
     let (click_path, line, column) = cli::parse_source_location(location)?;
     let source = load_audit_source(&click_path)?;
@@ -1380,7 +1381,7 @@ fn expand_location_with_source_parts(
         }
     }
     .map_err(|error| error.message().to_string())?;
-    if looks_like_mdtest(&click_path) {
+    if looks_like_mdtest(click_path) {
         source
             .mdtest
             .as_ref()
@@ -1396,15 +1397,6 @@ fn expand_location_with_source_parts(
 /// resolving its C sources relative to the original on-disk sidecar path.
 /// The unit is re-located by claim (its first tactic source) because the
 /// rewrite moves source positions.
-fn verify_rewritten(
-    original_click_path: &Path,
-    claim_label: &str,
-    rewritten: &str,
-) -> Result<(), String> {
-    let source = load_audit_source_from_text(original_click_path, rewritten.to_string())?;
-    verify_rewritten_with_inputs(&source, claim_label, &source.click_source)
-}
-
 fn verify_rewritten_with_inputs(
     source: &AuditSource,
     claim_label: &str,
@@ -1430,6 +1422,7 @@ fn verify_rewritten_with_inputs(
     .map_err(|error| error.message().to_string())
 }
 
+#[cfg(test)]
 fn claim_source_position(
     source: &AuditSource,
     claim_label: &str,
@@ -1474,6 +1467,7 @@ fn claim_source_position_for_inputs(
 /// original sidecar.
 /// On success the rewritten source is echoed so the caller's byte-identical
 /// comparison passes.
+#[cfg(test)]
 fn reexpand_source(
     click_path: &Path,
     claim_label: &str,

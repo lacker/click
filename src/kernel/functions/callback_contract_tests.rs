@@ -313,7 +313,7 @@ fn selected_callback_does_not_visit_unrelated_functions() {
 }
 
 fn check_unrelated_functions(select: bool) {
-    let contracts = vec![interface(0), interface(1)];
+    let contracts = [interface(0), interface(1)];
     let contracts = contracts.iter().collect::<Vec<_>>();
     let mut samples = Vec::new();
     for count in [0, 16, 64, 256] {

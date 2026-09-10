@@ -531,7 +531,7 @@ impl<'a> Proof<'a> {
                     execution.view(context),
                     &matched,
                     SurfaceFactMatch::CanonicalExact,
-                    &self.facts(),
+                    self.facts(),
                     &lowering_assumptions,
                     parameters,
                     arguments,

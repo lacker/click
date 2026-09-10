@@ -1,6 +1,5 @@
 use super::diagnostics::{
-    describe_code_region_ref, describe_contract_expression, describe_contract_segment,
-    describe_snapshot_selector,
+    describe_contract_expression, describe_contract_segment, describe_snapshot_selector,
 };
 use super::*;
 
@@ -448,31 +447,11 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 );
             }
             for item in loop_clause.items() {
-                match item.kind() {
-                    StructuralItemKind::Invariant => {
-                        output.push_str(&body_prefix);
-                        output.push_str("invariant");
-                        output.push(' ');
-                        output.push_str(&source_click_proposition(
-                            item.proposition().expect("proposition structural item"),
-                        ));
-                        if item.kind() == StructuralItemKind::Invariant {
-                            output.push_str(";\n");
-                        } else {
-                            output.push(' ');
-                            write_proof(output, item.proof(), indent + 1);
-                            output.push('\n');
-                        }
-                    }
-                    StructuralItemKind::Effect => {
-                        write_structural_effect(output, item, indent + 1);
-                    }
-                    StructuralItemKind::StepEffect => {
-                        line(output, &body_prefix, "step {");
-                        write_structural_effect(output, item, indent + 2);
-                        line(output, &body_prefix, "}");
-                    }
-                }
+                output.push_str(&body_prefix);
+                output.push_str("invariant");
+                output.push(' ');
+                output.push_str(&source_click_proposition(item.proposition()));
+                output.push_str(";\n");
             }
             if let Some(proof) = loop_clause.initialize_proof() {
                 output.push_str(&body_prefix);
@@ -594,48 +573,11 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::FrameUsing { region, premises } => {
-            line(
-                output,
-                &prefix,
-                &format!(
-                    "frame({}) using {{",
-                    region
-                        .as_ref()
-                        .map(describe_code_region_ref)
-                        .unwrap_or_default()
-                ),
-            );
-            write_premise_list(output, premises, indent + 1);
-            line(output, &prefix, "}");
-        }
         ProofTactic::SmartExecute
         | ProofTactic::SmartExecuteAllPaths
         | ProofTactic::ExecuteUntil(_)
-        | ProofTactic::SmartFrame(_)
         | ProofTactic::Simp => unreachable!("certificate validation rejects this tactic"),
     }
-}
-
-fn write_structural_effect(output: &mut String, item: &StructuralItem, indent: usize) {
-    let prefix = "    ".repeat(indent);
-    let effect = item.effect().expect("effect structural item");
-    match effect {
-        Effect::Immutable => output.push_str(&format!("{prefix}immutable")),
-        Effect::Mutable(segments) => {
-            output.push_str(&format!("{prefix}mutable "));
-            output.push_str(
-                &segments
-                    .iter()
-                    .map(describe_contract_segment)
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-        }
-    }
-    output.push(' ');
-    write_proof(output, item.proof(), indent);
-    output.push('\n');
 }
 
 fn write_proof(output: &mut String, proof: &SourceProof, indent: usize) {

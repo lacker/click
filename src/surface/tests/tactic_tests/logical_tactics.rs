@@ -485,23 +485,6 @@ fn parses_simp_tactic() {
 }
 
 #[test]
-fn parses_frame_tactic() {
-    let source = r#"
-            verifying "write_second.c";
-
-            int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
-                mutable p[1..2] by frame;
-                ensures returns_written: result == 9 by auto;
-            }
-        "#;
-    let file = parse(source).expect("frame tactic should parse");
-    let effect = &file.function_blocks()[0].effects()[0];
-
-    assert!(matches!(effect.proof().tactic(), Some(SmartTactic::Frame)));
-}
-
-#[test]
 fn parses_memory_postcondition() {
     let source = FILL3_CLICK.replace("result == 2", "p[2] == 2");
     let file = parse(&source).expect("sidecar should parse");
@@ -557,7 +540,7 @@ fn rejects_legacy_structural_region_syntax() {
 
 #[test]
 fn rejects_legacy_proof_tactic_region_syntax() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute(); frame(loop 0); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); execute_until(loop 0); }");
     let error = parse(&source).expect_err("legacy proof tactic region syntax should fail");
 
     assert!(
@@ -585,8 +568,6 @@ fn parses_click_proposition_syntax() {
                 ensures quantified: forall (k: int32) {
                     0 <= k implies k >= 0
                 } by auto;
-                immutable by auto;
-                mutable p[0..n], q[1..m] by auto;
             }
         "#;
     let file = parse(source).expect("proposition syntax should parse");
@@ -618,12 +599,6 @@ fn parses_click_proposition_syntax() {
         function.ensures()[3].ensure(),
         Ensure::Proposition(ClickProposition::ForAll { .. })
     ));
-    assert_eq!(function.effects().len(), 2);
-    assert!(matches!(function.effects()[0].effect(), Effect::Immutable));
-    match function.effects()[1].effect() {
-        Effect::Mutable(segments) => assert_eq!(segments.len(), 2),
-        effect => panic!("expected mutable effect, got {effect:?}"),
-    }
 }
 
 #[test]
@@ -1132,17 +1107,6 @@ fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
     assert_eq!(simp_errors[0], simp_errors[1]);
     assert_eq!(simp_errors[0], simp_errors[2]);
     assert!(simp_errors[0].contains("requires execution to reach function exit first"));
-
-    let frame_errors = ["by frame;", "by { frame(); }"].map(|proof| {
-        let source =
-            format!("verifying \"identity.c\"; int32 identity(int32 x) {{ immutable {proof} }}");
-        verify_c0_sources(&source, &[("identity.c", c_source)])
-            .expect_err("frame at function entry should not execute")
-            .message()
-            .to_string()
-    });
-    assert_eq!(frame_errors[0], frame_errors[1]);
-    assert!(frame_errors[0].contains("requires execution to reach function exit first"));
 }
 
 #[test]
@@ -1163,7 +1127,6 @@ fn every_claim_proof_form_retains_expandable_provenance() {
             int32 clamp(int32 p[1], int32 x) {
                 requires loadable(p[0..1]);
                 consumes p[0..1];
-                mutable p[0..1];
                 ensures result >= 0 by {
                     execute();
                     simp();
@@ -2915,13 +2878,11 @@ fn outcome_predecessor_upper_bound_writes_a_rewritten_nonnegative_leg() {
             requires ordered_pair(pair);
             requires pair->low == 1;
             owns object(pair);
-            mutable pair->low;
 
             ensures ordered_pair(pair);
         } by {
             unfold(ordered_pair);
             execute();
-            frame();
             simp();
         }
     "#;

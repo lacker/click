@@ -45,7 +45,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         parsed_function.parameters(),
         arguments,
         proof_context.old_reference_state(&execution.core.frontier, state),
-        &state,
+        state,
         None,
         None,
         ExecutionView::new(
@@ -122,7 +122,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
                         parsed_function.parameters(),
                         arguments,
                         proof_context.old_reference_state(&execution.core.frontier, state),
-                        &state,
+                        state,
                         None,
                         None,
                         ExecutionView::new(
@@ -239,13 +239,6 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
     let initial_state = execution.core.frontier.execution_start_state(state).clone();
-    // A frontier-local whole-loop effect already supplies the loop's range;
-    // inheriting the function effect as well duplicates the frame path. Loops
-    // without one still need the function summary for static-storage writes.
-    let inherit_function_effects_into_loops = !loop_template
-        .items()
-        .iter()
-        .any(|item| item.kind() == StructuralItemKind::Effect);
     let annotated = annotated_function(
         &bound_function_block,
         parsed_function,
@@ -254,7 +247,6 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        inherit_function_effects_into_loops,
     )?;
     if execution.core.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
@@ -385,14 +377,6 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             .map(|certificate| certificate.to_proof_tactics().to_vec())
             .unwrap_or_else(|| vec![ProofTactic::Assumption]),
     ));
-    for (item_index, item) in expanded_loop.items.iter_mut().enumerate() {
-        if !item.is_effect_kind() {
-            continue;
-        }
-        if let Some(certificate) = certificates.effects.get(&item_index) {
-            item.proof = SourceProof::Script(certificate.to_proof_tactics().to_vec());
-        }
-    }
     let local_function_environment = function_environment.clone().with_verified_loop_rules(
         execution
             .core
@@ -522,7 +506,6 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
                 SourceProof::Default
                 | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => Plan::DirectSmart,
                 SourceProof::Script(tactics) => Plan::Script(tactics),
-                SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
             };
             let goal = lower_fixed_state_proposition(
                 &have.proposition,
@@ -532,7 +515,7 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
                 pre_state,
                 state,
                 result,
-                &view.recorded_snapshots,
+                view.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -556,13 +539,13 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
         state,
         result,
         premise_anchor,
-        &view.recorded_snapshots,
+        view.recorded_snapshots,
         surface_propositions,
         predicate_environment,
         click_function_environment,
         theorem_environment,
         unfolded_predicates,
-        &view.effect_facts,
+        view.effect_facts,
         original_requirements,
         requirement_label_indices,
     );

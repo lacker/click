@@ -261,7 +261,6 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
 
             int32 replace_allocated_cell(struct cell_owner* owner) {
                 consumes allocated_cell(owner);
-                mutable owner->data, owner->data[0..1];
                 produces allocated_cell(owner);
 
                 ensures result == 0 or result == 1;
@@ -270,13 +269,11 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
                 unfold(allocated_cell(owner));
                 execute();
                 fold(allocated_cell(owner));
-                frame();
                 simp();
             }
 
             int32 replace_after_scoped_open(struct cell_owner* owner) {
                 consumes allocated_cell(owner);
-                mutable owner->data, owner->data[0..1];
                 produces allocated_cell(owner);
 
                 ensures result == 0 or result == 1;
@@ -290,7 +287,6 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
                 } else {
                     step();
                 }
-                frame();
                 simp();
             }
         "#;
@@ -379,7 +375,6 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
 
             int32 replace_allocated_cell(struct cell_owner* owner) {
                 consumes allocated_cell(owner);
-                mutable owner->data, owner->data[0..1];
                 produces allocated_cell(owner);
 
                 ensures result == 0 or result == 1;
@@ -390,13 +385,11 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
                 unfold(allocated_cell(owner));
                 execute();
                 fold(allocated_cell(owner));
-                frame();
                 simp();
             }
 
             int32 replace_then_branch(struct cell_owner* owner) {
                 consumes allocated_cell(owner);
-                mutable owner->data, owner->data[0..1];
                 produces allocated_cell(owner);
 
                 ensures result == 0 or result == 1;
@@ -412,7 +405,6 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
                     step();
                     step();
                 }
-                frame();
                 simp();
             }
         "#;
@@ -505,7 +497,6 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
             verifying "identity_after_prefix.c";
 
             int32 identity_after_prefix(int32 x) {
-                immutable;
                 ensures result == x;
             } by {
                 step();
@@ -516,7 +507,6 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
                     step();
                     step();
                 }
-                frame();
                 simp();
             }
     "#;
@@ -577,13 +567,11 @@ fn post_execution_resource_fold_completes_without_a_body_rerun() {
 
         int32 preserve_cell(int32 p[]) {
             owns cell(p);
-            immutable;
             ensures result == old(p[0]);
         } by {
             unfold(cell(p));
             execute();
             fold(cell(p));
-            frame();
             simp();
         }
     "#;
@@ -662,7 +650,6 @@ fn quantified_fold_after_execution_completes_without_a_body_rerun() {
         void produce_population(struct owner* owner, int32 amount) {
             requires 0 <= amount;
             owns object(owner);
-            mutable owner->capacity;
             produces amount of slot(owner);
 
             ensures valid_capacity(owner);
@@ -670,14 +657,12 @@ fn quantified_fold_after_execution_completes_without_a_body_rerun() {
             execute();
             if 0 < amount {
                 fold(amount of slot(owner));
-                frame();
                 simp();
             } else {
                 apply(int32_ge_and_not_gt_implies_eq(amount, 0)) using {
                     0 <= amount;
                     not (0 < amount);
                 }
-                frame();
                 simp();
             }
         }
@@ -755,11 +740,9 @@ fn counted_resource_entry_completes_without_a_body_rerun() {
 
         int32 preserve(int32 x) {
             owns 2 of marker(x);
-            immutable;
             ensures result == x;
         } by {
             step();
-            frame();
             simp();
         }
     "#;
@@ -969,23 +952,19 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
             void set_one(int32 data[], int32 permit) {
                 requires permit >= 0;
                 owns data[0..1];
-                mutable data[0..1];
                 ensures data[0] == 1;
             } by {
                 execute();
-                frame();
                 simp();
             }
 
             int32 call_set_one(int32 data[], int32 permit) {
                 requires permit >= 1;
                 owns data[0..1];
-                mutable data[0..1];
                 ensures exact: result == 1;
                 ensures post_call: data[0] == 1;
             } by {
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -1020,7 +999,6 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
         .nth(1)
         .expect("the expanded source should retain the selected caller");
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
-    assert!(!caller_expansion.contains("frame();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
     assert!(caller_expansion.contains("step();"), "{expanded}");
     verify_c0_sources(&expanded, sources)
@@ -1069,12 +1047,10 @@ fn outcome_simp_spells_a_call_postcondition_across_two_snapshots() {
                 requires p != 0;
                 owns p->x;
                 owns p->y;
-                mutable p->x, p->y;
                 ensures p->x == old(p->x);
                 ensures p->y == 1;
             } by {
                 execute();
-                frame();
                 simp();
             }
 
@@ -1082,11 +1058,9 @@ fn outcome_simp_spells_a_call_postcondition_across_two_snapshots() {
                 requires p != 0;
                 owns p->x;
                 owns p->y;
-                mutable p->x, p->y;
                 ensures result == old(p->x);
             } by {
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -1254,26 +1228,22 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
 
             int32 set_seven(int32* cell) {
                 consumes owned_cell(cell);
-                mutable cell[0..1];
                 produces owned_cell(cell);
                 ensures result == 7;
             } by {
                 open(owned_cell(cell)) {
                     execute();
-                    frame();
                 }
                 simp();
             }
 
             int32 set_wrapped_seven(int32* cell) {
                 consumes wrapped_cell(cell);
-                mutable cell[0..1];
                 produces wrapped_cell(cell);
                 ensures result == 7;
             } by {
                 open(wrapped_cell(cell)) {
                     execute();
-                    frame();
                 }
                 simp();
             }
@@ -1320,7 +1290,6 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
         "{expanded}"
     );
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
-    assert!(!caller_expansion.contains("frame();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, sources)
         .expect("the rewritten scoped composite-call proof should verify normally");
@@ -1367,27 +1336,23 @@ fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
 
             int32 set_seven(int32* cell, int32 choose) {
                 consumes owned_cell(cell);
-                mutable cell[0..1];
                 produces owned_cell(cell);
                 ensures result == 0 or result == 1;
             } by {
                 open(owned_cell(cell)) {
                     execute();
-                    frame();
                 }
                 simp();
             }
 
             int32 prepare_then_set_seven(int32* cell, int32 choose) {
                 consumes wrapped_cell(cell);
-                mutable cell[0..1];
                 produces wrapped_cell(cell);
                 ensures result == 0 or result == 1;
             } by {
                 open(wrapped_cell(cell)) {
                 }
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -1429,11 +1394,10 @@ fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
         .nth(1)
         .expect("the expanded source should retain the selected caller");
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
-    assert!(!caller_expansion.contains("frame();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
     assert!(caller_expansion.contains("open(wrapped_cell(cell))"));
     verify_c0_sources(&expanded, sources)
-        .expect("the rewritten preparatory-scope proof should verify normally");
+        .unwrap_or_else(|error| panic!("TEMP {error:?}\n{expanded}"));
 }
 
 #[test]
@@ -1461,7 +1425,6 @@ fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
                 requires x <= 2147483645;
                 owns first_marker(x);
                 owns second_marker(x);
-                immutable;
                 ensures result == (x + 1) + 1;
             } by {
                 open(first_marker(x)) {
@@ -1470,7 +1433,6 @@ fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
                 open(second_marker(x)) {
                     execute();
                 }
-                frame();
                 simp();
             }
         "#;
@@ -1509,7 +1471,6 @@ fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
         "both top-level scopes should be serialized: {expanded}"
     );
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
-    assert!(!caller_expansion.contains("frame();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, sources)
         .expect("the rewritten sequential-scope proof should verify normally");
@@ -1796,7 +1757,6 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
 
             int32 inspect_pair(int32 left[], int32 right[]) {
                 owns pair(left, right);
-                immutable;
                 ensures result == 0;
             } by {
                 observe(pair(left, right));
@@ -1809,7 +1769,6 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
                 }
                 fold(pair(left, right));
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -1884,7 +1843,7 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
 }
 
 #[test]
-fn grouped_mutable_outcome_resources_stay_on_one_proof() {
+fn grouped_owned_outcome_resources_stay_on_one_proof() {
     let c_source = r#"
             int32 set_seven(int32* cell) {
                 cell[0] = 7;
@@ -1901,7 +1860,6 @@ fn grouped_mutable_outcome_resources_stay_on_one_proof() {
 
             int32 set_seven(int32* cell) {
                 owns seven_cell(cell);
-                mutable cell[0..1];
                 ensures result == 7;
             } by {
                 unfold(seven_cell(cell));
@@ -1910,9 +1868,6 @@ fn grouped_mutable_outcome_resources_stay_on_one_proof() {
                     simp();
                 }
                 fold(seven_cell(cell));
-                frame() using {
-                    cell[0] == 7;
-                }
                 simp();
             }
         "#;
@@ -1930,49 +1885,28 @@ fn grouped_mutable_outcome_resources_stay_on_one_proof() {
                 })
             }
         });
-    verified.expect("mutable outcome resource operations should verify through Proof");
+    verified.expect("owned outcome resource operations should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
     assert_eq!(
         context_exports, 0,
-        "the mutable outcome Proof must not export semantic state"
+        "the owned outcome Proof must not export semantic state"
     );
     assert_eq!(
         certificate_checks, 0,
-        "ordinary mutable outcome verification must not check a certificate"
+        "ordinary owned outcome verification must not check a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
-        "mutable outcome resource operations must apply directly to Proof"
+        "owned outcome resource operations must apply directly to Proof"
     );
 
     let expanded = expand_c0_claim_source(click_source, sources, "set_seven", CProofClaim::Grouped)
-        .expect("the retained mutable outcome Proof should expand");
+        .expect("the retained owned outcome Proof should expand");
     assert!(expanded.contains("unfold(seven_cell(cell));"), "{expanded}");
     assert!(expanded.contains("have cell[0] == 7 by {"), "{expanded}");
     assert!(expanded.contains("fold(seven_cell(cell));"), "{expanded}");
     verify_c0_sources(&expanded, sources)
-        .expect("the rewritten mutable outcome proof should verify normally");
-
-    let frame_fact = "cell[0] == 7;";
-    let frame_fact_offset = expanded
-        .rfind(frame_fact)
-        .expect("expanded frame should retain its checked premise");
-    let mut corrupted = expanded.clone();
-    corrupted.replace_range(
-        frame_fact_offset..frame_fact_offset + frame_fact.len(),
-        "cell[0] == 8;",
-    );
-    assert_ne!(
-        corrupted, expanded,
-        "expansion should expose the post-execution frame premise"
-    );
-    let (corrupted_result, corrupted_fallbacks) =
-        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources)) };
-    corrupted_result.expect_err("tampering with the post-execution frame premise must fail");
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "invalid migrated outcome work must not become a compatibility miss"
-    );
+        .expect("the rewritten owned outcome proof should verify normally");
 }
 
 #[test]
@@ -2028,15 +1962,11 @@ fn post_execution_frame_using_relowers_a_preceding_have_fact() {
             int32 clear_first(int32 data[]) {
                 consumes data[0..1];
                 produces data[0..1];
-                mutable data[0..1];
                 ensures data[0] == 0;
             } by {
                 execute();
                 have data[0] == 0 by {
                     normalize();
-                }
-                frame() using {
-                    data[0] == 0;
                 }
                 simp();
             }
@@ -2095,47 +2025,6 @@ fn ordinary_verification_stops_at_the_tactic_deadline() {
 }
 
 #[test]
-fn smart_frame_reports_its_real_time_deadline() {
-    let c_source = r#"
-        int32 write_first(int32* data) {
-            data[0] = 1;
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        verifying "write_first.c";
-
-        int32 write_first(int32* data) {
-            consumes data[0..1];
-            produces data[0..1];
-            mutable data[0..1];
-        } by {
-            step();
-            step();
-            frame();
-            simp();
-        }
-    "#;
-    let limits = crate::instrumentation::TacticLimits {
-        simple: std::time::Duration::from_secs(1),
-        smart: std::time::Duration::ZERO,
-        control: std::time::Duration::from_secs(1),
-    };
-
-    let error = crate::instrumentation::with_tactic_limits(limits, || {
-        verify_c0_sources(click_source, &[("write_first.c", c_source)])
-    })
-    .expect_err("smart frame should observe its zero tactic deadline");
-
-    assert!(error.message().contains("real-time limit"), "{error:?}");
-    assert!(error.message().contains("frame"), "{error:?}");
-    assert!(
-        error.message().contains("explicit simple tactics"),
-        "{error:?}"
-    );
-}
-
-#[test]
 fn verifies_omitted_proof_with_default_prover() {
     let c_source = r#"
             int32 zero() {
@@ -2146,7 +2035,6 @@ fn verifies_omitted_proof_with_default_prover() {
             verifying "zero.c";
 
             int32 zero() {
-                immutable;
                 ensures returns_zero: result == 0;
             }
         "#;
@@ -2154,100 +2042,8 @@ fn verifies_omitted_proof_with_default_prover() {
     let verified = verify_c0_sources(click_source, &[("zero.c", c_source)])
         .expect("omitted proof clauses should use the default prover");
 
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
-}
-
-#[test]
-fn verifies_mutable_effect_with_bounded_frame_tactics() {
-    let c_source = r#"
-            int32 write_second(int32* p) {
-                p[1] = 9;
-                return p[1];
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_second.c";
-
-            int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
-                consumes p[1..2];
-                mutable p[1..2] by {
-                    execute();
-                    frame();
-                }
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect("bounded frame tactics should prove mutable effect");
-    let expected_tactics = [ProofTactic::SmartExecute, ProofTactic::SmartFrame(None)];
-
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(
-        verified[0].proof_tactics(),
-        Some(expected_tactics.as_slice())
-    );
-}
-
-#[test]
-fn bare_frame_tactic_rejects_ensure_claim() {
-    let c_source = r#"
-            int32 identity(int32 x) {
-                return x;
-            }
-        "#;
-    let click_source = r#"
-            verifying "identity.c";
-
-            int32 identity(int32 x) {
-                ensures returns_x: result == x by {
-                    execute();
-                    frame();
-                }
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
-        .expect_err("bare frame tactic should not prove postconditions");
-
-    assert!(
-        error
-            .message()
-            .contains("`frame` has no effect claim to prove"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn simp_rejects_effect_clauses() {
-    let c_source = r#"
-            int32 zero() {
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "zero.c";
-
-            int32 zero() {
-                immutable by simp;
-                ensures returns_zero: result == 0 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("zero.c", c_source)])
-        .expect_err("simp should not prove effect clauses");
-
-    assert!(
-        error
-            .message()
-            .contains("`simp` does not prove effect clauses"),
-        "{}",
-        error.message()
-    );
 }
 
 #[test]
@@ -2412,7 +2208,6 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
                 consumes p[i..i + 1];
                 views p[j..j + 1];
                 requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
-                mutable p[i..i + 1] by { execute(); frame(); }
                 ensures keeps_j: result == old(p[j]) by auto;
             }
         "#;
@@ -2420,7 +2215,7 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
     let verified = verify_c0_sources(click_source, &[("write_i_read_j.c", c_source)])
         .expect("separate singleton ranges should prove symbolic unwritten read");
 
-    assert_eq!(verified.len(), 2);
+    assert_eq!(verified.len(), 1);
 
     let offset = click_source.find("auto").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -2437,409 +2232,6 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("write_i_read_j.c", c_source)])
         .expect("expanded unwritten read should check");
-}
-
-#[test]
-fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
-    let c_source = r#"
-            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
-                p[i] = 9;
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_in_bounds.c";
-
-            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires i >= 0;
-                requires i < n;
-                requires loadable(p[0..n]);
-                requires loadable(unrelated[0..1]);
-                consumes p[0..n];
-                mutable p[0..n] by { execute(); frame(); }
-            }
-        "#;
-
-    let ((verified, _events), planning_transitions) =
-        collect_planning_statement_transitions(|| {
-            crate::instrumentation::collect(|| {
-                verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-            })
-        });
-    let verified = verified.expect("contextual frame should verify");
-    assert!(
-        planning_transitions.is_empty(),
-        "the complete effect script must search only on checked Proof descendants: \
-         {planning_transitions:#?}"
-    );
-    let theorem = verified
-        .iter()
-        .find(|theorem| theorem.effect_clause().is_some())
-        .expect("effect claim should use the frame proof");
-    let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
-        panic!(
-            "contextual frame should have a surface expansion: {:?}",
-            theorem.expansion_blocker()
-        )
-    });
-    assert!(
-        expanded
-            .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
-    );
-    let statement_steps = expanded
-        .iter()
-        .filter_map(|tactic| match tactic {
-            ProofTactic::Step => Some::<&[ClickProposition]>(&[]),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        statement_steps.len(),
-        2,
-        "the store and return should each occur exactly once in the retained certificate: {expanded:#?}"
-    );
-    assert!(
-        statement_steps
-            .iter()
-            .all(|premises| !format!("{premises:?}").contains("unrelated")),
-        "statement selection leaked an unrelated indexed fact: {statement_steps:#?}"
-    );
-    assert!(
-        !format!("{expanded:?}").contains("Derive("),
-        "contextual frame expansion retained a legacy derive certificate: {expanded:?}"
-    );
-    let Some(ProofTactic::FrameUsing {
-        region: None,
-        premises,
-    }) = expanded.last()
-    else {
-        panic!("contextual frame should end in exact frame check: {expanded:?}");
-    };
-    assert!(
-        !format!("{premises:?}").contains("unrelated"),
-        "an irrelevant ambient loadability fact leaked into the exact frame certificate: {premises:?}"
-    );
-    ProofCertificate::from_proof_tactics(&expanded)
-        .expect("contextual frame expansion should be a surface certificate");
-}
-
-#[test]
-fn call_footprint_alias_is_reproved_by_explicit_frame_premise() {
-    let callee_c = r#"
-        void touch_prefix(int32 data[], int32 length_cell[], int32 length) {
-            data[0] = 9;
-        }
-    "#;
-    let caller_c = r#"
-        int32 call_touch_prefix(int32 data[], int32 length_cell[], int32 length) {
-            touch_prefix(data, length_cell, length);
-            return 0;
-        }
-    "#;
-    let click_source = r#"
-        verifying "touch_prefix.c";
-        verifying "call_touch_prefix.c";
-
-        void touch_prefix(int32 data[], int32 length_cell[], int32 length) {
-            requires 1 <= length;
-            requires length_cell[0] == length;
-            consumes data[0..length];
-            views length_cell[0..1];
-            mutable data[0..length_cell[0]];
-        } by {
-            execute();
-            frame();
-        }
-
-        int32 call_touch_prefix(int32 data[], int32 length_cell[], int32 length) {
-            requires 1 <= length;
-            requires length_cell[0] == length;
-            consumes data[0..length];
-            views length_cell[0..1];
-            mutable data[0..length];
-            ensures result == 0;
-        } by {
-            execute();
-            frame();
-            simp();
-        }
-    "#;
-    let sources = [
-        ("touch_prefix.c", callee_c),
-        ("call_touch_prefix.c", caller_c),
-    ];
-
-    let verified = verify_c0_sources(click_source, &sources)
-        .expect("the call footprint should be restated from its exact endpoint equality");
-    let theorem = verified
-        .iter()
-        .find(|theorem| {
-            theorem.function_block.signature().name() == "call_touch_prefix"
-                && theorem.effect_clause().is_some()
-        })
-        .expect("the caller contract theorem should be present");
-    let expanded = theorem
-        .expanded_proof_tactics()
-        .expect("the caller proof should retain a simple expansion");
-    let Some(ProofTactic::FrameUsing { premises, .. }) = expanded
-        .iter()
-        .find(|tactic| matches!(tactic, ProofTactic::FrameUsing { .. }))
-    else {
-        panic!("the call footprint should end in an explicit frame operation: {expanded:#?}");
-    };
-    assert!(
-        premises.iter().any(|premise| {
-            format!("{premise:?}").contains("length_cell")
-                && format!("{premise:?}").contains("length")
-        }),
-        "the explicit frame must retain the endpoint equality: {expanded:#?}"
-    );
-    let expanded_source = expand_c0_claim_source(
-        click_source,
-        &sources,
-        "call_touch_prefix",
-        CProofClaim::Grouped,
-    )
-    .expect("the caller proof should expand");
-    verify_c0_sources(&expanded_source, &sources)
-        .expect("the explicit footprint restatement should independently reverify");
-}
-
-#[test]
-fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
-    let c_source = r#"
-            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
-                p[i] = 9;
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_in_bounds.c";
-
-            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires i >= 0;
-                requires i < n;
-                requires loadable(p[0..n]);
-                requires loadable(unrelated[0..1]);
-                consumes p[0..n];
-                mutable p[0..n];
-            } by {
-                execute();
-                frame();
-            }
-        "#;
-
-    let (result, flat_units) = proof::count_flat_proof_units(|| {
-        {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    collect_planning_statement_transitions(|| {
-                        crate::instrumentation::collect(|| {
-                            verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-                        })
-                    })
-                })
-            })
-        }
-    });
-    let (result, context_exports) = result;
-    let (result, certificate_checks) = result;
-    let ((verified, _events), planning_transitions) = result;
-    let verified = verified.expect("the grouped effect proof should verify");
-    assert_eq!(
-        flat_units, 1,
-        "the grouped effect proof should retain one Proof"
-    );
-    assert_eq!(
-        context_exports, 0,
-        "the grouped effect Proof must not export into an entry execution state"
-    );
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary grouped effect verification must not check a source certificate"
-    );
-    assert!(
-        planning_transitions.is_empty(),
-        "the complete grouped effect script must search only on checked Proof descendants: \
-         {planning_transitions:#?}"
-    );
-    let expanded = verified[0]
-        .expanded_proof_tactics()
-        .expect("the grouped effect proof should retain a simple certificate");
-    assert_eq!(
-        expanded
-            .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Step))
-            .count(),
-        2,
-        "the grouped store and return should each be retained exactly once: {expanded:#?}"
-    );
-    assert!(
-        !format!("{expanded:?}").contains("unrelated"),
-        "the grouped certificate selected an unrelated indexed fact: {expanded:#?}"
-    );
-    assert!(matches!(
-        expanded.last(),
-        Some(ProofTactic::FrameUsing { region: None, .. })
-    ));
-    ProofCertificate::from_proof_tactics(&expanded)
-        .expect("the grouped effect expansion should be a simple certificate");
-
-    let expanded_source = expand_c0_claim_source(
-        click_source,
-        &[("write_in_bounds.c", c_source)],
-        "write_in_bounds",
-        CProofClaim::Grouped,
-    )
-    .expect("the grouped effect proof should expand");
-    verify_c0_sources(&expanded_source, &[("write_in_bounds.c", c_source)])
-        .expect("the grouped retained certificate should independently verify");
-}
-
-#[test]
-fn grouped_contextual_frame_combines_multiple_effect_certificates_on_proof() {
-    let c_source = r#"
-            int32 write_both(int32* p, int32* q, int32 n, int32* unrelated) {
-                p[0] = 1;
-                q[0] = 2;
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_both.c";
-
-            int32 write_both(int32* p, int32* q, int32 n, int32* unrelated) {
-                requires n >= 1;
-                requires loadable(p[0..1]);
-                requires loadable(q[0..1]);
-                requires loadable(unrelated[0..1]);
-                consumes p[0..1];
-                consumes q[0..1];
-                mutable p[0..1], q[0..1];
-                mutable p[0..n], q[0..n];
-            } by {
-                execute();
-                frame();
-            }
-        "#;
-
-    let ((verified, _events), planning_transitions) =
-        collect_planning_statement_transitions(|| {
-            crate::instrumentation::collect(|| {
-                verify_c0_sources(click_source, &[("write_both.c", c_source)])
-            })
-        });
-    let verified = verified.expect("the grouped multi-effect proof should verify");
-    assert!(
-        planning_transitions.is_empty(),
-        "the grouped multi-effect script must search only on checked Proof descendants: \
-         {planning_transitions:#?}"
-    );
-    let expanded = verified[0]
-        .expanded_proof_tactics()
-        .expect("the grouped multi-effect proof should retain a simple certificate");
-    assert_eq!(
-        expanded
-            .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Step))
-            .count(),
-        3,
-        "both stores and the return should be retained exactly once: {expanded:#?}"
-    );
-    assert!(
-        !format!("{expanded:?}").contains("unrelated"),
-        "the grouped multi-effect certificate selected an unrelated fact: {expanded:#?}"
-    );
-    ProofCertificate::from_proof_tactics(&expanded)
-        .expect("the grouped multi-effect expansion should be a simple certificate");
-
-    let expanded_source = expand_c0_claim_source(
-        click_source,
-        &[("write_both.c", c_source)],
-        "write_both",
-        CProofClaim::Grouped,
-    )
-    .expect("the grouped multi-effect proof should expand");
-    verify_c0_sources(&expanded_source, &[("write_both.c", c_source)])
-        .expect("the grouped multi-effect certificate should independently verify");
-}
-
-#[test]
-fn contextual_frame_expands_independently_in_branch_leaves() {
-    let c_source = r#"
-            int32 write_selected(int32 p[2], int32 flag) {
-                if (flag) {
-                    p[0] = 1;
-                } else {
-                    p[1] = 1;
-                }
-                return 0;
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_selected.c";
-
-            int32 write_selected(int32 p[2], int32 flag) {
-                consumes p[0..2];
-                mutable p[0..2] by { execute(); frame(); }
-            }
-        "#;
-
-    let (((verified, certificate_checks), context_exports), flat_units) =
-        proof::count_flat_proof_units(|| {
-            {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        verify_c0_sources(click_source, &[("write_selected.c", c_source)])
-                    })
-                })
-            }
-        });
-    let verified = verified.expect("branched contextual frame should verify");
-    assert_eq!(flat_units, 1, "the effect claim should retain one Proof");
-    assert_eq!(context_exports, 0, "the effect Proof exported its state");
-    assert_eq!(
-        certificate_checks, 0,
-        "ordinary effect verification checked a certificate"
-    );
-    let theorem = verified
-        .iter()
-        .find(|theorem| theorem.effect_clause().is_some())
-        .expect("effect claim should use the frame proof");
-    let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
-        panic!(
-            "branched contextual frame should expand: {:?}",
-            theorem.expansion_blocker()
-        )
-    });
-    let proof_if = expanded
-        .iter()
-        .find_map(|tactic| match tactic {
-            ProofTactic::If(proof_if) => Some(proof_if),
-            _ => None,
-        })
-        .expect("branched frame expansion should retain the branch");
-    assert!(
-        matches!(
-            proof_if.then_tactics.last(),
-            Some(ProofTactic::FrameUsing { region: None, .. })
-        ),
-        "then branch lost its terminal frame: {expanded:#?}"
-    );
-    assert!(
-        matches!(
-            proof_if.else_tactics.last(),
-            Some(ProofTactic::FrameUsing { region: None, .. })
-        ),
-        "else branch lost its terminal frame: {expanded:#?}"
-    );
-    ProofCertificate::from_proof_tactics(&expanded)
-        .expect("branched frame expansion should be a surface certificate");
 }
 
 #[test]
@@ -2881,7 +2273,7 @@ fn quantified_old_memory_rejects_overwritten_cell() {
 }
 
 #[test]
-fn verifies_mutable_segment_effect() {
+fn owned_segment_rejects_write_outside_owned_memory() {
     let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -2893,181 +2285,26 @@ fn verifies_mutable_segment_effect() {
 
             int32 write_second(int32* p) {
                 requires loadable(p[0..2]);
-                consumes p[1..2];
-                mutable p[1..2] by { execute(); frame(); }
-                mutable p[0..2] by { execute(); frame(); }
+                consumes p[0..1];
                 ensures returns_written: result == 9 by auto;
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect("write should stay inside declared segments");
-
-    assert_eq!(verified.len(), 3);
-    assert!(matches!(
-        verified[0].effect_clause().unwrap().effect(),
-        Effect::Mutable(_)
-    ));
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
-}
-
-#[test]
-fn verifies_shifted_loadable_and_mutable_segment() {
-    let c_source = r#"
-            int32 write_second(int32* p) {
-                p[1] = 9;
-                return p[1];
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_second.c";
-
-            int32 write_second(int32* p) {
-                requires loadable((p + 1)[0..1]);
-                consumes (p + 1)[0..1];
-                mutable (p + 1)[0..1] by { execute(); frame(); }
-                ensures returns_written: result == 9 by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect("shifted loadable should prove access and frame");
-
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
-}
-
-#[test]
-fn frame_rejects_ensure_clause() {
-    let c_source = r#"
-            int32 identity(int32 x) {
-                return x;
-            }
-        "#;
-    let click_source = r#"
-            verifying "identity.c";
-
-            int32 identity(int32 x) {
-                ensures returns_argument: result == x by { execute(); frame(); }
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
-        .expect_err("frame should not prove postconditions");
+    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect_err("write outside owned memory should fail");
 
     assert!(
         error
             .message()
-            .contains("`frame` has no effect claim to prove"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn mutable_segment_rejects_write_outside_segment() {
-    let c_source = r#"
-            int32 write_second(int32* p) {
-                p[1] = 9;
-                return p[1];
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_second.c";
-
-            int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
-                consumes p[1..2];
-                mutable p[0..1] by auto;
-                ensures returns_written: result == 9 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect_err("write outside segment should fail");
-
-    assert!(
-        error.message().contains("outside the mutable footprint"),
+            .contains("missing resource fact `owns p[1..2]`"),
         "{}",
         error.message()
     );
     assert!(
-        error.message().contains("write to `p[1]`"),
+        error.message().contains("resource facts: [owns p[0..1]]"),
         "{}",
         error.message()
     );
-    assert!(
-        error.message().contains("mutable segments: [p[0..1]]"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("evaluated segments"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn immutable_rejects_external_memory_write() {
-    let c_source = r#"
-            int32 write_second(int32* p) {
-                p[1] = 9;
-                return p[1];
-            }
-        "#;
-    let click_source = r#"
-            verifying "write_second.c";
-
-            int32 write_second(int32* p) {
-                requires loadable(p[0..2]);
-                consumes p[1..2];
-                immutable by auto;
-                ensures returns_written: result == 9 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect_err("immutable should reject external memory writes");
-
-    assert!(
-        error.message().contains("outside the mutable footprint"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("evaluated segments"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn immutable_allows_stack_local_writes() {
-    let c_source = r#"
-            int32 count_to_one() {
-                int32 i;
-                i = 0;
-                i = i + 1;
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_one.c";
-
-            int32 count_to_one() {
-                immutable by { execute(); frame(); }
-                ensures returns_one: result == 1 by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("count_to_one.c", c_source)])
-        .expect("stack-local writes should not count as external mutation");
-
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]

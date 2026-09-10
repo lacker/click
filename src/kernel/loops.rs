@@ -650,20 +650,18 @@ fn execute_c_indirect_call_assign_paths(
                 CFunctionOutcome::Return { value, mut state } => {
                     if value == CValue::Void || state.locals.is_array_object(target) {
                         CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    } else if assign_call_result(
+                        &mut state,
+                        target,
+                        value,
+                        &mut path.obligations,
+                        assumptions,
+                    )
+                    .is_some()
+                    {
+                        CStatementOutcome::Normal(state)
                     } else {
-                        if assign_call_result(
-                            &mut state,
-                            target,
-                            value,
-                            &mut path.obligations,
-                            assumptions,
-                        )
-                        .is_some()
-                        {
-                            CStatementOutcome::Normal(state)
-                        } else {
-                            CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-                        }
+                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                     }
                 }
                 CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,

@@ -95,7 +95,7 @@ You will see these terms throughout the documentation:
 - **C0 source**: the C-like implementation being verified.
 - **Click sidecar**: a `.click` file containing contracts and proofs for C0
   functions.
-- **Contract**: the `requires`, `ensures`, `immutable`, and `mutable` clauses
+- **Contract**: the `requires`, `ensures`, `owns`, and `views` clauses
   for a function.
 - **Proposition**: a logical claim written in Click, such as `result == x` or
   `forall (k: int32) { ... }`.

@@ -24,33 +24,6 @@ pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize 
     }
 }
 
-pub(in crate::surface) fn count_statements(statement: &syntax::C0Statement) -> usize {
-    match statement {
-        syntax::C0Statement::Seq(first, second) => {
-            count_statements(first) + count_statements(second)
-        }
-        syntax::C0Statement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => 1 + count_statements(then_branch) + count_statements(else_branch),
-        syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
-            1 + count_statements(body)
-        }
-        syntax::C0Statement::For {
-            initializer,
-            step,
-            body,
-            ..
-        } => count_statements(initializer) + 1 + count_statements(body) + count_statements(step),
-        // A native switch is checked as one source operation; its case bodies
-        // are part of that operation rather than independently addressable
-        // statement regions.
-        syntax::C0Statement::Switch { .. } => 1,
-        _ => 1,
-    }
-}
-
 #[derive(Clone, Default)]
 pub(in crate::surface) struct SourceExecutionLayout {
     data: std::sync::Arc<SourceExecutionLayoutData>,
@@ -263,113 +236,6 @@ impl SourceExecutionLayout {
     }
 }
 
-#[cfg(test)]
-mod source_execution_layout_tests {
-    use super::*;
-
-    #[test]
-    fn clones_share_large_immutable_layouts() {
-        let statements = (0..4096)
-            .map(|index| {
-                (
-                    index,
-                    SourceStatementRegion {
-                        continuation_node: index + 1,
-                        kind: SourceStatementKind::Plain,
-                    },
-                )
-            })
-            .collect();
-        let layout = SourceExecutionLayout {
-            data: std::sync::Arc::new(SourceExecutionLayoutData {
-                statements,
-                loop_bodies: BTreeMap::new(),
-                exited_branch_regions: BTreeMap::new(),
-            }),
-        };
-        let cloned = layout.clone();
-
-        assert!(std::sync::Arc::ptr_eq(&layout.data, &cloned.data));
-        assert_eq!(cloned.statement_count(), 4096);
-        assert_eq!(
-            cloned
-                .statement(4095)
-                .map(|region| region.continuation_node),
-            Some(4096)
-        );
-    }
-}
-
-pub(in crate::surface) fn c0_loop_modified_locals(
-    statement: &syntax::C0Statement,
-) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    collect_c0_loop_modified_locals(statement, &mut names);
-    names
-}
-
-pub(in crate::surface) fn collect_c0_loop_modified_locals(
-    statement: &syntax::C0Statement,
-    names: &mut BTreeSet<String>,
-) {
-    match statement {
-        syntax::C0Statement::Skip
-        | syntax::C0Statement::Break
-        | syntax::C0Statement::Continue
-        | syntax::C0Statement::Declare { .. }
-        | syntax::C0Statement::DeclareStructValue { .. }
-        | syntax::C0Statement::Return(_)
-        | syntax::C0Statement::Store { .. }
-        | syntax::C0Statement::AggregateCopy { .. }
-        | syntax::C0Statement::Assert { .. } => {}
-        syntax::C0Statement::SequentialStore { target, .. } => {
-            if let syntax::C0Expression::Variable(name) = target {
-                names.insert(name.clone());
-            }
-        }
-        syntax::C0Statement::Update { target, .. } => {
-            if let syntax::C0Expression::Variable(name) = target {
-                names.insert(name.clone());
-            }
-        }
-        syntax::C0Statement::Assign { name, .. } => {
-            names.insert(name.clone());
-        }
-        syntax::C0Statement::CallAssign { target, .. } => {
-            names.insert(target.clone());
-        }
-        syntax::C0Statement::Call { .. } | syntax::C0Statement::IndirectCall { .. } => {}
-        syntax::C0Statement::HeapAllocate { target, .. } => {
-            names.insert(target.clone());
-        }
-        syntax::C0Statement::HeapFree { .. } => {}
-        syntax::C0Statement::Seq(first, second) => {
-            collect_c0_loop_modified_locals(first, names);
-            collect_c0_loop_modified_locals(second, names);
-        }
-        syntax::C0Statement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_c0_loop_modified_locals(then_branch, names);
-            collect_c0_loop_modified_locals(else_branch, names);
-        }
-        syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
-            collect_c0_loop_modified_locals(body, names);
-        }
-        syntax::C0Statement::For { body, step, .. } => {
-            collect_c0_loop_modified_locals(body, names);
-            collect_c0_loop_modified_locals(step, names);
-        }
-        syntax::C0Statement::Switch { cases, .. } => {
-            for case in cases {
-                collect_c0_loop_modified_locals(case.body(), names);
-            }
-        }
-    }
-}
-
 pub(in crate::surface) fn contract_segment_referenced_names(
     segment: &ContractSegment,
 ) -> BTreeSet<String> {
@@ -456,5 +322,42 @@ pub(in crate::surface) fn collect_c_expression_referenced_names(
         CExpression::BitwiseNot(expression) => {
             collect_c_expression_referenced_names(expression, names);
         }
+    }
+}
+
+#[cfg(test)]
+mod source_execution_layout_tests {
+    use super::*;
+
+    #[test]
+    fn clones_share_large_immutable_layouts() {
+        let statements = (0..4096)
+            .map(|index| {
+                (
+                    index,
+                    SourceStatementRegion {
+                        continuation_node: index + 1,
+                        kind: SourceStatementKind::Plain,
+                    },
+                )
+            })
+            .collect();
+        let layout = SourceExecutionLayout {
+            data: std::sync::Arc::new(SourceExecutionLayoutData {
+                statements,
+                loop_bodies: BTreeMap::new(),
+                exited_branch_regions: BTreeMap::new(),
+            }),
+        };
+        let cloned = layout.clone();
+
+        assert!(std::sync::Arc::ptr_eq(&layout.data, &cloned.data));
+        assert_eq!(cloned.statement_count(), 4096);
+        assert_eq!(
+            cloned
+                .statement(4095)
+                .map(|region| region.continuation_node),
+            Some(4096)
+        );
     }
 }

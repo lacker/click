@@ -73,6 +73,20 @@ These fixtures cover compiler conditional selection, token pasting and macro
 rescanning, contextual headers, configured system dependencies, stale locks,
 artifact tampering, import identity, and original-source diagnostics. They do
 not claim that the complete captured Linux translation unit verifies.
+## What the gate runs
+
+`scripts/check.sh` is the single source of truth for "is this tree green", and
+CI runs exactly that script. In order it runs `cargo fmt --check`, then
+`cargo clippy --all-targets -- -D warnings`, then the documentation test, the
+mdBook render and the docs lint, then `cargo nextest run --lib --bins`, then
+the mdtest and example fixture harnesses serially. Judge the verdict from the
+script's exit status.
+
+The tree is clippy-clean, so a new diagnostic belongs to the change that
+introduced it. When a lint is wrong about a deliberate design, silence exactly
+that case with an `#[allow(clippy::…)]` carrying a one-line reason rather than
+reshaping verifier behaviour to satisfy the lint. The crate-wide exceptions
+live at the top of `src/lib.rs` with their reasons.
 
 ## Time-Bounded runs
 

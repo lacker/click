@@ -18,6 +18,12 @@ export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
 # so drift cannot accumulate. Run `cargo fmt` to fix a failure.
 cargo fmt --check
 
+# Lints are part of the gate for the same reason formatting is: the tree is
+# clippy-clean today, so any new diagnostic is a new one and belongs to the
+# change that introduced it. Deliberate exceptions are `#[allow]`s carrying a
+# reason, not warnings the gate has learned to ignore.
+cargo clippy --all-targets -- -D warnings
+
 # Keep the rendered technical documentation and its source-backed public
 # inventories in the same deterministic gate as the verifier.
 cargo test --test documentation

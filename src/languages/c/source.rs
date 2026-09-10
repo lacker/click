@@ -661,7 +661,7 @@ fn evaluate_condition_for_discovery(
                 macros
                     .get(name)
                     .and_then(MacroDefinition::object_value)
-                    .and_then(|value| macro_condition_truth(value))
+                    .and_then(macro_condition_truth)
                     .unwrap_or(ConditionalTruth::Unknown)
             }
         }
@@ -814,7 +814,7 @@ fn comparison_operand_for_discovery(
                 macros
                     .get(name)
                     .and_then(MacroDefinition::object_value)
-                    .and_then(|value| preprocessor_literal_value(value))
+                    .and_then(preprocessor_literal_value)
             }
         }
         Conditional::Defined(name) => {
@@ -949,14 +949,12 @@ fn validate_conditional_structure(
                 }
                 *else_seen = true;
             }
-            SourceDirective::ConditionalEnd => {
-                if stack.pop().is_none() {
-                    return Err(CSourceError::new(
-                        source_path,
-                        line_number,
-                        "unmatched `#endif`; expected an open conditional",
-                    ));
-                }
+            SourceDirective::ConditionalEnd if stack.pop().is_none() => {
+                return Err(CSourceError::new(
+                    source_path,
+                    line_number,
+                    "unmatched `#endif`; expected an open conditional",
+                ));
             }
             _ => {}
         }
@@ -1000,16 +998,16 @@ fn header_guard_shape(
     if !valid {
         return None;
     }
-    let define_line = directives.iter().find_map(|(line, directive)| {
+
+    directives.iter().find_map(|(line, directive)| {
         matches!(directive, SourceDirective::HeaderGuardDefine(_)).then_some(*line)
-    });
-    define_line
+    })
 }
 
-fn parse_directive<'a>(
+fn parse_directive(
     source_path: &str,
     line_number: usize,
-    line: &'a str,
+    line: &str,
     in_block_comment: &mut bool,
 ) -> Result<Option<SourceDirective>, CSourceError> {
     let Some(directive) = directive_text(line, in_block_comment) else {
@@ -1767,7 +1765,7 @@ fn expand_macro_text(
                     append_macro_tokens(&mut expanded, &replacement, chars.get(index).copied());
                 }
                 MacroDefinition::FunctionLike {
-                    parameters,
+                    parameters: _,
                     primitive: Some(primitive),
                     ..
                 } if chars.get(index) == Some(&'(') => {

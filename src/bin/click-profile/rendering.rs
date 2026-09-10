@@ -51,7 +51,7 @@ pub(super) fn render_profiles_with_top(
         .iter()
         .flat_map(|profile| profile.slow_steps.iter())
         .collect::<Vec<_>>();
-    slow_steps.sort_by(|left, right| right.elapsed.cmp(&left.elapsed));
+    slow_steps.sort_by_key(|step| std::cmp::Reverse(step.elapsed));
 
     let mut output = String::new();
     writeln!(
@@ -423,7 +423,7 @@ fn render_operations(output: &mut String, profiles: &[ProjectProfile], top_rows:
                 .map(|operation| (profile.project.as_str(), operation))
         })
         .collect::<Vec<_>>();
-    operations.sort_by(|(_, left), (_, right)| right.elapsed.cmp(&left.elapsed));
+    operations.sort_by_key(|(_, step)| std::cmp::Reverse(step.elapsed));
     if operations.is_empty() {
         return;
     }
@@ -452,7 +452,7 @@ fn render_operations(output: &mut String, profiles: &[ProjectProfile], top_rows:
         entry.max_work = entry.max_work.max(operation.work);
     }
     let mut aggregates = aggregates.into_iter().collect::<Vec<_>>();
-    aggregates.sort_by(|(_, left), (_, right)| right.total.cmp(&left.total));
+    aggregates.sort_by_key(|(_, step)| std::cmp::Reverse(step.total));
     writeln!(output, "  AGGREGATES BY TIME").expect("writing a String cannot fail");
     for ((project, name), aggregate) in aggregates.iter().take(top_rows) {
         writeln!(
@@ -473,7 +473,7 @@ fn render_operations(output: &mut String, profiles: &[ProjectProfile], top_rows:
     // in milliseconds. Rank the same aggregates by it so such an operation
     // is visible even when its time is small.
     if aggregates.iter().any(|(_, aggregate)| aggregate.work > 0) {
-        aggregates.sort_by(|(_, left), (_, right)| right.work.cmp(&left.work));
+        aggregates.sort_by_key(|(_, step)| std::cmp::Reverse(step.work));
         writeln!(output, "  AGGREGATES BY DETERMINISTIC WORK")
             .expect("writing a String cannot fail");
         for ((project, name), aggregate) in aggregates.iter().take(top_rows) {

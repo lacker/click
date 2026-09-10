@@ -936,36 +936,6 @@ pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
     }
 }
 
-pub(super) fn describe_evaluated_segments(segments: &[EvaluatedContractSegment]) -> String {
-    if segments.is_empty() {
-        return "[]".to_string();
-    }
-    let entries = segments
-        .iter()
-        .map(|segment| {
-            format!(
-                "{} => {}[{}..{}]",
-                describe_contract_segment(&segment.source),
-                describe_pointer(&segment.base, &[], &[]),
-                describe_bitvector(&segment.start),
-                describe_bitvector(&segment.end)
-            )
-        })
-        .collect::<Vec<_>>();
-    format!("[{}]", entries.join(", "))
-}
-
-pub(super) fn describe_contract_segments(segments: &[EvaluatedContractSegment]) -> String {
-    if segments.is_empty() {
-        return "[]".to_string();
-    }
-    let entries = segments
-        .iter()
-        .map(|segment| describe_contract_segment(&segment.source))
-        .collect::<Vec<_>>();
-    format!("[{}]", entries.join(", "))
-}
-
 pub(super) fn describe_c_expression(expression: &CExpression) -> String {
     match expression {
         CExpression::Value(value) => describe_c_value(value, &[], &[]),

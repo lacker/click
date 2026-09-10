@@ -301,7 +301,7 @@ entry memory snapshots. This supports direct invariants such as
 ## Loop invariants need explicit facts
 
 Pointer-writing loops do not implicitly preserve memory. Use invariants,
-`mutable` effects, and `separate(memory(...), memory(...))` requirements. Symbolic loops need invariants
+`owns` clauses, and `separate(memory(...), memory(...))` requirements. Symbolic loops need invariants
 for arithmetic bounds, memory safety, and postconditions.
 
 ## `simp` is not a solver

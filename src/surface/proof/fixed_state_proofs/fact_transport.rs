@@ -701,33 +701,6 @@ pub(in crate::surface::proof) fn path_condition_equivalent(
         || symmetric_equality_equivalent(&left, &right)
 }
 
-#[cfg(test)]
-mod path_condition_tests {
-    use super::*;
-
-    #[test]
-    fn pointer_offset_path_equality_accepts_reversed_operands() {
-        let left = PointerOffsetTerm::Int32Scaled {
-            value: Box::new(Bitvector32Term::Variable(Variable(41))),
-            byte_width: 4,
-        };
-        let right = PointerOffsetTerm::Int32Scaled {
-            value: Box::new(Bitvector32Term::Variable(Variable(42))),
-            byte_width: 4,
-        };
-        let forward = Proposition::ConditionIs(
-            ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
-            true,
-        );
-        let reversed = Proposition::ConditionIs(
-            ConditionTerm::PointerOffsetEqual(Box::new(right), Box::new(left)),
-            true,
-        );
-
-        assert!(path_condition_equivalent(&forward, &reversed));
-    }
-}
-
 /// The outermost memory snapshot a comparison proposition loads from, used
 /// to pick the transport destination for certified-fact matching.
 pub(in crate::surface::proof) fn proposition_outer_load_memory(
@@ -949,5 +922,32 @@ fn is_reflexive_equality(proposition: &Proposition) -> bool {
             _ => false,
         },
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod path_condition_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_offset_path_equality_accepts_reversed_operands() {
+        let left = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(41))),
+            byte_width: 4,
+        };
+        let right = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(42))),
+            byte_width: 4,
+        };
+        let forward = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        );
+        let reversed = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(right), Box::new(left)),
+            true,
+        );
+
+        assert!(path_condition_equivalent(&forward, &reversed));
     }
 }

@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (12)
+## P1: before launch (11)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -62,7 +62,6 @@ Soundness and kernel shape:
 C import and execution:
 
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
-- [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify inline function definitions reached through headers](inline-functions-in-headers.md)
 - [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
@@ -85,6 +84,7 @@ normal tooling-first policy and moves up.
 
 C language coverage:
 
+- [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
@@ -104,5 +104,4 @@ Proof language and tooling:
 
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
-- [Replace `mutable`, `immutable`, and `frame` with ownership](effect-clauses-to-ownership.md)
 - [Add modules and imports for Click specifications](specification-imports.md)

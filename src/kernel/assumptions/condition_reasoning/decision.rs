@@ -838,15 +838,14 @@ impl PureFactContext {
                         swapped: false,
                     });
                 }
-                let swapped = self
-                    .pointer_offset_congruence_evidence(left_a, right_b)
+
+                self.pointer_offset_congruence_evidence(left_a, right_b)
                     .zip(self.pointer_offset_congruence_evidence(left_b, right_a))
                     .map(|(first, second)| PointerOffsetCongruenceEvidence::Add {
                         first: Box::new(first),
                         second: Box::new(second),
                         swapped: true,
-                    });
-                swapped
+                    })
             }
             (
                 PointerOffsetTerm::Int32Scaled {
@@ -1548,7 +1547,7 @@ impl PureFactContext {
         resolved: &mut BTreeMap<Bitvector32Term, SignedConstantResolution>,
     ) -> SignedConstantResolution {
         if let Some(done) = resolved.get(term) {
-            return done.clone();
+            return *done;
         }
         if let Some(value) = signed_bitvector_constant(term) {
             return SignedConstantResolution::Known(value);
@@ -1733,7 +1732,7 @@ impl PureFactContext {
         }
 
         resolving.remove(term);
-        resolved.insert(term.clone(), result.clone());
+        resolved.insert(term.clone(), result);
         if let SignedConstantResolution::Known(known) = result
             && let Some(memo_id) = memo_id
         {

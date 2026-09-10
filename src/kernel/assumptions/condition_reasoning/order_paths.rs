@@ -1,6 +1,7 @@
 use super::*;
 
 impl PureFactContext {
+    #[cfg(test)]
     /// Whether one recorded strict order fact separates `left` from `right`
     /// directly (`left < right` or `right < left`, under either term or its
     /// canonical alias). This is an indexed lookup only — no derivation, no
@@ -1231,7 +1232,7 @@ fn drop_aligned_scaled_addends(
         }
         _ => false,
     };
-    if !parts.iter().any(|part| divisible(part)) {
+    if !parts.iter().any(&divisible) {
         return None;
     }
     Some(

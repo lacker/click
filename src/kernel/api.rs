@@ -2658,22 +2658,23 @@ pub(in crate::kernel) fn proof_evidence_unretained_premise(
 ) -> Option<Proposition> {
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
-        if !assumptions.proves_exact(premise)
-            && !executed_under.is_some_and(|context| context.proves_exact(premise))
-            && !execution_facts
+        if !(assumptions.proves_exact(premise)
+            || executed_under.is_some_and(|context| context.proves_exact(premise))
+            || execution_facts
                 .iter()
                 .any(|fact| retained_fact_contains(fact.proposition(), premise))
-            && !obligations
+            || obligations
                 .iter()
                 .any(|obligation| obligation.proposition() == premise.as_ref())
-            && !resources_certify_loadability(state, state.resources(), premise, assumptions)
-            && !(matches!(premise.as_ref(), Proposition::CMemoryLoadable { .. })
-                && executed_under.is_some_and(|context| loadable_covered_by_fact(context, premise)))
-            && !(matches!(
+            || resources_certify_loadability(state, state.resources(), premise, assumptions)
+            || (matches!(premise.as_ref(), Proposition::CMemoryLoadable { .. })
+                && executed_under
+                    .is_some_and(|context| loadable_covered_by_fact(context, premise)))
+            || (matches!(
                 premise.as_ref(),
                 Proposition::CResourceContains { .. } | Proposition::CResourceSeparate { .. }
             ) && function_entry_resource_facts
-                .is_some_and(|facts| facts.proves_exact(premise)))
+                .is_some_and(|facts| facts.proves_exact(premise))))
         {
             return Some(premise.as_ref().clone());
         }

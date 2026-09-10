@@ -6,7 +6,6 @@ use super::*;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CProofClaim {
     Ensure(usize),
-    Effect(usize),
     Grouped,
 }
 
@@ -154,20 +153,6 @@ pub fn expand_c0_claim_source_by_label(
                 );
             }
         }
-        for (index, effect) in function.effects().iter().enumerate() {
-            let kind = match effect.effect() {
-                Effect::Immutable => "immutable",
-                Effect::Mutable(_) => "mutable",
-            };
-            if claim_label == format!("{function_name}.{kind}_{index}") {
-                return expand_c0_claim_source(
-                    click_source,
-                    c_sources,
-                    function_name,
-                    CProofClaim::Effect(index),
-                );
-            }
-        }
     }
     Err(ClickError::new(format!(
         "could not locate function claim `{claim_label}`"
@@ -203,20 +188,6 @@ pub fn expand_c0_prepared_claim_source_by_label(
                     imports,
                     function_name,
                     CProofClaim::Ensure(index),
-                );
-            }
-        }
-        for (index, effect) in function.effects().iter().enumerate() {
-            let kind = match effect.effect() {
-                Effect::Immutable => "immutable",
-                Effect::Mutable(_) => "mutable",
-            };
-            if claim_label == format!("{function_name}.{kind}_{index}") {
-                return expand_c0_prepared_claim_source(
-                    click_source,
-                    imports,
-                    function_name,
-                    CProofClaim::Effect(index),
                 );
             }
         }
@@ -291,11 +262,6 @@ fn c0_smart_tactic_source_sites_context(
     for function in file.function_blocks() {
         let function_name = function.signature().name();
         for clause in function.structural_clauses() {
-            let region_label = match clause.region() {
-                CodeRegion::Function => format!("{function_name}.function"),
-                CodeRegion::Loop(index) => format!("{function_name}.loop({index})"),
-                CodeRegion::Statement(index) => format!("{function_name}.statement({index})"),
-            };
             if let CodeRegion::Loop(loop_index) = clause.region() {
                 let default = SourceProof::Default;
                 collect_smart_proof_sites(
@@ -306,23 +272,6 @@ fn c0_smart_tactic_source_sites_context(
                 collect_smart_proof_sites(
                     &format!("{function_name}.loop({loop_index}).preserve"),
                     clause.preserve_proof().unwrap_or(&default),
-                    &mut sites,
-                );
-            }
-            for (item_index, item) in clause.items().iter().enumerate() {
-                // Invariants have no independent source proof: their obligations
-                // are certified by the loop's initialize and preserve proofs.
-                if item.kind() == StructuralItemKind::Invariant {
-                    continue;
-                }
-                let kind = match item.kind() {
-                    StructuralItemKind::Invariant => unreachable!(),
-                    StructuralItemKind::Effect => "effect",
-                    StructuralItemKind::StepEffect => "step_effect",
-                };
-                collect_smart_proof_sites(
-                    &format!("{region_label}.{kind}_{item_index}"),
-                    item.proof(),
                     &mut sites,
                 );
             }
@@ -337,17 +286,6 @@ fn c0_smart_tactic_source_sites_context(
                 |name| format!("{function_name}.{name}"),
             );
             collect_smart_proof_sites(&label, ensure.proof(), &mut sites);
-        }
-        for (index, effect) in function.effects().iter().enumerate() {
-            let kind = match effect.effect() {
-                Effect::Immutable => "immutable",
-                Effect::Mutable(_) => "mutable",
-            };
-            collect_smart_proof_sites(
-                &format!("{function_name}.{kind}_{index}"),
-                effect.proof(),
-                &mut sites,
-            );
         }
     }
     Ok(sites)
@@ -369,7 +307,6 @@ fn collect_smart_proof_sites(
             source_index: 0,
             tactic_name: match tactic {
                 SmartTactic::Auto => "auto",
-                SmartTactic::Frame => "frame",
                 SmartTactic::Simp => "simp",
             }
             .to_string(),
@@ -470,19 +407,6 @@ fn collect_smart_script_sites(
                         nested_source_index,
                         sites,
                     );
-                    nested_source_index += proof_source_tactic_count(proof);
-                }
-                for item in clause.items() {
-                    if !item.is_effect_kind() {
-                        continue;
-                    }
-                    collect_smart_nested_proof_sites(
-                        claim_label,
-                        item.proof(),
-                        nested_source_index,
-                        sites,
-                    );
-                    nested_source_index += proof_source_tactic_count(item.proof());
                 }
             }
             _ => {}
@@ -504,7 +428,6 @@ fn collect_smart_nested_proof_sites(
             source_index,
             tactic_name: match tactic {
                 SmartTactic::Auto => "auto",
-                SmartTactic::Frame => "frame",
                 SmartTactic::Simp => "simp",
             }
             .to_string(),
@@ -843,10 +766,6 @@ fn select_expansion_theorem<'a>(
             matches_function(theorem)
                 && matches!(theorem.claim, VerifiedClaim::Ensure { index: found, .. } if found == index)
         }),
-        CProofClaim::Effect(index) => verified.iter().find(|theorem| {
-            matches_function(theorem)
-                && matches!(theorem.claim, VerifiedClaim::Effect { index: found, .. } if found == index)
-        }),
         CProofClaim::Grouped => verified
             .iter()
             .find(|theorem| {
@@ -1136,55 +1055,12 @@ fn find_claim_proof_edit(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<ProofSourceEdit, ClickError> {
-    if let CProofClaim::Ensure(index) = claim {
-        return find_ensure_proof_edit(tokens, function.body_open, function.body_close, index);
-    }
-    let (keyword, wanted) = match claim {
-        CProofClaim::Ensure(_) => unreachable!(),
-        CProofClaim::Effect(index) => ("effect", index),
-        CProofClaim::Grouped => unreachable!(),
+    let CProofClaim::Ensure(index) = claim else {
+        return Err(ClickError::new(format!(
+            "could not locate source clause for {claim:?}"
+        )));
     };
-    let mut depth = 0;
-    let mut found = 0;
-    let mut index = function.body_open + 1;
-    while index < function.body_close {
-        match tokens[index].text.as_str() {
-            "{" => depth += 1,
-            "}" => depth -= 1,
-            text if depth == 0
-                && (text == keyword
-                    || keyword == "effect" && matches!(text, "immutable" | "mutable")) =>
-            {
-                if found == wanted {
-                    let mut cursor = index + 1;
-                    let mut nested = 0;
-                    while cursor < function.body_close {
-                        match tokens[cursor].text.as_str() {
-                            "{" | "(" | "[" => nested += 1,
-                            "}" | ")" | "]" => nested -= 1,
-                            "by" if nested == 0 => {
-                                return Ok(ProofSourceEdit::Explicit(proof_span(tokens, cursor)?));
-                            }
-                            ";" if nested == 0 => {
-                                return Ok(ProofSourceEdit::DefaultTerminator {
-                                    span: tokens[cursor].span.clone(),
-                                    selector: tokens[index].span.start,
-                                });
-                            }
-                            _ => {}
-                        }
-                        cursor += 1;
-                    }
-                }
-                found += 1;
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    Err(ClickError::new(format!(
-        "could not locate source clause for {claim:?}"
-    )))
+    find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)
 }
 
 /// An explicit expansion request threaded through one verification run.
@@ -1243,12 +1119,6 @@ pub(super) enum ProofSite {
         loop_index: usize,
         phase: &'static str,
     },
-    StructuralItem {
-        function_name: String,
-        region: CodeRegion,
-        item_index: usize,
-        kind: StructuralItemKind,
-    },
 }
 
 impl ProofSite {
@@ -1267,24 +1137,6 @@ impl ProofSite {
                 loop_index,
                 phase,
             } => format!("`{function_name}.loop({loop_index}).{phase}`"),
-            Self::StructuralItem {
-                function_name,
-                region,
-                item_index,
-                kind,
-            } => {
-                let region = match region {
-                    CodeRegion::Function => "function".to_string(),
-                    CodeRegion::Loop(index) => format!("loop({index})"),
-                    CodeRegion::Statement(index) => format!("statement({index})"),
-                };
-                let kind = match kind {
-                    StructuralItemKind::Invariant => "invariant",
-                    StructuralItemKind::Effect => "effect",
-                    StructuralItemKind::StepEffect => "step_effect",
-                };
-                format!("{function_name}.{region}.{kind}_{item_index}")
-            }
         }
     }
 }
@@ -1384,22 +1236,6 @@ fn locate_source_tactic_context(
                     clause.items().len()
                 )));
             }
-            for (item_index, (item, edit)) in clause.items().iter().zip(edits.iter()).enumerate() {
-                if let Some(found) = locate_tactic_in_proof(
-                    &tokens,
-                    edit,
-                    item.proof(),
-                    wanted,
-                    ProofSite::StructuralItem {
-                        function_name: function_name.to_string(),
-                        region: *clause.region(),
-                        item_index,
-                        kind: item.kind(),
-                    },
-                )? {
-                    return Ok(found);
-                }
-            }
         }
         if let Some(proof) = function_block.grouped_proof() {
             let edit = ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?);
@@ -1424,22 +1260,6 @@ fn locate_source_tactic_context(
                 &tokens,
                 &edit,
                 ensure.proof(),
-                wanted,
-                ProofSite::FunctionClaim {
-                    function_name: function_name.to_string(),
-                    claim,
-                },
-            )? {
-                return Ok(found);
-            }
-        }
-        for (index, effect) in function_block.effects().iter().enumerate() {
-            let claim = CProofClaim::Effect(index);
-            let edit = find_claim_proof_edit(&tokens, &function, claim)?;
-            if let Some(found) = locate_tactic_in_proof(
-                &tokens,
-                &edit,
-                effect.proof(),
                 wanted,
                 ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
@@ -1591,11 +1411,6 @@ fn c0_tactic_source_position_context(
         let function_name = function_block.signature().name();
         let function = find_function(&tokens, function_name)?;
         for clause in function_block.structural_clauses() {
-            let region_label = match clause.region() {
-                CodeRegion::Function => format!("{function_name}.function"),
-                CodeRegion::Loop(index) => format!("{function_name}.loop({index})"),
-                CodeRegion::Statement(index) => format!("{function_name}.statement({index})"),
-            };
             let block = find_structural_clause_block(&tokens, &function, *clause.region())?;
             let edits = structural_item_proof_edits(&tokens, &block)?;
             if edits.len() != clause.items().len() {
@@ -1605,29 +1420,6 @@ fn c0_tactic_source_position_context(
                     edits.len(),
                     clause.items().len()
                 )));
-            }
-            for (item_index, (item, edit)) in clause.items().iter().zip(edits.iter()).enumerate() {
-                let kind = match item.kind() {
-                    StructuralItemKind::Invariant => "invariant",
-                    StructuralItemKind::Effect => "effect",
-                    StructuralItemKind::StepEffect => "step_effect",
-                };
-                if claim_label != format!("{region_label}.{kind}_{item_index}") {
-                    continue;
-                }
-                return proof_source_position(
-                    click_source,
-                    &tokens,
-                    match edit {
-                        ProofSourceEdit::Explicit(span) => Some(span),
-                        ProofSourceEdit::DefaultTerminator { .. }
-                        | ProofSourceEdit::OmittedLoopPhase { .. } => None,
-                    },
-                    Some(item.proof()),
-                    edit.selector(),
-                    claim_label,
-                    source_index,
-                );
             }
         }
         if let Some(rest) = claim_label
@@ -1674,35 +1466,17 @@ fn c0_tactic_source_position_context(
                     );
                     (label == claim_label).then_some((CProofClaim::Ensure(index), ensure.proof()))
                 })
-                .or_else(|| {
-                    function_block
-                        .effects()
-                        .iter()
-                        .enumerate()
-                        .find_map(|(index, effect)| {
-                            let kind = match effect.effect() {
-                                Effect::Immutable => "immutable",
-                                Effect::Mutable(_) => "mutable",
-                            };
-                            (claim_label == format!("{function_name}.{kind}_{index}"))
-                                .then_some((CProofClaim::Effect(index), effect.proof()))
-                        })
-                })
         };
         let Some((claim, proof)) = selected else {
             continue;
         };
         let fallback = match claim {
             CProofClaim::Grouped => tokens[function.body_close].span.start,
-            CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
-                find_claim_clause_offset(&tokens, &function, claim)?
-            }
+            CProofClaim::Ensure(_) => find_claim_clause_offset(&tokens, &function, claim)?,
         };
         let proof_span = match claim {
             CProofClaim::Grouped => Some(find_grouped_proof_span(&tokens, &function)?),
-            CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
-                find_claim_proof_span(&tokens, &function, claim).ok()
-            }
+            CProofClaim::Ensure(_) => find_claim_proof_span(&tokens, &function, claim).ok(),
         };
         return proof_source_position(
             click_source,
@@ -1764,38 +1538,12 @@ fn find_claim_clause_offset(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<usize, ClickError> {
-    if let CProofClaim::Ensure(index) = claim {
-        return Ok(
-            find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)?
-                .selector(),
-        );
-    }
-    let (keyword, wanted) = match claim {
-        CProofClaim::Ensure(_) => unreachable!(),
-        CProofClaim::Effect(index) => ("effect", index),
-        CProofClaim::Grouped => unreachable!(),
+    let CProofClaim::Ensure(index) = claim else {
+        return Err(ClickError::new(format!(
+            "could not locate source clause for {claim:?}"
+        )));
     };
-    let mut depth = 0;
-    let mut found = 0;
-    for token in &tokens[function.body_open + 1..function.body_close] {
-        match token.text.as_str() {
-            "{" => depth += 1,
-            "}" => depth -= 1,
-            text if depth == 0
-                && (text == keyword
-                    || keyword == "effect" && matches!(text, "immutable" | "mutable")) =>
-            {
-                if found == wanted {
-                    return Ok(token.span.start);
-                }
-                found += 1;
-            }
-            _ => {}
-        }
-    }
-    Err(ClickError::new(format!(
-        "could not locate source clause for {claim:?}"
-    )))
+    Ok(find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)?.selector())
 }
 
 fn find_loop_phase_proof_span(
@@ -2147,18 +1895,6 @@ fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) 
                         && let Some(proof) = clause.preserve_proof()
                     {
                         found = in_proof(proof, wanted, nested_source_index);
-                        nested_source_index += proof_source_tactic_count(proof);
-                    } else if let Some(proof) = clause.preserve_proof() {
-                        nested_source_index += proof_source_tactic_count(proof);
-                    }
-                    if found.is_none() {
-                        for item in clause.items().iter().filter(|item| item.is_effect_kind()) {
-                            found = in_proof(item.proof(), wanted, nested_source_index);
-                            nested_source_index += proof_source_tactic_count(item.proof());
-                            if found.is_some() {
-                                break;
-                            }
-                        }
                     }
                     found
                 }
@@ -2297,12 +2033,6 @@ fn collect_tactic_block_spans(
                         clause.items().len()
                     )));
                 }
-                for (item, edit) in clause.items().iter().zip(&edits) {
-                    if !item.is_effect_kind() {
-                        continue;
-                    }
-                    collect_nested_proof_spans(tokens, edit, item.proof(), spans)?;
-                }
             }
             _ => {}
         }
@@ -2403,9 +2133,9 @@ fn direct_tactic_token_ranges(
                     })?;
                     if braces == 0 && parentheses == 0 && brackets == 0 {
                         let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
-                        if !matches!(continuation, Some("else" | "by"))
-                            && !(tokens[start].text == "both" && continuation == Some("and"))
-                            && !(tokens[start].text == "match" && continuation == Some("{"))
+                        if !(matches!(continuation, Some("else" | "by"))
+                            || (tokens[start].text == "both" && continuation == Some("and"))
+                            || (tokens[start].text == "match" && continuation == Some("{")))
                         {
                             let terminator = if continuation == Some(";") {
                                 cursor + 1

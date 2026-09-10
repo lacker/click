@@ -11,12 +11,11 @@ Prefer smart tactics while authoring unless profiling identifies a hotspot.
 Exact `using` blocks are ordinary Click and may be committed after expansion,
 but manually listing every premise is not the normal starting workflow.
 
-Click also has two single-purpose proof sugars:
+Click also has one single-purpose proof sugar:
 
 - `by simp;` simplifies the goal at the current proof state.
-- `by frame;` performs contextual frame reasoning at the current proof state.
 
-Neither one executes C. For a whole-function proof, use `by auto;` or make the
+It does not execute C. For a whole-function proof, use `by auto;` or make the
 sequence explicit:
 
 <!-- verified-example: mdtests/pure_theorem.md -->
@@ -27,19 +26,10 @@ ensures result == x by {
 }
 ```
 
-<!-- verified-example: mdtests/pure_theorem.md -->
-```click
-mutable p[0..n] by {
-    execute();
-    frame();
-}
-```
-
 ## Smart and simple tactics
 
 Smart tactics plan or search. The most common are `execute()`,
-`execute_until(...)`, `simp()`, bare `frame()`, bare `apply(...)`, and bare
-`transport(...)`.
+`execute_until(...)`, `simp()`, bare `apply(...)`, and bare `transport(...)`.
 
 Simple tactics request one deterministic checked operation without planning or
 search, and their checkers must be fast and output-sensitive. Paired operations
@@ -47,7 +37,7 @@ use `using` to mark that boundary:
 
 <!-- verified-example: mdtests/pure_theorem.md -->
 ```click
-frame() using {
+simp() using {
     i >= 0;
     i < n;
 }

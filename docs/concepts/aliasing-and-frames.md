@@ -29,27 +29,38 @@ cell.
 That fact can come from:
 
 - a `separate(memory(...), memory(...))` requirement,
-- a precise `mutable` footprint,
-- a loop effect summary,
+- a precise owned footprint,
+- the loop's owned resources,
 - or an explicit invariant.
 
-## Frame clauses
+## Ownership is the frame
 
-Frame clauses describe what memory a function preserves or may mutate:
+A contract's owned memory is what it may write; everything else it can reach is
+preserved:
 
 <!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
-immutable src[0..n] by frame;
-mutable dst[0..n] by frame;
+views src[0..n];
+owns dst[0..n];
 ```
 
-`immutable` says a region is unchanged.
+`views` says a region is readable and unchanged.
 
-`mutable` says a region is allowed to change. It is an effect summary, not a
+`owns` says a region is allowed to change. It is a write bound, not a
 postcondition about the final values.
 
+A narrow write inside a wider range is a view of the whole plus ownership of
+the piece:
+
+<!-- verified-example: mdtests/field_derived_precise_effect_after_metadata_write.md -->
+```click
+views owned_buffer(owner);
+owns owner[0..1];
+owns (owner->data + owner->len)[0..2];
+```
+
 Function-level ranges are fixed at function entry. For a push operation,
-`mutable (owner->data + owner->len)[0..2]` denotes two cells at the old end even
+`owns (owner->data + owner->len)[0..2]` denotes two cells at the old end even
 if the function later updates `owner->len`. Click transports unchanged field
 loads across certified writes when matching the executed stores to that
 footprint. Which facts a statement step carries across such a write, and what
@@ -79,25 +90,19 @@ copying every old value into a separate variable.
 
 ## Loop frames
 
-Loops need their own frame reasoning. A loop can have a whole-loop effect:
+A loop frames by ownership. With no clause of its own, a loop may write exactly
+the memory the function owns, and every viewed cell and every owned cell it did
+not write is preserved across it.
 
-<!-- verified-example: mdtests/copy3_array_demo.md -->
+A loop can narrow that authority the way a callee contract does:
+
+<!-- verified-example: mdtests/local_array_loop_frame.md -->
 ```click
 loop {
-    mutable p[0..n] by frame;
+    owns p[0..n];
+    invariant i >= 0;
 }
 ```
 
-or a step-relative effect:
-
-<!-- verified-example: mdtests/copy3_array_demo.md -->
-```click
-loop {
-    step {
-        mutable p[i..i + 1] by frame;
-    }
-}
-```
-
-Use whole-loop effects for stable regions and step effects for the cell or range
-written by one iteration.
+A body store outside the loop's owned ranges is rejected at the store, and a
+cell outside them holds its entry value after the loop with no invariant.

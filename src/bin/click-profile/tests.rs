@@ -592,7 +592,7 @@ fn quarantined_mdtests_are_profileable() {
     let source = load_profiled_source(&path).expect("a quarantined mdtest still extracts");
 
     assert!(source.click_source.contains("bubble_sort3_two_pass"));
-    assert!(!source.c_sources.is_empty());
+    assert!(matches!(&source.inputs, CInput::Bundle(sources) if !sources.is_empty()));
     assert!(
         source.line_offset > 0,
         "positions inside an mdtest sidecar must be offset to the markdown file"

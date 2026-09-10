@@ -474,9 +474,6 @@ pub(super) fn validate_pure_theorem_proof(
     match proof {
         SourceProof::Default => Ok(()),
         SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => Ok(()),
-        SourceProof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
-            "`frame` is not available in the pure proof for theorem `{theorem_name}`"
-        ))),
         SourceProof::Script(tactics) => validate_pure_theorem_tactics(theorem_name, tactics),
     }
 }
@@ -550,8 +547,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::SmartExecute
             | ProofTactic::SmartExecuteAllPaths
             | ProofTactic::ExecuteUntil(_)
-            | ProofTactic::SmartFrame(_)
-            | ProofTactic::FrameUsing { .. }
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
             | ProofTactic::TransportUsing { .. }
@@ -577,8 +572,6 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::SmartExecute => "execute",
         ProofTactic::SmartExecuteAllPaths => "execute",
         ProofTactic::ExecuteUntil(_) => "execute_until",
-        ProofTactic::SmartFrame(_) => "frame",
-        ProofTactic::FrameUsing { .. } => "frame",
         ProofTactic::UnfoldPredicate(_)
         | ProofTactic::UnfoldFunction(_)
         | ProofTactic::UnfoldResource(_) => "unfold",
@@ -1013,14 +1006,13 @@ pub(super) fn infer_contract_expression_type(
                 };
                 if let Some(actual) =
                     infer_contract_expression_type(argument, variables, click_functions, context)?
+                    && !click_types_compatible(actual, expected)
                 {
-                    if !click_types_compatible(actual, expected) {
-                        return Err(ClickError::new(format!(
-                            "function `{name}` argument {index} expects {}, got {} in {context}",
-                            describe_c0_type(expected),
-                            describe_c0_type(actual)
-                        )));
-                    }
+                    return Err(ClickError::new(format!(
+                        "function `{name}` argument {index} expects {}, got {} in {context}",
+                        describe_c0_type(expected),
+                        describe_c0_type(actual)
+                    )));
                 }
             }
             Ok(function.return_type.c_type())

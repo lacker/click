@@ -895,7 +895,7 @@ fn file_state(path: &Path, metadata: &fs::Metadata) -> Result<FileState, String>
         file_digest(path)?
     } else if metadata.file_type().is_symlink() {
         hex_digest(
-            &fs::read_link(path)
+            fs::read_link(path)
                 .map_err(|e| format!("read link {}: {e}", path.display()))?
                 .to_string_lossy()
                 .as_bytes(),
@@ -1612,7 +1612,7 @@ mod tests {
         let roots = vec![fs::canonicalize(&root).unwrap()];
         assert!(
             parse_dependencies(
-                &dep.as_bytes(),
+                dep.as_bytes(),
                 &root.join("x.c"),
                 ".",
                 &roots,
@@ -1701,7 +1701,7 @@ mod tests {
                 roots.push(file);
             }
             roots.sort();
-            let compact = snapshot_roots(&[input.clone()], &BTreeSet::new()).unwrap();
+            let compact = snapshot_roots(std::slice::from_ref(&input), &BTreeSet::new()).unwrap();
             let overlapping = snapshot_roots(&roots, &BTreeSet::new()).unwrap();
             assert_eq!(compact.entries.len(), 2 * size + 1);
             assert_eq!(

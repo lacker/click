@@ -52,14 +52,14 @@ ensures result >= b by auto;
 
 The guarantee says what Click is proving. The `by` clause says how.
 
-## 5. effects
+## 5. memory ownership
 
-For pointer code, check frame clauses:
+For pointer code, check the ownership clauses:
 
 <!-- verified-example: mdtests/scalar.md -->
 ```click
-immutable src[0..n] by frame;
-mutable dst[0..n] by frame;
+views src[0..n];
+owns dst[0..n];
 ```
 
 These describe which memory is preserved and which memory may change.

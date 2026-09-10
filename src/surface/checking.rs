@@ -3,13 +3,13 @@ use super::*;
 
 mod algebraic_rewrite;
 mod contract_evaluation;
-mod effects;
 mod predicates;
+mod segments;
 mod simp;
 use crate::kernel::memory_effect_write_pointers;
 pub(super) use contract_evaluation::*;
-pub(super) use effects::*;
 pub(super) use predicates::*;
+pub(super) use segments::*;
 pub(super) use simp::*;
 
 pub(super) fn prove_ensure_resource(
@@ -77,7 +77,7 @@ pub(super) fn prove_ensure_resource(
     Err(ClickError::new(format!(
         "`{claim_label}` failed on path {path_index}: {}",
         describe_missing_resource_fact(
-            &expected,
+            expected,
             available_pure_facts,
             post_state.resources().facts(),
             parameters,
@@ -85,114 +85,6 @@ pub(super) fn prove_ensure_resource(
             execution_pure_facts
         )
     )))
-}
-
-pub(super) fn apply_choose_tactic(
-    choice: &ProofChoice,
-    claim_label: &str,
-    path_index: usize,
-    tactic_index: usize,
-    available_pure_facts: &mut Vec<Proposition>,
-    values: &mut BTreeMap<String, CValue>,
-    original_requirements: &[Requirement],
-    next_choice_variable: &mut u64,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    unfolded_predicates: &[String],
-) -> Result<(), ClickError> {
-    if choice.name == "result" || values.contains_key(&choice.name) {
-        return Err(ClickError::new(format!(
-            "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: `{}` is already in scope",
-            choice.name
-        )));
-    }
-
-    let source_index = match &choice.source {
-        ProofFactSource::Requirement(index) => {
-            if *index >= original_requirements.len() {
-                return Err(ClickError::new(format!(
-                    "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: requirement {index} is out of range; function has {} requirement(s)",
-                    original_requirements.len()
-                )));
-            }
-            *index
-        }
-        ProofFactSource::RequirementLabel(label) => original_requirements
-            .iter()
-            .position(|requirement| requirement.label() == Some(label.as_str()))
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: unknown requirement label `{label}`"
-                ))
-            })?,
-    };
-    let mut source = available_pure_facts
-        .get(source_index)
-        .cloned()
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: requirement {source_index} was not available"
-            ))
-        })?;
-    if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
-        let assumptions = assumptions_from_propositions(available_pure_facts);
-        source = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
-            unfolded_predicates,
-            &source,
-            &assumptions,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: {message}"
-            ))
-        })?;
-    }
-
-    let Proposition::Exists {
-        var, sort, body, ..
-    } = source
-    else {
-        return Err(ClickError::new(format!(
-            "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: source is not an existential proposition"
-        )));
-    };
-    let chosen_variable = Variable(*next_choice_variable);
-    *next_choice_variable += 1;
-    let chosen = match sort {
-        Sort::CInt32 => CValue::Int32(Bitvector32Term::Variable(chosen_variable)),
-        Sort::CPointer(c_type @ CType::FunctionPointer(_)) => {
-            CValue::typed_pointer(Pointer::symbolic_function(chosen_variable), c_type)
-        }
-        Sort::CPointer(c_type) => CValue::typed_pointer(Pointer::symbolic(chosen_variable), c_type),
-        _ => {
-            return Err(ClickError::new(format!(
-                "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: unsupported existential sort"
-            )));
-        }
-    };
-    let chosen_fact = match &chosen {
-        CValue::Int32(value) => substitute_int32_variable_in_proposition(&body, var, value.clone()),
-        CValue::Pointer(pointer) => {
-            crate::kernel::substitute_pointer_variable_in_proposition(&body, var, pointer.pointer())
-        }
-        CValue::Void
-        | CValue::Bool(_)
-        | CValue::Int16(_)
-        | CValue::UInt8(_)
-        | CValue::UInt16(_)
-        | CValue::UInt32(_)
-        | CValue::Int64(_)
-        | CValue::UInt64(_)
-        | CValue::Float32(_)
-        | CValue::Float64(_) => {
-            unreachable!("unsupported choice sort above")
-        }
-    };
-    values.insert(choice.name.clone(), chosen);
-    available_pure_facts.push(chosen_fact);
-    Ok(())
 }
 
 pub(super) fn evaluate_witness_tactic_value(

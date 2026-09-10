@@ -281,22 +281,22 @@ impl<'a> Proof<'a> {
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
-                &premise_pairs,
+                premise_pairs,
                 fixed_state_application_closes_goal,
             )
-            .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
-            .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
+            .or_else(|| self.try_selected_equality_rewrite_chain(premise_pairs))
+            .or_else(|| self.try_selected_predecessor_upper_bound(&goal, premise_pairs))
             .or_else(|| self.try_selected_constant_bound_weakening(&goal, &derivation))
             .or_else(|| {
                 self.surface_goal().and_then(|surface_goal| {
-                    self.try_selected_unchanged_load_forall_goal(surface_goal, &premise_pairs)
+                    self.try_selected_unchanged_load_forall_goal(surface_goal, premise_pairs)
                         .or_else(|| {
-                            self.try_selected_forall_goal(&goal, surface_goal, &premise_pairs)
+                            self.try_selected_forall_goal(&goal, surface_goal, premise_pairs)
                         })
                 })
             })
-            .or_else(|| self.try_selected_forall_instantiation(&goal, &premise_pairs))
-            .or_else(|| self.try_selected_disjunction_cases(&premise_pairs))
+            .or_else(|| self.try_selected_forall_instantiation(&goal, premise_pairs))
+            .or_else(|| self.try_selected_disjunction_cases(premise_pairs))
         })();
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
@@ -692,17 +692,16 @@ impl<'a> Proof<'a> {
             let nonstrict_done = nonstrict_scope
                 .try_simp_closure_with_surfaces(&else_surfaces)?
                 .or_else(|| {
-                    match nonstrict_scope.apply_step(ProofStep::ApplyTheoremUsing {
-                        application: TheoremApplication {
-                            name: "int32_lt_successor_implies_le".to_string(),
-                            arguments: surface_nonstrict_parts(&nonstrict)
-                                .map(|(left, right)| vec![left, right])?,
-                        },
-                        premises: vec![direct_bound.clone()],
-                    }) {
-                        Ok(proof) => Some(proof),
-                        Err(_) => None,
-                    }
+                    nonstrict_scope
+                        .apply_step(ProofStep::ApplyTheoremUsing {
+                            application: TheoremApplication {
+                                name: "int32_lt_successor_implies_le".to_string(),
+                                arguments: surface_nonstrict_parts(&nonstrict)
+                                    .map(|(left, right)| vec![left, right])?,
+                            },
+                            premises: vec![direct_bound.clone()],
+                        })
+                        .ok()
                 });
             let Some(nonstrict_done) = nonstrict_done else {
                 continue;
@@ -861,9 +860,7 @@ impl<'a> Proof<'a> {
             _ => None,
         };
         let surface_goal = self.surface_goal()?.clone();
-        if surface_nonstrict_parts(&surface_goal).is_none() {
-            return None;
-        }
+        surface_nonstrict_parts(&surface_goal)?;
         for anchor in predecessor
             .as_ref()
             .into_iter()
@@ -1027,6 +1024,23 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(closed));
         }
+        // A selected execution path can make the antecedent false through a
+        // short derivation rather than an already-indexed exact opposite.
+        // Prove and retain that opposite first; after `intro`, ordinary
+        // contradiction checks the two explicit facts.
+        let negated_antecedent = negate_click_proposition(surface_antecedent);
+        if let Some(scope) =
+            attempt::candidate_outcome(self.begin_have(negated_antecedent.clone()))?
+            && let Some(proved) = scope.try_simp_closure()?
+            && let Some(with_opposite) = attempt::candidate_outcome(proved.join())?
+            && let Some(with_antecedent) =
+                attempt::candidate_outcome(with_opposite.apply_step(ProofStep::Intro))?
+            && let Some(closed) = attempt::candidate_outcome(
+                with_antecedent.apply_step(ProofStep::Contradiction(negated_antecedent)),
+            )?
+        {
+            return Ok(Some(closed));
+        }
         let mut conjuncts = Vec::new();
         if matches!(surface_antecedent, ClickProposition::And(_, _)) {
             collect_surface_conjunct_leaves(surface_antecedent, &mut conjuncts);
@@ -1117,12 +1131,14 @@ impl<'a> Proof<'a> {
                 introduced_surfaces,
             );
         }
+        if matches!(goal, Proposition::Implies(_, _))
+            && let Some((surface_antecedent, _)) = surface_implication_parts(surface_goal)
+        {
+            return self.try_implication_simp_closure(&surface_antecedent, introduced_surfaces);
+        }
         match (surface_goal, goal) {
             (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
                 self.try_structural_forall_simp_closure(surface_goal, introduced_surfaces)
-            }
-            (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
-                self.try_implication_simp_closure(surface_antecedent, introduced_surfaces)
             }
             // A predicate-call goal unfolds to its body, which the
             // structural arms and logical closers then work over. Repeat
@@ -2009,12 +2025,9 @@ impl<'a> Proof<'a> {
                 for oriented in
                     std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
                 {
-                    match proof.apply_step(ProofStep::Rewrite(oriented)) {
-                        Ok(rewritten) => {
-                            selected = Some((index, rewritten));
-                            break;
-                        }
-                        Err(_) => {}
+                    if let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) {
+                        selected = Some((index, rewritten));
+                        break;
                     }
                 }
                 if selected.is_some() {
@@ -2146,12 +2159,12 @@ impl<'a> Proof<'a> {
                 ContractExpression::CFragment(CExpression::Value(int32(constant as u32)));
             let bound_surface = ClickProposition::Comparison {
                 left: surface_value.clone(),
-                operator: operator.clone(),
+                operator,
                 right: surface_constant.clone(),
             };
             let link_surface = ClickProposition::Comparison {
                 left: surface_constant.clone(),
-                operator: operator.clone(),
+                operator,
                 right: surface_goal_constant.clone(),
             };
             let Ok(scope) = self.begin_have(bound_surface.clone()) else {
@@ -2473,7 +2486,7 @@ impl<'a> Proof<'a> {
         let surface_facts = match self.context.as_ref() {
             ProofContext::Pure(context) => &context.theorem_context.surface_requirements,
             ProofContext::FixedState(context) => context.surface_propositions,
-            ProofContext::Execution(_) => &execution_view.as_ref()?.surface_propositions,
+            ProofContext::Execution(_) => execution_view.as_ref()?.surface_propositions,
         };
         let bound_variable_names = match self.proposition_obligation() {
             Some(goal) => goal
@@ -2702,8 +2715,8 @@ impl<'a> Proof<'a> {
                 }
             }
             for surface in surfaces {
-                for value in candidate_values.iter().cloned() {
-                    let argument = match &value {
+                for value in candidate_values.iter() {
+                    let argument = match value {
                         Bitvector32Term::Constant(bits) => Some(ContractExpression::CFragment(
                             CExpression::Value(CValue::Int32(Bitvector32Term::Constant(*bits))),
                         )),
@@ -2910,9 +2923,7 @@ impl<'a> Proof<'a> {
         surface_goal: &ClickProposition,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        if self.focused_outcome_data().is_none() {
-            return None;
-        }
+        self.focused_outcome_data()?;
         let mut cursor = surface_goal;
         let mut proof = self.clone();
         let mut introduced_forall = false;
@@ -2944,7 +2955,7 @@ impl<'a> Proof<'a> {
                     .assumptions()
                     .derive_atomic_proposition(&kernel)
             })
-            .map(|derivation| {
+            .and_then(|derivation| {
                 let data = proof.focused_outcome_data()?;
                 let pairs = derivation
                     .context_premises()
@@ -2961,7 +2972,6 @@ impl<'a> Proof<'a> {
                     .collect::<Vec<_>>();
                 Some(pairs)
             })
-            .flatten()
             .unwrap_or_default();
         let data = proof.focused_outcome_data()?;
         let anchor = data.premise_anchor.as_ref()?;
@@ -3088,9 +3098,8 @@ impl<'a> Proof<'a> {
         if !crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(goal).is_empty() {
             let conditions = premise_pairs
                 .iter()
-                .filter_map(|(kernel, surface)| {
-                    (!condition_polarity_forms(kernel).is_empty()).then(|| surface.clone())
-                })
+                .filter(|&(kernel, _surface)| !condition_polarity_forms(kernel).is_empty())
+                .map(|(_kernel, surface)| surface.clone())
                 .collect::<Vec<_>>();
             if !conditions.is_empty()
                 && let Ok(closed) = proof.apply_step(ProofStep::NormalizeUsing(conditions))
@@ -3133,7 +3142,7 @@ impl<'a> Proof<'a> {
         premise_pairs: &[(Proposition, ClickProposition)],
         fixed_state_application_closes_goal: bool,
     ) -> Option<Self> {
-        let tactics = recorded_signed_order_pairs(derivation, &premise_pairs)
+        let tactics = recorded_signed_order_pairs(derivation, premise_pairs)
             .and_then(|ordered| {
                 plan_recorded_signed_order_path_for_context(
                     goal,
@@ -3141,12 +3150,12 @@ impl<'a> Proof<'a> {
                     fixed_state_application_closes_goal,
                 )
             })
-            .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))
-            .or_else(|| plan_recorded_pointer_alignment(goal, derivation, &premise_pairs))
-            .or_else(|| plan_recorded_pointer_word(goal, derivation, &premise_pairs))
+            .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, premise_pairs))
+            .or_else(|| plan_recorded_pointer_alignment(goal, derivation, premise_pairs))
+            .or_else(|| plan_recorded_pointer_word(goal, derivation, premise_pairs))
             .or_else(|| {
                 let recorded =
-                    recorded_load_address_congruence_path_pairs(derivation, &premise_pairs)?;
+                    recorded_load_address_congruence_path_pairs(derivation, premise_pairs)?;
                 plan_recorded_load_address_congruence(goal, derivation, &recorded)
             })
             .or_else(|| {
@@ -3155,7 +3164,7 @@ impl<'a> Proof<'a> {
             .or_else(|| plan_pointer_advanced_load_equality(goal, premise_pairs))
             .or_else(|| {
                 let recorded =
-                    recorded_int32_increment_upper_bound_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_increment_upper_bound_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_increment_upper_bound_for_context(
                     goal,
                     &recorded,
@@ -3163,10 +3172,8 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
-                let recorded = recorded_int32_increment_constant_upper_bound_pairs(
-                    derivation,
-                    &premise_pairs,
-                )?;
+                let recorded =
+                    recorded_int32_increment_constant_upper_bound_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_increment_constant_upper_bound_for_context(
                     goal,
                     &recorded,
@@ -3175,7 +3182,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_increment_strictly_increases_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_increment_strictly_increases_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_increment_strictly_increases_for_context(
                     goal,
                     &recorded,
@@ -3184,7 +3191,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_one_plus_strictly_increases_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_one_plus_strictly_increases_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_one_plus_strictly_increases_for_context(
                     goal,
                     &recorded,
@@ -3192,10 +3199,8 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
-                let recorded = recorded_int32_increment_below_max_is_defined_pairs(
-                    derivation,
-                    &premise_pairs,
-                )?;
+                let recorded =
+                    recorded_int32_increment_below_max_is_defined_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_increment_below_max_is_defined_for_context(
                     goal,
                     &recorded,
@@ -3204,7 +3209,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_one_plus_below_max_is_defined_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_one_plus_below_max_is_defined_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_one_plus_below_max_is_defined_for_context(
                     goal,
                     &recorded,
@@ -3213,7 +3218,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_nonnegative_add_within_max_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_nonnegative_add_within_max_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_nonnegative_add_within_max_for_context(
                     goal,
                     &recorded,
@@ -3223,7 +3228,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_nonnegative_subtract_within_value_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_nonnegative_subtract_within_value_for_context(
                     goal,
@@ -3233,7 +3238,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_increment_lower_bound_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_increment_lower_bound_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_increment_lower_bound_for_context(
                     goal,
                     &recorded,
@@ -3243,7 +3248,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_increment_greater_equal_lower_bound_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_increment_greater_equal_lower_bound_for_context(
                     goal,
@@ -3254,7 +3259,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_increment_strict_greater_lower_bound_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_increment_strict_greater_lower_bound_for_context(
                     goal,
@@ -3265,7 +3270,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_increment_strict_greater_from_strict_lower_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
                     goal,
@@ -3275,7 +3280,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_increment_preserves_order_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_increment_preserves_order_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_increment_preserves_order_for_context(
                     goal,
                     &recorded,
@@ -3285,7 +3290,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_positive_predecessor_is_nonnegative_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
                     goal,
@@ -3296,7 +3301,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_positive_predecessor_strictly_decreases_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
                     goal,
@@ -3307,7 +3312,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_nonnegative_predecessor_upper_bound_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
                     goal,
@@ -3317,18 +3322,18 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_equal_one_predecessor_is_zero_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_equal_one_predecessor_is_zero_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_equal_one_predecessor_is_zero(goal, derivation, &recorded)
             })
             .or_else(|| {
                 let recorded = recorded_int32_equal_one_predecessor_is_nonnegative_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )
                 .or_else(|| {
                     recorded_int32_equal_one_predecessor_strictly_decreases_pairs(
                         derivation,
-                        &premise_pairs,
+                        premise_pairs,
                     )
                 })?;
                 plan_recorded_int32_equal_one_predecessor_for_context(
@@ -3341,12 +3346,12 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_one_le_predecessor_is_nonnegative_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )
                 .or_else(|| {
                     recorded_int32_one_le_predecessor_strictly_decreases_pairs(
                         derivation,
-                        &premise_pairs,
+                        premise_pairs,
                     )
                 })?;
                 plan_recorded_int32_one_le_predecessor_for_context(
@@ -3356,10 +3361,8 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
-                let recorded = recorded_int32_le_and_not_lt_implies_equality_pairs(
-                    derivation,
-                    &premise_pairs,
-                )?;
+                let recorded =
+                    recorded_int32_le_and_not_lt_implies_equality_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
                     goal,
                     &recorded,
@@ -3367,10 +3370,8 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
-                let recorded = recorded_int32_ge_and_not_gt_implies_equality_pairs(
-                    derivation,
-                    &premise_pairs,
-                )?;
+                let recorded =
+                    recorded_int32_ge_and_not_gt_implies_equality_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_ge_and_not_gt_implies_equality_for_context(
                     goal,
                     &recorded,
@@ -3379,7 +3380,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_positive_is_nonnegative_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_positive_is_nonnegative_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_positive_is_nonnegative_for_context(
                     goal,
                     &recorded,
@@ -3389,7 +3390,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 let recorded = recorded_int32_strictly_positive_is_nonnegative_pairs(
                     derivation,
-                    &premise_pairs,
+                    premise_pairs,
                 )?;
                 plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
                     goal,
@@ -3399,7 +3400,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_successor_le_implies_lt_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_successor_le_implies_lt_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_successor_le_implies_lt_for_context(
                     goal,
                     &recorded,
@@ -3407,10 +3408,8 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
-                let recorded = recorded_int32_constant_lower_bound_weakening_pairs(
-                    derivation,
-                    &premise_pairs,
-                )?;
+                let recorded =
+                    recorded_int32_constant_lower_bound_weakening_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_constant_lower_bound_weakening_for_context(
                     goal,
                     &recorded,
@@ -3418,10 +3417,8 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| {
-                let recorded = recorded_int32_negated_strict_successor_bound_pairs(
-                    derivation,
-                    &premise_pairs,
-                )?;
+                let recorded =
+                    recorded_int32_negated_strict_successor_bound_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_negated_strict_successor_bound_for_context(
                     goal,
                     &recorded,
@@ -3430,7 +3427,7 @@ impl<'a> Proof<'a> {
             })
             .or_else(|| {
                 let recorded =
-                    recorded_int32_le_and_neq_implies_strict_pairs(derivation, &premise_pairs)?;
+                    recorded_int32_le_and_neq_implies_strict_pairs(derivation, premise_pairs)?;
                 plan_recorded_int32_le_and_neq_implies_strict_for_context(
                     goal,
                     &recorded,
@@ -3635,7 +3632,6 @@ impl<'a> Proof<'a> {
                                 scope.try_linear_script(body)?
                             }
                         }
-                        SourceProof::Tactic(SmartTactic::Frame) => None,
                     };
                     let Some(selected) = selected else {
                         return Ok(None);

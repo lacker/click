@@ -41,8 +41,8 @@ Click signatures currently understand `void` C return types, `int32`/`int`/
 and `uint8 bytes[]`. C typedefs may alias these modeled types. `uint32` is
 currently scalar-only: pointers, arrays, and struct fields of that type remain
 unsupported. `void` is not an object or parameter type. A `void` contract has
-no `result` binding; it may still state resource transfer, memory effects, and
-return-state propositions that do not mention a result.
+no `result` binding; it may still state resource transfer and return-state
+propositions that do not mention a result.
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
@@ -159,8 +159,8 @@ measure. The loop guard is available when proving the recursive argument is
 nonnegative. The numeric function-level measure must remain unchanged by
 assignments, updates, allocation results, and call results. Structural
 recursive calls in loops are supported for read-only resource transitions when
-the parent is observed before the loop and the loop effect is `immutable by
-frame`; the recursive call must still receive a direct contained child. See
+the parent is observed before the loop; the recursive call must still receive
+a direct contained child. See
 `mdtests/c_decreases_resource_recursive_in_loop.md`. Resource-consuming or
 mutating structural calls across a loop back edge remain tracked in the
 hard-bucket `issues/recursion.md`.
@@ -182,32 +182,29 @@ run out of those host resources; the worker's stack size and verifier budgets
 are not program guarantees. The perpetual-loop regressions in the [examples
 reference](../examples.md) pin this partial-correctness boundary.
 
-A function with several effect and postcondition clauses may instead use one
-grouped execution proof after the contract block:
+A function with several postcondition clauses may instead use one grouped
+execution proof after the contract block:
 
 <!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 int32 set_first(int32 p[], int32 value) {
     owns p[0..1];
-    mutable p[0..1];
     ensures result == value;
     ensures p[0] == value;
 } by {
     execute();
-    frame();
     simp();
 }
 ```
 
 The trailing block executes the function once and proves every listed claim
-from that shared execution. It may also certify a resource-only contract with no
-effect or postcondition clauses. `frame()` discharges the effect claims, while
-`simp()` and resource steps discharge the postconditions. A function uses
-either this grouped form or per-claim `by` clauses; the two forms cannot be
-mixed. Structural region clauses, including loop proofs, retain their own
-proof blocks.
+from that shared execution. It may also certify a resource-only contract with
+no postcondition clauses. `simp()` and resource steps discharge the
+postconditions. A function uses either this grouped form or per-claim `by`
+clauses; the two forms cannot be mixed. Structural region clauses, including
+loop proofs, retain their own proof blocks.
 
-For contracts that need only ordinary execution, loop checks, framing, and
+For contracts that need only ordinary execution, loop checks, and
 simplification, the grouped proof can be written `} by auto;`. This is a fixed
 expansion of those steps. It does not search through composite-resource folds
 or theorem applications; use an explicit grouped block for those operations.
@@ -231,15 +228,15 @@ the matching postcondition without applying those existential steps to other
 contract claims.
 
 Post-execution grouped steps run in source order. `fold`, `apply`, and `have`
-update each symbolic path once; `frame()` closes its effect claims and `simp()`
-closes the postconditions currently provable. Facts established after a closing
+update each symbolic path once; `simp()` closes the postconditions currently
+provable. Facts established after a closing
 step do not retroactively affect it. All claim proofs for one symbolic path use
 the same finalized specification.
 
 Inside a proof-level `if`, post-execution tactics apply only to execution paths
-compatible with that branch's checked condition. In particular, `frame()` does
-not plan operations for a contradictory sibling outcome and then align them
-by vector position. Branch-local expansion therefore preserves the sibling's
+compatible with that branch's checked condition. In particular, a closing step
+does not plan operations for a contradictory sibling outcome and then align
+them by vector position. Branch-local expansion therefore preserves the sibling's
 proof text and reports a compact `pN` path identifier if surface and execution
 coverage ever diverge.
 
@@ -269,7 +266,7 @@ clauses. A theorem-only `.click` file does not need a `verifying "file.c";`
 declaration.
 
 Theorems are intentionally pure. They do not support resource `requires`,
-resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
+resource `ensures`, region proof blocks, `old(...)`, `at(...)`, or
 `result`. Pure theorem scripts can simplify, unfold predicates and pure functions, apply
 theorems, introduce logical structure, rewrite, use exact assumptions, and
 derive atomic propositions. They cannot execute C or transform resources.
@@ -484,9 +481,8 @@ The proof starts with arbitrary call arguments and the **target contract's**
 input requirements and resources. It knows only the callback contracts in the
 theorem's premises or established by checked proof steps—not the target
 contract fact being proved. The call checks the selected source contract's
-requirements and performs its resource transition and effects. The remaining
-proof must establish all target postconditions, returned resources, and effect
-bounds. Unrelated owned resources use ordinary framing.
+requirements and performs its resource transition. The remaining proof must
+establish all target postconditions, returned resources, and write bounds. Unrelated owned resources use ordinary framing.
 
 These are ordinary execution proof blocks: `have`, theorem application,
 rewriting, proof cases, `fold`, `unfold`, and the usual closing tactics retain
@@ -689,8 +685,8 @@ Once C execution returns, the remaining proof uses the post-return population
 counts while retaining the body's ownership for closing open resources. The
 new count does not itself establish any body invariant: the proof must still
 show that the stored values agree with it. This return-count interpretation
-comes from the contract's checked exit rule and does not require `frame()` or
-an explicit memory-effect clause.
+comes from the contract's checked exit rule and requires no framing step of
+its own.
 
 `fold(object_ref(obj))` initializes a population of one from its body
 resources. `open(object_ref(obj)) { ... }` temporarily exposes the one shared
@@ -1084,9 +1080,9 @@ This is intentionally not a complete resource system. Memory permissions have
 no fractional form, and there are no general ownership predicates, general
 allocator APIs, or user-defined resource algebras. Exact struct allocation and
 runtime-sized `int32` arrays are the
-supported heap slices. `loadable`, `mutable`, and `immutable` remain separate
-concepts from memory permission: loadability proves an access is in bounds,
-while memory resources authorize the access.
+supported heap slices. `loadable` remains a separate concept from memory
+permission: loadability proves an access is in bounds, while memory resources
+authorize the access.
 
 ## Propositions
 
@@ -1420,7 +1416,7 @@ int32 bounded_increment(int32 x) {
 
 Contract-level lets are immutable lexical abbreviations. They are visible to
 later clauses in the same function block, including `requires`, `ensures`,
-`mutable`, and region proof blocks. A contract-level let cannot reuse a C
+`owns`, `views`, and region proof blocks. A contract-level let cannot reuse a C
 parameter name or an earlier contract-level let name. Explicit type annotations
 are checked when the binding is evaluated.
 
@@ -1445,8 +1441,8 @@ ensures result == k by {
 proposition and body }`. Contract-level `let ... where` applies that shape to
 each later proposition clause. The type annotation is required. The current
 implementation supports this in proposition clauses; it is intentionally
-rejected in `loadable`, `mutable`, and other memory-segment expressions
-until Click has a contract-wide witness environment.
+rejected in `loadable`, `owns`, and other memory-segment expressions until
+Click has a contract-wide witness environment.
 
 In pure Click function parameters, `int32 p[]` and `int32* p` are treated as
 array-ref parameters. `uint8 p[]` and `uint8* p` are also array-ref parameters,
@@ -1585,47 +1581,43 @@ Like pure Click functions, predicate array parameters are Click array refs.
 A predicate can compare two arrays from different memory states when its caller
 passes arguments such as `p` and `old(p)`.
 
-## Effects
+## Write footprints
 
-Function-level effects are separate from postconditions:
+A function's externally visible write footprint is exactly the memory its
+contract owns. There is no separate effect clause: `owns` permits stores and
+reads, `views` permits reads, and a store outside the owned memory fails at
+the store. The retired `modifies`, `preserves`, `mutable`, and `immutable`
+effect spellings and the `frame` tactic are parse errors whose diagnostics name
+this ownership form.
 
-<!-- verified-example: mdtests/shifted_copy_effect_uses_covering_separate.md -->
+Contract segment expressions are evaluated at function entry, so a shifted
+segment such as `owns (owner->data + owner->len)[0..2]` continues to denote the
+old two-cell tail after `owner->len` changes. Footprint matching uses proven
+pointer equalities, including unchanged field loads across a finite chain of
+certified memory effects.
+
+A narrow write inside a wider range is spelled as a view of the whole plus
+ownership of the piece:
+
+<!-- verified-example: mdtests/field_derived_precise_effect_after_metadata_write.md -->
 ```click
-immutable by frame;
-mutable p[0..n] by frame;
-mutable dst[0..n], counter[0..1] by frame;
+views owned_buffer(owner);
+owns owner[0..1];
+owns (owner->data + owner->len)[0..2];
 ```
 
-`immutable` proves there are no writes to memory visible at function entry;
-stack locals and initialization writes to a function-fresh allocation are
-internal. `mutable` states an upper bound on externally visible writes. It does
-not claim every listed cell changes, and neither form waives allocation
-lifetime obligations. Function-level segment expressions are evaluated at
-function entry, so a shifted segment such as
-`(owner->data + owner->len)[0..2]` continues to denote the old two-cell tail
-after `owner->len` changes. Footprint matching uses proven pointer equalities,
-including unchanged field loads across a finite chain of certified memory
-effects.
+Callers then frame the viewed remainder with no clause and no tactic. A
+function that owns no memory must not write memory that was live at entry;
+this is checked when the function contract is certified, so callers preserve
+memory across a read-only callee with nothing to declare. Stack locals and
+initialization writes to a function-fresh allocation are internal and never
+part of the footprint. Ownership never waives allocation lifetime obligations.
 
-If a function omits an effect clause, its externally visible write footprint
-is empty: the function must not write memory that was live at entry. This is
-checked when the function contract is certified, so callers may preserve
-memory across a read-only callee without a synthesized `immutable` clause.
-Memory frames derived from transferred owned resources are checked by the
-resource transition instead.
-
-A `mutable` clause that lists exactly the memory the contract owns adds
-nothing: callers frame the same ranges from the owned resources, and the
-resource transition checks the writes. Likewise `immutable;` on a function
-that owns no memory restates the empty footprint an omitted clause already
-means. Both spellings remain accepted; the examples omit them.
-
-File-scope and static storage is not caller memory, so a contract that
-declares resources but no effect clause may store into such storage only
-inside the cells it owns: a `views` clause, or ownership of a neighboring
-cell, does not authorize the store. Resource slices of global and static
-arrays use the array's declared element width, so `owns bytes[0..1]` on a
-`uint8` array covers one byte.
+File-scope and static storage is not caller memory, so a contract that declares
+resources may store into such storage only inside the cells it owns: a `views`
+clause, or ownership of a neighboring cell, does not authorize the store.
+Resource slices of global and static arrays use the array's declared element
+width, so `owns bytes[0..1]` on a `uint8` array covers one byte.
 
 A loop may declare resources of its own beside its invariants, in the same
 `owns` and `views` spellings a contract uses:
@@ -1649,5 +1641,5 @@ invariant naming it. A loop that declares only `views` owns nothing and so
 writes nothing. With no declaration, a loop inherits everything the function
 owns, which is the default footprint an omitted clause already means.
 
-Loop-level and step-level effects are described in [proof-workflow.md](../../concepts/proof-workflow.md)
+Loop frames are described in [proof-workflow.md](../../concepts/proof-workflow.md)
 and [memory-model.md](../../concepts/memory-model.md).

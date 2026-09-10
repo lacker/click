@@ -236,45 +236,6 @@ fn bounded_statement_successor_exclusion_ignores_unrelated_ambient_facts() {
     assert_near_linear_scaling("bounded statement-successor ambient facts", &samples);
 }
 
-#[test]
-fn smart_loop_effect_frame_selection_ignores_unrelated_named_facts() {
-    let mut samples = Vec::new();
-    let mut candidate_counts = Vec::new();
-    for size in [4, 8, 16, 32] {
-        let parameters = (0..size)
-            .map(|index| format!(", int32 unrelated_{index}"))
-            .collect::<String>();
-        let requirements = (0..size)
-            .map(|index| format!("    requires unrelated_{index} >= 0;\n"))
-            .collect::<String>();
-        let c_source = format!(
-            "int32 fill_one(int32 p[]{parameters}) {{\n    int32 i;\n    i = 0;\n    while (i < 1) {{\n        p[i] = 1;\n        i = i + 1;\n    }}\n    return i;\n}}\n"
-        );
-        let click_source = format!(
-            "verifying \"fill_one.c\";\n\nint32 fill_one(int32 p[]{parameters}) {{\n    requires loadable(p[0..1]);\n    consumes p[0..1];\n{requirements}    ensures result == 1;\n}} by {{\n    step();\n    step();\n    loop {{\n        invariant i >= 0;\n        invariant i <= 1;\n        mutable p[0..1] by frame;\n        initialize by simp;\n        preserve by {{\n            step();\n            step();\n            close_invariants();\n        }}\n    }}\n    step();\n    simp();\n}}\n"
-        );
-        let ((verified, candidates), sample) = scaling_sample(size, || {
-            proof::count_smart_loop_effect_frame_candidates(|| {
-                verify_c0_sources(&click_source, &[("fill_one.c", &c_source)])
-            })
-        });
-        verified.expect("the smart loop effect frame should ignore unrelated named facts");
-        candidate_counts.push(candidates);
-        samples.push(sample);
-    }
-    assert!(
-        candidate_counts[0] > 0,
-        "the scaling fixture did not exercise premise selection"
-    );
-    assert!(
-        candidate_counts
-            .iter()
-            .all(|count| *count == candidate_counts[0]),
-        "loop frame candidates changed with unrelated named facts: {candidate_counts:?}"
-    );
-    assert_near_linear_scaling("smart loop frame unrelated named facts", &samples);
-}
-
 fn unrelated_identity_project(function_count: usize) -> (Vec<(String, String)>, String) {
     let mut c_sources = Vec::new();
     let mut click_source = String::new();
@@ -365,7 +326,7 @@ fn load_variable_project(statement_count: usize, axis: LoadAxis) -> (String, Str
     let (permission, statements) = match axis {
         LoadAxis::DistinctCells | LoadAxis::OneCell => ("views data[0..length];", statement_count),
         LoadAxis::OneCellAcrossStores => (
-            "consumes data[0..length];\n    mutable data[1..2];\n    produces data[0..length];",
+            "consumes data[0..length];\n    produces data[0..length];",
             2 * statement_count,
         ),
     };
@@ -378,9 +339,9 @@ fn load_variable_project(statement_count: usize, axis: LoadAxis) -> (String, Str
     }
     click_source.push_str("    normalize();\n");
     if matches!(axis, LoadAxis::OneCellAcrossStores) {
-        // `frame()` closes the effect claim; the `produces` claim has no
-        // simple closer and takes the one smart tactic in this fixture.
-        click_source.push_str("    frame();\n    simp();\n");
+        // The `produces` claim has no simple closer and takes the one smart
+        // tactic in this fixture.
+        click_source.push_str("    simp();\n");
     }
     click_source.push_str("}\n");
     (c_source, click_source)
@@ -469,7 +430,7 @@ fn resource_member_project(member_count: usize) -> (String, String) {
         click_source.push_str(&format!("    contains member_{index}({index});\n"));
     }
     click_source.push_str(
-        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    views bundle(p);\n    immutable by {\n        step();\n        frame() using {}\n    }\n}\n",
+        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    views bundle(p);\n    ensures result == 0;\n} by {\n    step();\n    simp();\n}\n",
     );
     (c_source, click_source)
 }

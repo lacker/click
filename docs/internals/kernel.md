@@ -566,7 +566,7 @@ free as `CHeapAllocationFreed(before, after, base, bytes)`. Effect
 certification checks that executing `free(base)` from `before` with the stated
 extent produces `after`, and chains that transition separately from ordinary
 `CMemoryMutatesOnly` and ranged call-havoc effects. This lets a function free
-owned storage directly even when its surface `mutable` clause names only
+owned storage directly even when its surface `owns` clause names only
 unrelated surviving memory.
 
 Function-effect certification treats stores into heap blocks created after
@@ -600,7 +600,7 @@ each unfolding, in the same order, answer with the resource algebra's
 reasoning. Reasoning at every unfolding is what once took binary-tree's
 certification from seconds to minutes.
 
-A `CallHavoc` edge carries the callee's checked mutable ranges. Load transport
+A `CallHavoc` edge carries the callee's checked owned ranges. Load transport
 may cross that edge only when the loaded address is proved disjoint from every
 range; multiple opaque calls compose by following the corresponding bounded
 effect chain. This rule preserves an adjacent unchanged field without exposing
@@ -608,7 +608,7 @@ havoc block names in an expanded proof. A dependent address is transported
 only when its pointer and index expressions are themselves stable. An
 overlapping or undecidable footprint stops the transport.
 
-Loop havoc carries the checked mutable ranges of a whole-loop effect summary
+Loop havoc carries the checked owned ranges of a whole-loop frame summary
 when they are available. Its memory-DAG edge is crossed by the same
 range-disjointness rule; a loop with no evaluated footprint remains a barrier.
 
@@ -616,7 +616,7 @@ Independent whole-path checking can regenerate fresh return variables and
 `call-havoc` marker identities for the same execution path. Certification
 couples those encodings only through matching memory-derivation structure:
 local bookkeeping edges are transparent, stores must have equal pointers and
-values, and call-havoc edges must have definitionally equal mutable ranges and
+values, and call-havoc edges must have definitionally equal owned ranges and
 matching base histories. An empty store list is not evidence of equal memory.
 Fresh return values may be related using kernel-certified path-equivalence facts, but
 never by ordinary untrusted facts; exact memory and ghost-resource changes are

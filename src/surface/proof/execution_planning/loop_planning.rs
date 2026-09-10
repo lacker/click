@@ -54,11 +54,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             context.state.clone(),
         );
     }
-    let invariant_items = clause
-        .items()
-        .iter()
-        .filter(|item| item.kind() == StructuralItemKind::Invariant)
-        .collect::<Vec<_>>();
+    let invariant_items = clause.items().iter().collect::<Vec<_>>();
     let initialization_surface_propositions =
         std::cell::RefCell::new(context.surface_propositions.clone());
     // Generated initialization steps belong to the explicit phase tactic when
@@ -97,7 +93,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     matches!(
                         tactic,
                         ProofTactic::Have(have)
-                            if item.proposition() == Some(&have.proposition)
+                            if item.proposition() == &have.proposition
                     )
                 });
         (prefix_is_explicit && invariants_match)
@@ -114,19 +110,17 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             let mut tactics = Vec::new();
             let mut all_invariants_checked = true;
             for (invariant_index, item) in invariant_items.iter().enumerate() {
-                let proposition = item
-                    .proposition()
-                    .expect("invariant region proof item should contain a proposition");
+                let proposition = item.proposition();
                 let invariant_claim_label =
                     format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
                 let obligation_context =
                     format!("loop {loop_index} invariant {invariant_index} entry");
-                let expected_goal = entry_obligations
+                let exact_expected_goal = entry_obligations
                     .iter()
                     .find(|obligation| obligation.context() == Some(&obligation_context))
                     .map(|obligation| obligation.proposition().clone());
                 let planning_assumptions = assumptions_from_propositions(&planning_available);
-                let expected_goal = expected_goal.map(|mut expected_goal| {
+                let expected_goal = exact_expected_goal.clone().map(|mut expected_goal| {
                     while let Proposition::Implies(antecedent, body) = &expected_goal {
                         if !planning_assumptions.proves(antecedent) {
                             break;
@@ -134,6 +128,17 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         expected_goal = body.as_ref().clone();
                     }
                     expected_goal
+                });
+                let planning_facts =
+                    crate::kernel::proof::ProofFacts::from_ordered(&planning_available);
+                let proof_goal = exact_expected_goal.map(|mut proof_goal| {
+                    while let Proposition::Implies(antecedent, body) = &proof_goal {
+                        if !planning_facts.contains(antecedent) {
+                            break;
+                        }
+                        proof_goal = body.as_ref().clone();
+                    }
+                    proof_goal
                 });
                 // Planning an invariant's entry proof is proof search, not
                 // check. Classify it by the `by` clause the search is
@@ -172,6 +177,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         environment.click_function_environment,
                         &context.surface_propositions,
                         expected_goal.as_ref(),
+                        proof_goal.as_ref(),
                         environment.theorem_environment,
                     )
                 };
@@ -261,9 +267,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 };
                 let invariant_index = certificate_index.checked_sub(invariant_start);
                 if let Some(invariant_index) = invariant_index {
-                    let proposition = invariant_items[invariant_index]
-                        .proposition()
-                        .expect("invariant region proof item should contain a proposition");
+                    let proposition = invariant_items[invariant_index].proposition();
                     if &have.proposition != proposition {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` certificate step {certificate_index} changed invariant {invariant_index}"
@@ -513,740 +517,8 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     merge_path_aligned_certificates(&claim_label, paths)
 }
 
-fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
-    match step {
-        ProofStep::Mark(_)
-        | ProofStep::Step
-        | ProofStep::StepContract(_)
-        | ProofStep::ApplyTheoremUsing { .. }
-        | ProofStep::TransportUsing { .. }
-        | ProofStep::UnfoldPredicate(_)
-        | ProofStep::UnfoldFunction(_)
-        | ProofStep::UnfoldResource(_)
-        | ProofStep::FoldResource(_)
-        | ProofStep::ConstructResource(_)
-        | ProofStep::ObserveResource(_)
-        | ProofStep::Choose(_)
-        | ProofStep::Witness(_)
-        | ProofStep::InstantiateUsing { .. }
-        | ProofStep::Extract(_)
-        | ProofStep::Rewrite(_)
-        | ProofStep::Assumption
-        | ProofStep::Normalize
-        | ProofStep::ArithmeticUsing(_)
-        | ProofStep::NormalizeUsing(_)
-        | ProofStep::Intro
-        | ProofStep::Split
-        | ProofStep::Left
-        | ProofStep::Right
-        | ProofStep::Enumerate
-        | ProofStep::Contradiction(_)
-        | ProofStep::CloseInvariants
-        | ProofStep::FrameUsing { .. } => true,
-        ProofStep::Have { proof, .. } => {
-            Proof::supports_linear_source(&SourceProof::Script(proof.to_proof_tactics()))
-        }
-        ProofStep::CloseInvariantsBy(_)
-        | ProofStep::Induct { .. }
-        | ProofStep::Both { .. }
-        | ProofStep::StructuralInduct { .. }
-        | ProofStep::Match { .. }
-        | ProofStep::ApplyInduction { .. }
-        | ProofStep::Open { .. }
-        | ProofStep::If { .. }
-        | ProofStep::Cases { .. }
-        | ProofStep::Branch { .. }
-        | ProofStep::Loop(_) => false,
-    }
-}
-
-fn loop_effect_scope_step_supported(step: &ProofStep) -> bool {
-    match step {
-        ProofStep::Open { proof, .. } => proof.steps().iter().all(loop_effect_scope_step_supported),
-        step => loop_effect_linear_step_supported(step),
-    }
-}
-
-fn loop_effect_open_body_supported(certificate: &ProofCertificate) -> bool {
-    loop_effect_open_body_analysis(certificate).is_some()
-}
-
-/// Returns whether this supported body contains an execution `if` or logical
-/// `cases` tree.
-/// Validation and branch discovery share this linear walk so deep leading
-/// scopes and recursively nested arms are not rescanned once per level.
-fn loop_effect_open_body_analysis(certificate: &ProofCertificate) -> Option<bool> {
-    let mut contains_branch = false;
-    for (index, step) in certificate.steps().iter().enumerate() {
-        let step_contains_branch = match step {
-            // The branch closes every leading open representation
-            // independently on each terminal arm, so it must own the
-            // remainder of every enclosing scope. Nested execution branches
-            // recurse through this same typed tree driver; logical branches
-            // inside `have` use the proposition driver.
-            ProofStep::If {
-                then_proof,
-                else_proof,
-                ..
-            }
-            | ProofStep::Cases {
-                left_proof: then_proof,
-                right_proof: else_proof,
-                ..
-            } => {
-                if index + 1 != certificate.steps().len()
-                    || loop_effect_open_body_analysis(then_proof).is_none()
-                    || loop_effect_open_body_analysis(else_proof).is_none()
-                {
-                    return None;
-                }
-                true
-            }
-            ProofStep::Open { proof, .. } => {
-                let nested_contains_branch = loop_effect_open_body_analysis(proof)?;
-                if nested_contains_branch && index + 1 != certificate.steps().len() {
-                    return None;
-                }
-                nested_contains_branch
-            }
-            step => {
-                if !loop_effect_scope_step_supported(step) {
-                    return None;
-                }
-                false
-            }
-        };
-        contains_branch |= step_contains_branch;
-    }
-    Some(contains_branch)
-}
-
-fn loop_effect_open_branch_path(certificate: &ProofCertificate) -> Option<Vec<usize>> {
-    let mut path = Vec::new();
-    loop_effect_open_branch_path_into(certificate, &mut path).then_some(path)
-}
-
-fn loop_effect_open_branch_path_into(
-    certificate: &ProofCertificate,
-    path: &mut Vec<usize>,
-) -> bool {
-    for (index, step) in certificate.steps().iter().enumerate() {
-        match step {
-            ProofStep::If { .. } | ProofStep::Cases { .. } => {
-                path.push(index);
-                return true;
-            }
-            ProofStep::Open { proof, .. } => {
-                path.push(index);
-                if loop_effect_open_branch_path_into(proof, path) {
-                    return true;
-                }
-                path.pop();
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-fn loop_effect_step_source_width(step: &ProofStep) -> usize {
-    match step {
-        // Resource scopes participate in the outer source-index sequence;
-        // proposition-scope bodies have their own proof site and therefore,
-        // like `source_tactic_width`, count only the enclosing `have` here.
-        ProofStep::Open { proof, .. } => {
-            1 + proof
-                .steps()
-                .iter()
-                .map(loop_effect_step_source_width)
-                .sum::<usize>()
-        }
-        ProofStep::If {
-            then_proof,
-            else_proof,
-            ..
-        } => {
-            1 + then_proof
-                .steps()
-                .iter()
-                .map(loop_effect_step_source_width)
-                .sum::<usize>()
-                + else_proof
-                    .steps()
-                    .iter()
-                    .map(loop_effect_step_source_width)
-                    .sum::<usize>()
-        }
-        ProofStep::Cases {
-            left_proof,
-            right_proof,
-            ..
-        } => {
-            1 + left_proof
-                .steps()
-                .iter()
-                .map(loop_effect_step_source_width)
-                .sum::<usize>()
-                + right_proof
-                    .steps()
-                    .iter()
-                    .map(loop_effect_step_source_width)
-                    .sum::<usize>()
-        }
-        _ => 1,
-    }
-}
-
-fn select_loop_effect_path_prefix(
-    claim_label: &str,
-    tactics: &[ProofTactic],
-    case_path: &[ProofCaseChoice],
-) -> Result<ProofCertificate, ClickError> {
-    let mut selected = tactics;
-    let mut next_case = 0;
-    while let [ProofTactic::If(proof_if)] = selected {
-        let Some(choice) = case_path.get(next_case) else {
-            break;
-        };
-        if choice.condition != proof_if.condition {
-            break;
-        }
-        selected = if choice.value {
-            &proof_if.then_tactics
-        } else {
-            &proof_if.else_tactics
-        };
-        next_case += 1;
-    }
-    ProofCertificate::from_proof_tactics(selected).map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` selected an invalid structural-effect certificate: {error:?}"
-        ))
-    })
-}
-
-fn apply_loop_effect_scope_certificate_at<'a>(
-    mut scope: ProofScope<'a>,
-    certificate: &ProofCertificate,
-    tactic_index_offset: usize,
-    source_index_offset: usize,
-) -> Result<ProofScope<'a>, ClickError> {
-    let mut source_index = source_index_offset;
-    for (local_index, step) in certificate.steps().iter().enumerate() {
-        let tactic_index = tactic_index_offset + local_index;
-        match step {
-            ProofStep::Open { resource, proof } => {
-                let nested = scope.begin_open(resource.clone(), source_index)?;
-                let nested = apply_loop_effect_scope_certificate_at(
-                    nested,
-                    proof,
-                    tactic_index + 1,
-                    source_index + 1,
-                )?;
-                scope = scope.join_nested(nested)?;
-            }
-            ProofStep::Have {
-                proposition,
-                proof: body,
-            } => {
-                let nested = scope.begin_have(proposition.clone())?;
-                let tactics = body.to_proof_tactics();
-                let nested = nested
-                    .try_authoritative_linear_script(&tactics)?
-                    .ok_or_else(|| {
-                        ClickError::new(
-                            "loop-effect `have` body was admitted without a checked Proof driver",
-                        )
-                    })?;
-                scope = scope.join_nested(nested)?;
-            }
-            step => {
-                scope = scope.apply_step_at(step.clone(), tactic_index, source_index)?;
-            }
-        }
-        source_index += loop_effect_step_source_width(step);
-    }
-    Ok(scope)
-}
-
-fn apply_loop_effect_open_certificate_at<'a>(
-    scope: ProofScope<'a>,
-    certificate: &ProofCertificate,
-    tactic_index_offset: usize,
-    source_index_offset: usize,
-) -> Result<Proof<'a>, ClickError> {
-    if let Some(branch_path) = loop_effect_open_branch_path(certificate) {
-        return apply_loop_effect_open_chain_certificate_at(
-            vec![scope],
-            certificate,
-            &branch_path,
-            0,
-            tactic_index_offset,
-            source_index_offset,
-        );
-    }
-    let scope = apply_loop_effect_scope_certificate_at(
-        scope,
-        certificate,
-        tactic_index_offset,
-        source_index_offset,
-    )?;
-    scope.join()
-}
-
-fn apply_loop_effect_open_chain_certificate_at<'a>(
-    mut scopes: Vec<ProofScope<'a>>,
-    certificate: &ProofCertificate,
-    branch_path: &[usize],
-    wrap_from: usize,
-    tactic_index_offset: usize,
-    source_index_offset: usize,
-) -> Result<Proof<'a>, ClickError> {
-    let Some((&branch_index, nested_branch_path)) = branch_path.split_first() else {
-        return Err(ClickError::new(
-            "a loop-effect open-chain driver requires a terminal `if` path",
-        ));
-    };
-    let mut source_index = source_index_offset;
-    for (local_index, step) in certificate.steps().iter().enumerate() {
-        let tactic_index = tactic_index_offset + local_index;
-        match step {
-            ProofStep::If {
-                condition,
-                then_proof,
-                else_proof,
-            } => {
-                if local_index != branch_index
-                    || !nested_branch_path.is_empty()
-                    || local_index + 1 != certificate.steps().len()
-                {
-                    return Err(ClickError::new(
-                        "a loop-effect `if` inside `open` must be the terminal scope operation",
-                    ));
-                }
-                let then_source_index = source_index + 1;
-                let else_source_index = then_source_index
-                    + then_proof
-                        .steps()
-                        .iter()
-                        .map(loop_effect_step_source_width)
-                        .sum::<usize>();
-                let current = scopes
-                    .last()
-                    .expect("an open-chain driver owns a leading scope")
-                    .clone();
-                let joined = ProofScope::apply_loop_effect_if(
-                    &scopes,
-                    current,
-                    condition.clone(),
-                    |then_scope| {
-                        apply_loop_effect_arm_certificate_at(
-                            scopes.clone(),
-                            then_scope,
-                            then_proof,
-                            tactic_index + 1,
-                            then_source_index,
-                        )
-                    },
-                    |else_scope| {
-                        apply_loop_effect_arm_certificate_at(
-                            scopes.clone(),
-                            else_scope,
-                            else_proof,
-                            tactic_index + 1,
-                            else_source_index,
-                        )
-                    },
-                )?;
-                return ProofScope::retain_loop_effect_open_scopes(&scopes, wrap_from, joined);
-            }
-            ProofStep::Cases {
-                disjunction,
-                left_proof,
-                right_proof,
-            } => {
-                if local_index != branch_index
-                    || !nested_branch_path.is_empty()
-                    || local_index + 1 != certificate.steps().len()
-                {
-                    return Err(ClickError::new(
-                        "loop-effect `cases` inside `open` must be the terminal scope operation",
-                    ));
-                }
-                let left_source_index = source_index + 1;
-                let right_source_index = left_source_index
-                    + left_proof
-                        .steps()
-                        .iter()
-                        .map(loop_effect_step_source_width)
-                        .sum::<usize>();
-                let current = scopes
-                    .last()
-                    .expect("an open-chain driver owns a leading scope")
-                    .clone();
-                let joined = ProofScope::apply_loop_effect_cases(
-                    &scopes,
-                    current,
-                    disjunction.clone(),
-                    |left_scope| {
-                        apply_loop_effect_arm_certificate_at(
-                            scopes.clone(),
-                            left_scope,
-                            left_proof,
-                            tactic_index + 1,
-                            left_source_index,
-                        )
-                    },
-                    |right_scope| {
-                        apply_loop_effect_arm_certificate_at(
-                            scopes.clone(),
-                            right_scope,
-                            right_proof,
-                            tactic_index + 1,
-                            right_source_index,
-                        )
-                    },
-                )?;
-                return ProofScope::retain_loop_effect_open_scopes(&scopes, wrap_from, joined);
-            }
-            ProofStep::Open { resource, proof } => {
-                let current = scopes
-                    .last()
-                    .expect("an open-chain driver owns a leading scope")
-                    .clone();
-                let nested = current.begin_open(resource.clone(), source_index)?;
-                if local_index == branch_index {
-                    if local_index + 1 != certificate.steps().len() {
-                        return Err(ClickError::new(
-                            "a leading loop-effect `open` containing `if` must be terminal",
-                        ));
-                    }
-                    scopes.push(nested);
-                    return apply_loop_effect_open_chain_certificate_at(
-                        scopes,
-                        proof,
-                        nested_branch_path,
-                        wrap_from,
-                        tactic_index + 1,
-                        source_index + 1,
-                    );
-                }
-                let nested = apply_loop_effect_scope_certificate_at(
-                    nested,
-                    proof,
-                    tactic_index + 1,
-                    source_index + 1,
-                )?;
-                *scopes
-                    .last_mut()
-                    .expect("an open-chain driver owns a leading scope") =
-                    current.join_nested(nested)?;
-            }
-            ProofStep::Have {
-                proposition,
-                proof: body,
-            } => {
-                let current = scopes
-                    .last()
-                    .expect("an open-chain driver owns a leading scope")
-                    .clone();
-                let nested = current.begin_have(proposition.clone())?;
-                let tactics = body.to_proof_tactics();
-                let nested = nested
-                    .try_authoritative_linear_script(&tactics)?
-                    .ok_or_else(|| {
-                        ClickError::new(
-                            "loop-effect `have` body was admitted without a checked Proof driver",
-                        )
-                    })?;
-                *scopes
-                    .last_mut()
-                    .expect("an open-chain driver owns a leading scope") =
-                    current.join_nested(nested)?;
-            }
-            step => {
-                let current = scopes
-                    .last()
-                    .expect("an open-chain driver owns a leading scope")
-                    .clone();
-                *scopes
-                    .last_mut()
-                    .expect("an open-chain driver owns a leading scope") =
-                    current.apply_step_at(step.clone(), tactic_index, source_index)?;
-            }
-        }
-        source_index += loop_effect_step_source_width(step);
-    }
-    Err(ClickError::new(
-        "a loop-effect open-chain driver did not reach its checked terminal `if`",
-    ))
-}
-
-fn apply_loop_effect_arm_certificate_at<'a>(
-    mut scopes: Vec<ProofScope<'a>>,
-    current: ProofScope<'a>,
-    certificate: &ProofCertificate,
-    tactic_index_offset: usize,
-    source_index_offset: usize,
-) -> Result<Proof<'a>, ClickError> {
-    *scopes
-        .last_mut()
-        .expect("a loop-effect arm owns at least one open scope") = current.clone();
-    if let Some(branch_path) = loop_effect_open_branch_path(certificate) {
-        let wrap_from = scopes.len();
-        return apply_loop_effect_open_chain_certificate_at(
-            scopes,
-            certificate,
-            &branch_path,
-            wrap_from,
-            tactic_index_offset,
-            source_index_offset,
-        );
-    }
-    let leaf = apply_loop_effect_scope_certificate_at(
-        current,
-        certificate,
-        tactic_index_offset,
-        source_index_offset,
-    )?;
-    ProofScope::complete_loop_effect_leaf(&scopes, leaf)
-}
-
-fn apply_loop_effect_certificate_at<'a>(
-    mut proof: Proof<'a>,
-    certificate: &ProofCertificate,
-    tactic_index_offset: usize,
-    source_index_offset: usize,
-) -> Result<Proof<'a>, ClickError> {
-    let mut source_index = source_index_offset;
-    for (local_index, step) in certificate.steps().iter().enumerate() {
-        let tactic_index = tactic_index_offset + local_index;
-        match step {
-            ProofStep::If {
-                condition,
-                then_proof,
-                else_proof,
-            } => {
-                if local_index + 1 != certificate.steps().len() {
-                    return Err(ClickError::new(
-                        "a loop-effect `if` must be the terminal proof operation",
-                    ));
-                }
-                let then_source_index = source_index + 1;
-                let else_source_index = then_source_index
-                    + then_proof
-                        .steps()
-                        .iter()
-                        .map(loop_effect_step_source_width)
-                        .sum::<usize>();
-                return proof.apply_execution_if_with(
-                    condition.clone(),
-                    |then_proof_root| {
-                        apply_loop_effect_certificate_at(
-                            then_proof_root,
-                            then_proof,
-                            tactic_index + 1,
-                            then_source_index,
-                        )
-                    },
-                    |else_proof_root| {
-                        apply_loop_effect_certificate_at(
-                            else_proof_root,
-                            else_proof,
-                            tactic_index + 1,
-                            else_source_index,
-                        )
-                    },
-                );
-            }
-            ProofStep::Cases {
-                disjunction,
-                left_proof,
-                right_proof,
-            } => {
-                if local_index + 1 != certificate.steps().len() {
-                    return Err(ClickError::new(
-                        "loop-effect `cases` must be the terminal proof operation",
-                    ));
-                }
-                let left_source_index = source_index + 1;
-                let right_source_index = left_source_index
-                    + left_proof
-                        .steps()
-                        .iter()
-                        .map(loop_effect_step_source_width)
-                        .sum::<usize>();
-                return proof.apply_execution_cases_with(
-                    disjunction.clone(),
-                    |left_proof_root| {
-                        apply_loop_effect_certificate_at(
-                            left_proof_root,
-                            left_proof,
-                            tactic_index + 1,
-                            left_source_index,
-                        )
-                    },
-                    |right_proof_root| {
-                        apply_loop_effect_certificate_at(
-                            right_proof_root,
-                            right_proof,
-                            tactic_index + 1,
-                            right_source_index,
-                        )
-                    },
-                );
-            }
-            ProofStep::Open {
-                resource,
-                proof: body,
-            } => {
-                let scope = proof.begin_open(resource.clone(), source_index)?;
-                proof = apply_loop_effect_open_certificate_at(
-                    scope,
-                    body,
-                    tactic_index + 1,
-                    source_index + 1,
-                )?;
-            }
-            ProofStep::Have {
-                proposition,
-                proof: body,
-            } => {
-                let scope = proof.begin_have(proposition.clone())?;
-                let tactics = body.to_proof_tactics();
-                let scope = scope
-                    .try_authoritative_linear_script(&tactics)?
-                    .ok_or_else(|| {
-                        ClickError::new(
-                            "loop-effect `have` body was admitted without a checked Proof driver",
-                        )
-                    })?;
-                proof = scope.join()?;
-            }
-            step => {
-                proof = proof.apply_step_at(step.clone(), tactic_index, source_index)?;
-            }
-        }
-        source_index += loop_effect_step_source_width(step);
-    }
-    Ok(proof)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn verify_structural_effect_proof(
-    _expansion_capture: Option<&mut ExpansionCapture>,
-    loop_index: usize,
-    item_index: usize,
-    item: &StructuralItem,
-    check: &CLoopEffectCheck,
-    body: &CStatement,
-    before_state: &CState,
-    case_path: &[ProofCaseChoice],
-    preservation: &Proof<'_>,
-    whole_loop_effect_facts: &[Proposition],
-    environment: &ExecutionProofEnvironment<'_>,
-) -> Result<ProofCertificate, ClickError> {
-    let legacy_site = ProofSite::StructuralItem {
-        function_name: environment.function_block.signature().name().to_string(),
-        region: CodeRegion::Loop(loop_index),
-        item_index,
-        kind: item.kind(),
-    };
-    let (site, claim_label, effect_source_index) = environment
-        .frontier_loop_source
-        .map(|source| {
-            (
-                source
-                    .proof_site
-                    .clone()
-                    .unwrap_or_else(|| legacy_site.clone()),
-                source.claim_label.clone(),
-                source
-                    .effect_source_indices
-                    .get(&item_index)
-                    .copied()
-                    .unwrap_or(source.loop_source_index),
-            )
-        })
-        .unwrap_or_else(|| (legacy_site.clone(), legacy_site.description(), 0));
-    let source_proof = item.proof();
-    let smart_frame = matches!(
-        source_proof,
-        SourceProof::Default
-            | SourceProof::Tactic(SmartTactic::Auto)
-            | SourceProof::Tactic(SmartTactic::Frame)
-    );
-    let source_certificate = match source_proof {
-        SourceProof::Default
-        | SourceProof::Tactic(SmartTactic::Auto)
-        | SourceProof::Tactic(SmartTactic::Frame) => {
-            ProofCertificate::from_proof_tactics(&[ProofTactic::FrameUsing {
-                region: None,
-                premises: Vec::new(),
-            }])
-        }
-        SourceProof::Script(tactics) => ProofCertificate::from_proof_tactics(tactics),
-        SourceProof::Tactic(SmartTactic::Simp) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` must use `auto`, `frame`, or a simple proof script"
-            )));
-        }
-    }
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` produced an invalid structural-effect certificate: {error:?}"
-        ))
-    })?;
-    // Structural effects are checked once per already-certified preservation
-    // path. The source cursor consumes only the exact leading branch prefix
-    // aligned with that path. Any remaining `if` or `cases` is a semantic
-    // proof scope and advances the path's Proof through an audited split and
-    // join. The cursor owns no facts or successor state, and the caller
-    // reconstructs the structured Surface tree from checked provenance after
-    // all paths complete.
-    let certificate = select_loop_effect_path_prefix(
-        &claim_label,
-        &source_certificate.to_proof_tactics(),
-        case_path,
-    )?;
-    // Every recursively simple operation and nested resource scope supported
-    // by the typed Proof APIs is authoritative here. Smart frame syntax
-    // selects its bounded explicit premises from this Proof; a search miss is
-    // a checked failure rather than permission to check the same candidate
-    // elsewhere.
-    if !loop_effect_open_body_supported(&certificate) {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` uses a proof operation that is unavailable for a loop structural effect"
-        )));
-    }
-    let root = preservation.start_loop_effect_proof(
-        &claim_label,
-        site,
-        before_state,
-        check,
-        whole_loop_effect_facts,
-    )?;
-    let checked = if smart_frame {
-        root.try_smart_loop_effect_frame_at(body, 0, effect_source_index)?
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` smart structural-effect frame found no checked Proof descendant"
-                ))
-            })?
-    } else {
-        apply_loop_effect_certificate_at(root, &certificate, 0, effect_source_index)?
-    };
-    if !checked.is_complete() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` structural-effect proof did not close its checked Proof goal"
-        )));
-    }
-    checked.completed_certificate()
-}
-
 pub(in crate::surface::proof) struct LoopPreservationProofResult {
     pub(in crate::surface::proof) certificate: ProofCertificate,
-    pub(in crate::surface::proof) effect_certificates: Vec<(usize, ProofCertificate)>,
     pub(in crate::surface::proof) final_exit_candidates: Vec<CLoopFinalExitCandidate>,
     /// Loop rules checked by frontier-local tactics inside this loop's
     /// preservation proof. They are evidence for termination only; the
@@ -1263,7 +535,6 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
-    effect_checks: &[CLoopEffectCheck],
     condition: &CExpression,
     body: &CStatement,
     do_while: bool,
@@ -1302,8 +573,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // Automatic preservation appends planned body steps and a closer
         // after the source-written unfold prefix. They are owned by the loop
         // tactic, not additional source occurrences after `preserve`.
-        // Detach them so a later nested clause (notably `immutable by frame`)
-        // cannot be mistaken for one of these generated tactics by expand.
+        // Detach them so a later nested clause cannot be mistaken for one of
+        // these generated tactics by expand.
         detach_generated_suffix_from_source_indices(&mut program, first_generated_tactic_index);
     }
     let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
@@ -1355,8 +626,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .iter()
         .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
         .flat_map(StructuralClause::items)
-        .filter(|item| item.kind() == StructuralItemKind::Invariant)
-        .filter_map(StructuralItem::proposition);
+        .map(StructuralItem::proposition);
     {
         let surfaces = if do_while {
             invariant_surfaces
@@ -1433,23 +703,13 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         &claim_label,
         &mut leaves,
     )?;
-    let effect_items = environment
-        .function_block
-        .structural_clauses()
-        .iter()
-        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .into_iter()
-        .flat_map(|clause| clause.items().iter().enumerate())
-        .filter(|(_, item)| item.is_effect_kind())
-        .collect::<Vec<_>>();
     let invariant_surfaces = environment
         .function_block
         .structural_clauses()
         .iter()
         .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
         .flat_map(StructuralClause::items)
-        .filter(|item| item.kind() == StructuralItemKind::Invariant)
-        .filter_map(|item| item.proposition().cloned())
+        .map(|item| item.proposition().clone())
         .collect::<Vec<_>>();
     let invariant_premise_surfaces = invariant_surfaces
         .iter()
@@ -1463,19 +723,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    // Resource-backed function frames add a kernel-only whole-loop effect
-    // check even when the source has no structural `mutable` item. The
-    // source-indexed checks still appear first, so only a deficit is an
-    // invalid lowering; surplus inherited checks need no surface certificate.
-    if effect_items.len() > effect_checks.len() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` has {} structural effect items but {} lowered effect checks",
-            effect_items.len(),
-            effect_checks.len()
-        )));
-    }
     let mut certificate_paths = Vec::new();
-    let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     let mut final_exit_candidates = Vec::new();
     let mut nested_loop_rules = Vec::new();
     for leaf in leaves {
@@ -1702,49 +950,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             case_offsets,
             certificate,
         });
-        for (effect_index, ((item_index, item), check)) in
-            effect_items.iter().zip(effect_checks).enumerate()
-        {
-            let effect_certificate = verify_structural_effect_proof(
-                expansion_capture.as_deref_mut(),
-                loop_index,
-                *item_index,
-                item,
-                check,
-                body,
-                preservation.state(),
-                &case_path,
-                &checked,
-                preservation.whole_loop_effect_facts(),
-                environment,
-            )?;
-            effect_certificate_paths[effect_index].push(PathCertificate {
-                case_path: case_path.clone(),
-                case_offsets: None,
-                certificate: effect_certificate,
-            });
-        }
     }
     let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
-    let effect_certificates = effect_items
-        .iter()
-        .zip(effect_certificate_paths)
-        .map(|((item_index, item), paths)| {
-            let site = ProofSite::StructuralItem {
-                function_name: environment.function_block.signature().name().to_string(),
-                region: CodeRegion::Loop(loop_index),
-                item_index: *item_index,
-                kind: item.kind(),
-            };
-            Ok((
-                *item_index,
-                merge_path_aligned_certificates(&site.description(), paths)?,
-            ))
-        })
-        .collect::<Result<Vec<_>, ClickError>>()?;
     Ok(LoopPreservationProofResult {
         certificate,
-        effect_certificates,
         final_exit_candidates,
         nested_loop_rules,
     })

@@ -345,13 +345,13 @@ fn local_markdown_links_resolve() {
                 failures.push(format!("{}: broken link {link}", path.display()));
                 continue;
             };
-            if let Some(requested_anchor) = requested_anchor {
-                if !anchors(&target_source).contains(requested_anchor) {
-                    failures.push(format!(
-                        "{}: link {link} has no matching anchor",
-                        path.display()
-                    ));
-                }
+            if let Some(requested_anchor) = requested_anchor
+                && !anchors(&target_source).contains(requested_anchor)
+            {
+                failures.push(format!(
+                    "{}: link {link} has no matching anchor",
+                    path.display()
+                ));
             }
         }
     }
@@ -608,8 +608,8 @@ fn standard_library_declarations_are_exact_source_includes() {
         declaration.push_str(line);
         depth += line.chars().filter(|ch| *ch == '{').count();
         depth -= line.chars().filter(|ch| *ch == '}').count();
-        let complete = (depth == 0 && line.trim_end().ends_with('}'))
-            || (depth == 0 && line.trim_end().ends_with(';'));
+        let complete =
+            depth == 0 && (line.trim_end().ends_with('}') || line.trim_end().ends_with(';'));
         if complete {
             assert!(
                 reference.contains(&declaration),
@@ -690,8 +690,6 @@ fn tactic_form_inventory_is_bidirectional() {
         .collect::<Vec<_>>();
     for form in PUBLIC_TACTIC_FORMS {
         let matches_surface = |surface: &str| match form.id {
-            "frame" => surface == "`frame()` / `frame(region)`",
-            "frame-using" => surface == "`frame() using { P; ... }`",
             "apply-induction" => surface == "`apply(ih(m))`",
             "apply-induction-using" => surface == "`apply(ih(m)) using { P; ... }`",
             "apply-theorem" => surface == "`apply(theorem(args))`",

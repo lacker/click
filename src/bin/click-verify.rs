@@ -9,8 +9,7 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_VERIFY_TIME_LIMIT, files_with_extension, find_projects, format_duration,
-    looks_like_source_location, parse_duration, parse_source_location, read_c_inputs,
-    read_verifying_sources, source_refs,
+    looks_like_source_location, parse_duration, parse_source_location, read_c_inputs, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -602,7 +601,7 @@ fn load_baseline_sidecar(
         return Ok(None);
     };
     let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
-    let Some(sources) = load_baseline_sources(&parent, &click_source, |source_path| {
+    let Some(sources) = load_baseline_sources(parent, &click_source, |source_path| {
         git_show(repo, revision, source_path)
     })?
     else {
@@ -685,10 +684,10 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
         })
     })?;
     print_external_dependencies(&dependencies, &verified);
-    if !inputs.is_prepared() {
-        if let Err(message) = record_full_verification(click_path, &[]) {
-            eprintln!("click-verify: warning: could not record incremental baseline: {message}");
-        }
+    if !inputs.is_prepared()
+        && let Err(message) = record_full_verification(click_path, &[])
+    {
+        eprintln!("click-verify: warning: could not record incremental baseline: {message}");
     }
     Ok(())
 }
@@ -746,13 +745,6 @@ fn print_external_dependencies(
             );
         }
     }
-}
-
-fn load_sidecar(click_path: &Path) -> Result<LoadedSidecar, String> {
-    let click_source = fs::read_to_string(click_path)
-        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let sources = read_verifying_sources(click_path, &click_source)?;
-    Ok((click_source, sources))
 }
 
 fn load_sidecar_inputs(click_path: &Path) -> Result<(String, CInput), String> {

@@ -141,7 +141,7 @@ impl<'a> Proof<'a> {
         )?;
         let (checked_condition_split, transitions) = certified_proof_condition_split(
             &current_state,
-            &self.facts(),
+            self.facts(),
             &branch_statement,
             remaining.as_ref(),
             &format!(
@@ -982,8 +982,7 @@ impl<'a> Proof<'a> {
                 self.partition_steps_since(&record.marker, record.split, [id, id])?;
             steps.extend(trailing);
             let name = if take_then { "then" } else { "else" };
-            let (selection, view) =
-                self.sibling_execution_arm_view(record, name, arm_index, id, steps)?;
+            let view = self.sibling_execution_arm_view(record, name, arm_index, id, steps)?;
             let mut parts = self.merge_decided_interface_execution_path(
                 &record.parent_unfolds,
                 &record.parent_execution,
@@ -993,9 +992,9 @@ impl<'a> Proof<'a> {
                 &view,
             )?;
             self.install_parent_frontier_after_decided(&mut parts.execution, record)?;
-            return self.resume_parent_after_sibling_join(record, [id, id], selection, parts);
+            return self.resume_parent_after_sibling_join(record, [id, id], parts);
         }
-        let (ids, selection, arms) = self.sibling_execution_arm_views(record)?;
+        let (ids, arms) = self.sibling_execution_arm_views(record)?;
         let parts = self.merge_interface_execution_join(
             &record.parent_facts,
             &record.parent_unfolds,
@@ -1008,7 +1007,7 @@ impl<'a> Proof<'a> {
             assertions,
             arms,
         )?;
-        self.resume_parent_after_sibling_join(record, ids, selection, parts)
+        self.resume_parent_after_sibling_join(record, ids, parts)
     }
 
     /// Carries only checked C-branch anchor spellings across a structural
@@ -1249,7 +1248,7 @@ impl<'a> Proof<'a> {
         {
             append_execution_effect_facts(
                 &mut execution.core.effect_facts,
-                std::slice::from_ref(&effect),
+                std::slice::from_ref(effect),
             );
         }
         migrate_arm_metadata(&mut execution, &arms, true);
@@ -1622,7 +1621,7 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
         require_empty: bool,
     ) -> Result<Self, ClickError> {
-        let (ids, selection, arms) = self.sibling_execution_arm_views(record)?;
+        let (ids, arms) = self.sibling_execution_arm_views(record)?;
         let parts = self.merge_checked_execution_join(
             &record.parent_facts,
             &record.parent_unfolds,
@@ -1635,7 +1634,7 @@ impl<'a> Proof<'a> {
             require_empty,
             arms,
         )?;
-        self.resume_parent_after_sibling_join(record, ids, selection, parts)
+        self.resume_parent_after_sibling_join(record, ids, parts)
     }
 
     /// Joins the two sibling execution frontier goals created by
@@ -1647,7 +1646,7 @@ impl<'a> Proof<'a> {
         &self,
         record: &ExecutionSplit<'a>,
     ) -> Result<Self, ClickError> {
-        let (ids, selection, arms) = self.sibling_execution_arm_views(record)?;
+        let (ids, arms) = self.sibling_execution_arm_views(record)?;
         let parts = self.merge_terminal_execution_join(
             &record.parent_facts,
             &record.parent_unfolds,
@@ -1657,7 +1656,7 @@ impl<'a> Proof<'a> {
             None,
             arms,
         )?;
-        self.resume_parent_after_sibling_join(record, ids, selection, parts)
+        self.resume_parent_after_sibling_join(record, ids, parts)
     }
 
     /// Joins the two terminal arms of a proof-level execution `if`. Both arms
@@ -1669,7 +1668,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Self, ClickError> {
         let [then_steps, else_steps] =
             self.partition_steps_since(&record.marker, record.split, record.arm_branches)?;
-        let (selection, then_view) = self.sibling_execution_arm_view_from_bases(
+        let then_view = self.sibling_execution_arm_view_from_bases(
             "then",
             record.split,
             record.arm_branches[0],
@@ -1679,7 +1678,7 @@ impl<'a> Proof<'a> {
             &record.base_executions[0],
             None,
         )?;
-        let (_, else_view) = self.sibling_execution_arm_view_from_bases(
+        let else_view = self.sibling_execution_arm_view_from_bases(
             "else",
             record.split,
             record.arm_branches[1],
@@ -1702,7 +1701,6 @@ impl<'a> Proof<'a> {
             &record.marker,
             record.split,
             record.arm_branches,
-            selection,
             parts,
         )
     }
@@ -1713,18 +1711,10 @@ impl<'a> Proof<'a> {
     /// attribution into per-arm body certificates, and each arm's
     /// introduction deltas are recovered by suffix walks against the
     /// recorded split-time bases.
-    #[allow(clippy::type_complexity)]
     pub(super) fn sibling_execution_arm_views<'v>(
         &'v self,
         record: &'v ExecutionSplit<'a>,
-    ) -> Result<
-        (
-            [BranchId; 2],
-            EffectGoalSelection,
-            [CheckedExecutionJoinArm<'v>; 2],
-        ),
-        ClickError,
-    > {
+    ) -> Result<([BranchId; 2], [CheckedExecutionJoinArm<'v>; 2]), ClickError> {
         let [Some(then_id), Some(else_id)] = record.arm_branches else {
             return Err(self.step_error(
                 "an execution `branch` with one feasible arm is a decided path, not a join",
@@ -1732,11 +1722,9 @@ impl<'a> Proof<'a> {
         };
         let [then_steps, else_steps] =
             self.partition_steps_since(&record.marker, record.split, [then_id, else_id])?;
-        let (selection, then_view) =
-            self.sibling_execution_arm_view(record, "then", 0, then_id, then_steps)?;
-        let (_, else_view) =
-            self.sibling_execution_arm_view(record, "else", 1, else_id, else_steps)?;
-        Ok(([then_id, else_id], selection, [then_view, else_view]))
+        let then_view = self.sibling_execution_arm_view(record, "then", 0, then_id, then_steps)?;
+        let else_view = self.sibling_execution_arm_view(record, "else", 1, else_id, else_steps)?;
+        Ok(([then_id, else_id], [then_view, else_view]))
     }
 
     /// Reduces one sibling arm of an in-`Proof` execution split to the
@@ -1751,7 +1739,7 @@ impl<'a> Proof<'a> {
         arm_index: usize,
         id: BranchId,
         steps: Vec<ProofStep>,
-    ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
+    ) -> Result<CheckedExecutionJoinArm<'v>, ClickError> {
         self.validate_checked_execution_split(record)?;
         let base_facts = record.base_facts[arm_index]
             .as_ref()
@@ -1823,17 +1811,17 @@ impl<'a> Proof<'a> {
         delta_facts: &'v ProofFacts,
         delta_execution: &'v ExecutionProofState,
         condition_theorem: Option<&'v Theorem>,
-    ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
+    ) -> Result<CheckedExecutionJoinArm<'v>, ClickError> {
         let Some(branch) = self.state().open_branches().get(id) else {
             return Err(self.step_error(format!(
                 "cannot join `branch`: the {name} arm is not an open execution frontier"
             )));
         };
-        let Obligation::Frontier(frontier) = &branch.obligation else {
+        if !matches!(branch.obligation, Obligation::Frontier(_)) {
             return Err(self.step_error(format!(
                 "cannot join `branch`: the {name} arm is not an open execution frontier"
             )));
-        };
+        }
         let execution = branch.state.execution.as_deref().ok_or_else(|| {
             self.step_error(format!("{name} branch arm lost its execution state"))
         })?;
@@ -1892,21 +1880,18 @@ impl<'a> Proof<'a> {
             .suffix_since(&delta_execution.core.frontier_loop_rules)
             .ok_or_else(not_descended)?
             .to_vec();
-        Ok((
-            frontier.selection,
-            CheckedExecutionJoinArm {
-                certificate: ProofCertificate::from_steps(steps),
-                facts: &branch.state.facts,
-                execution,
-                condition_theorem,
-                introduced_facts,
-                introduced_effect_facts,
-                introduced_derivations,
-                introduced_unfolds,
-                introduced_loop_clauses,
-                introduced_loop_rules,
-            },
-        ))
+        Ok(CheckedExecutionJoinArm {
+            certificate: ProofCertificate::from_steps(steps),
+            facts: &branch.state.facts,
+            execution,
+            condition_theorem,
+            introduced_facts,
+            introduced_effect_facts,
+            introduced_derivations,
+            introduced_unfolds,
+            introduced_loop_clauses,
+            introduced_loop_rules,
+        })
     }
 
     /// Finishes an in-`Proof` execution split for which the kernel
@@ -1936,8 +1921,7 @@ impl<'a> Proof<'a> {
             self.partition_steps_since(&record.marker, record.split, [id, id])?;
         steps.extend(trailing);
         let name = if take_then { "then" } else { "else" };
-        let (selection, view) =
-            self.sibling_execution_arm_view(record, name, arm_index, id, steps)?;
+        let view = self.sibling_execution_arm_view(record, name, arm_index, id, steps)?;
         let step = self.merge_decided_execution_path(
             &record.parent_execution,
             record.statement_index,
@@ -1962,7 +1946,7 @@ impl<'a> Proof<'a> {
             ),
             step,
         };
-        self.resume_parent_after_sibling_join(record, [id, id], selection, parts)
+        self.resume_parent_after_sibling_join(record, [id, id], parts)
     }
 
     /// Consumes both sibling arm goals and resumes the parent obligation
@@ -1973,16 +1957,9 @@ impl<'a> Proof<'a> {
         &self,
         record: &ExecutionSplit<'a>,
         ids: [BranchId; 2],
-        selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
     ) -> Result<Self, ClickError> {
-        self.resume_parent_after_sibling_join_from_marker(
-            &record.marker,
-            record.split,
-            ids,
-            selection,
-            parts,
-        )
+        self.resume_parent_after_sibling_join_from_marker(&record.marker, record.split, ids, parts)
     }
 
     pub(super) fn resume_parent_after_sibling_join_from_marker(
@@ -1990,7 +1967,6 @@ impl<'a> Proof<'a> {
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
         ids: [BranchId; 2],
-        selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
     ) -> Result<Self, ClickError> {
         let parent_goal = marker.node.focused_branch;
@@ -2003,7 +1979,6 @@ impl<'a> Proof<'a> {
                 split,
                 ids,
                 parent_goal,
-                selection,
                 parts.facts,
                 parts.unfolded_predicates,
                 parts.execution,
@@ -2050,9 +2025,6 @@ impl<'a> Proof<'a> {
             .map_err(|error| match error {
                 ProofFocusError::NotOpen => {
                     self.step_error(format!("goal {id:?} is not open in this proof"))
-                }
-                ProofFocusError::NotAllocated => {
-                    unreachable!("open-branch focus reports only whether the branch is open")
                 }
             })?;
         Ok(self.with_kernel_state(state))
@@ -2543,7 +2515,6 @@ impl<'a> Proof<'a> {
                 execution,
                 Vec::new(),
                 Vec::new(),
-                false,
             )
             .map_err(|error| self.execution_update_error("continue branch arm", error))?;
         Ok(Self {

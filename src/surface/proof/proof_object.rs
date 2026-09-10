@@ -3,14 +3,13 @@ use super::pure_theorems::{
 };
 use super::*;
 use crate::kernel::proof::{
-    BranchId, CheckedBranchSplit, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError,
-    FrontierObligation, FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
-    OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
-    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofFocusError, ProofJoinError,
-    ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
-    ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
-    PropositionIntroduction, PropositionObligation as KernelPropositionObligation,
-    PropositionSplitError, SplitId,
+    BranchId, CheckedBranchSplit, ExecutionUpdateError, FrontierObligation, FrontierSplitError,
+    FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState as KernelOutcomeProofState,
+    ProofBranch, ProofBranchState, ProofExecutionState as KernelProofExecutionState, ProofFacts,
+    ProofFocusError, ProofJoinError, ProofObject as KernelProofObject,
+    ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
+    PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,
+    PropositionObligation as KernelPropositionObligation, PropositionSplitError, SplitId,
 };
 use crate::persistent::PersistentMap;
 
@@ -37,9 +36,6 @@ thread_local! {
         std::cell::RefCell::new(None)
     };
     static CHECKED_EXPANDED_EXECUTION_IFS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
-    static SMART_LOOP_EFFECT_FRAME_CANDIDATES: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
     static FINALIZATION_VIEW_CONSTRUCTIONS: std::cell::Cell<usize> = const {
@@ -89,16 +85,6 @@ pub(in crate::surface) fn count_execution_context_exports<R>(
     let before = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
     let result = operation();
     let after = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::surface) fn count_smart_loop_effect_frame_candidates<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
-    let result = operation();
-    let after = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -208,9 +194,8 @@ pub(super) struct ExecutionProofCaseSplit<'a> {
 /// Unlike an execution `if`, this split introduces the two exact disjuncts
 /// from an already-available proposition and does not write a C-path choice
 /// into the execution state.
-pub(super) struct ExecutionLogicalCasesSplit<'a> {
-    marker: ProofCheckpoint<'a>,
-    split: SplitId,
+#[cfg(test)]
+pub(super) struct ExecutionLogicalCasesSplit {
     arm_branches: [BranchId; 2],
     path_facts: [Vec<Proposition>; 2],
 }
@@ -289,24 +274,6 @@ impl<'a> ExecutionSplit<'a> {
                         .descends_from(self.parent_execution.core.state.resources())
                 }))
     }
-}
-
-/// Bookkeeping for one in-`Proof` terminal-outcome partition split: the
-/// marker and recorded arm ids its join verifies, the partition condition
-/// and the effect selection both arms must close, the parent context the
-/// join resumes, and each arm's entry fact delta. This is a record the
-/// audited join checks — never semantic authority.
-pub(super) struct OutcomeSplit<'a> {
-    marker: ProofCheckpoint<'a>,
-    split: SplitId,
-    arm_branches: [BranchId; 2],
-    condition: ClickProposition,
-    expected_effects: Vec<usize>,
-    path_facts: [Vec<Proposition>; 2],
-    parent_facts: ProofFacts,
-    parent_unfolds: PersistentOrderedSet<String>,
-    parent_execution: Arc<ExecutionProofState>,
-    root_post_execution_count: usize,
 }
 
 /// The audited branch-entry result shared by the execution container and
@@ -468,139 +435,6 @@ fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
         SourceProof::Script(tactics) => script_contains_linear_search(tactics),
-        SourceProof::Tactic(SmartTactic::Frame) => false,
-    }
-}
-
-/// Collects only source-local C names mentioned by one candidate statement.
-/// Smart statement selection uses these names as keys into the persistent
-/// Surface-fact index; it never scans the ambient proposition set.
-fn collect_expression_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
-    match expression {
-        CExpression::Variable(name) => {
-            names.insert(name.clone());
-        }
-        CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
-        CExpression::Cast { expression, .. } => {
-            collect_expression_variable_names(expression, names)
-        }
-        CExpression::FloatNegate(expression)
-        | CExpression::FloatClassification { expression, .. } => {
-            collect_expression_variable_names(expression, names)
-        }
-        CExpression::Conditional {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_expression_variable_names(condition, names);
-            collect_expression_variable_names(then_branch, names);
-            collect_expression_variable_names(else_branch, names);
-        }
-        CExpression::PointerOffsetBytes { pointer, .. } => {
-            collect_expression_variable_names(pointer, names)
-        }
-        CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {
-            collect_expression_variable_names(inner, names)
-        }
-        CExpression::TypedLoad { pointer, .. } => collect_expression_variable_names(pointer, names),
-        CExpression::LessThan(left, right)
-        | CExpression::LessEqual(left, right)
-        | CExpression::GreaterThan(left, right)
-        | CExpression::GreaterEqual(left, right)
-        | CExpression::Equal(left, right)
-        | CExpression::NotEqual(left, right)
-        | CExpression::And(left, right)
-        | CExpression::Or(left, right)
-        | CExpression::Add(left, right)
-        | CExpression::Subtract(left, right)
-        | CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
-        | CExpression::ShiftLeft(left, right)
-        | CExpression::ShiftRight(left, right)
-        | CExpression::BitwiseAnd(left, right)
-        | CExpression::BitwiseOr(left, right)
-        | CExpression::BitwiseXor(left, right)
-        | CExpression::Index(left, right) => {
-            collect_expression_variable_names(left, names);
-            collect_expression_variable_names(right, names);
-        }
-        CExpression::BitwiseNot(inner) => collect_expression_variable_names(inner, names),
-    }
-}
-
-fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet<String>) {
-    match statement {
-        CStatement::Skip
-        | CStatement::Break
-        | CStatement::Continue
-        | CStatement::Declare { .. }
-        | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ContinueWithStep { step } => {
-            collect_statement_variable_names(step, names);
-        }
-        CStatement::Assign { name, expression } => {
-            names.insert(name.clone());
-            collect_expression_variable_names(expression, names);
-        }
-        CStatement::Return(expression)
-        | CStatement::Assert {
-            condition: expression,
-            ..
-        }
-        | CStatement::HeapAllocate {
-            bytes: expression, ..
-        }
-        | CStatement::HeapFree {
-            pointer: expression,
-        } => collect_expression_variable_names(expression, names),
-        CStatement::CallAssign {
-            target, arguments, ..
-        } => {
-            names.insert(target.clone());
-            for argument in arguments {
-                collect_expression_variable_names(argument, names);
-            }
-        }
-        CStatement::Call { arguments, .. } => {
-            for argument in arguments {
-                collect_expression_variable_names(argument, names);
-            }
-        }
-        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
-            collect_expression_variable_names(pointer, names);
-            collect_expression_variable_names(value, names);
-        }
-        CStatement::CopyAggregate { target, source, .. } => {
-            collect_expression_variable_names(target, names);
-            collect_expression_variable_names(source, names);
-        }
-        CStatement::Update {
-            target, operand, ..
-        } => {
-            collect_expression_variable_names(target, names);
-            collect_expression_variable_names(operand, names);
-        }
-        // The execution cursor normally splits sequences before selection.
-        // If a composite statement reaches this helper, only its immediate
-        // operation may influence the next checked transition; later source
-        // must not widen one smart step's dependency query.
-        CStatement::Seq(first, _) => {
-            collect_statement_variable_names(first, names);
-        }
-        CStatement::If { condition, .. } => {
-            collect_expression_variable_names(condition, names);
-        }
-        CStatement::While { condition, .. } => {
-            collect_expression_variable_names(condition, names);
-        }
-        CStatement::Switch { expression, cases } => {
-            collect_expression_variable_names(expression, names);
-            for case in cases {
-                collect_statement_variable_names(&case.body, names);
-            }
-        }
     }
 }
 
@@ -635,204 +469,6 @@ pub(in crate::surface::proof) fn source_proof_is_supported(proof: &SourceProof) 
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
         SourceProof::Script(tactics) => linear_script_is_supported(tactics),
-        SourceProof::Tactic(SmartTactic::Frame) => false,
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ContextualFrameHavePlan {
-    proposition: ClickProposition,
-    tactics: Vec<ProofTactic>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ContextualFrameLeafPlan {
-    haves: Vec<ContextualFrameHavePlan>,
-    premises: Vec<ClickProposition>,
-}
-
-impl ContextualFrameLeafPlan {
-    fn from_surface_tactics(mut tactics: Vec<ProofTactic>) -> Result<Self, String> {
-        let Some(ProofTactic::FrameUsing {
-            region: None,
-            premises,
-        }) = tactics.pop()
-        else {
-            return Err("contextual frame path did not end in `frame using`".to_string());
-        };
-        let haves = tactics
-            .into_iter()
-            .map(|tactic| {
-                let ProofTactic::Have(ProofHave { proposition, proof }) = tactic else {
-                    return Err(
-                        "contextual frame path contained an operation other than `have` before its frame"
-                            .to_string(),
-                    );
-                };
-                let SourceProof::Script(tactics) = proof else {
-                    return Err(
-                        "contextual frame `have` did not lower to explicit Surface operations"
-                            .to_string(),
-                    );
-                };
-                Ok(ContextualFrameHavePlan {
-                    proposition,
-                    tactics,
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { haves, premises })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ContextualFramePlan {
-    Leaf(ContextualFrameLeafPlan),
-    If {
-        condition: ClickProposition,
-        then_plan: Box<Self>,
-        else_plan: Box<Self>,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ContextualFrameSkeleton {
-    Leaf,
-    If {
-        condition: ClickProposition,
-        then_skeleton: Box<Self>,
-        else_skeleton: Box<Self>,
-    },
-}
-
-impl ContextualFrameSkeleton {
-    fn from_steps(steps: &[ProofStep]) -> Self {
-        let Some((condition, then_proof, else_proof)) =
-            steps.iter().rev().find_map(|step| match step {
-                ProofStep::If {
-                    condition,
-                    then_proof,
-                    else_proof,
-                } => Some((condition, then_proof, else_proof)),
-                _ => None,
-            })
-        else {
-            return Self::Leaf;
-        };
-        Self::If {
-            condition: condition.clone(),
-            then_skeleton: Box::new(Self::from_steps(then_proof.steps())),
-            else_skeleton: Box::new(Self::from_steps(else_proof.steps())),
-        }
-    }
-
-    fn collect_conditions(&self, conditions: &mut Vec<ClickProposition>) {
-        let Self::If {
-            condition,
-            then_skeleton,
-            else_skeleton,
-        } = self
-        else {
-            return;
-        };
-        if !conditions.contains(condition) {
-            conditions.push(condition.clone());
-        }
-        then_skeleton.collect_conditions(conditions);
-        else_skeleton.collect_conditions(conditions);
-    }
-
-    fn fill(
-        self,
-        leaves: &[ContextualFrameLeafPlan],
-        next: &mut usize,
-    ) -> Result<ContextualFramePlan, String> {
-        match self {
-            Self::Leaf => {
-                let Some(leaf) = leaves.get(*next) else {
-                    return Err(format!(
-                        "surface/frame path coverage diverged at p{}: the Proof has more leaves than the frame plan",
-                        *next
-                    ));
-                };
-                *next += 1;
-                Ok(ContextualFramePlan::Leaf(leaf.clone()))
-            }
-            Self::If {
-                condition,
-                then_skeleton,
-                else_skeleton,
-            } => Ok(ContextualFramePlan::If {
-                condition,
-                then_plan: Box::new(then_skeleton.fill(leaves, next)?),
-                else_plan: Box::new(else_skeleton.fill(leaves, next)?),
-            }),
-        }
-    }
-}
-
-fn contextual_frame_plan(
-    skeleton: ContextualFrameSkeleton,
-    path_tactics: Vec<Vec<ProofTactic>>,
-    path_independent_only: bool,
-) -> Result<Option<ContextualFramePlan>, String> {
-    if path_tactics.is_empty() {
-        return Ok(None);
-    }
-    let leaves = path_tactics
-        .into_iter()
-        .map(ContextualFrameLeafPlan::from_surface_tactics)
-        .collect::<Result<Vec<_>, _>>()?;
-    if leaves.iter().all(|leaf| leaf == &leaves[0]) {
-        return Ok(Some(ContextualFramePlan::Leaf(leaves[0].clone())));
-    }
-    if path_independent_only {
-        return Ok(None);
-    }
-    let mut next = 0;
-    let plan = skeleton.fill(&leaves, &mut next)?;
-    if next != leaves.len() {
-        return Err(format!(
-            "surface/frame path coverage diverged at p{next}: the Proof has {next} leaves but the frame plan has {}",
-            leaves.len()
-        ));
-    }
-    Ok(Some(plan))
-}
-
-fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
-    match proposition {
-        ClickProposition::Comparison {
-            left,
-            operator,
-            right,
-        } => {
-            let operator = match operator {
-                ComparisonOperator::Equal => ComparisonOperator::Equal,
-                ComparisonOperator::NotEqual => ComparisonOperator::NotEqual,
-                ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,
-                ComparisonOperator::LessEqual => ComparisonOperator::GreaterEqual,
-                ComparisonOperator::GreaterThan => ComparisonOperator::LessThan,
-                ComparisonOperator::GreaterEqual => ComparisonOperator::LessEqual,
-                ComparisonOperator::In => return None,
-            };
-            Some(ClickProposition::Comparison {
-                left: right.clone(),
-                operator,
-                right: left.clone(),
-            })
-        }
-        ClickProposition::At {
-            selector,
-            proposition,
-        } => Some(ClickProposition::At {
-            selector: selector.clone(),
-            proposition: Box::new(reverse_surface_comparison(proposition)?),
-        }),
-        ClickProposition::Not(body) => Some(ClickProposition::Not(Box::new(
-            reverse_surface_comparison(body)?,
-        ))),
-        _ => None,
     }
 }
 
@@ -1221,7 +857,7 @@ impl KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>>
 
 trait OpenBranchConstruction {
     fn proposition_in(state: BranchState, kernel: Proposition) -> Self;
-    fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self;
+    fn frontier(state: BranchState) -> Self;
     fn function_outcome(obligation: OutcomeObligation, state: BranchState) -> Self;
     fn surface_proposition_in(
         state: BranchState,
@@ -1250,11 +886,8 @@ impl OpenBranchConstruction for OpenBranch {
         )
     }
 
-    fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self {
-        Self::new(
-            Obligation::Frontier(FrontierObligation::new(selection)),
-            state,
-        )
+    fn frontier(state: BranchState) -> Self {
+        Self::new(Obligation::Frontier(FrontierObligation), state)
     }
 
     fn function_outcome(obligation: OutcomeObligation, state: BranchState) -> Self {
@@ -1566,27 +1199,6 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Number of selected function-effect obligations represented by this
-    /// frontier without materializing their clauses.
-    #[cfg(test)]
-    fn effect_goal_count(&self) -> usize {
-        let Some(Obligation::Frontier(FrontierObligation { selection, .. })) =
-            self.focused_obligation()
-        else {
-            return 0;
-        };
-        let ProofContext::Execution(context) = self.context.as_ref() else {
-            return 0;
-        };
-        match *selection {
-            EffectGoalSelection::None => 0,
-            EffectGoalSelection::One(index) => {
-                usize::from(index < context.function_block.effects().len())
-            }
-            EffectGoalSelection::All => context.function_block.effects().len(),
-        }
-    }
-
     /// Focuses a kernel proposition goal without a surface spelling; tests
     /// use it to address a goal directly.
     #[cfg(test)]
@@ -1840,23 +1452,13 @@ impl<'a> Proof<'a> {
     }
 
     fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
-        (matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
-            && !self.focused_loop_effect_closed())
-        .then_some(())
-        .ok_or_else(|| {
-            self.step_error(format!(
-                "{operation} cannot advance C execution inside a proposition proof"
-            ))
-        })
-    }
-
-    /// A structural-effect frame may retain its closed frontier only while
-    /// resource scopes unwind. It remains addressable for those audited
-    /// representation transitions, but it is no longer an open semantic goal.
-    fn focused_loop_effect_closed(&self) -> bool {
-        self.branch_execution()
-            .and_then(|execution| execution.core.loop_effect_goal.as_ref())
-            .is_some_and(|goal| goal.closed)
+        matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
+            .then_some(())
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "{operation} cannot advance C execution inside a proposition proof"
+                ))
+            })
     }
 
     /// Names the failing step by where the user wrote it: the source tactic
@@ -1942,7 +1544,6 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ConstructResource(_) => "construct",
         ProofStep::ObserveResource(_) => "observe",
-        ProofStep::FrameUsing { .. } => "frame",
         ProofStep::CloseInvariants => "close_invariants()",
         ProofStep::CloseInvariantsBy(_) => "close_invariants by",
         ProofStep::Mark(_) => "mark",
@@ -1988,24 +1589,6 @@ impl ExecutionProofPresentation {
                 source_index,
                 tactic,
                 surface_recorded: false,
-            });
-    }
-
-    /// Schedules ordered outcome work whose semantics and Surface provenance
-    /// are already owned by a checked `Proof` descendant.
-    pub(in crate::surface::proof) fn defer_checked_post_execution(
-        &mut self,
-        tactic_index: usize,
-        source_index: usize,
-        tactic: PostExecutionTactic,
-    ) {
-        self.post_execution_tactics
-            .push(DeferredPostExecutionTactic {
-                lexical_bindings: None,
-                tactic_index,
-                source_index,
-                tactic,
-                surface_recorded: true,
             });
     }
 }

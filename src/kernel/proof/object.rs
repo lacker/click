@@ -5,9 +5,9 @@
 //! attachments as evidence.
 
 use super::{
-    BranchId, CheckedProofCasePartition, EffectGoalSelection, FrontierObligation,
-    OutcomeProofState, PersistentOrderedSet, ProofBranch, ProofBranchState, ProofBranches,
-    ProofExecutionState, ProofFacts, ProofObligation,
+    BranchId, CheckedProofCasePartition, FrontierObligation, OutcomeProofState,
+    PersistentOrderedSet, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState,
+    ProofFacts, ProofObligation,
 };
 use crate::kernel::{Proposition, Sort};
 use std::ops::Deref;
@@ -113,14 +113,15 @@ pub(crate) enum ProofJoinError {
 
 pub(crate) enum ProofFocusError {
     NotOpen,
-    NotAllocated,
 }
 
 pub(crate) enum FrontierSplitError {
     Completed,
     NotFrontier,
     MissingExecution,
+    #[cfg(test)]
     MissingDisjunction(Proposition),
+    #[cfg(test)]
     ExpectedDisjunction(Proposition),
     NonComplementaryCases,
 }
@@ -128,10 +129,8 @@ pub(crate) enum FrontierSplitError {
 pub(crate) enum ExecutionUpdateError {
     NotFrontier,
     MissingExecution,
-    ClosedLoopEffect,
     NotLoopBody,
     InvariantsAlreadyClosed,
-    LoopEffectNotClosed,
 }
 
 #[derive(Clone, Copy)]
@@ -276,29 +275,6 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
         Ok(self
             .focus_open_branch(focused_branch)?
             .with_fact_deltas(added_facts, checked_facts))
-    }
-
-    /// Restores a provenance cursor that was allocated earlier in this
-    /// branch lineage, including a now-retired parent identity. This changes
-    /// no semantic state and may replace only reporting deltas.
-    pub(crate) fn restore_allocated_cursor_with_fact_deltas(
-        &self,
-        focused_branch: BranchId,
-        added_facts: Vec<Proposition>,
-        checked_facts: Vec<Proposition>,
-    ) -> Result<Self, ProofFocusError> {
-        if !self.state.open_branches.has_allocated(focused_branch) {
-            return Err(ProofFocusError::NotAllocated);
-        }
-        Ok(Self::new(
-            ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.clone(),
-                added_facts: Arc::new(added_facts),
-                checked_facts: Arc::new(checked_facts),
-            },
-            focused_branch,
-        ))
     }
 
     pub(crate) fn with_fact_deltas(
@@ -1288,14 +1264,6 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             .execution
             .as_deref()
             .ok_or(ExecutionUpdateError::MissingExecution)?;
-        if execution
-            .core
-            .loop_effect_goal
-            .as_ref()
-            .is_some_and(|goal| goal.closed)
-        {
-            return Err(ExecutionUpdateError::ClosedLoopEffect);
-        }
         Ok((branch, execution))
     }
 
@@ -1440,41 +1408,6 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
-    /// Retires a closed structural loop-effect frontier only after a checked
-    /// frame operation has marked its kernel-owned goal closed.
-    pub(crate) fn discharge_closed_loop_effect(&self) -> Result<Self, ExecutionUpdateError> {
-        let branch = self
-            .state
-            .open_branches
-            .get(self.focused_branch)
-            .ok_or(ExecutionUpdateError::NotFrontier)?;
-        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
-            return Err(ExecutionUpdateError::NotFrontier);
-        }
-        let execution = branch
-            .state
-            .execution
-            .as_deref()
-            .ok_or(ExecutionUpdateError::MissingExecution)?;
-        if !execution
-            .core
-            .loop_effect_goal
-            .as_ref()
-            .is_some_and(|goal| goal.closed)
-        {
-            return Err(ExecutionUpdateError::LoopEffectNotClosed);
-        }
-        Ok(Self::new(
-            ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.close_at(self.focused_branch),
-                added_facts: self.state.added_facts.clone(),
-                checked_facts: self.state.checked_facts.clone(),
-            },
-            self.focused_branch,
-        ))
-    }
-
     /// Publishes the result of a separately checked frontier transition while
     /// preserving every unrelated branch and the focused frontier's
     /// obligation and unfold set. The caller remains responsible for checking
@@ -1486,7 +1419,6 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         execution: ProofExecutionState<S>,
         added_facts: Vec<Proposition>,
         checked_facts: Vec<Proposition>,
-        discharge_closed_loop_effect: bool,
     ) -> Result<Self, ExecutionUpdateError> {
         let branch = self
             .state
@@ -1499,22 +1431,10 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         if branch.state.execution.is_none() {
             return Err(ExecutionUpdateError::MissingExecution);
         }
-        if discharge_closed_loop_effect
-            && !execution
-                .core
-                .loop_effect_goal
-                .as_ref()
-                .is_some_and(|goal| goal.closed)
-        {
-            return Err(ExecutionUpdateError::LoopEffectNotClosed);
-        }
-        let mut open_branches =
+        let open_branches =
             self.state
                 .open_branches
                 .replace_frontier_at(self.focused_branch, facts, execution);
-        if discharge_closed_loop_effect {
-            open_branches = open_branches.close_at(self.focused_branch);
-        }
         Ok(Self::new(
             ProofState {
                 locals: self.state.locals.clone(),
@@ -1637,88 +1557,26 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
-    pub(crate) fn publish_checked_frontier_join(
-        &self,
-        split: super::SplitId,
-        children: [BranchId; 2],
-        parent: BranchId,
-        selection: EffectGoalSelection,
-        facts: ProofFacts,
-        unfolded_predicates: PersistentOrderedSet<String>,
-        execution: ProofExecutionState<S>,
-        added_facts: Vec<Proposition>,
-        checked_facts: Vec<Proposition>,
-    ) -> Result<Self, ProofJoinError> {
-        self.publish_checked_frontier_join_inner(
-            split,
-            children,
-            parent,
-            selection,
-            facts,
-            unfolded_predicates,
-            execution,
-            added_facts,
-            checked_facts,
-            false,
-        )
-    }
-
+    /// Closes `split` by replacing its reserved arms with the joined parent
+    /// branch. Every child must be an arm identity reserved by exactly this
+    /// split (a decided split names its one feasible arm twice), and the
+    /// parent must precede the split and be retired. All of this is checked
+    /// here and in the branch store in every build profile.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_reserved_checked_frontier_join(
         &self,
         split: super::SplitId,
         children: [BranchId; 2],
         parent: BranchId,
-        selection: EffectGoalSelection,
         facts: ProofFacts,
         unfolded_predicates: PersistentOrderedSet<String>,
         execution: ProofExecutionState<S>,
         added_facts: Vec<Proposition>,
         checked_facts: Vec<Proposition>,
     ) -> Result<Self, ProofJoinError> {
-        self.publish_checked_frontier_join_inner(
-            split,
-            children,
-            parent,
-            selection,
-            facts,
-            unfolded_predicates,
-            execution,
-            added_facts,
-            checked_facts,
-            true,
-        )
-    }
-
-    /// Closes `split` by replacing its arms with the joined parent branch.
-    /// Every child must be an arm identity reserved by exactly this split
-    /// (a decided split names its one feasible arm twice), the parent must
-    /// precede the split and be retired, and, unless the arms were only
-    /// reserved, every child must be an open branch. All of this is checked
-    /// here and in the branch store in every build profile.
-    #[allow(clippy::too_many_arguments)]
-    fn publish_checked_frontier_join_inner(
-        &self,
-        split: super::SplitId,
-        children: [BranchId; 2],
-        parent: BranchId,
-        selection: EffectGoalSelection,
-        facts: ProofFacts,
-        unfolded_predicates: PersistentOrderedSet<String>,
-        execution: ProofExecutionState<S>,
-        added_facts: Vec<Proposition>,
-        checked_facts: Vec<Proposition>,
-        reserved_children: bool,
-    ) -> Result<Self, ProofJoinError> {
-        let valid_children = if reserved_children {
-            children
-                .iter()
-                .all(|child| split.reserves(*child, children.len()))
-        } else {
-            split.owns(children)
-                && children
-                    .iter()
-                    .all(|child| self.state.open_branches.get(*child).is_some())
-        };
+        let valid_children = children
+            .iter()
+            .all(|child| split.reserves(*child, children.len()));
         if !valid_children
             || !split.follows(parent)
             || !self.state.open_branches.has_allocated(parent)
@@ -1727,21 +1585,18 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             return Err(ProofJoinError::InvalidSplit);
         }
         let branch = ProofBranch::new(
-            ProofObligation::Frontier(FrontierObligation::new(selection)),
+            ProofObligation::Frontier(FrontierObligation),
             ProofBranchState {
                 facts,
                 unfolded_predicates,
                 execution: Some(Arc::new(execution)),
             },
         );
-        let open_branches = if reserved_children {
-            self.state
-                .open_branches
-                .join_reserved_at(children, parent, branch)
-        } else {
-            self.state.open_branches.join_at(children, parent, branch)
-        }
-        .ok_or(ProofJoinError::InvalidSplit)?;
+        let open_branches = self
+            .state
+            .open_branches
+            .join_reserved_at(children, parent, branch)
+            .ok_or(ProofJoinError::InvalidSplit)?;
         Ok(Self::new(
             ProofState {
                 locals: self.state.locals.clone(),
@@ -1753,6 +1608,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn split_frontier_cases(
         &self,
         disjunction: Proposition,
@@ -2075,7 +1931,7 @@ mod tests {
             ProofObject::root(
                 (),
                 ProofBranch::new(
-                    ProofObligation::Frontier(FrontierObligation::new(EffectGoalSelection::None)),
+                    ProofObligation::Frontier(FrontierObligation),
                     ProofBranchState {
                         facts,
                         unfolded_predicates: PersistentOrderedSet::default(),
@@ -2241,7 +2097,7 @@ mod tests {
         let frontier = TestProof::root(
             (),
             ProofBranch::new(
-                ProofObligation::Frontier(FrontierObligation::new(EffectGoalSelection::None)),
+                ProofObligation::Frontier(FrontierObligation),
                 ProofBranchState {
                     facts: ProofFacts::default(),
                     unfolded_predicates: PersistentOrderedSet::default(),
@@ -2303,7 +2159,7 @@ mod tests {
             ProofObject::root(
                 (),
                 ProofBranch::new(
-                    ProofObligation::Frontier(FrontierObligation::new(EffectGoalSelection::None)),
+                    ProofObligation::Frontier(FrontierObligation),
                     ProofBranchState {
                         facts,
                         unfolded_predicates: PersistentOrderedSet::default(),

@@ -38,7 +38,7 @@ not evidence that Click verifies the unchanged source form.
 ### 3. replace broad search with explicit proof steps
 
 Smart tactics are bounded, incomplete heuristics. A prompt and actionable
-failure from `auto`, `execute()`, `simp()`, `frame()`, or another smart tactic
+failure from `auto`, `execute()`, `simp()`, or another smart tactic
 does not establish an engine bug. Split the task into smaller searches or use
 simple tactics with explicit premises.
 
@@ -125,7 +125,7 @@ Use the narrowest description supported by the evidence:
   the profile/expand/audit workflow violates its guarantees.
 
 When evidence is incomplete, say what is known instead of guessing a label.
-For example: "smart `frame()` failed; explicit resource transport has not yet
+For example: "smart `simp()` failed; explicit resource transport has not yet
 been attempted." The next experiment should be the smallest one that
 distinguishes the remaining categories.
 

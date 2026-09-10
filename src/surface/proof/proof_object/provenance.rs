@@ -14,7 +14,6 @@ pub(in crate::surface::proof) struct ProofCheckpoint<'a> {
 
 #[derive(Clone, Copy)]
 pub(super) struct ProofStepOrigin {
-    pub(super) tactic_index: usize,
     pub(super) source_index: usize,
 }
 

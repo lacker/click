@@ -56,16 +56,11 @@ pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKi
         }
     }
     if let ProofTactic::Loop(loop_clause) = tactic
-        && (loop_clause.initialize_proof().is_none()
-            || loop_clause.preserve_proof().is_none()
-            || loop_clause
-                .items()
-                .iter()
-                .any(|item| item.is_effect_kind() && matches!(item.proof(), SourceProof::Default)))
+        && (loop_clause.initialize_proof().is_none() || loop_clause.preserve_proof().is_none())
     {
         // The loop keyword is the shared source anchor for every omitted
-        // phase/effect proof in this block. Expanding it materializes all of
-        // those defaults together.
+        // phase proof in this block. Expanding it materializes all of those
+        // defaults together.
         return SourceSiteKind::ExpandableAutomation;
     }
     match tactic.class() {

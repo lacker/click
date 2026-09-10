@@ -74,7 +74,7 @@ a load may mention bound variables; the first stage still applies there.
 ### Contextual vocabulary is an explicit proof operation
 
 Creation sites do not rewrite a term to a preferred member of an equality
-class. In particular, a verified call records its mutable ranges in
+class. In particular, a verified call records its owned ranges in
 assumption-free canonical form in both the call-memory derivation and its
 `CMemoryEffectSummary`. If a caller's effect or frame proof uses another
 spelling for a bound, smart frame planning selects the exact equality premises

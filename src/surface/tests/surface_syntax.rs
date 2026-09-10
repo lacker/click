@@ -221,7 +221,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
         int32 example(int32 owner[], int32 data[]) {
             ensures result == 0;
         } by {
-            frame() using {
+            simp() using {
                 loadable(old(owner[0..6]));
                 load_int32_pointer((owner + 2)) == data;
                 separate(
@@ -238,9 +238,10 @@ fn parses_expanded_typed_loads_and_old_loadability() {
     else {
         panic!("expected a proof script");
     };
-    let ProofTactic::FrameUsing { premises, .. } = &tactics[0] else {
-        panic!("expected a frame() using tactic");
+    let ProofTactic::SimpUsing(simp_using) = &tactics[0] else {
+        panic!("expected a simp() using tactic");
     };
+    let premises = &simp_using.premises;
     assert!(matches!(
         &premises[0],
         ClickProposition::Loadable { segment }
@@ -1283,6 +1284,106 @@ theorem choose_right() {
 }
 
 #[test]
+fn normalization_does_not_hide_context_free_implication_derivation() {
+    let opaque = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by { normalize(); }
+}
+"#;
+    let error = verify_c0_sources(opaque, &[])
+        .expect_err("normalize must not construct an implication proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+
+    let explicit = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by {
+        intro();
+        assumption();
+    }
+}
+"#;
+    verify_c0_sources(explicit, &[]).expect("the explicit implication proof should verify");
+
+    let opaque_using = r#"
+theorem cited_implication(x: int32) {
+    requires x == 0;
+    ensures x == 0 implies x == 0 by { normalize() using { x == 0; } }
+}
+"#;
+    let error = verify_c0_sources(opaque_using, &[])
+        .expect_err("normalize using must not construct an implication proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+}
+
+#[test]
+fn smart_context_free_implication_retains_explicit_introduction() {
+    let source = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by { simp(); }
+}
+
+theorem true_consequent(x: int32) {
+    ensures x == 0 implies 1 == 1 by { simp(); }
+}
+
+theorem nested_choice(x: int32) {
+    ensures x == 0 implies (x == 0 or 1 == 2) by { simp(); }
+}
+
+theorem conjunctive_guard(x: int32, y: int32) {
+    ensures (x == 0 and y == 1) implies x == 0 by { simp(); }
+}
+
+theorem false_guard(x: int32) {
+    ensures 1 == 2 implies x == 0 by { simp(); }
+}
+"#;
+    let verified =
+        verify_click_theorems(source).expect("smart context-free implication proofs should verify");
+
+    assert_eq!(
+        verified[0]
+            .proof_tactics()
+            .expect("expected reflexive implication certificate"),
+        &[ProofTactic::Intro, ProofTactic::Assumption]
+    );
+    assert_eq!(
+        verified[1]
+            .proof_tactics()
+            .expect("expected true-consequent certificate"),
+        &[ProofTactic::Intro, ProofTactic::Normalize]
+    );
+    assert!(matches!(
+        verified[2]
+            .proof_tactics()
+            .expect("expected nested disjunction certificate")
+            .as_slice(),
+        [ProofTactic::Intro, ProofTactic::Left]
+    ));
+    assert!(matches!(
+        verified[3]
+            .proof_tactics()
+            .expect("expected conjunctive-guard certificate")
+            .as_slice(),
+        [ProofTactic::Intro, ProofTactic::Assumption]
+    ));
+    assert!(matches!(
+        verified[4]
+            .proof_tactics()
+            .expect("expected false-guard certificate")
+            .as_slice(),
+        [
+            ProofTactic::Have(ProofHave {
+                proof: SourceProof::Script(body),
+                ..
+            }),
+            ProofTactic::Intro,
+            ProofTactic::Contradiction(_)
+        ] if matches!(body.as_slice(), [ProofTactic::Normalize])
+    ));
+}
+
+#[test]
 fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     let current = ClickProposition::Comparison {
         left: current_var("x"),
@@ -1972,7 +2073,6 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
             int32 json_object_get_ref_count(struct json_object* obj) {
                 requires loadable(obj->ref_count);
                 ensures returns_ref_count: result == obj->ref_count by auto;
-                immutable by frame;
             }
         "#;
     let file = parse(source).expect("pilot struct pointer signature should parse");
@@ -2102,11 +2202,9 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
         int32 write_nested(struct node* root) {
             views root->child;
             consumes root->child->value;
-            mutable root->child->value;
             ensures result == 7;
         } by {
             execute();
-            frame();
             simp();
         }
     "#;
@@ -2117,11 +2215,8 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
     else {
         panic!("expected a nested owned field requirement")
     };
-    let Effect::Mutable(segments) = file.function_blocks()[0].effects()[0].effect() else {
-        panic!("expected a nested mutable field effect")
-    };
-
-    for segment in [required, &segments[0]] {
+    {
+        let segment = required;
         assert_eq!(segment.start, CExpression::Value(int32(1)));
         assert_eq!(segment.end, CExpression::Value(int32(2)));
         assert!(matches!(
@@ -2241,22 +2336,25 @@ fn aggregate_resource_places_expand_to_typed_nested_leaf_segments() {
 }
 
 #[test]
-fn parses_pilot_struct_field_mutable_effect() {
+fn parses_pilot_struct_field_owned_segment() {
     let source = r#"
             verifying "json_object_set_ref_count.c";
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
                 requires loadable(obj->ref_count);
-                mutable obj->ref_count by frame;
+                owns obj->ref_count;
                 ensures returns_count: result == count by auto;
             }
         "#;
-    let file = parse(source).expect("pilot struct field effect should parse");
+    let file = parse(source).expect("pilot struct field ownership should parse");
     let function = &file.function_blocks()[0];
 
+    let Requirement::Resource(ResourceClause::OwnMemory(segment)) = &function.requires()[1] else {
+        panic!("expected an owned struct-field segment")
+    };
     assert_eq!(
-        function.effects()[0].effect(),
-        &Effect::Mutable(vec![ContractSegment {
+        segment,
+        &ContractSegment {
             state: ContractSegmentState::Current,
             base: CExpression::Variable("obj".to_string()),
             start: CExpression::Value(int32(0)),
@@ -2266,7 +2364,7 @@ fn parses_pilot_struct_field_mutable_effect() {
                 element_width: None,
                 element_type: None,
             },
-        }])
+        }
     );
 }
 
@@ -2276,7 +2374,7 @@ fn rejects_legacy_mutable_field_effect_spelling() {
             verifying "json_object_set_ref_count.c";
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
-                mutable_field(obj->ref_count) by frame;
+                mutable_field(obj->ref_count);
                 ensures returns_count: result == count by auto;
             }
         "#;

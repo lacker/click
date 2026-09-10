@@ -10,36 +10,17 @@ fn omitted_ensure_proof_uses_default_prover() {
 }
 
 #[test]
-fn omitted_effect_proof_uses_default_prover() {
-    let source = r#"
-            verifying "zero.c";
-
-            int32 zero() {
-                immutable;
-                ensures returns_zero: result == 0;
-            }
-        "#;
-    let file = parse(source).expect("effect proof may be omitted");
-    let function = &file.function_blocks()[0];
-
-    assert!(function.effects()[0].proof().is_auto_tactic());
-    assert!(function.ensures()[0].proof().is_auto_tactic());
-}
-
-#[test]
 fn parses_grouped_function_proof() {
     let source = r#"
             verifying "set.c";
 
             int32 set(int32 p[], int32 value) {
                 consumes p[0..1];
-                mutable p[0..1];
                 produces p[0..1];
                 ensures result == value;
                 ensures p[0] == value;
             } by {
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -48,19 +29,8 @@ fn parses_grouped_function_proof() {
 
     assert_eq!(
         function.grouped_proof().and_then(SourceProof::tactics),
-        Some(
-            [
-                ProofTactic::SmartExecute,
-                ProofTactic::SmartFrame(None),
-                ProofTactic::Simp
-            ]
-            .as_slice()
-        )
+        Some([ProofTactic::SmartExecute, ProofTactic::Simp].as_slice())
     );
-    assert!(matches!(
-        function.effects()[0].proof(),
-        SourceProof::Default
-    ));
     assert!(matches!(
         function.ensures()[0].proof(),
         SourceProof::Default
@@ -134,13 +104,11 @@ fn grouped_function_certificates_share_finalized_specification() {
 
             int32 set(int32 p[], int32 value) {
                 consumes p[0..1];
-                mutable p[0..1];
                 produces p[0..1];
                 ensures result == value;
                 ensures p[0] == value;
             } by {
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -152,7 +120,7 @@ fn grouped_function_certificates_share_finalized_specification() {
         .map(|theorem| &theorem.specification)
         .collect::<Vec<_>>();
 
-    assert_eq!(specifications.len(), 4);
+    assert_eq!(specifications.len(), 3);
     assert!(specifications.windows(2).all(|pair| pair[0] == pair[1]));
 }
 
@@ -169,7 +137,6 @@ fn grouped_auto_completes_the_proof_execution_without_a_body_rerun() {
 
             int32 set(int32 p[], int32 value) {
                 consumes p[0..1];
-                mutable p[0..1];
                 produces p[0..1];
                 ensures result == value;
                 ensures p[0] == value;
@@ -178,16 +145,9 @@ fn grouped_auto_completes_the_proof_execution_without_a_body_rerun() {
     let _ = crate::kernel::take_checked_function_body_execution_count();
     let verified = verify_c0_sources(click_source, &[("set.c", c_source)])
         .expect("grouped auto proof should verify");
-    let expected_tactics = [
-        ProofTactic::SmartExecute,
-        ProofTactic::FrameUsing {
-            region: None,
-            premises: Vec::new(),
-        },
-        ProofTactic::Simp,
-    ];
+    let expected_tactics = [ProofTactic::SmartExecute, ProofTactic::Simp];
 
-    assert_eq!(verified.len(), 4);
+    assert_eq!(verified.len(), 3);
     assert!(
         verified
             .iter()
@@ -221,11 +181,9 @@ fn grouped_resource_predicate_proof_completes_without_a_body_rerun() {
 
             int32 return_zero(int32 p[]) {
                 owns zero_cell(p);
-                immutable;
                 ensures result == 0;
             } by {
                 execute();
-                frame();
                 simp();
             }
         "#;
@@ -234,7 +192,7 @@ fn grouped_resource_predicate_proof_completes_without_a_body_rerun() {
     let verified = verify_c0_sources(click_source, &[("return_zero.c", c_source)])
         .expect("resource predicate proof should verify");
 
-    assert_eq!(verified.len(), 3);
+    assert_eq!(verified.len(), 2);
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
@@ -244,20 +202,13 @@ fn grouped_resource_predicate_proof_completes_without_a_body_rerun() {
 
 #[test]
 fn parses_proof_tactic_script() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute(); frame(loop(0)); simp(); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); simp(); }");
     let file = parse(&source).expect("explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
         ensure.proof().tactics(),
-        Some(
-            [
-                ProofTactic::SmartExecute,
-                ProofTactic::SmartFrame(Some(CodeRegionRef::Loop(0))),
-                ProofTactic::Simp,
-            ]
-            .as_slice()
-        )
+        Some([ProofTactic::SmartExecute, ProofTactic::Simp].as_slice())
     );
 }
 

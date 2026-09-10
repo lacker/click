@@ -145,7 +145,7 @@ fn bounded_directive(line: &str) -> String {
         return line.to_owned();
     }
     let mut prefix = line.chars().take(LIMIT).collect::<String>();
-    prefix.push_str("…");
+    prefix.push('…');
     prefix
 }
 

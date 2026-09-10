@@ -41,8 +41,7 @@ documentation inventory keep the following accepted words synchronized.
 | `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
 | `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |
 | `constructs` | Authorizes one function to create an abstract resource token. |
-| `immutable`, `mutable` | Effect clauses and structural effect items. |
-| `invariant`, `step`, `initialize`, `preserve` | Loop structural items and phase proofs. |
+| `invariant`, `initialize`, `preserve` | Loop structural items and phase proofs. |
 | `contains`, `fact`, `field`, `if` | Composite-resource members, pure field declarations, and optional resource guard. `if` also forms expressions and proof splits. |
 | `read`, `write`, `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
 | `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |
@@ -53,7 +52,7 @@ documentation inventory keep the following accepted words synchronized.
 | `sizeof`, `byte_offset`, `address` | Supported scalar, pointer, and struct-layout sizes, byte-granularity pointer-offset expressions, and the LP64 integer representation of an object pointer. |
 | `load_int32`, `load_uint8`, `load_uint32`, `load_int64`, `load_uint64`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
-| `mark`, `step`, `execute`, `execute_until`, `frame` | Execution and framing tactics. |
+| `mark`, `step`, `execute`, `execute_until` | Execution tactics. |
 | `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |
 | `apply`, `have`, `if`, `cases`, `both`, `branch`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |

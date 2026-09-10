@@ -1331,7 +1331,6 @@ fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
 struct ProfiledSource {
     click_source: String,
     inputs: CInput,
-    c_sources: Vec<(String, String)>,
     /// Added to a one-based line inside the sidecar. Zero for a `.click`
     /// file; the offset of the ```click block for an mdtest, so reported
     /// locations point into the markdown the user actually edits.
@@ -1347,8 +1346,7 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
         let c_sources = mdtest.c_sources;
         return Ok(ProfiledSource {
             click_source,
-            inputs: CInput::Bundle(c_sources.clone()),
-            c_sources,
+            inputs: CInput::Bundle(c_sources),
             line_offset: mdtest.click_start_line.saturating_sub(1),
         });
     }
@@ -1358,7 +1356,6 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
     Ok(ProfiledSource {
         click_source,
         inputs,
-        c_sources: Vec::new(),
         line_offset: 0,
     })
 }

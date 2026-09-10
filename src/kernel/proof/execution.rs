@@ -7,10 +7,10 @@
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
     Bitvector32Term, CCompositeResourceDefinition, CConditionOutcome, CExpression, CFunction,
-    CFunctionExecutionCandidates, CLoopEffectCheck, CMemory, CMemoryRange, CResource,
-    CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
-    ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
-    ResourceContext, SpecProposition, Theorem, Variable,
+    CFunctionExecutionCandidates, CMemory, CMemoryRange, CResource, CResourceFact, CResourceSpec,
+    CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule, ExecutionBudget,
+    ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext, ResourceContext,
+    SpecProposition, Theorem, Variable,
 };
 use crate::persistent::PersistentSet;
 use std::collections::{BTreeMap, HashMap};
@@ -33,19 +33,6 @@ pub(crate) enum ExecutionRegionKind {
     LoopBody,
     /// One arm of a C `if`: exhausting the arm reaches its typed boundary.
     BranchArm,
-}
-
-/// One checked loop-effect obligation carried by an execution proof.
-#[derive(Clone)]
-pub(crate) struct LoopEffectGoal {
-    pub(crate) before_state: CState,
-    pub(crate) check: CLoopEffectCheck,
-    /// Whole-span summaries generated for the enclosing loop. They are
-    /// valid evidence for a whole-span effect, but a step-span check must
-    /// validate the iteration's own writes instead of inheriting the whole
-    /// loop's broader footprint.
-    pub(crate) whole_loop_effect_facts: Vec<Proposition>,
-    pub(crate) closed: bool,
 }
 
 /// Kernel-issued evidence for one semantic C transition accepted by this
@@ -1318,16 +1305,13 @@ impl CheckedFunctionEntry {
         &self,
         assumptions: &PureFactContext,
     ) -> Option<PureFactContext> {
-        let Some((_, propositions)) =
+        let (_, propositions) =
             crate::kernel::functions::expand_all_composite_resource_facts_and_propositions(
                 self.entry_state.resources(),
                 self.function.composite_resource_definitions(),
                 self.entry_state.memory(),
                 assumptions,
-            )
-        else {
-            return None;
-        };
+            )?;
         Some(
             propositions
                 .into_iter()
@@ -2334,17 +2318,14 @@ fn evaluate_interface_resource_spec(
     state: &CState,
     facts: &ProofFacts,
 ) -> Option<CResourceFact> {
-    match crate::kernel::functions::evaluate_function_resource_spec(
+    (crate::kernel::functions::evaluate_function_resource_spec(
         state,
         spec,
         facts.assumptions(),
         &mut ExecutionBudget::new(),
     )
-    .ok()?
-    {
-        Ok(fact) => Some(fact),
-        Err(_) => None,
-    }
+    .ok()?)
+    .ok()
 }
 
 fn interface_resource_intrinsic_fact(
@@ -2797,7 +2778,6 @@ pub(crate) struct ExecutionProofCore {
     pub(crate) function_entry: Option<Arc<CheckedFunctionEntry>>,
     pub(crate) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     pub(crate) execution_abstraction: bool,
-    pub(crate) loop_effect_goal: Option<LoopEffectGoal>,
     pub(crate) next_path_choice: usize,
     pub(crate) concrete_loop_execution: bool,
     /// Kernel theorems whose conclusions justify the facts a resource
@@ -3322,12 +3302,11 @@ fn check_evidence_events_with_call_events(
         if let Some(CStatementOutcome::Return {
             state: returned, ..
         }) = &mut completed
+            && let CheckedExecutionEvent::ResourceRewrite(rewrite) = event
         {
-            if let CheckedExecutionEvent::ResourceRewrite(rewrite) = event {
-                current_facts = rewrite.advance_checked(returned, &current_facts, &call_events)?;
-                *returned = rewrite.after_state.clone();
-                continue;
-            }
+            current_facts = rewrite.advance_checked(returned, &current_facts, &call_events)?;
+            *returned = rewrite.after_state.clone();
+            continue;
         }
         if completed.is_some() {
             return None;
@@ -3790,7 +3769,6 @@ impl ExecutionProofCore {
             function_entry: None,
             frontier_loop_rules: Default::default(),
             execution_abstraction: false,
-            loop_effect_goal: None,
             next_path_choice: 0,
             concrete_loop_execution: false,
             function_entry_derivations: Default::default(),
@@ -4980,7 +4958,7 @@ impl ExecutionProofCore {
             mode,
             execution: crate::kernel::SymbolicCExecution { paths, limit: None },
             entry_representation_origin: has_checked_entry
-                .then(|| self.function_entry.as_ref())
+                .then_some(self.function_entry.as_ref())
                 .flatten()
                 .map(|entry| entry.caller_state().clone()),
             checked_call_events: self.retained_call_events(),
@@ -5073,7 +5051,7 @@ impl ExecutionProofCore {
                             candidates.state(),
                             candidates.function(),
                             candidates.arguments(),
-                            &assumptions,
+                            assumptions,
                         )
                         .is_some()
                 }
@@ -5104,7 +5082,7 @@ impl ExecutionProofCore {
             let (completed, statement_assumptions, interface_execution_facts) = trace_completion(
                 function,
                 &events,
-                &assumptions,
+                assumptions,
                 function.return_type() == crate::kernel::CType::Void
                     && self.evidence_source.is_none()
                     && self.frontier.region == ExecutionRegionKind::Function,
@@ -5120,7 +5098,7 @@ impl ExecutionProofCore {
                 trace_completion(
                     function,
                     &events[..publication_end],
-                    &assumptions,
+                    assumptions,
                     function.return_type() == crate::kernel::CType::Void
                         && self.evidence_source.is_none()
                         && self.frontier.region == ExecutionRegionKind::Function,
@@ -5193,7 +5171,7 @@ impl ExecutionProofCore {
             }
             let theorem = Theorem::new(crate::kernel::reasoning::wrap_proof_facts(
                 proposition,
-                &assumptions,
+                assumptions,
                 &facts,
                 candidate.obligations(),
             ));
@@ -5258,6 +5236,19 @@ impl ExecutionFrontier {
 
     pub(crate) fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
         self.execution_start_state.as_ref().unwrap_or(current_state)
+    }
+}
+
+/// Resolves the named function-entry state used by `old(...)`, falling back
+/// to the current region's start state when the proof has no entry snapshot.
+pub(crate) fn old_reference_state<'a>(
+    function_entry_state: Option<&'a CState>,
+    frontier: &'a ExecutionFrontier,
+    current_state: &'a CState,
+) -> &'a CState {
+    match function_entry_state {
+        Some(entry_state) => entry_state,
+        None => frontier.execution_start_state(current_state),
     }
 }
 
@@ -7868,18 +7859,5 @@ mod tests {
             .is_err(),
             "a resource absent from both arms must not gain interface authority"
         );
-    }
-}
-
-/// Resolves the named function-entry state used by `old(...)`, falling back
-/// to the current region's start state when the proof has no entry snapshot.
-pub(crate) fn old_reference_state<'a>(
-    function_entry_state: Option<&'a CState>,
-    frontier: &'a ExecutionFrontier,
-    current_state: &'a CState,
-) -> &'a CState {
-    match function_entry_state {
-        Some(entry_state) => entry_state,
-        None => frontier.execution_start_state(current_state),
     }
 }

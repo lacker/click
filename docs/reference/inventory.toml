@@ -662,9 +662,6 @@ path = "reference/language/grammar.md#word-index"
 id = "language.word.forall"
 path = "reference/language/grammar.md#word-index"
 
-[[item]]
-id = "language.word.frame"
-path = "reference/language/grammar.md#word-index"
 
 [[item]]
 id = "language.word.from"
@@ -682,9 +679,6 @@ path = "reference/language/grammar.md#word-index"
 id = "language.word.if"
 path = "reference/language/grammar.md#word-index"
 
-[[item]]
-id = "language.word.immutable"
-path = "reference/language/grammar.md#word-index"
 
 [[item]]
 id = "language.word.implies"
@@ -762,9 +756,6 @@ path = "reference/language/grammar.md#word-index"
 id = "language.word.memory"
 path = "reference/language/grammar.md#word-index"
 
-[[item]]
-id = "language.word.mutable"
-path = "reference/language/grammar.md#word-index"
 
 [[item]]
 id = "language.word.normalize"
@@ -1015,13 +1006,7 @@ path = "reference/language/index.md#read-and-write-resources"
 id = "language.resource-witness"
 path = "reference/language/index.md#read-and-write-resources"
 
-[[item]]
-id = "language.immutable"
-path = "reference/language/index.md#read-and-write-resources"
 
-[[item]]
-id = "language.mutable"
-path = "reference/language/index.md#read-and-write-resources"
 
 [[item]]
 id = "language.contains"
@@ -1109,15 +1094,15 @@ path = "reference/language/index.md#predicates"
 
 [[item]]
 id = "language.modifies"
-path = "reference/language/index.md#effects"
+path = "reference/language/index.md#write-footprints"
 
 [[item]]
 id = "language.preserves"
-path = "reference/language/index.md#effects"
+path = "reference/language/index.md#write-footprints"
 
 [[item]]
 id = "language.effect"
-path = "reference/language/index.md#effects"
+path = "reference/language/index.md#write-footprints"
 
 [[item]]
 id = "language.operator-plus"
@@ -1319,33 +1304,30 @@ path = "reference/tactics/index.md#proposition-reasoning"
 id = "tactic.choose"
 path = "reference/tactics/index.md#proposition-reasoning"
 
-[[item]]
-id = "tactic.frame"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
 
 [[item]]
 id = "tactic.transport"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
 id = "tactic.unfold"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
 id = "tactic.fold"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
 id = "tactic.construct"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
 id = "tactic.observe"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
 id = "tactic.close_invariants"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
 id = "tactic.conjunction"
@@ -1414,26 +1396,20 @@ path = "reference/tactics/index.md#execution"
 id = "tactic-form.execute-until"
 path = "reference/tactics/index.md#execution"
 [[item]]
-id = "tactic-form.frame"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
-[[item]]
-id = "tactic-form.frame-using"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
-[[item]]
 id = "tactic-form.unfold-predicate"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.unfold-function"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.unfold-resource"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.fold-resource"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.construct-resource"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.induct"
 path = "reference/tactics/index.md#proposition-reasoning"
@@ -1475,7 +1451,7 @@ id = "tactic-form.loop"
 path = "reference/tactics/index.md#execution"
 [[item]]
 id = "tactic-form.observe-resource"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.witness"
 path = "reference/tactics/index.md#proposition-reasoning"
@@ -1523,19 +1499,19 @@ id = "tactic-form.contradiction"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.close-invariants"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.close-invariants-by"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.rewrite"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.transport"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.transport-using"
-path = "reference/tactics/index.md#effects-resources-and-snapshots"
+path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.instantiate-using"
 path = "reference/tactics/index.md#proposition-reasoning"

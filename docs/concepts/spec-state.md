@@ -108,7 +108,7 @@ Keep these distinctions explicit:
 - `let` is an immutable abbreviation, not mutable spec state.
 - `loadable` proves memory safety and bounds; it does not grant access
   authority.
-- `mutable` bounds a function's writes; it does not grant permission to access
+- `owns` bounds a function's writes; it does not grant permission to access
   or free the named memory.
 - A pure fact can be reused. An owned resource fact cannot be copied freely.
 - Ownership protocols are expressible through resources, but arbitrary mutable

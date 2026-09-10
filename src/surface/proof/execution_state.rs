@@ -325,7 +325,6 @@ pub(super) fn proof_site_for_claims(
     } else {
         match claims {
             [FunctionClaimRef::Ensure(index, _)] => CProofClaim::Ensure(*index),
-            [FunctionClaimRef::Effect(index, _)] => CProofClaim::Effect(*index),
             _ => return None,
         }
     };
@@ -949,21 +948,6 @@ pub(super) enum PostExecutionTactic {
     Normalize,
     NormalizeUsing(Vec<ClickProposition>),
     Rewrite(ClickProposition),
-    FrameRegion(CodeRegionRef),
-    Frame,
-    FrameUsing {
-        region: Option<CodeRegionRef>,
-        premises: Vec<ClickProposition>,
-    },
-    CheckedFrameUsing {
-        authority: CheckedFrameAuthority,
-        region: Option<CodeRegionRef>,
-        premises: Vec<ClickProposition>,
-        /// Exact checked Surface contribution retained until ordered
-        /// finalization reaches this source operation. This is expansion
-        /// provenance only; the other fields are the complete semantic input.
-        surface_tactics: Option<Vec<ProofTactic>>,
-    },
     /// Surface-only control structure scheduled after terminal execution.
     /// The arms contain no semantic state: ordered finalization asks the
     /// focused outcome `Proof` to decide the condition, then applies only the
@@ -1240,11 +1224,6 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::Normalize => ("normalize", "simple"),
         PostExecutionTactic::NormalizeUsing(_) => ("normalize", "simple"),
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
-        PostExecutionTactic::FrameRegion(_) => ("frame", "simple"),
-        PostExecutionTactic::Frame => ("frame", "simple"),
-        PostExecutionTactic::FrameUsing { .. } | PostExecutionTactic::CheckedFrameUsing { .. } => {
-            ("frame", "simple")
-        }
         PostExecutionTactic::If { .. } => ("if", "control"),
     }
 }

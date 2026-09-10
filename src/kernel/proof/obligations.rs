@@ -10,29 +10,12 @@ use std::sync::Arc;
 use super::storage::SharedValue;
 use crate::kernel::{CState, CValue, ExecutionPureFact, Proposition};
 
-/// Function-effect obligations owned alongside an execution frontier.
-///
-/// The selection is symbolic so grouped verification does not copy every
-/// effect clause into every short-lived proof root. The checked function block
-/// remains the indexed clause store.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EffectGoalSelection {
-    None,
-    One(usize),
-    All,
-}
-
 /// One open C frontier judgment's remaining semantic obligation.
+///
+/// A frontier judgment carries no payload of its own: reaching the frontier
+/// is the obligation, and every semantic detail lives in the branch state.
 #[derive(Clone)]
-pub(crate) struct FrontierObligation {
-    pub(crate) selection: EffectGoalSelection,
-}
-
-impl FrontierObligation {
-    pub(crate) fn new(selection: EffectGoalSelection) -> Self {
-        Self { selection }
-    }
-}
+pub(crate) struct FrontierObligation;
 
 /// One proposition branch obligation with opaque presentation data.
 #[derive(Clone)]
@@ -158,19 +141,12 @@ impl<S> DerefMut for OutcomeProofState<S> {
 #[derive(Clone)]
 pub(crate) struct FunctionOutcomeObligation<S> {
     pub(crate) path_index: usize,
-    pub(crate) selection: EffectGoalSelection,
-    pub(crate) checked_effects: Arc<Vec<usize>>,
     pub(crate) data: S,
 }
 
 impl<S> FunctionOutcomeObligation<S> {
-    pub(crate) fn new(path_index: usize, selection: EffectGoalSelection, data: S) -> Self {
-        Self {
-            path_index,
-            selection,
-            checked_effects: Arc::new(Vec::new()),
-            data,
-        }
+    pub(crate) fn new(path_index: usize, data: S) -> Self {
+        Self { path_index, data }
     }
 }
 
@@ -183,38 +159,4 @@ pub(crate) enum ProofObligation<P, O> {
     Proposition(PropositionObligation<P, O>),
     Frontier(FrontierObligation),
     FunctionOutcome(FunctionOutcomeObligation<O>),
-}
-
-/// Private authority that ordered outcome finalization may consume without
-/// proving the same function effect a second time.
-///
-/// Only checked proof frame operations construct this value, after checking
-/// every selected effect against the outcome or outcomes they own.
-#[derive(Clone)]
-pub(crate) struct CheckedFrameAuthority {
-    effect_indices: Arc<Vec<usize>>,
-}
-
-impl CheckedFrameAuthority {
-    pub(crate) fn new(effect_indices: Vec<usize>) -> Self {
-        Self {
-            effect_indices: Arc::new(effect_indices),
-        }
-    }
-
-    pub(crate) fn contains(&self, effect_index: usize) -> bool {
-        self.effect_indices.binary_search(&effect_index).is_ok()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.effect_indices.is_empty()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.effect_indices.len()
-    }
-
-    pub(crate) fn matches(&self, effect_indices: &[usize]) -> bool {
-        self.effect_indices.as_slice() == effect_indices
-    }
 }

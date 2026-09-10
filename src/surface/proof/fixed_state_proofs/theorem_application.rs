@@ -287,7 +287,6 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                 &lowered,
                 assumptions,
             )
-            .map(|lowered| lowered.clone())
         })
         .collect()
 }
@@ -320,7 +319,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
             surface,
             predicate_environment,
             click_function_environment,
-            &view.recorded_snapshots,
+            view.recorded_snapshots,
         )
         .map_err(ClickError::new)
     };
@@ -360,7 +359,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
         }
     }
     let (exact_snapshots, compatible_snapshots) =
-        snapshot_indexed_selectors(kernel, &view.recorded_snapshots);
+        snapshot_indexed_selectors(kernel, view.recorded_snapshots);
     for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         check_verification_deadline()?;
         let Some(base) =
@@ -503,7 +502,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
                 }
             }
             let (folded_exact_snapshots, folded_compatible_snapshots) =
-                snapshot_indexed_selectors(fact, &view.recorded_snapshots);
+                snapshot_indexed_selectors(fact, view.recorded_snapshots);
             for state in std::iter::once(post_state).chain(
                 folded_exact_snapshots
                     .iter()

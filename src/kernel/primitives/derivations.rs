@@ -615,8 +615,7 @@ impl PropositionDerivation {
                     body: source_body,
                     ..
                 } = source
-                {
-                    if let Some(renamed) =
+                    && let Some(renamed) =
                         crate::kernel::api::substitute_quantified_body_capture_free(
                             source_body,
                             *source_var,
@@ -626,12 +625,11 @@ impl PropositionDerivation {
                             },
                             sort,
                         )
-                    {
-                        let mut conjuncts = BTreeSet::new();
-                        collect_local_assumptions(&renamed, &mut conjuncts);
-                        for conjunct in conjuncts {
-                            body_premises.remove(&conjunct);
-                        }
+                {
+                    let mut conjuncts = BTreeSet::new();
+                    collect_local_assumptions(&renamed, &mut conjuncts);
+                    for conjunct in conjuncts {
+                        body_premises.remove(&conjunct);
                     }
                 }
                 premises.extend(body_premises);
@@ -920,12 +918,10 @@ impl DirectBitvectorEqualityEvidence {
                                         } else {
                                             Some(bound)
                                         }
+                                    } else if evidence.strict {
+                                        bound.checked_sub(1)
                                     } else {
-                                        if evidence.strict {
-                                            bound.checked_sub(1)
-                                        } else {
-                                            Some(bound)
-                                        }
+                                        Some(bound)
                                     }
                                 };
                             bitvector_variable(term) == Some(*variable)

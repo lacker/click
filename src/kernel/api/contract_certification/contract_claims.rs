@@ -1094,25 +1094,23 @@ fn function_claim_holds_on_prepared_path(
                         {
                             return false;
                         }
-                        let requirements_match =
-                            proof.specification.requires().iter().all(|requirement| {
-                                let ok = certification_proves_proposition(assumptions, requirement)
-                                    || match requirement {
-                                        Proposition::CResourceComposition(required) => {
-                                            resource_context_definitionally_contains(
-                                                required_resources,
-                                                required,
-                                                function.composite_resource_definitions(),
-                                                entry_state.memory(),
-                                                assumptions,
-                                            )
-                                        }
-                                        Proposition::Predicate { .. } => function
-                                            .predicate_unfoldings()
-                                            .iter()
-                                            .any(|unfolding| {
-                                                let mut budget = ExecutionBudget::default();
-                                                let Some((
+
+                        proof.specification.requires().iter().all(|requirement| {
+                            certification_proves_proposition(assumptions, requirement)
+                                || match requirement {
+                                    Proposition::CResourceComposition(required) => {
+                                        resource_context_definitionally_contains(
+                                            required_resources,
+                                            required,
+                                            function.composite_resource_definitions(),
+                                            entry_state.memory(),
+                                            assumptions,
+                                        )
+                                    }
+                                    Proposition::Predicate { .. } => {
+                                        function.predicate_unfoldings().iter().any(|unfolding| {
+                                            let mut budget = ExecutionBudget::default();
+                                            let Some((
                                         predicate,
                                         predicate_obligations,
                                         body,
@@ -1127,29 +1125,25 @@ fn function_claim_holds_on_prepared_path(
                                     else {
                                         return false;
                                     };
-                                                predicate == *requirement
-                                                    && predicate_obligations
-                                                        .iter()
-                                                        .chain(&body_obligations)
-                                                        .all(|obligation| {
-                                                            certification_proves_proposition(
-                                                                assumptions,
-                                                                obligation,
-                                                            )
-                                                        })
-                                                    && certification_proves_proposition(
-                                                        assumptions,
-                                                        &body,
-                                                    )
-                                            }),
-                                        _ => certification_proves_proposition(
-                                            assumptions,
-                                            requirement,
-                                        ),
-                                    };
-                                ok
-                            });
-                        requirements_match
+                                            predicate == *requirement
+                                                && predicate_obligations
+                                                    .iter()
+                                                    .chain(&body_obligations)
+                                                    .all(|obligation| {
+                                                        certification_proves_proposition(
+                                                            assumptions,
+                                                            obligation,
+                                                        )
+                                                    })
+                                                && certification_proves_proposition(
+                                                    assumptions,
+                                                    &body,
+                                                )
+                                        })
+                                    }
+                                    _ => certification_proves_proposition(assumptions, requirement),
+                                }
+                        })
                     })
             };
             let registered_predicate_ensure_holds = function
@@ -1813,7 +1807,7 @@ pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
             }
             let mut forall = proposition.clone();
             if let Proposition::ForAll { body: slot, .. } = &mut forall {
-                *slot = Box::new(body);
+                **slot = body;
             }
             forall
         }
@@ -1824,7 +1818,7 @@ pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
             }
             let mut exists = proposition.clone();
             if let Proposition::Exists { body: slot, .. } = &mut exists {
-                *slot = Box::new(body);
+                **slot = body;
             }
             exists
         }

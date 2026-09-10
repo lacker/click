@@ -331,7 +331,7 @@ Design notes:
 - Function calls should prefer verified summaries over inlining.
 - Specs for external functions should be ordinary Click files when possible.
 - Generated proof obligations should be readable enough that an agent can add
-  the missing `requires`, `invariant`, `mutable`, or `unfold` step.
+  the missing `requires`, `invariant`, `owns`, or `unfold` step.
 
 Done means:
 

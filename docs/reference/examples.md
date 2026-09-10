@@ -246,10 +246,10 @@ retain, nonfinal release, final release, and free across opaque calls.
 
 ## Effects and frames
 
-- `mdtests/immutable_stack_locals.md`: stack-local writes under `immutable`.
-- `mdtests/count_to_three_loop_immutable.md`: loop-level immutable clause.
-- `mdtests/fill_n_mutable_segment.md`: symbolic mutable function segment.
-- `mdtests/fill_n_loop_mutable_segment.md`: step-relative loop mutable segment.
+- `mdtests/immutable_stack_locals.md`: stack-local writes with nothing owned.
+- `mdtests/count_to_three_loop_immutable.md`: a loop that owns no caller memory.
+- `mdtests/fill_n_mutable_segment.md`: a symbolic owned function segment.
+- `mdtests/fill_n_loop_mutable_segment.md`: a loop over an owned segment.
 - `mdtests/loop_frame_segment_shapes.md`: shifted, growing, and multi-segment
   loop effects.
 - `mdtests/shifted_loop_effect_subset.md`: loop effect composes into function

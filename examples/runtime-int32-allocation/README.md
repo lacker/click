@@ -7,7 +7,7 @@ returns a conditional resource: null carries no allocation, while non-null owns
 the exact allocation authority and `data[0..count]` memory. `free_int32s`
 unfolds and consumes that complete resource. The same resource pair authorizes
 a direct `free` inside a larger function: deallocation is tracked as a
-heap-lifetime effect rather than requiring a fictitious mutable byte range or
+heap-lifetime effect rather than requiring a fictitious owned byte range or
 an allocation-specific wrapper call.
 
 The wrapper intentionally returns the `malloc` result without testing it.

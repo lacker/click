@@ -9,13 +9,13 @@ The main clauses are:
 let name [: type] = expression;
 let name: type where proposition;
 requires ...
+owns ...
+views ...
 ensures ... by ...
-immutable ...
-mutable ...
 ```
 
 Initial proofs mostly use `requires` and `ensures`. Memory proofs also add
-`immutable` and `mutable`.
+`owns` and `views`.
 
 ## Local names
 
@@ -130,20 +130,21 @@ ensures incremented: result == x + 1 by auto;
 
 Labels make diagnostics easier to read and make proof scripts more durable.
 
-## Effects
+## Write footprints
 
-Memory-modifying functions also use frame clauses:
+Memory-modifying functions declare the memory they own:
 
 <!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
-immutable src[0..n] by frame;
-mutable dst[0..n] by frame;
+views src[0..n];
+owns dst[0..n];
 ```
 
-These say which parts of memory are preserved or may be written. They are
-introduced later, after pointer loadability and aliasing. Unlike a return
-postcondition, a write footprint constrains finite writes even on an execution
-that later runs forever.
+Ownership says which parts of memory may be written; a view permits reads only.
+There is no separate effect clause: the owned memory *is* the write footprint,
+and a store outside it fails at the store. Unlike a return postcondition, a
+write footprint constrains finite writes even on an execution that later runs
+forever.
 
 ## Proof clauses
 

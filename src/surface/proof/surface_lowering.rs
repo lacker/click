@@ -40,13 +40,12 @@ impl<'a> Proof<'a> {
             }
             ProofContext::FixedState(context) => {
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                if !proposition_contains_old_expression(&surface) {
-                    if let Some(recorded) = context
+                if !proposition_contains_old_expression(&surface)
+                    && let Some(recorded) = context
                         .surface_propositions
                         .available_kernel(&surface, context.lowering_context.as_ref())
-                    {
-                        return Ok(recorded.clone());
-                    }
+                {
+                    return Ok(recorded.clone());
                 }
                 lower_fixed_state_proposition_with_assumptions(
                     &surface,
@@ -89,13 +88,13 @@ impl<'a> Proof<'a> {
                     }
                     _ => false,
                 };
-                if explicitly_anchored && !proposition_contains_old_expression(&surface) {
-                    if let Some(recorded) = view
+                if explicitly_anchored
+                    && !proposition_contains_old_expression(&surface)
+                    && let Some(recorded) = view
                         .surface_propositions
                         .available_kernel_matching(&surface, |kernel| self.facts().contains(kernel))
-                    {
-                        return Ok(recorded.clone());
-                    }
+                {
+                    return Ok(recorded.clone());
                 }
                 lower_fixed_state_proposition_with_assumptions(
                     &surface,

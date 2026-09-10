@@ -3410,7 +3410,7 @@ fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
     );
     let carrier = |index: u64| {
         let base = Pointer {
-            block: PointerBlock::Concrete(format!("carrier-{index}").into()),
+            block: PointerBlock::Concrete(format!("carrier-{index}")),
             offset: PointerOffsetTerm::Constant(0),
         };
         let split = Bitvector32Term::Variable(Variable(95_000 + index));

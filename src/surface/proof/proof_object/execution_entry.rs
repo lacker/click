@@ -25,59 +25,6 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
-        let effect_goals = match constants.proof_site.as_ref() {
-            Some(ProofSite::FunctionClaim {
-                claim: CProofClaim::Grouped,
-                ..
-            }) if !function_block.effects().is_empty() => EffectGoalSelection::All,
-            Some(ProofSite::FunctionClaim {
-                claim: CProofClaim::Effect(index),
-                ..
-            }) => EffectGoalSelection::One(*index),
-            _ => EffectGoalSelection::None,
-        };
-        Self::for_execution_frontier_with_effect_goals(
-            claim_label,
-            tactic_index,
-            execution,
-            pure_facts,
-            constants,
-            effect_goals,
-            function_block,
-            function,
-            parsed_function,
-            arguments,
-            function_environment,
-            resource_environment,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-        )
-    }
-
-    /// Constructs an execution-frontier proof with an explicit effect-goal
-    /// selection. The ordered outcome drain uses `EffectGoalSelection::None`:
-    /// at the drain boundary the function frame has already been consumed
-    /// into deferred checked authority, so the reconstructed frontier goal no
-    /// longer carries effect obligations.
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::surface::proof) fn for_execution_frontier_with_effect_goals(
-        claim_label: &'a str,
-        tactic_index: usize,
-        execution: ExecutionProofState,
-        pure_facts: Vec<Proposition>,
-        constants: ExecutionProofConstants,
-        effect_goals: EffectGoalSelection,
-        function_block: &'a FunctionBlock,
-        function: &'a CFunction,
-        parsed_function: &'a syntax::C0Function,
-        arguments: &'a [CExpression],
-        function_environment: &'a CExecutionEnvironment,
-        resource_environment: &'a ResourceEnvironment,
-        predicate_environment: &'a PredicateEnvironment,
-        click_function_environment: &'a ClickFunctionEnvironment,
-        theorem_environment: &'a TheoremEnvironment,
-    ) -> Self {
         Self {
             site: ProofStepSite::default(),
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
@@ -96,14 +43,11 @@ impl<'a> Proof<'a> {
             })),
             state: KernelProofObject::root(
                 ProofLocals::default(),
-                OpenBranch::frontier(
-                    effect_goals,
-                    BranchState {
-                        facts: ProofFacts::from_ordered(&pure_facts),
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
+                OpenBranch::frontier(BranchState {
+                    facts: ProofFacts::from_ordered(&pure_facts),
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: Some(Arc::new(execution)),
+                }),
             ),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -112,72 +56,6 @@ impl<'a> Proof<'a> {
                 depth: 0,
             }),
         }
-    }
-
-    /// Derives one structural loop-effect obligation from an already checked
-    /// preservation path. The new root shares the path's facts and execution
-    /// snapshot; only the explicitly declared effect goal and its diagnostic
-    /// source site are installed.
-    pub(in crate::surface::proof) fn start_loop_effect_proof<'b>(
-        &'b self,
-        claim_label: &'b str,
-        site: ProofSite,
-        before_state: &CState,
-        check: &CLoopEffectCheck,
-        whole_loop_effect_facts: &[Proposition],
-    ) -> Result<Proof<'b>, ClickError> {
-        let ProofContext::Execution(context) = self.context.as_ref() else {
-            return Err(self.step_error("a loop effect requires an execution proof"));
-        };
-        self.require_execution_frontier("a loop effect")?;
-        let mut execution = self
-            .execution()
-            .cloned()
-            .ok_or_else(|| self.step_error("a loop effect lost its preservation state"))?;
-        execution.core.loop_effect_goal = Some(LoopEffectGoal {
-            before_state: before_state.clone(),
-            check: check.clone(),
-            whole_loop_effect_facts: whole_loop_effect_facts.to_vec(),
-            closed: false,
-        });
-        execution.presentation.surface_record = SurfaceRecord::default();
-        Ok(Proof {
-            site: ProofStepSite::default(),
-            context: Arc::new(ProofContext::Execution(ExecutionProofContext {
-                claim_label,
-                tactic_index: 0,
-                function_block: context.function_block,
-                function: context.function,
-                parsed_function: context.parsed_function,
-                arguments: context.arguments,
-                function_environment: context.function_environment,
-                resource_environment: context.resource_environment,
-                predicate_environment: context.predicate_environment,
-                click_function_environment: context.click_function_environment,
-                theorem_environment: context.theorem_environment,
-                constants: Arc::new(ExecutionProofConstants {
-                    proof_site: Some(site),
-                    ..(*context.constants).clone()
-                }),
-            })),
-            state: KernelProofObject::root(
-                ProofLocals::default(),
-                OpenBranch::frontier(
-                    EffectGoalSelection::None,
-                    BranchState {
-                        facts: self.facts().clone(),
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
-            ),
-            node: Arc::new(ProofNode {
-                parent: None,
-                step: None,
-                focused_branch: BranchId::ROOT,
-                depth: 0,
-            }),
-        })
     }
 
     /// Starts the `source_index`th source tactic on a threaded execution
@@ -213,10 +91,8 @@ impl<'a> Proof<'a> {
                 ExecutionUpdateError::MissingExecution => {
                     "execution-frontier proof lost its semantic state"
                 }
-                ExecutionUpdateError::ClosedLoopEffect
-                | ExecutionUpdateError::NotLoopBody
-                | ExecutionUpdateError::InvariantsAlreadyClosed
-                | ExecutionUpdateError::LoopEffectNotClosed => {
+                ExecutionUpdateError::NotLoopBody
+                | ExecutionUpdateError::InvariantsAlreadyClosed => {
                     unreachable!("presentation editing checks only frontier ownership")
                 }
             };
@@ -369,10 +245,8 @@ impl<'a> Proof<'a> {
                 ExecutionUpdateError::MissingExecution => {
                     self.step_error("execution proof lost its terminal state")
                 }
-                ExecutionUpdateError::ClosedLoopEffect
-                | ExecutionUpdateError::NotLoopBody
-                | ExecutionUpdateError::InvariantsAlreadyClosed
-                | ExecutionUpdateError::LoopEffectNotClosed => {
+                ExecutionUpdateError::NotLoopBody
+                | ExecutionUpdateError::InvariantsAlreadyClosed => {
                     unreachable!("presentation scheduling checks only frontier ownership")
                 }
             })?;

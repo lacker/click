@@ -839,7 +839,8 @@ pub(super) fn validate_algebraic_type_uses(
         }
         for clause in function.structural_clauses() {
             for item in clause.items() {
-                if let Some(proposition) = item.proposition() {
+                {
+                    let proposition = item.proposition();
                     validate_algebraic_proposition(
                         proposition,
                         &requires_variables,

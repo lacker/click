@@ -130,73 +130,6 @@ fn partition_outcome_cases(
     }
 }
 
-#[cfg(test)]
-mod outcome_case_tests {
-    use super::*;
-
-    #[test]
-    fn nested_case_partition_work_visits_only_reached_nodes() {
-        for size in [4, 8, 16, 32] {
-            let conditions = (0..size)
-                .map(|index| ClickProposition::PredicateCall {
-                    name: format!("case_{index}"),
-                    arguments: Vec::new(),
-                })
-                .collect::<Vec<_>>();
-            let nodes = conditions
-                .iter()
-                .enumerate()
-                .map(|(index, condition)| OutcomeCase {
-                    condition,
-                    arms: [
-                        if index + 1 < size {
-                            Some(index + 1)
-                        } else {
-                            None
-                        },
-                        None,
-                    ],
-                })
-                .collect::<Vec<_>>();
-            let visits = std::cell::Cell::new(0);
-            let mut leaves = 0;
-            let mut facts = Vec::new();
-            let root = ProofFacts::default();
-            partition_outcome_cases(
-                &nodes,
-                Some(0),
-                &root,
-                &root,
-                &mut facts,
-                OutcomeProvenance {
-                    branch_decisions: PersistentSequence::default(),
-                    surface_propositions: SurfacePropositionMap::default(),
-                    recorded_snapshots: RecordedSnapshots::default(),
-                },
-                &|condition, _| {
-                    visits.set(visits.get() + 1);
-                    let ClickProposition::PredicateCall { name, .. } = condition else {
-                        unreachable!()
-                    };
-                    Ok(Proposition::Predicate {
-                        name: name.clone(),
-                        arguments: Vec::new(),
-                    })
-                },
-                &mut |_, _| leaves += 1,
-            )
-            .unwrap();
-            assert_eq!(visits.get(), size, "case-lowering work at size {size}");
-            assert_eq!(
-                leaves,
-                size + 1,
-                "no unrelated sibling combinations at size {size}"
-            );
-            assert!(facts.is_empty(), "each arm restores the shared fact cursor");
-        }
-    }
-}
-
 impl<'a> Proof<'a> {
     pub(super) fn apply_theorem_using(
         &self,
@@ -315,7 +248,7 @@ impl<'a> Proof<'a> {
             surface_premises,
             view.claim_label,
             view.tactic_index,
-            &self.facts(),
+            self.facts(),
             view.parameters,
             view.arguments,
             view.pre_state,
@@ -357,7 +290,7 @@ impl<'a> Proof<'a> {
             surface_premises,
             context.claim_label,
             context.tactic_index,
-            &self.facts(),
+            self.facts(),
             context.parsed_function.parameters(),
             context.arguments,
             &pre_state,
@@ -491,9 +424,11 @@ impl<'a> Proof<'a> {
             ContractExpression::CFragment(CExpression::Value(chosen)),
         );
         locals.next_choice_variable += 1;
-        let added_facts = (!self.facts().contains_top_level(&chosen_fact))
-            .then(|| vec![chosen_fact.clone()])
-            .unwrap_or_default();
+        let added_facts = if self.facts().contains_top_level(&chosen_fact) {
+            Vec::new()
+        } else {
+            vec![chosen_fact.clone()]
+        };
         let facts = self.facts().with_kernel_checked_fact(chosen_fact.clone());
         Ok(self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]))
     }
@@ -1330,7 +1265,7 @@ impl<'a> Proof<'a> {
             &premises,
             view.claim_label,
             view.tactic_index,
-            &self.facts(),
+            self.facts(),
             view.effect_facts,
             view.parameters,
             view.arguments,
@@ -1413,7 +1348,7 @@ impl<'a> Proof<'a> {
             premises,
             context.claim_label,
             context.tactic_index,
-            &self.facts(),
+            self.facts(),
             &execution.core.effect_facts,
             context.parsed_function.parameters(),
             context.arguments,
@@ -1448,5 +1383,72 @@ impl<'a> Proof<'a> {
             added_facts.clone(),
             added_facts,
         ))
+    }
+}
+
+#[cfg(test)]
+mod outcome_case_tests {
+    use super::*;
+
+    #[test]
+    fn nested_case_partition_work_visits_only_reached_nodes() {
+        for size in [4, 8, 16, 32] {
+            let conditions = (0..size)
+                .map(|index| ClickProposition::PredicateCall {
+                    name: format!("case_{index}"),
+                    arguments: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            let nodes = conditions
+                .iter()
+                .enumerate()
+                .map(|(index, condition)| OutcomeCase {
+                    condition,
+                    arms: [
+                        if index + 1 < size {
+                            Some(index + 1)
+                        } else {
+                            None
+                        },
+                        None,
+                    ],
+                })
+                .collect::<Vec<_>>();
+            let visits = std::cell::Cell::new(0);
+            let mut leaves = 0;
+            let mut facts = Vec::new();
+            let root = ProofFacts::default();
+            partition_outcome_cases(
+                &nodes,
+                Some(0),
+                &root,
+                &root,
+                &mut facts,
+                OutcomeProvenance {
+                    branch_decisions: PersistentSequence::default(),
+                    surface_propositions: SurfacePropositionMap::default(),
+                    recorded_snapshots: RecordedSnapshots::default(),
+                },
+                &|condition, _| {
+                    visits.set(visits.get() + 1);
+                    let ClickProposition::PredicateCall { name, .. } = condition else {
+                        unreachable!()
+                    };
+                    Ok(Proposition::Predicate {
+                        name: name.clone(),
+                        arguments: Vec::new(),
+                    })
+                },
+                &mut |_, _| leaves += 1,
+            )
+            .unwrap();
+            assert_eq!(visits.get(), size, "case-lowering work at size {size}");
+            assert_eq!(
+                leaves,
+                size + 1,
+                "no unrelated sibling combinations at size {size}"
+            );
+            assert!(facts.is_empty(), "each arm restores the shared fact cursor");
+        }
     }
 }

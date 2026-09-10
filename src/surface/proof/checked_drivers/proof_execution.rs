@@ -62,10 +62,6 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
             application: application.clone(),
             premises: premises.clone(),
         }),
-        ProofTactic::FrameUsing { region, premises } => Some(ProofStep::FrameUsing {
-            region: region.clone(),
-            premises: premises.clone(),
-        }),
         ProofTactic::CloseInvariants => Some(ProofStep::CloseInvariants),
         _ => None,
     }
@@ -372,48 +368,6 @@ fn checked_execution_region_contains_source_at(
     }
 }
 
-fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
-    match node {
-        InternalProofNode::Match {
-            arms, continuation, ..
-        } => {
-            arms.iter().any(internal_proof_contains_frame)
-                || internal_proof_contains_frame(continuation)
-        }
-        InternalProofNode::Done => false,
-        InternalProofNode::Linear {
-            tactics,
-            continuation,
-        } => {
-            tactics.iter().any(|indexed| {
-                matches!(
-                    indexed.tactic,
-                    ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-                )
-            }) || internal_proof_contains_frame(continuation)
-        }
-        InternalProofNode::Open {
-            body, continuation, ..
-        } => internal_proof_contains_frame(body) || internal_proof_contains_frame(continuation),
-        InternalProofNode::If {
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        }
-        | InternalProofNode::Branch {
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        } => {
-            internal_proof_contains_frame(then_branch)
-                || internal_proof_contains_frame(else_branch)
-                || internal_proof_contains_frame(continuation)
-        }
-    }
-}
-
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_proof_step(tactic).is_some()
         || matches!(tactic, ProofTactic::Choose(_))
@@ -427,27 +381,8 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
                 | ProofTactic::ExecuteUntil(_)
                 | ProofTactic::SmartExecute
                 | ProofTactic::SmartExecuteAllPaths
-                | ProofTactic::SmartFrame(_)
                 | ProofTactic::Loop(_)
         )
-}
-
-fn checked_linear_continuation_reaches_frame(node: &InternalProofNode) -> bool {
-    let Some(tactics) = linear_execution_tactics(node) else {
-        return false;
-    };
-    for indexed in tactics {
-        if matches!(
-            indexed.tactic,
-            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-        ) {
-            return true;
-        }
-        if !checked_linear_continuation_tactic(&indexed.tactic) {
-            return false;
-        }
-    }
-    false
 }
 
 fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTactic> {
@@ -497,10 +432,6 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
             Some(PostExecutionTactic::NormalizeUsing(premises.clone()))
         }
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
-        ProofTactic::FrameUsing { region, premises } => Some(PostExecutionTactic::FrameUsing {
-            region: region.clone(),
-            premises: premises.clone(),
-        }),
         ProofTactic::Simp => Some(PostExecutionTactic::Simp),
         _ => None,
     }
@@ -516,17 +447,7 @@ fn deferred_post_execution_linear_region(
     let mut deferred = tactics
         .iter()
         .map(|indexed| {
-            // Inside a deferred region (an arm of a post-execution `if`)
-            // a bare `frame()` is the ambient function frame checked per
-            // outcome path at finalization; the arm applies only on the
-            // paths that take it, so there is no Proof to search now.
-            let tactic = match &indexed.tactic {
-                ProofTactic::SmartFrame(None) => PostExecutionTactic::Frame,
-                ProofTactic::SmartFrame(Some(region)) => {
-                    PostExecutionTactic::FrameRegion(region.clone())
-                }
-                tactic => flat_post_execution_tactic(tactic)?,
-            };
+            let tactic = flat_post_execution_tactic(&indexed.tactic)?;
             Some(DeferredPostExecutionTactic {
                 lexical_bindings: None,
                 tactic_index: indexed.index,
@@ -605,12 +526,9 @@ fn deferred_post_execution_if_is_explicit_path_cursor(
 fn checked_structural_execution_branch_supported(
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
-    continuation: &InternalProofNode,
 ) -> bool {
-    (checked_execution_region_pair(then_branch, else_branch).is_some()
-        || checked_execution_region_pair_is_mixed(then_branch, else_branch))
-        && (!internal_proof_contains_frame(continuation)
-            || checked_linear_continuation_reaches_frame(continuation))
+    checked_execution_region_pair(then_branch, else_branch).is_some()
+        || checked_execution_region_pair_is_mixed(then_branch, else_branch)
 }
 
 /// Advances the checked linear prefix following a structural branch. Every
@@ -637,16 +555,10 @@ fn advance_checked_linear_continuation<'a>(
         // Every source driver starts a tactic with an empty step delta.
         proof = proof.start_source_tactic(indexed.source_index)?;
         let statement_index = proof.execution_frontier_index()?;
-        let terminal_frame = matches!(
-            indexed.tactic,
-            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-        );
         // Once the common execution has returned, proposition and resource
         // operations are interpreted once per concrete outcome. In
         // particular, `result` has no single value on this joined Proof.
-        // A function frame is the one audited exception: it checks the typed
-        // effect goal across every owned outcome before ordered finalization.
-        if proof.is_at_function_exit() && !terminal_frame {
+        if proof.is_at_function_exit() {
             return Ok(Some((proof, tactics[offset..].to_vec())));
         }
         let _timing = timing_claim_label.and_then(|claim_label| {
@@ -662,26 +574,21 @@ fn advance_checked_linear_continuation<'a>(
         let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
             proof.apply_close_invariants_body(&[ProofTactic::Simp])?
         } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
-            proof.apply_step_at(step, indexed.index, indexed.source_index)?
+            proof.apply_step_at(step, indexed.source_index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
-            proof.apply_step_at(
-                ProofStep::Choose(choice.clone()),
-                indexed.index,
-                indexed.source_index,
-            )?
+            proof.apply_step_at(ProofStep::Choose(choice.clone()), indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
                 return decline();
             };
             applied
         } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
-            let transported = match proof.try_execution_fact_transport(source, target)? {
+            match proof.try_execution_fact_transport(source, target)? {
                 Some(transported) => transported,
                 None => proof.apply_planned_fact_transport(source, target, indexed.index)?,
-            };
-            transported
+            }
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
             if let Some(selected) = solve_nested_have(nested, have, true)? {
@@ -727,13 +634,6 @@ fn advance_checked_linear_continuation<'a>(
                 indexed.index,
                 indexed.source_index,
             )?
-        } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-            let Some(framed) =
-                proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
-            else {
-                return Err(smart_frame_miss_error(&proof));
-            };
-            framed
         } else {
             return Ok(Some((proof, tactics[offset..].to_vec())));
         };
@@ -766,9 +666,6 @@ fn advance_checked_linear_continuation<'a>(
         // no single lowering on the joined execution Proof. Return that suffix
         // to the post-execution driver instead of treating it as another
         // execution-frontier transition.
-        if terminal_frame {
-            return Ok(Some((proof, tactics[offset + 1..].to_vec())));
-        }
     }
     Ok(Some((proof, Vec::new())))
 }
@@ -1120,11 +1017,7 @@ fn try_check_structural_function_proof_inner<'a>(
                 }) {
                     return decline();
                 }
-                if !checked_structural_execution_branch_supported(
-                    then_branch,
-                    else_branch,
-                    continuation,
-                ) {
+                if !checked_structural_execution_branch_supported(then_branch, else_branch) {
                     return decline();
                 }
                 let Some((advanced, _, certificate, consumed_continuation)) =
@@ -1361,79 +1254,15 @@ fn try_check_structural_function_proof_inner<'a>(
     Ok(Some(proof))
 }
 
-/// The diagnostic for a smart `frame` that found no checked candidate: the
-/// frontier must have reached function exit, the claim must own an effect
-/// goal, and otherwise the search missed.
-fn smart_frame_miss_error(proof: &Proof<'_>) -> ClickError {
-    if !proof.is_at_function_exit() {
-        return ClickError::new(
-            "`frame` requires execution to reach function exit first".to_string(),
-        );
-    }
-    if !proof.frontier_owns_effect_goal() {
-        return ClickError::new("`frame` has no effect claim to prove".to_string());
-    }
-    ClickError::new("`frame` found no checked Proof candidate".to_string())
-}
-
 /// Defers one ordered outcome operation, written after the checked
-/// execution reached function exit, onto the exit `Proof`. A bare `frame()`
-/// is the smart function frame searched here; other outcome tactics are
-/// deferred by their post-execution kind. `Ok(None)` declines; `Err` is a
+/// execution reached function exit, onto the exit `Proof`. Outcome tactics
+/// are deferred by their post-execution kind. `Ok(None)` declines; `Err` is a
 /// terminal diagnostic.
 fn defer_post_exit_outcome_tactic<'a>(
     proof: Proof<'a>,
     indexed: &IndexedTactic,
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-        let checkpoint = proof.checkpoint();
-        let Some(framed) =
-            proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
-        else {
-            return Err(smart_frame_miss_error(&proof));
-        };
-        let certificate = framed.certificate_since(&checkpoint)?;
-        let (_, deferred) = framed.edit_execution_presentation(|presentation| {
-            presentation.post_execution_tactics.pop()
-        })?;
-        let Some(mut deferred) = deferred else {
-            return decline();
-        };
-        let PostExecutionTactic::CheckedFrameUsing {
-            surface_tactics, ..
-        } = &mut deferred.tactic
-        else {
-            return decline();
-        };
-        *surface_tactics = Some(certificate.to_proof_tactics());
-        deferred.surface_recorded = false;
-        let branch_skeleton =
-            ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
-                .to_proof_tactics();
-        let (source_index, tactic_index) = (indexed.source_index, indexed.index);
-        let proof_site = proof
-            .execution_context()
-            .and_then(|context| context.constants.proof_site.clone());
-        let mut capture = expansion_capture.as_deref_mut();
-        let (framed, _) = proof.edit_execution_presentation(|presentation| {
-            if begin_tactic_expansion_capture(
-                capture.take(),
-                source_index,
-                &presentation.expansion,
-                proof_site.as_ref(),
-            ) {
-                presentation.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
-                    tactic_index,
-                    source_index,
-                    post_execution_index: presentation.post_execution_tactics.len(),
-                    branch_skeleton,
-                });
-            }
-            presentation.post_execution_tactics.push(deferred);
-        })?;
-        return Ok(Some(framed));
-    }
     if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
         return Err(error);
     }
@@ -1468,7 +1297,6 @@ pub(super) fn solve_nested_have<'a>(
                 nested.try_linear_script(body)?
             }
         }
-        SourceProof::Tactic(SmartTactic::Frame) => None,
     };
     // A surface `have` may lower to more than the currently focused
     // proposition goal (for example, a loadability assertion can carry an
@@ -1768,63 +1596,6 @@ fn advance_focused_execution_arm<'a>(
 ) -> Result<Option<Proof<'a>>, ClickError> {
     for indexed in tactics {
         if proof.is_at_function_exit() {
-            // A bare `frame()` at an arm's exit is the smart function frame
-            // searched on this arm's exit Proof, kept as an ordered deferral
-            // like the flat driver's post-exit frame.
-            if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-                let checkpoint = proof.checkpoint();
-                let Some(framed) = proof.try_smart_frame_at(
-                    region.as_ref(),
-                    indexed.index,
-                    indexed.source_index,
-                )?
-                else {
-                    return Err(smart_frame_miss_error(&proof));
-                };
-                let certificate = framed.certificate_since(&checkpoint)?;
-                let (_, deferred) = framed.edit_execution_presentation(|presentation| {
-                    presentation.post_execution_tactics.pop()
-                })?;
-                let Some(mut deferred) = deferred else {
-                    return decline();
-                };
-                let PostExecutionTactic::CheckedFrameUsing {
-                    surface_tactics, ..
-                } = &mut deferred.tactic
-                else {
-                    return decline();
-                };
-                *surface_tactics = Some(certificate.to_proof_tactics());
-                deferred.surface_recorded = false;
-                let branch_skeleton = ProofCertificate::from_steps(surface_branch_skeleton(
-                    proof.certificate().steps(),
-                ))
-                .to_proof_tactics();
-                let (source_index, tactic_index) = (indexed.source_index, indexed.index);
-                let proof_site = proof
-                    .execution_context()
-                    .and_then(|context| context.constants.proof_site.clone());
-                let mut capture = expansion_capture.as_deref_mut();
-                let (next, _) = proof.edit_execution_presentation(|presentation| {
-                    if begin_tactic_expansion_capture(
-                        capture.take(),
-                        source_index,
-                        &presentation.expansion,
-                        proof_site.as_ref(),
-                    ) {
-                        presentation.expansion.deferred_tactic_capture =
-                            Some(DeferredTacticCapture {
-                                tactic_index,
-                                source_index,
-                                post_execution_index: presentation.post_execution_tactics.len(),
-                                branch_skeleton,
-                            });
-                    }
-                    presentation.post_execution_tactics.push(deferred);
-                })?;
-                proof = next;
-                continue;
-            }
             if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
                 return Err(error);
             }
@@ -2473,7 +2244,7 @@ fn try_advance_checked_execution_branch<'a>(
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
     continuation: &InternalProofNode,
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
     depth: usize,
@@ -2492,7 +2263,7 @@ fn try_advance_checked_execution_branch<'a>(
         then_branch,
         else_branch,
         continuation,
-        expansion_capture.as_deref_mut(),
+        expansion_capture,
         proof_site,
         owning_source_index,
         depth,
@@ -2590,7 +2361,7 @@ fn advance_checked_branch_arms<'a>(
                 continuing,
                 Some(record),
                 continuation,
-                expansion_capture.as_deref_mut(),
+                expansion_capture,
                 proof_site,
                 owning_source_index,
                 depth + 1,
@@ -2650,29 +2421,7 @@ fn advance_linear_open_scope<'a>(
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     for indexed in tactics {
         if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
-            scope = if let ProofStep::FrameUsing { region, premises } = &step {
-                if scope.is_at_function_exit()
-                    && !scope.supports_checked_frame_using(region.as_ref(), premises)?
-                {
-                    // Execution inside the scope reached function exit and
-                    // this frame is not checkable here: defer it through the
-                    // scope to finalization, as the arm walker defers a
-                    // post-exit outcome tactic on a `Proof`.
-                    let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
-                        return decline();
-                    };
-                    scope = scope.defer_post_execution_source_tactic(
-                        indexed.index,
-                        indexed.source_index,
-                        post_tactic,
-                        expansion_capture.as_deref_mut(),
-                    )?;
-                    continue;
-                }
-                scope.apply_step_at(step, indexed.index, indexed.source_index)?
-            } else {
-                scope.apply_step(step)?
-            };
+            scope = scope.apply_step(step)?;
             continue;
         }
         if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
@@ -2722,33 +2471,6 @@ fn advance_linear_open_scope<'a>(
                 return decline();
             };
             scope = executed;
-            if indexed.source_index != owning_source_index
-                && let Some(site) = proof_site
-            {
-                let certificate = scope.certificate_since(&checkpoint)?;
-                record_proof_site_tactic_expansion(
-                    expansion_capture.as_deref_mut(),
-                    site,
-                    indexed.source_index,
-                    &certificate.to_proof_tactics(),
-                );
-            }
-            continue;
-        }
-        if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-            let checkpoint = scope.checkpoint();
-            let Some(framed) =
-                scope.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
-            else {
-                return Err(if scope.is_at_function_exit() {
-                    ClickError::new("`frame` found no checked Proof candidate".to_string())
-                } else {
-                    ClickError::new(
-                        "`frame` requires execution to reach function exit first".to_string(),
-                    )
-                });
-            };
-            scope = framed;
             if indexed.source_index != owning_source_index
                 && let Some(site) = proof_site
             {
@@ -2902,49 +2624,6 @@ fn advance_checked_open_scope<'a>(
     }
     if let InternalProofNode::If {
         index,
-        source_index,
-        condition,
-        then_branch,
-        else_branch,
-        continuation,
-    } = body
-        && let Some(then_tactics) = linear_execution_tactics(then_branch)
-        && let Some(else_tactics) = linear_execution_tactics(else_branch)
-        && matches!(
-            then_tactics.last().map(|indexed| &indexed.tactic),
-            Some(ProofTactic::FrameUsing { region: None, .. })
-        )
-        && matches!(
-            else_tactics.last().map(|indexed| &indexed.tactic),
-            Some(ProofTactic::FrameUsing { region: None, .. })
-        )
-    {
-        let Some(scope) = scope.apply_contextual_frame_tactics_at(
-            condition.clone(),
-            then_tactics
-                .iter()
-                .map(|indexed| indexed.tactic.clone())
-                .collect(),
-            else_tactics
-                .iter()
-                .map(|indexed| indexed.tactic.clone())
-                .collect(),
-            *index,
-            *source_index,
-        )?
-        else {
-            return decline();
-        };
-        return advance_checked_open_scope(
-            scope,
-            continuation,
-            expansion_capture,
-            proof_site,
-            owning_source_index,
-        );
-    }
-    if let InternalProofNode::If {
-        index,
         condition,
         then_branch,
         else_branch,
@@ -3067,52 +2746,6 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
     let click_function_environment = proof_context.click_function_environment;
     let claim_label = proof_context.claim_label;
 
-    if execution.core.loop_effect_goal.is_some() {
-        // A structural-effect validation path may already own the exact C-branch
-        // fact under this Surface spelling. Prefer that unambiguous indexed
-        // identity to rereading the condition from the heap. Ordinary loop
-        // preservation must lower afresh because the same spelling can name
-        // the next iteration's new condition variables.
-        let positive_surface = condition.clone();
-        let negative_surface = negate_click_proposition(condition);
-        let positive = execution
-            .presentation
-            .surface_propositions
-            .available_kernel_matching(&positive_surface, |kernel| pure_facts.contains(kernel))
-            .cloned();
-        let negative = execution
-            .presentation
-            .surface_propositions
-            .available_kernel_matching(&negative_surface, |kernel| pure_facts.contains(kernel))
-            .cloned();
-        if positive.is_some() != negative.is_some() {
-            let recorded_value = positive.is_some();
-            if value != recorded_value {
-                return Ok(false);
-            }
-            let kernel_fact = positive.or(negative).expect("one recorded polarity exists");
-            let surface_fact = if value {
-                positive_surface
-            } else {
-                negative_surface
-            };
-            execution
-                .presentation
-                .surface_propositions
-                .record_lowering(&surface_fact, &kernel_fact)?;
-            execution
-                .presentation
-                .case_assumptions
-                .push(CaseAssumption {
-                    tactic_index,
-                    condition: condition.clone(),
-                    value,
-                    fact: Some(kernel_fact),
-                    at_function_entry: execution.core.frontier.is_at_function_entry(),
-                });
-            return Ok(true);
-        }
-    }
     if execution.core.frontier.is_at_function_exit()
         && structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)
@@ -3324,7 +2957,6 @@ fn pre_exit_outcome_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Simp => "simp",
-        ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. } => "frame",
         _ => return None,
     };
     Some(ClickError::new(format!(

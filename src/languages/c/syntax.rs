@@ -466,6 +466,7 @@ impl C0GlobalArray {
             .expect("incomplete external array has no source-level length")
     }
 
+    #[cfg(test)]
     pub(crate) fn array_length(&self) -> Option<u32> {
         self.length
     }
@@ -1891,9 +1892,9 @@ fn conditional_expression_type(
         return None;
     };
     usual_arithmetic_conversion_type(then_type, else_type).or_else(|| {
-        if then_type == else_type {
-            Some(then_type)
-        } else if then_type.is_object_pointer() && is_null_pointer_constant(else_branch) {
+        if then_type == else_type
+            || (then_type.is_object_pointer() && is_null_pointer_constant(else_branch))
+        {
             Some(then_type)
         } else if else_type.is_object_pointer() && is_null_pointer_constant(then_branch) {
             Some(else_type)
@@ -3055,20 +3056,6 @@ impl C0Type {
         self.is_pointer() && !matches!(self, Self::FunctionPointer(_))
     }
 
-    fn is_scalar_pointer(self) -> bool {
-        matches!(
-            self,
-            Self::Int16Pointer
-                | Self::Int32Pointer
-                | Self::CharPointer
-                | Self::UInt8Pointer
-                | Self::UInt16Pointer
-                | Self::UInt32Pointer
-                | Self::Int64Pointer
-                | Self::UInt64Pointer
-        )
-    }
-
     fn is_supported_static_scalar(self) -> bool {
         matches!(
             self,
@@ -3689,6 +3676,7 @@ pub(crate) fn parse_translation_unit_for_import(
         .parse_translation_unit()
 }
 
+#[cfg(test)]
 pub(crate) fn parse_functions_for_source(
     source: &str,
     source_identity: &str,
@@ -4347,23 +4335,21 @@ fn static_integer_literal_for_type(
     if matches!(
         c_type,
         C0Type::Char | C0Type::UInt8 | C0Type::UInt16 | C0Type::UInt32 | C0Type::UInt64
-    ) {
-        if let StaticIntegerValue::Signed { value, .. } = value
-            && value < 0
-        {
-            let bits = static_integer_type_info(c_type)
-                .expect("unsigned static integer type has type information")
-                .1;
-            let modulus = 1i128
-                .checked_shl(bits)
-                .ok_or(StaticIntegerEvaluationError::Overflow)?;
-            let value = value.rem_euclid(modulus) as u128;
-            return if c_type == C0Type::UInt64 {
-                Ok(C0Expression::UInt64Literal(value as u64))
-            } else {
-                Ok(C0Expression::UInt32Literal(value as u32))
-            };
-        }
+    ) && let StaticIntegerValue::Signed { value, .. } = value
+        && value < 0
+    {
+        let bits = static_integer_type_info(c_type)
+            .expect("unsigned static integer type has type information")
+            .1;
+        let modulus = 1i128
+            .checked_shl(bits)
+            .ok_or(StaticIntegerEvaluationError::Overflow)?;
+        let value = value.rem_euclid(modulus) as u128;
+        return if c_type == C0Type::UInt64 {
+            Ok(C0Expression::UInt64Literal(value as u64))
+        } else {
+            Ok(C0Expression::UInt32Literal(value as u32))
+        };
     }
     let (minimum, maximum) = match c_type {
         C0Type::Int16 => (i128::from(i16::MIN), i128::from(i16::MAX)),
@@ -4694,13 +4680,9 @@ fn flatten_aggregate_layout(
     let mut aggregate_unions = Vec::new();
     for (field_name, field) in fields {
         if field.c_type == C0Type::Int32
-            && field.struct_name.is_some()
+            && let Some(nested_name) = field.struct_name.as_ref()
             && field.array_element_width.is_none()
         {
-            let nested_name = field
-                .struct_name
-                .as_ref()
-                .expect("embedded struct field has a struct name");
             let nested_layout = structs
                 .get(nested_name)
                 .expect("embedded struct field has a parsed layout");
@@ -4798,13 +4780,13 @@ fn field_expression(
             union_name,
         };
     }
-    if field_type == C0Type::Int32 {
-        if let Some(struct_name) = field_struct_name {
-            return C0Expression::AggregateAddress {
-                pointer: Box::new(pointer),
-                struct_name,
-            };
-        }
+    if field_type == C0Type::Int32
+        && let Some(struct_name) = field_struct_name
+    {
+        return C0Expression::AggregateAddress {
+            pointer: Box::new(pointer),
+            struct_name,
+        };
     }
     C0Expression::Field {
         pointer: Box::new(pointer),
@@ -6472,11 +6454,10 @@ impl Parser {
 
     fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {
         while self.peek().is_some() {
-            if self.peek_ident() == Some("static")
-                && self.peek_n(1).is_some_and(Self::is_inline_specifier)
+            if (self.peek_ident() == Some("static")
+                && self.peek_n(1).is_some_and(Self::is_inline_specifier))
+                || self.peek_inline_specifier()
             {
-                break;
-            } else if self.peek_inline_specifier() {
                 break;
             } else if self.peek_ident() == Some("static") {
                 self.parse_global_declaration()?;
@@ -7772,12 +7753,12 @@ impl Parser {
                 "union `{union_name}` fields may not contain embedded structs or unions"
             )));
         }
-        if base_type.enum_name.is_some() {
-            if base_type.c_type != C0Type::Int32 || self.peek() == Some(&Token::LBracket) {
-                return Err(self.error_here(format!(
-                    "union `{union_name}` enum members must be scalar int32 values"
-                )));
-            }
+        if base_type.enum_name.is_some()
+            && (base_type.c_type != C0Type::Int32 || self.peek() == Some(&Token::LBracket))
+        {
+            return Err(self.error_here(format!(
+                "union `{union_name}` enum members must be scalar int32 values"
+            )));
         }
         if self.peek() == Some(&Token::LBracket) {
             return Err(self.error_here(format!("union `{union_name}` members may not be arrays")));
@@ -9816,19 +9797,15 @@ impl Parser {
                 element_width,
             );
         }
-        if field.c_type == C0Type::Int32 {
-            if let Some(nested_name) = field.struct_name.as_deref() {
-                if self.peek() != Some(&Token::LBrace) {
-                    return Err(self.error_here(
-                        "embedded struct initializers require a nested `{...}` group",
-                    ));
-                }
-                return self.parse_aggregate_initializer_level(
-                    object_name,
-                    nested_name,
-                    field_offset,
+        if field.c_type == C0Type::Int32
+            && let Some(nested_name) = field.struct_name.as_deref()
+        {
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(
+                    self.error_here("embedded struct initializers require a nested `{...}` group")
                 );
             }
+            return self.parse_aggregate_initializer_level(object_name, nested_name, field_offset);
         }
 
         if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
@@ -10165,15 +10142,15 @@ impl Parser {
                 element_width,
             );
         }
-        if field.c_type == C0Type::Int32 {
-            if let Some(struct_name) = field.struct_name.as_deref() {
-                if self.peek() != Some(&Token::LBrace) {
-                    return Err(self.error_here(
-                        "embedded struct initializers require a nested `{...}` group",
-                    ));
-                }
-                return self.parse_struct_initializer_level(field_pointer, struct_name);
+        if field.c_type == C0Type::Int32
+            && let Some(struct_name) = field.struct_name.as_deref()
+        {
+            if self.peek() != Some(&Token::LBrace) {
+                return Err(
+                    self.error_here("embedded struct initializers require a nested `{...}` group")
+                );
             }
+            return self.parse_struct_initializer_level(field_pointer, struct_name);
         }
 
         if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
@@ -10427,10 +10404,10 @@ impl Parser {
                 element_width,
             );
         }
-        if field.c_type == C0Type::Int32 {
-            if let Some(struct_name) = field.struct_name.as_deref() {
-                return self.zero_struct_initializer_level(field_pointer, struct_name);
-            }
+        if field.c_type == C0Type::Int32
+            && let Some(struct_name) = field.struct_name.as_deref()
+        {
+            return self.zero_struct_initializer_level(field_pointer, struct_name);
         }
 
         if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
@@ -10657,7 +10634,7 @@ impl Parser {
             if parsed_type.struct_name.is_some()
                 && parsed_type.c_type == C0Type::Int32Pointer
                 && array_shape.is_none()
-                && self
+                && !self
                     .structs
                     .get(
                         parsed_type
@@ -10667,8 +10644,7 @@ impl Parser {
                     )
                     .expect("struct pointer has a declaration")
                     .size_bytes
-                    % 4
-                    != 0
+                    .is_multiple_of(4)
             {
                 // Unaligned struct sizes cannot use the kernel's int32
                 // pointer allocation width. Use a byte-addressed local for
@@ -13698,10 +13674,7 @@ impl Parser {
 
     fn parse_multiply(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut expression = self.parse_unary()?;
-        loop {
-            let Some(operator) = self.peek() else {
-                break;
-            };
+        while let Some(operator) = self.peek() {
             let constructor = match operator {
                 Token::Star => C0Expression::Multiply,
                 Token::Slash => C0Expression::Divide,
@@ -13767,13 +13740,13 @@ impl Parser {
         };
         let expression = self.parse_unary()?;
         self.validate_pointer_cast(c_type, struct_name.as_deref(), &expression, &cast_position)?;
-        return Ok(C0Expression::Cast {
+        Ok(C0Expression::Cast {
             expression: Box::new(expression),
             c_type,
             struct_name,
             pointee_volatile: volatile_pointer_object_cast,
             pointee_constant: parsed_type.pointee_constant,
-        });
+        })
     }
 
     fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -14738,10 +14711,10 @@ impl Parser {
         match expression {
             C0Expression::Variable(name) => {
                 let c_type = self.variable_types.get(name).copied()?;
-                if self.string_literal_names.contains(name) {
-                    if let C0Type::UInt8Array(length) = c_type {
-                        return Some(C0Type::CharArray(length));
-                    }
+                if self.string_literal_names.contains(name)
+                    && let C0Type::UInt8Array(length) = c_type
+                {
+                    return Some(C0Type::CharArray(length));
                 }
                 Some(c_type)
             }
@@ -15632,6 +15605,9 @@ fn integer_literal_parts(literal: &str) -> (&str, &str) {
     literal.split_at(suffix_start)
 }
 
+// The rungs mirror C's integer-literal type ladder verbatim, including the
+// final `u64::MAX` rung that a `u64` magnitude always satisfies.
+#[allow(clippy::absurd_extreme_comparisons)]
 fn parse_integer_literal_expression(literal: &str) -> Result<C0Expression, &'static str> {
     let magnitude = parse_integer_literal_magnitude(literal)?;
     let (digits, suffix) = integer_literal_parts(literal);

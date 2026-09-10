@@ -1123,9 +1123,8 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
         ),
         "the two marker blocks are expected to stop the snapshot matcher"
     );
-    assert_eq!(
+    assert!(
         PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&right)),
-        true,
         "the common-ancestor lookup is exactly what the DAG adds here"
     );
     let evidence = memory_load_equality_evidence_at(

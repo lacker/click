@@ -311,11 +311,14 @@ pub(in crate::surface) fn certified_statement_transitions(
         crate::kernel::collect_reasoning_provenance(execute)
     } else {
         let planning_premises =
-            (matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
                 && (statement_consults_conditions(state, statement)
-                    || context_reasons_about_memory(state, &transition_pure_facts)))
-            .then(|| ambient_condition_facts(pure_facts))
-            .unwrap_or_default();
+                    || context_reasons_about_memory(state, &transition_pure_facts))
+            {
+                ambient_condition_facts(pure_facts)
+            } else {
+                Default::default()
+            };
         (execute(), planning_premises)
     };
     if precise_call_provenance {
@@ -1174,6 +1177,30 @@ fn replace_fact_in_place(facts: &mut Vec<Proposition>, source: &Proposition, tar
     }
 }
 
+/// Direct transport of one fact across the statement effect, together with
+/// the exact facts its bounded frame check consumed (recorded so check
+/// frames the fact from the same evidence). The source fact itself is not a
+/// frame premise.
+fn direct_transport_with_frame_premises(
+    fact: &Proposition,
+    after: &crate::kernel::CMemory,
+    assumptions: &PureFactContext,
+) -> (Option<Theorem>, Vec<Proposition>) {
+    let (theorem, used) = crate::kernel::collect_reasoning_provenance(|| {
+        crate::kernel::capture_implicit_reasoning_provenance(|| {
+            prove_c_condition_fact_direct_transport(fact, after, assumptions)
+        })
+    });
+    if theorem.is_none() {
+        return (None, Vec::new());
+    }
+    let frame_premises = used
+        .into_iter()
+        .filter(|premise| premise != fact && assumptions.proves_exact(premise))
+        .collect();
+    (theorem, frame_premises)
+}
+
 #[cfg(test)]
 mod condition_transition_tests {
     use super::*;
@@ -1208,28 +1235,4 @@ mod condition_transition_tests {
             "{error:?}"
         );
     }
-}
-
-/// Direct transport of one fact across the statement effect, together with
-/// the exact facts its bounded frame check consumed (recorded so check
-/// frames the fact from the same evidence). The source fact itself is not a
-/// frame premise.
-fn direct_transport_with_frame_premises(
-    fact: &Proposition,
-    after: &crate::kernel::CMemory,
-    assumptions: &PureFactContext,
-) -> (Option<Theorem>, Vec<Proposition>) {
-    let (theorem, used) = crate::kernel::collect_reasoning_provenance(|| {
-        crate::kernel::capture_implicit_reasoning_provenance(|| {
-            prove_c_condition_fact_direct_transport(fact, after, assumptions)
-        })
-    });
-    if theorem.is_none() {
-        return (None, Vec::new());
-    }
-    let frame_premises = used
-        .into_iter()
-        .filter(|premise| premise != fact && assumptions.proves_exact(premise))
-        .collect();
-    (theorem, frame_premises)
 }

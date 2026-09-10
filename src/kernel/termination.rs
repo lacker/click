@@ -1205,11 +1205,12 @@ fn recursion_paths(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
         ))),
         CStatement::Assign { .. } => Ok(lower_bounds),
-        CStatement::Update { target, .. } if matches!(target, CExpression::Variable(name) if name == measure) => {
-            Err(error(format!(
-                "termination measure `{measure}` is updated; this first implementation requires an unchanged function parameter"
-            )))
-        }
+        CStatement::Update {
+            target: CExpression::Variable(name),
+            ..
+        } if name == measure => Err(error(format!(
+            "termination measure `{measure}` is updated; this first implementation requires an unchanged function parameter"
+        ))),
         CStatement::Update { .. } => Ok(lower_bounds),
         CStatement::HeapAllocate { target, .. } if target == measure => Err(error(format!(
             "recursive termination measure `{measure}` is overwritten by an allocation result"

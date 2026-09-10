@@ -1315,11 +1315,6 @@ fn verify_theorem_ensure(
             }
             (ProofKind::Simp, None, None)
         }
-        SourceProof::Tactic(SmartTactic::Frame) => {
-            return Err(ClickError::new(format!(
-                "`frame` is not available in the pure proof for theorem `{claim_label}`"
-            )));
-        }
         SourceProof::Script(tactics) => {
             if tactics.is_empty() {
                 return Err(ClickError::new(format!(
@@ -3109,14 +3104,13 @@ pub(super) fn click_function_applications(
                 expression(value, known_facts, applications);
                 expression(body, known_facts, applications);
             }
-            ContractExpression::ResourceCount(resource) => match resource.as_ref() {
-                ResourceClause::Declared { arguments, .. } => {
+            ContractExpression::ResourceCount(resource) => {
+                if let ResourceClause::Declared { arguments, .. } = resource.as_ref() {
                     for argument in arguments {
                         expression(argument, known_facts, applications);
                     }
                 }
-                _ => {}
-            },
+            }
             ContractExpression::QualifiedC { .. }
             | ContractExpression::CFragment(_)
             | ContractExpression::CBinding(_)
