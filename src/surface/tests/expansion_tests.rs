@@ -12304,3 +12304,73 @@ fn loop_preservation_case_before_step_expands_in_place() {
         panic!("expanded proof failed independent verification: {error:?}\n{expanded}")
     });
 }
+
+#[test]
+fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
+    // Lowering wraps this loop's quantified entry obligation in a loadability
+    // guard that has no Surface connective. The guard is derivable at entry
+    // but is not exactly available, so it stays part of the goal that planning
+    // and independent validation both compute, and the retained certificate
+    // must discharge it with an explicit introduction.
+    let c_source = r#"
+        int32 fill3_entry_guard(int32 p[3]) {
+            int32 i;
+            i = 0;
+            while (i < 3) {
+                p[i] = i;
+                i = i + 1;
+            }
+            return p[2];
+        }
+    "#;
+    let click_source = r#"
+        verifying "fill3_entry_guard.c";
+        int32 fill3_entry_guard(int32 p[3]) {
+            requires loadable(p[0..3]);
+            consumes p[0..3];
+            ensures returns_third: result == 2;
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 0 and i <= 3;
+                invariant forall (k: int32) { 0 <= k and k < i implies p[k] == k };
+                initialize by simp;
+                preserve by simp;
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("fill3_entry_guard.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("the entry-guard loop proof should verify");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "fill3_entry_guard",
+        CProofClaim::Grouped,
+    )
+    .expect("the entry-guard loop proof should expand");
+    let initialize = expanded
+        .find("initialize by")
+        .expect("the expansion keeps the initialization proof");
+    let preserve = expanded
+        .find("preserve by")
+        .expect("the expansion keeps the preservation proof");
+    assert!(initialize < preserve, "{expanded}");
+    assert!(
+        expanded[initialize..preserve].contains("intro();"),
+        "the initialization certificate must introduce the lowering guard: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("expanded entry-guard proof failed independent verification: {error:?}\n{expanded}")
+    });
+    let missing_intro = format!(
+        "{}{}",
+        expanded[..preserve].replacen("intro();", "", 1),
+        &expanded[preserve..]
+    );
+    assert_ne!(missing_intro, expanded, "{expanded}");
+    verify_c0_sources(&missing_intro, &sources)
+        .expect_err("deleting the retained guard introduction must be rejected at validation");
+}
