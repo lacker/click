@@ -2905,3 +2905,36 @@ path = "reference/glossary.md#proof-provenance"
 [[item]]
 id = "glossary.resource-projection"
 path = "reference/glossary.md#resource-projection"
+
+[[item]]
+id = "cli.import.command"
+path = "reference/cli/import.md#click-import"
+
+[[item]]
+id = "cli.import.--help"
+path = "reference/cli/import.md#options-and-exit-status"
+
+[[item]]
+id = "cli.import.-h"
+path = "reference/cli/import.md#options-and-exit-status"
+
+[[item]]
+id = "cli.import.--"
+path = "reference/cli/import.md#options-and-exit-status"
+
+
+[[item]]
+id = "cli.behavior.import.lock"
+path = "reference/cli/import.md#configure-and-lock-an-import"
+
+[[item]]
+id = "cli.behavior.import.source-selection"
+path = "reference/cli/import.md#configure-and-lock-an-import"
+
+[[item]]
+id = "cli.behavior.import.validation"
+path = "reference/cli/import.md#validation-and-supported-profile"
+
+[[item]]
+id = "cli.behavior.import.trust-boundary"
+path = "reference/cli/import.md#locations-and-trust-boundary"

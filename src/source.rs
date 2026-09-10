@@ -1,23 +1,57 @@
 //! Source-file positions shared by Surface Click and program languages.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
+
+/// The compiler source location associated with an imported physical line.
+///
+/// Preprocessed output does not preserve a meaningful macro-expanded column,
+/// so imports retain the original file and line only.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct SourceOrigin {
+    pub filename: Arc<str>,
+    pub line: usize,
+}
 
 /// A one-based line and column in a source file.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SourcePosition {
     pub line: usize,
     pub column: usize,
+    pub origin: Option<Arc<SourceOrigin>>,
 }
 
 impl SourcePosition {
     pub fn new(line: usize, column: usize) -> Self {
-        Self { line, column }
+        Self {
+            line,
+            column,
+            origin: None,
+        }
+    }
+
+    pub(crate) fn with_origin(
+        line: usize,
+        column: usize,
+        filename: Arc<str>,
+        original_line: usize,
+    ) -> Self {
+        Self {
+            line,
+            column,
+            origin: Some(Arc::new(SourceOrigin {
+                filename,
+                line: original_line,
+            })),
+        }
     }
 }
 
 impl fmt::Display for SourcePosition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "line {}, column {}", self.line, self.column)
+        match &self.origin {
+            Some(origin) => write!(f, "{}:{}", origin.filename, origin.line),
+            None => write!(f, "line {}, column {}", self.line, self.column),
+        }
     }
 }
 

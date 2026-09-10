@@ -6,6 +6,9 @@ mod audit;
 #[path = "click-expand.rs"]
 #[allow(dead_code)]
 mod expand;
+#[path = "click-import.rs"]
+#[allow(dead_code)]
+mod import;
 #[path = "click-profile.rs"]
 #[allow(dead_code)]
 mod profile;
@@ -19,7 +22,8 @@ commands:\n  \
   verify   verify a sidecar, proof unit, project, or examples directory\n  \
   profile  measure verification and identify slow tactics\n  \
   expand   replace one smart tactic with its checked simple certificate\n  \
-  audit    check expansion across a project or repository";
+  audit    check expansion across a project or repository\n  \
+  import   prepare and lock compiler-selected C sources";
 
 fn main() {
     if let Err(message) = entry(env::args().skip(1)) {
@@ -42,6 +46,7 @@ fn entry(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
         "profile" => profile::entry_with(arguments),
         "expand" => expand::entry_with(arguments),
         "audit" => audit::entry_with(arguments),
+        "import" => import::entry_with(arguments),
         _ => Err(format!("unknown command `{command}`\n{USAGE}")),
     }
 }
@@ -54,6 +59,11 @@ mod tests {
     fn rejects_unknown_subcommands() {
         let error = entry(["unknown".to_string()]).unwrap_err();
         assert!(error.contains("unknown command `unknown`"));
+    }
+
+    #[test]
+    fn dispatches_import_help_without_spawning() {
+        entry(["import".to_string(), "--help".to_string()]).unwrap();
     }
 
     #[test]

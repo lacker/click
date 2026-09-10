@@ -1,5 +1,90 @@
 use super::validation::combined_algebraic_type_definitions;
 use super::*;
+use crate::languages::c::compiler_import::PreparedCImport;
+#[cfg(test)]
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::sync::Arc;
+
+/// Typed input boundary for C verification. The bundle variant preserves the
+/// legacy source map while leaving room for compiler-prepared inputs without
+/// ambient or global state.
+pub(in crate::surface) struct CSourceContext<'a> {
+    bundle: Option<BTreeMap<&'a str, &'a str>>,
+    imports: Option<&'a [PreparedCImport]>,
+    prepared_by_source: Option<BTreeMap<&'a str, &'a PreparedCImport>>,
+    prepared_project_identity: Option<String>,
+    prepared_duplicates: bool,
+    parsed_units: RefCell<BTreeMap<String, Arc<syntax::C0TranslationUnit>>>,
+    #[cfg(test)]
+    prepared_parse_count: Cell<usize>,
+}
+
+impl<'a> CSourceContext<'a> {
+    pub(in crate::surface) fn bundle(sources: &[(&'a str, &'a str)]) -> Self {
+        Self {
+            bundle: Some(sources.iter().copied().collect()),
+            imports: None,
+            prepared_by_source: None,
+            prepared_project_identity: None,
+            prepared_duplicates: false,
+            parsed_units: RefCell::new(BTreeMap::new()),
+            #[cfg(test)]
+            prepared_parse_count: Cell::new(0),
+        }
+    }
+
+    pub(in crate::surface) fn prepared(imports: &'a [PreparedCImport]) -> Self {
+        let mut identities = imports
+            .iter()
+            .map(|import| import.identity().to_string())
+            .collect::<Vec<_>>();
+        identities.sort();
+        identities.dedup();
+        let duplicate_logical_source = imports
+            .iter()
+            .map(|import| import.logical_source())
+            .collect::<BTreeSet<_>>()
+            .len()
+            != imports.len();
+        let project_identity = if imports.len() == 1 {
+            imports[0].identity().to_string()
+        } else {
+            let mut framed = String::from("project:");
+            for identity in &identities {
+                framed.push_str(&identity.len().to_string());
+                framed.push(':');
+                framed.push_str(identity);
+                framed.push(';');
+            }
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(framed.as_bytes()))
+        };
+        Self {
+            bundle: None,
+            imports: Some(imports),
+            prepared_by_source: Some(
+                imports
+                    .iter()
+                    .map(|import| (import.logical_source(), import))
+                    .collect(),
+            ),
+            prepared_project_identity: Some(project_identity),
+            prepared_duplicates: duplicate_logical_source,
+            parsed_units: RefCell::new(BTreeMap::new()),
+            #[cfg(test)]
+            prepared_parse_count: Cell::new(0),
+        }
+    }
+
+    fn bundle_sources(&self) -> Result<&BTreeMap<&'a str, &'a str>, ClickError> {
+        self.bundle.as_ref().ok_or_else(|| {
+            ClickError::new(
+                "incremental source comparison is unavailable for compiler-prepared imports",
+            )
+        })
+    }
+}
 
 fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String>) {
     for tactic in tactics {
@@ -199,7 +284,22 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
-    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let sources = CSourceContext::bundle(c_sources);
+    verify_click_theorems_with_context(click_source, &sources)
+}
+
+pub(in crate::surface) fn verify_click_theorems_with_prepared(
+    click_source: &str,
+    imports: &[PreparedCImport],
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let sources = CSourceContext::prepared(imports);
+    verify_click_theorems_with_context(click_source, &sources)
+}
+
+pub(in crate::surface) fn verify_click_theorems_with_context(
+    click_source: &str,
+    sources: &CSourceContext<'_>,
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let (
         struct_layouts,
         union_layouts,
@@ -207,7 +307,7 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
-    ) = parse_c_layouts(click_source, &sources)?;
+    ) = parse_c_layouts(click_source, sources)?;
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
@@ -217,7 +317,7 @@ pub(in crate::surface) fn verify_click_theorems_with_c_sources(
         global_array_shapes,
         qualified_objects,
     )?;
-    let parsed_sources = parse_verified_sources(&file, &sources)?;
+    let parsed_sources = parse_verified_sources_context(&file, &sources)?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -291,7 +391,14 @@ pub(in crate::surface) fn parse_c0_click_file(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {
-    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let sources = CSourceContext::bundle(c_sources);
+    parse_c0_click_file_context(click_source, &sources)
+}
+
+fn parse_c0_click_file_context(
+    click_source: &str,
+    sources: &CSourceContext<'_>,
+) -> Result<ClickFile, ClickError> {
     let (
         struct_layouts,
         union_layouts,
@@ -299,7 +406,7 @@ pub(in crate::surface) fn parse_c0_click_file(
         aggregate_array_objects,
         global_array_shapes,
         qualified_objects,
-    ) = parse_c_layouts(click_source, &sources)?;
+    ) = parse_c_layouts(click_source, sources)?;
     parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
@@ -364,6 +471,19 @@ pub fn verify_c0_sources(
     })
 }
 
+/// Verifies compiler-prepared translation units through the same engine used
+/// by legacy source bundles.
+pub fn verify_c0_prepared_sources(
+    click_source: &str,
+    imports: &[PreparedCImport],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports);
+        verify_c0_sources_with_context(click_source, &sources, None, None, None)
+            .map(|(verified, _)| verified)
+    })
+}
+
 /// Runs one ordinary verification while filling in the given expansion
 /// capture. Verification behaves identically with or without the capture;
 /// only the capture's `result` differs.
@@ -381,6 +501,17 @@ pub(in crate::surface) fn verify_c0_sources_with_expansion_capture(
             Some(expansion_capture),
         )
         .map(|(verified, _)| verified)
+    })
+}
+
+pub(in crate::surface) fn verify_c0_sources_with_expansion_capture_context(
+    click_source: &str,
+    c_sources: &CSourceContext<'_>,
+    expansion_capture: &mut ExpansionCapture,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        verify_c0_sources_with_context(click_source, c_sources, None, None, Some(expansion_capture))
+            .map(|(verified, _)| verified)
     })
 }
 
@@ -451,16 +582,10 @@ pub fn c0_incremental_selection(
 ) -> Result<C0IncrementalSelection, ClickError> {
     let current_file = parse_c0_click_file(current_click_source, current_c_sources)?;
     let baseline_file = parse_c0_click_file(baseline_click_source, baseline_c_sources)?;
-    let current_source_map = current_c_sources
-        .iter()
-        .copied()
-        .collect::<BTreeMap<_, _>>();
-    let baseline_source_map = baseline_c_sources
-        .iter()
-        .copied()
-        .collect::<BTreeMap<_, _>>();
-    let current_parsed = parse_verified_sources(&current_file, &current_source_map)?;
-    let baseline_parsed = parse_verified_sources(&baseline_file, &baseline_source_map)?;
+    let current_source_map = CSourceContext::bundle(current_c_sources);
+    let baseline_source_map = CSourceContext::bundle(baseline_c_sources);
+    let current_parsed = parse_verified_sources_context(&current_file, &current_source_map)?;
+    let baseline_parsed = parse_verified_sources_context(&baseline_file, &baseline_source_map)?;
     let current_blocks = current_file
         .function_blocks()
         .iter()
@@ -521,8 +646,9 @@ pub fn c0_incremental_selection(
         }
     }
 
-    let current_imports = c0_imported_headers(&current_file, &current_source_map)?;
-    let baseline_imports = c0_imported_headers(&baseline_file, &baseline_source_map)?;
+    let current_imports = c0_imported_headers(&current_file, current_source_map.bundle_sources()?)?;
+    let baseline_imports =
+        c0_imported_headers(&baseline_file, baseline_source_map.bundle_sources()?)?;
     for source_path in &current_file.verifying_sources {
         let current_headers = current_imports.get(source_path).into_iter().flatten();
         let baseline_headers = baseline_imports.get(source_path).into_iter().flatten();
@@ -530,11 +656,13 @@ pub fn c0_incremental_selection(
             .chain(baseline_headers)
             .cloned()
             .collect::<BTreeSet<_>>();
+        let current_bundle = current_source_map.bundle_sources()?;
+        let baseline_bundle = baseline_source_map.bundle_sources()?;
         let changed_headers = headers
             .into_iter()
             .filter(|header| {
-                current_source_map.get(header.as_str()).copied()
-                    != baseline_source_map.get(header.as_str()).copied()
+                current_bundle.get(header.as_str()).copied()
+                    != baseline_bundle.get(header.as_str()).copied()
             })
             .collect::<Vec<_>>();
         if changed_headers.is_empty() {
@@ -602,6 +730,25 @@ pub fn verify_c0_sources_functions(
     })
 }
 
+pub fn verify_c0_prepared_sources_functions(
+    click_source: &str,
+    imports: &[PreparedCImport],
+    functions: impl IntoIterator<Item = String>,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let functions = functions.into_iter().collect::<BTreeSet<_>>();
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports);
+        verify_c0_sources_with_context(
+            click_source,
+            &sources,
+            Some(VerificationTarget::Functions(functions)),
+            None,
+            None,
+        )
+        .map(|(verified, _)| verified)
+    })
+}
+
 pub(in crate::surface) fn verify_c0_sources_with_limits(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -623,6 +770,29 @@ impl C0VerificationSession {
         })
     }
 
+    /// Starts a reusable verification session over compiler-prepared inputs.
+    /// The opaque artifacts are retained for all subsequent rewrite checks.
+    pub fn new_prepared(
+        click_source: &str,
+        imports: &[PreparedCImport],
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::prepared(imports);
+            let (verified, verified_function_environment) =
+                verify_c0_sources_with_context(click_source, &sources, None, None, None)?;
+            let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
+            Ok((
+                Self {
+                    c_sources: Vec::new(),
+                    prepared_imports: Some(imports.to_vec()),
+                    baseline_file,
+                    verified_function_environment,
+                },
+                verified,
+            ))
+        })
+    }
+
     fn new_with_limits(
         click_source: &str,
         c_sources: &[(&str, &str)],
@@ -636,6 +806,7 @@ impl C0VerificationSession {
                     .iter()
                     .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
                     .collect(),
+                prepared_imports: None,
                 baseline_file,
                 verified_function_environment,
             },
@@ -659,6 +830,66 @@ impl C0VerificationSession {
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
         instrumentation::with_default_tactic_limits(|| {
             self.verify_at_with_limits(click_source, line, column)
+        })
+    }
+
+    /// Verifies a rewritten proof location against this prepared-input
+    /// session, preserving the import identity across certification.
+    pub fn verify_at_prepared(
+        &self,
+        click_source: &str,
+        line: usize,
+        column: usize,
+    ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        let imports = self.prepared_imports.as_ref().ok_or_else(|| {
+            ClickError::new("verification session does not contain prepared imports")
+        })?;
+        instrumentation::with_default_tactic_limits(|| {
+            let sources = CSourceContext::prepared(imports);
+            let target = verification_target_at_context(click_source, &sources, line, column)?;
+            let target_exists_in_baseline = match &target {
+                VerificationTarget::Function(name) => self
+                    .baseline_file
+                    .function_blocks()
+                    .iter()
+                    .any(|function| function.signature().name() == name),
+                VerificationTarget::Theorem(name) => self
+                    .baseline_file
+                    .theorem_definitions()
+                    .iter()
+                    .any(|theorem| theorem.name() == name),
+                VerificationTarget::Functions(_) => false,
+            };
+            if !target_exists_in_baseline {
+                return Err(ClickError::new(
+                    "rewritten source location resolves to a proof unit absent from the baseline",
+                ));
+            }
+            let rewritten_file = parse_c0_click_file_context(click_source, &sources)?;
+            let baseline_interface =
+                proof_unit_erased_click_file(self.baseline_file.clone(), &target);
+            let rewritten_interface = proof_unit_erased_click_file(rewritten_file, &target);
+            if rewritten_interface != baseline_interface {
+                return Err(ClickError::new(
+                    "rewritten sidecar changed source outside the selected proof unit",
+                ));
+            }
+            let initial_environment = match &target {
+                VerificationTarget::Function(function_name) => Some(
+                    self.verified_function_environment
+                        .clone()
+                        .without_verified_function_rule(&function_name),
+                ),
+                VerificationTarget::Theorem(_) | VerificationTarget::Functions(_) => None,
+            };
+            verify_c0_sources_with_context(
+                click_source,
+                &sources,
+                Some(target),
+                initial_environment,
+                None,
+            )
+            .map(|(verified, _)| verified)
         })
     }
 
@@ -734,6 +965,20 @@ pub fn verify_c0_sources_at(
     })
 }
 
+pub fn verify_c0_prepared_sources_at(
+    click_source: &str,
+    imports: &[PreparedCImport],
+    line: usize,
+    column: usize,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        let sources = CSourceContext::prepared(imports);
+        let target = verification_target_at_context(click_source, &sources, line, column)?;
+        verify_c0_sources_with_context(click_source, &sources, Some(target), None, None)
+            .map(|(verified, _)| verified)
+    })
+}
+
 pub(in crate::surface) fn verify_c0_sources_targeted(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -750,6 +995,23 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     initial_function_environment: Option<CExecutionEnvironment>,
     mut expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
+    let sources = CSourceContext::bundle(c_sources);
+    verify_c0_sources_with_context(
+        click_source,
+        &sources,
+        verification_target,
+        initial_function_environment,
+        expansion_capture,
+    )
+}
+
+fn verify_c0_sources_with_context(
+    click_source: &str,
+    c_sources: &CSourceContext<'_>,
+    verification_target: Option<VerificationTarget>,
+    initial_function_environment: Option<CExecutionEnvironment>,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     check_verification_deadline()?;
     // A verification that continues from an earlier one's environment shares
     // that environment's snapshots and keeps its kernel session; every other
@@ -762,7 +1024,6 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         .then(crate::kernel::VerificationSession::enter);
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
-        let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
         let (
             struct_layouts,
             union_layouts,
@@ -780,7 +1041,7 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             global_array_shapes,
             qualified_objects,
         )?;
-        let parsed_sources = parse_verified_sources(&file, &c_sources)?;
+        let parsed_sources = parse_verified_sources_context(&file, &c_sources)?;
         let expansion_functions = expansion_capture
             .as_deref()
             .map(|capture| {
@@ -1622,6 +1883,11 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     function_environment =
         function_environment.with_verified_function_termination_rules(termination_rules);
 
+    if c_sources.imports.is_some() {
+        for theorem in &mut verified {
+            theorem.import_identity = c_sources.prepared_project_identity.clone();
+        }
+    }
     Ok((verified, function_environment))
 }
 
@@ -1705,9 +1971,9 @@ pub(in crate::surface) fn tactic_expansion_dependency_context(
     let ProofSite::FunctionClaim { function_name, .. } = site else {
         return Ok(None);
     };
-    let source_map = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let source_map = CSourceContext::bundle(c_sources);
     let file = parse_c0_click_file(click_source, c_sources)?;
-    let parsed_sources = parse_verified_sources(&file, &source_map)?;
+    let parsed_sources = parse_verified_sources_context(&file, &source_map)?;
     let required = tactic_expansion_required_functions(
         &file,
         &parsed_sources,
@@ -1819,7 +2085,23 @@ pub fn c0_external_dependencies(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
-    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let sources = CSourceContext::bundle(c_sources);
+    c0_external_dependencies_context(click_source, &sources)
+}
+
+/// Reports the same explicit external-contract assumptions for compiler imports.
+pub fn c0_prepared_external_dependencies(
+    click_source: &str,
+    imports: &[PreparedCImport],
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
+    let sources = CSourceContext::prepared(imports);
+    c0_external_dependencies_context(click_source, &sources)
+}
+
+fn c0_external_dependencies_context(
+    click_source: &str,
+    sources: &CSourceContext<'_>,
+) -> Result<BTreeMap<String, Vec<String>>, ClickError> {
     let (
         struct_layouts,
         union_layouts,
@@ -1837,7 +2119,7 @@ pub fn c0_external_dependencies(
         global_array_shapes,
         qualified_objects,
     )?;
-    let parsed_sources = parse_verified_sources(&file, &sources)?;
+    let parsed_sources = parse_verified_sources_context(&file, &sources)?;
     let function_blocks = combined_external_function_blocks(&file)?;
     let external_names = function_blocks
         .iter()
@@ -2393,29 +2675,118 @@ pub(in crate::surface) fn c_function_termination_plans(
 
 fn parse_c_source_unit(
     source_path: &str,
-    c_sources: &BTreeMap<&str, &str>,
+    c_sources: &CSourceContext<'_>,
 ) -> Result<syntax::C0TranslationUnit, ClickError> {
-    let expanded =
-        crate::languages::c::source::expand_includes(source_path, c_sources).map_err(|error| {
-            ClickError::new(format!(
-                "failed to resolve includes for C source `{source_path}`: {error}"
-            ))
-        })?;
-    for header_path in expanded.dependencies() {
-        let header = crate::languages::c::source::expand_includes(header_path, c_sources).map_err(
-            |error| {
-                ClickError::new(format!(
-                    "failed to resolve includes for C header `{header_path}`: {error}"
-                ))
-            },
-        )?;
-        syntax::validate_header(header.source()).map_err(|error| {
-            ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
-        })?;
+    if let Some(unit) = c_sources.parsed_units.borrow().get(source_path) {
+        return Ok((**unit).clone());
     }
-    syntax::parse_translation_unit_for_source(expanded.source(), source_path).map_err(|error| {
-        ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
-    })
+    let unit = if let Some(bundle) = &c_sources.bundle {
+        let expanded =
+            crate::languages::c::source::expand_includes(source_path, bundle).map_err(|error| {
+                ClickError::new(format!(
+                    "failed to resolve includes for C source `{source_path}`: {error}"
+                ))
+            })?;
+        for header_path in expanded.dependencies() {
+            let header = crate::languages::c::source::expand_includes(header_path, bundle)
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "failed to resolve includes for C header `{header_path}`: {error}"
+                    ))
+                })?;
+            syntax::validate_header(header.source()).map_err(|error| {
+                ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
+            })?;
+        }
+        syntax::parse_translation_unit_for_source(expanded.source(), source_path).map_err(
+            |error| ClickError::new(format!("failed to parse C source `{source_path}`: {error}")),
+        )?
+    } else {
+        #[cfg(test)]
+        c_sources
+            .prepared_parse_count
+            .set(c_sources.prepared_parse_count.get() + 1);
+        let import = c_sources
+            .prepared_by_source
+            .as_ref()
+            .and_then(|imports| imports.get(source_path).copied())
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "import configuration has no prepared translation unit for verifying source `{source_path}`"
+                ))
+            })?;
+        syntax::parse_translation_unit_for_import(
+            import.source(),
+            import.logical_source(),
+            import.source_map(),
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "failed to parse compiler-prepared C source `{source_path}`: {error}"
+            ))
+        })?
+    };
+    c_sources
+        .parsed_units
+        .borrow_mut()
+        .insert(source_path.to_string(), Arc::new(unit.clone()));
+    Ok(unit)
+}
+
+#[cfg(test)]
+mod prepared_scaling_tests {
+    use super::*;
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    fn imports(size: usize) -> Vec<PreparedCImport> {
+        (0..size)
+            .map(|index| {
+                PreparedCImport::for_test(
+                    &format!("unit{index}.c"),
+                    &format!("int unit{index}(int value) {{ return value; }}\n"),
+                )
+            })
+            .collect()
+    }
+
+    fn click(size: usize) -> String {
+        (0..size)
+            .map(|index| format!("verifying \"unit{index}.c\";\n"))
+            .collect()
+    }
+
+    #[test]
+    fn functions_share_one_prepared_parse_across_sizes() {
+        for size in [16usize, 32, 64, 128] {
+            let source = (0..size)
+                .map(|index| format!("int function{index}(int value) {{ return value; }}\n"))
+                .collect::<String>();
+            let imports = [PreparedCImport::for_test("shared.c", &source)];
+            let sources = CSourceContext::prepared(&imports);
+            let click = "verifying \"shared.c\";\n";
+            let file = parse_c0_click_file_context(click, &sources).unwrap();
+            let functions = parse_verified_sources_context(&file, &sources).unwrap();
+            assert_eq!(functions.len(), size);
+            assert_eq!(sources.prepared_parse_count.get(), 1);
+            parse_c_layouts(click, &sources).unwrap();
+            assert_eq!(sources.prepared_parse_count.get(), 1);
+        }
+    }
+
+    #[test]
+    fn prepared_translation_units_parse_once_and_cache_across_sizes() {
+        for size in [16usize, 32, 64, 128] {
+            let imports = imports(size);
+            let sources = CSourceContext::prepared(&imports);
+            parse_c_layouts(&click(size), &sources).expect("prepared layouts parse");
+            assert_eq!(sources.prepared_parse_count.get(), size);
+            let file = parse_c0_click_file_context(&click(size), &sources)
+                .expect("prepared click file parse");
+            parse_verified_sources_context(&file, &sources)
+                .expect("prepared verified sources parse");
+            assert_eq!(sources.prepared_parse_count.get(), size);
+        }
+    }
 }
 
 /// Looks up a C definition using the spelling visible to Click. Header-local
@@ -2443,7 +2814,7 @@ fn parsed_function_for_source_name<'a>(
 
 pub(in crate::surface) fn parse_c_layouts(
     click_source: &str,
-    c_sources: &BTreeMap<&str, &str>,
+    c_sources: &CSourceContext<'_>,
 ) -> Result<
     (
         BTreeMap<String, syntax::C0StructLayout>,
@@ -2461,7 +2832,27 @@ pub(in crate::surface) fn parse_c_layouts(
     let mut aggregate_array_objects = BTreeMap::new();
     let mut global_array_shapes = BTreeMap::new();
     let mut qualified_objects = BTreeMap::new();
-    for source_path in super::verifying_source_paths(click_source)? {
+    let verifying_paths = super::verifying_source_paths(click_source)?;
+    if let Some(imports) = c_sources.imports {
+        if c_sources.prepared_duplicates {
+            return Err(ClickError::new(
+                "prepared imports contain duplicate logical translation-unit sources",
+            ));
+        }
+        let expected = verifying_paths.iter().cloned().collect::<BTreeSet<_>>();
+        let actual = imports
+            .iter()
+            .map(|import| import.logical_source().to_string())
+            .collect::<BTreeSet<_>>();
+        if expected != actual {
+            return Err(ClickError::new(format!(
+                "prepared import logical sources must exactly match verifying clauses (expected {}, received {})",
+                expected.iter().cloned().collect::<Vec<_>>().join(", "),
+                actual.iter().cloned().collect::<Vec<_>>().join(", "),
+            )));
+        }
+    }
+    for source_path in verifying_paths {
         let unit = parse_c_source_unit(&source_path, c_sources)?;
         let mut objects = BTreeMap::new();
         for (name, global) in &unit.globals {
@@ -2772,6 +3163,23 @@ pub(in crate::surface) fn parse_c_layouts(
 pub(in crate::surface) fn parse_verified_sources(
     file: &ClickFile,
     c_sources: &BTreeMap<&str, &str>,
+) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
+    let context = CSourceContext {
+        bundle: Some(c_sources.clone()),
+        imports: None,
+        prepared_by_source: None,
+        prepared_project_identity: None,
+        prepared_duplicates: false,
+        parsed_units: RefCell::new(BTreeMap::new()),
+        #[cfg(test)]
+        prepared_parse_count: Cell::new(0),
+    };
+    parse_verified_sources_context(file, &context)
+}
+
+pub(in crate::surface) fn parse_verified_sources_context(
+    file: &ClickFile,
+    c_sources: &CSourceContext<'_>,
 ) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
     if file.verifying_sources.is_empty() {
         if file

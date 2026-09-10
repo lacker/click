@@ -4603,6 +4603,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             });
                         verified.push(VerifiedCTheorem {
                             source_path: source_path.to_string(),
+                            import_identity: None,
                             function_block: function_block.clone(),
                             claim: claim.verified_claim(),
                             proof_kind: ProofKind::TacticScript,

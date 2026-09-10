@@ -5,14 +5,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT,
+    CInput, DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT,
     MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
-    format_fractional_duration, looks_like_mdtest, parse_duration, read_mdtest,
-    read_verifying_sources, shell_quote, source_refs,
+    format_fractional_duration, looks_like_mdtest, parse_duration, read_c_inputs, read_mdtest,
+    shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
 use click::surface::{
-    SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position, verify_c0_sources,
+    SourcePosition, c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, verify_c0_prepared_sources,
+    verify_c0_sources,
 };
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -533,19 +535,21 @@ fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, Strin
         .collect::<BTreeSet<_>>();
     paths.into_iter().try_fold(0usize, |total, path| {
         let source = load_profiled_source(&path)?;
-        let c_sources = source
-            .c_sources
-            .iter()
-            .map(|(name, text)| (name.as_str(), text.as_str()))
-            .collect::<Vec<_>>();
-        let sites =
-            c0_smart_tactic_source_sites(&source.click_source, &c_sources).map_err(|error| {
-                format!(
-                    "could not inventory `{}`: {}",
-                    path.display(),
-                    error.message()
-                )
-            })?;
+        let sites = match &source.inputs {
+            CInput::Bundle(c_sources) => {
+                c0_smart_tactic_source_sites(&source.click_source, &source_refs(c_sources))
+            }
+            CInput::Prepared(imports) => {
+                c0_prepared_smart_tactic_source_sites(&source.click_source, imports)
+            }
+        }
+        .map_err(|error| {
+            format!(
+                "could not inventory `{}`: {}",
+                path.display(),
+                error.message()
+            )
+        })?;
         Ok(total + sites.len())
     })
 }
@@ -1326,6 +1330,7 @@ fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
 /// needed to turn a position inside it into a position in that file.
 struct ProfiledSource {
     click_source: String,
+    inputs: CInput,
     c_sources: Vec<(String, String)>,
     /// Added to a one-based line inside the sidecar. Zero for a `.click`
     /// file; the offset of the ```click block for an mdtest, so reported
@@ -1339,18 +1344,21 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
         let click_source = mdtest
             .click_source
             .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
+        let c_sources = mdtest.c_sources;
         return Ok(ProfiledSource {
             click_source,
-            c_sources: mdtest.c_sources,
+            inputs: CInput::Bundle(c_sources.clone()),
+            c_sources,
             line_offset: mdtest.click_start_line.saturating_sub(1),
         });
     }
     let click_source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
-    let c_sources = read_verifying_sources(path, &click_source)?;
+    let inputs = read_c_inputs(path, &click_source)?;
     Ok(ProfiledSource {
         click_source,
-        c_sources,
+        inputs,
+        c_sources: Vec::new(),
         line_offset: 0,
     })
 }
@@ -1385,21 +1393,26 @@ fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> 
                 entry.insert(load_profiled_source(key.source_path.as_path())?)
             }
         };
-        let c_sources = source
-            .c_sources
-            .iter()
-            .map(|(name, text)| (name.as_str(), text.as_str()))
-            .collect::<Vec<_>>();
-        match c0_tactic_source_position(
-            &source.click_source,
-            &c_sources,
-            &key.claim,
-            key.source_index,
-        ) {
+        let position = match &source.inputs {
+            CInput::Bundle(c_sources) => c0_tactic_source_position(
+                &source.click_source,
+                &source_refs(c_sources),
+                &key.claim,
+                key.source_index,
+            ),
+            CInput::Prepared(imports) => c0_prepared_tactic_source_position(
+                &source.click_source,
+                imports,
+                &key.claim,
+                key.source_index,
+            ),
+        };
+        match position {
             Ok(position) => {
                 key.position = Some(SourcePosition {
                     line: position.line + source.line_offset,
                     column: position.column,
+                    origin: None,
                 });
             }
             Err(error) => {
@@ -1478,11 +1491,15 @@ fn verify_project(project: &Path) -> Result<(), String> {
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-        let c_sources = read_verifying_sources(&click_path, &click_source)?;
+        let inputs = read_c_inputs(&click_path, &click_source)?;
         if instrumentation::enabled() {
             instrumentation::emit(VerificationEvent::Source(click_path.clone()));
         }
-        verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
+        let result = match &inputs {
+            CInput::Bundle(sources) => verify_c0_sources(&click_source, &source_refs(sources)),
+            CInput::Prepared(imports) => verify_c0_prepared_sources(&click_source, imports),
+        };
+        result.map_err(|error| {
             format!(
                 "example sidecar `{}` failed: {}",
                 click_path.display(),

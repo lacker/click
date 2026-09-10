@@ -15,6 +15,7 @@
   - [`click profile`](reference/cli/profile.md)
   - [`click expand`](reference/cli/expand.md)
   - [`click audit`](reference/cli/audit.md)
+  - [`click import`](reference/cli/import.md)
   - [Environment variables](reference/cli/environment.md)
 - [Standard library](reference/library/index.md)
 - [Glossary](reference/glossary.md)

@@ -417,7 +417,8 @@ int32 identity(int32 x) {
         nested,
         SourcePosition {
             line: 13,
-            column: 9
+            column: 9,
+            origin: None
         }
     );
 
@@ -427,7 +428,8 @@ int32 identity(int32 x) {
         continuation,
         SourcePosition {
             line: 15,
-            column: 5
+            column: 5,
+            origin: None
         }
     );
 }
@@ -1476,7 +1478,11 @@ int32 identity(int32 x) {
             0,
         )
         .unwrap(),
-        SourcePosition { line: 4, column: 6 }
+        SourcePosition {
+            line: 4,
+            column: 6,
+            origin: None
+        }
     );
     assert!(
         c0_tactic_source_position(
@@ -1506,7 +1512,11 @@ int32 identity(int32 x) {
             0,
         )
         .unwrap(),
-        SourcePosition { line: 3, column: 5 }
+        SourcePosition {
+            line: 3,
+            column: 5,
+            origin: None
+        }
     );
     assert!(
         c0_tactic_source_position(

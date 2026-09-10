@@ -522,7 +522,8 @@ Execution started on 2026-09-10 from
 `/tmp/click-kernel-scale-preprocessing`, branch
 `codex/kernel-scale-preprocessing`. Stage 0 has two Luna medium investigations:
 existing input/capture and provisioning evidence; shared engine/import API and
-diagnostic integration. No compiler-backed implementation is claimed yet.
+diagnostic integration. The first importer milestone is implemented below;
+`scripts/check.sh` is its combined verification gate.
 
 ### Checkpoint A: captured input and approved first milestone
 
@@ -617,3 +618,36 @@ because one implementation package landed.
 - [GCC line-marker format](https://gcc.gnu.org/onlinedocs/cpp/Preprocessor-Output.html):
   file/line attribution, include flags, and directives that can remain in
   preprocessed output.
+
+### First importer milestone
+
+The implementation uses `languages::c::compiler_import::{create_lock,
+load_imports}` and opaque, shared `PreparedCImport` values. The public command
+is `click import lock <sidecar.click>`; the usage, restricted compiler profile,
+resource limits, trust boundary, and provisioning requirements are documented
+in [the import reference](../docs/reference/cli/import.md) and
+[testing documentation](../docs/internals/testing.md#compiler-import-fixtures).
+
+Compiler artifacts are freshly reproduced from controlled GCC arguments and
+environment. Validation binds compiler/cc1/resources, the ABI probe, exact used
+dependencies (including system headers), ordered source options, source bytes,
+and output bytes. Before/after input snapshots catch concurrent changes;
+ambiguous roots and unsupported arguments fail explicitly. A proof result
+carries a fixed-size identity of the complete selected prepared project.
+Imported incremental verification is rejected and verification markers are
+bypassed. Proof tools retain the typed input, and compiler line markers supply
+original file/line diagnostics through parsing and lowering. No metadata
+projection or kernel primitive replacement is introduced.
+
+The small checked-in fixture is `tests/fixtures/compiler-import/`; its direct
+shared-engine gate is `tests/compiler_import.rs`. It covers contextual headers,
+macro rescanning and token pasting, alternate definitions, configured system
+headers, newly selected optional headers, tampering, cross-translation-unit
+identity, lowering diagnostics, unsupported directives and retained assembly,
+and checked expansion/reverification. It requires installed GCC and creates
+fresh temporary artifacts; it does not download or silently skip prerequisites.
+Deterministic multi-size checks cover actual line-marker decoding/lookup,
+root snapshots, translation-unit caching, and functions sharing one import.
+
+The complete Linux input and its original acceptance criteria remain open.
+The discovery evidence still does not constitute a passing Linux fixture.

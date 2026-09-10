@@ -60,6 +60,20 @@ Run the larger example-project verifier with:
 cargo test --test examples
 ```
 
+## Compiler import fixtures
+
+The gate also runs `tests/compiler_import.rs` against the installed GCC at
+`/usr/bin/gcc`. Provision GCC before running `scripts/check.sh` (the Linux CI
+runner includes it). Missing GCC fails the fixture; the gate never downloads a
+compiler or silently skips these checks. The small fixture creates its own
+artifacts and locks in an isolated temporary directory and calls the shared
+verification and expansion engine directly.
+
+These fixtures cover compiler conditional selection, token pasting and macro
+rescanning, contextual headers, configured system dependencies, stale locks,
+artifact tampering, import identity, and original-source diagnostics. They do
+not claim that the complete captured Linux translation unit verifies.
+
 ## Time-Bounded runs
 
 Ordinary development and test builds use `debug = "line-tables-only"` to

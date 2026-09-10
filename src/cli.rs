@@ -31,6 +31,10 @@ pub const PUBLIC_ENVIRONMENT_VARIABLES: &[&str] = &[
 pub const PUBLIC_CLI_BEHAVIORS: &[&str] = &[
     "shared.duration-syntax",
     "shared.exit-status",
+    "import.lock",
+    "import.source-selection",
+    "import.validation",
+    "import.trust-boundary",
     "verify.target.sidecar",
     "verify.target.location",
     "verify.target.project",
@@ -81,6 +85,7 @@ pub const PUBLIC_CLI_BEHAVIORS: &[&str] = &[
 ];
 
 use crate::instrumentation::{TacticEvent, VerificationEvent};
+use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::source as c_source;
 use crate::surface::verifying_source_paths;
 
@@ -374,6 +379,53 @@ pub fn read_verifying_sources(
         loaded.push((name, source));
     }
     Ok(loaded)
+}
+
+/// Inputs selected by a sidecar. An explicit import manifest is authoritative;
+/// malformed or missing locked artifacts are errors rather than a legacy
+/// source-bundle fallback.
+#[derive(Clone)]
+pub enum CInput {
+    Bundle(Vec<(String, String)>),
+    Prepared(Vec<PreparedCImport>),
+}
+
+impl CInput {
+    pub fn is_prepared(&self) -> bool {
+        matches!(self, Self::Prepared(_))
+    }
+}
+
+pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, String> {
+    let name = sidecar
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("sidecar path `{}` has no valid filename", sidecar.display()))?;
+    let config = sidecar.with_file_name(format!("{name}.import.json"));
+    match fs::symlink_metadata(&config) {
+        Ok(_) => {
+            // Preserve the path spelling for the adapter's validation.
+            // An existing but unreadable or dangling config cannot select
+            // the legacy source-bundle route.
+            let config = if config.is_absolute() {
+                config
+            } else {
+                std::env::current_dir()
+                    .map_err(|error| format!("failed to resolve import config directory: {error}"))?
+                    .join(config)
+            };
+            let imports = crate::languages::c::compiler_import::load_imports(&config)?;
+            return Ok(CInput::Prepared(imports));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("failed to inspect `{}`: {error}", config.display()));
+        }
+    }
+    Ok(CInput::Bundle(read_verifying_sources(
+        sidecar,
+        click_source,
+    )?))
 }
 
 /// Borrows owned `(name, source)` pairs as the `&str` pairs the verification

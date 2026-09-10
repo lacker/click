@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn imported_parser_errors_keep_original_header_location() {
+    let (source, map) = provenance::CSourceMap::decode(
+        "# 1 \"generated/header.h\" 1\nint32 broken(int32 x) { return x + ...; }\n",
+    )
+    .expect("line marker should decode");
+    let error = match syntax::parse_translation_unit_for_import(&source, "tu.c", &map) {
+        Ok(_) => panic!("variadic syntax should remain rejected"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("generated/header.h:1"));
+}
+
+#[test]
+fn imported_parser_does_not_apply_legacy_macro_name_shortcuts() {
+    let (source, map) = provenance::CSourceMap::decode(
+        "# 1 \"tu.c\" 1\nint32 READ_ONCE(int32 x) { return x + 1; }\nint32 use(int32 x) { return READ_ONCE(x); }\n",
+    )
+    .unwrap();
+    let unit = syntax::parse_translation_unit_for_import(&source, "tu.c", &map).unwrap();
+    let rendered = format!("{:?}", unit.functions[1].body());
+    assert!(!rendered.contains("SequentialRead"));
+}
+
+#[test]
+fn imported_statement_calls_do_not_apply_legacy_store_shortcuts() {
+    for name in ["WRITE_ONCE", "rcu_assign_pointer"] {
+        let input = format!(
+            "# 1 \"tu.c\" 1\nint {name}(int x, int y) {{ return x + y; }}\nint use(int x) {{ {name}(x, 1); return x; }}\n"
+        );
+        let (source, map) = provenance::CSourceMap::decode(&input).unwrap();
+        let unit = syntax::parse_translation_unit_for_import(&source, "tu.c", &map).unwrap();
+        let rendered = format!("{:?}", unit.functions[1].body());
+        assert!(!rendered.contains("SequentialStore"), "{name}");
+        assert!(rendered.contains(name), "original call must remain: {name}");
+    }
+}
+
+#[test]
+fn imported_static_inline_helpers_use_tu_identity_and_shared_origin() {
+    let (source, map) = provenance::CSourceMap::decode(
+        "# 1 \"include/helper.h\" 1\nstatic inline int32 add_one(int32 value) { return value + 1; }\nint32 run(int32 value) { return add_one(value); }\n",
+    )
+    .unwrap();
+    let alpha = syntax::parse_translation_unit_for_import(&source, "alpha.c", &map).unwrap();
+    let beta = syntax::parse_translation_unit_for_import(&source, "beta.c", &map).unwrap();
+    assert_ne!(alpha.functions[0].name(), beta.functions[0].name());
+
+    let (bad_source, bad_map) = provenance::CSourceMap::decode(
+        "# 1 \"include/helper.h\" 1\nint32 broken(int32 value) { return value + ...; }\n",
+    )
+    .unwrap();
+    let error = match syntax::parse_translation_unit_for_import(&bad_source, "alpha.c", &bad_map) {
+        Ok(_) => panic!("unsupported helper syntax should fail"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().starts_with("include/helper.h:1:"));
+}
+
+#[test]
 fn c0_linux_sequential_access_primitives_lower_to_ordered_kernel_accesses() {
     let source = r#"
 #define READ_ONCE(x) ({ typeof(x) __value; __value = x; __value; })
@@ -3369,12 +3428,29 @@ fn c0_call_lowering_diagnostics_preserve_original_call_positions() {
             .expect_err("unsupported call lowering should be rejected");
 
         assert_eq!(error.message(), expected_message);
-        assert_eq!(error.position(), Some(expected_position));
+        assert_eq!(error.position(), Some(expected_position.clone()));
         assert_eq!(
             error.to_string(),
             format!("{expected_position}: {expected_message}")
         );
     }
+}
+
+#[test]
+fn imported_call_lowering_diagnostics_use_original_header_line() {
+    let (source, map) = provenance::CSourceMap::decode(
+        "# 1 \"include/alloc.h\" 1\nint32 caller() { return malloc(1); }\n",
+    )
+    .unwrap();
+    let error = match syntax::parse_translation_unit_for_import(&source, "tu.c", &map) {
+        Ok(_) => panic!("discarded allocation result should remain rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.message(),
+        "allocation and deallocation builtins must be used in statement form"
+    );
+    assert!(error.to_string().starts_with("include/alloc.h:1:"));
 }
 
 #[test]

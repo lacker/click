@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::source::{SourcePosition, character_positions};
 
+use super::provenance::CSourceMap;
+
 /// Stable documentation IDs for the accepted C0 surface. This registry
 /// describes source forms rather than the lowered enum variants because some
 /// forms are syntax sugar and several forms share a representation.
@@ -3626,13 +3628,13 @@ impl C0SyntaxError {
     }
 
     pub fn position(&self) -> Option<SourcePosition> {
-        self.position
+        self.position.clone()
     }
 }
 
 impl std::fmt::Display for C0SyntaxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.position {
+        match &self.position {
             Some(position) => write!(f, "{position}: {}", self.message),
             None => write!(f, "{}", self.message),
         }
@@ -3654,6 +3656,7 @@ pub fn parse_functions(source: &str) -> Result<Vec<C0Function>, C0SyntaxError> {
     parse_functions_for_abi(source, CAbi::SUPPORTED)
 }
 
+#[derive(Clone)]
 pub(crate) struct C0TranslationUnit {
     pub functions: Vec<C0Function>,
     pub function_declarations: BTreeMap<String, C0FunctionHeader>,
@@ -3670,6 +3673,19 @@ pub(crate) fn parse_translation_unit_for_source(
     source_identity: &str,
 ) -> Result<C0TranslationUnit, C0SyntaxError> {
     Parser::new_with_source_identity(source, CAbi::SUPPORTED, Some(source_identity))?
+        .parse_translation_unit()
+}
+
+/// Parses compiler-preprocessed C while retaining original file/line
+/// locations from validated line markers. `source_identity` remains the
+/// translation-unit linkage identity and is deliberately independent of the
+/// diagnostic origin filename.
+pub(crate) fn parse_translation_unit_for_import(
+    source: &str,
+    source_identity: &str,
+    map: &CSourceMap,
+) -> Result<C0TranslationUnit, C0SyntaxError> {
+    Parser::new_with_source_identity_and_map(source, CAbi::SUPPORTED, Some(source_identity), map)?
         .parse_translation_unit()
 }
 
@@ -5120,8 +5136,8 @@ pub(crate) fn merge_global_array_declarations(
 
 impl ErrorContext {
     fn error(&self, message: impl Into<String>) -> C0SyntaxError {
-        match self.position {
-            Some(position) => C0SyntaxError::at(position, message),
+        match &self.position {
+            Some(position) => C0SyntaxError::at(position.clone(), message),
             None => C0SyntaxError::new(message),
         }
     }
@@ -5177,6 +5193,7 @@ struct Parser {
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
+    import_mode: bool,
     abi: CAbi,
     current_return_struct_name: Option<String>,
     current_return_pointer_struct_name: Option<String>,
@@ -5269,6 +5286,36 @@ impl Parser {
         source_identity: Option<&str>,
     ) -> Result<Self, C0SyntaxError> {
         let (tokens, positions) = tokenize(source)?;
+        Self::from_tokens(tokens, positions, abi, source_identity, false)
+    }
+
+    fn new_with_source_identity_and_map(
+        source: &str,
+        abi: CAbi,
+        source_identity: Option<&str>,
+        map: &CSourceMap,
+    ) -> Result<Self, C0SyntaxError> {
+        let (tokens, positions) = tokenize(source).map_err(|error| {
+            let position = error.position().map(|position| map.lookup(position));
+            match position {
+                Some(position) => C0SyntaxError::at(position, error.message()),
+                None => error,
+            }
+        })?;
+        let positions = positions
+            .into_iter()
+            .map(|position| map.lookup(position))
+            .collect();
+        Self::from_tokens(tokens, positions, abi, source_identity, true)
+    }
+
+    fn from_tokens(
+        tokens: Vec<Token>,
+        positions: Vec<SourcePosition>,
+        abi: CAbi,
+        source_identity: Option<&str>,
+        import_mode: bool,
+    ) -> Result<Self, C0SyntaxError> {
         Ok(Self {
             tokens,
             positions,
@@ -5308,6 +5355,7 @@ impl Parser {
             string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
+            import_mode,
             abi,
             current_return_struct_name: None,
             current_return_pointer_struct_name: None,
@@ -5951,7 +5999,7 @@ impl Parser {
         self.positions
             .get(self.position)
             .or_else(|| self.positions.last())
-            .copied()
+            .cloned()
     }
 
     /// An error at the next unconsumed token.
@@ -5967,7 +6015,7 @@ impl Parser {
     fn error_at_previous(&self, message: impl Into<String>) -> C0SyntaxError {
         let index = self.position.saturating_sub(1);
         match self.positions.get(index).or_else(|| self.positions.last()) {
-            Some(position) => C0SyntaxError::at(*position, message),
+            Some(position) => C0SyntaxError::at(position.clone(), message),
             None => C0SyntaxError::new(message),
         }
     }
@@ -10697,7 +10745,7 @@ impl Parser {
                         .parse_kernel_primitive_expression(
                             &source_name,
                             &arguments,
-                            self.positions.get(call_start).copied(),
+                            self.positions.get(call_start).cloned(),
                         )?
                         .is_some();
                     if !is_kernel_primitive
@@ -11235,7 +11283,7 @@ impl Parser {
         };
         let name = self.resolve_object_name(
             &source_name,
-            self.positions.get(self.position.saturating_sub(1)).copied(),
+            self.positions.get(self.position.saturating_sub(1)).cloned(),
         )?;
         if self.variable_is_constant(&name) {
             return Err(self.error_here(format!(
@@ -11277,7 +11325,7 @@ impl Parser {
         };
         let name = self.resolve_object_name(
             &source_name,
-            self.positions.get(self.position.saturating_sub(1)).copied(),
+            self.positions.get(self.position.saturating_sub(1)).cloned(),
         )?;
         if self.variable_is_constant(&name) {
             return Err(self.error_here(format!(
@@ -11324,7 +11372,7 @@ impl Parser {
                         .parse_kernel_primitive_expression(
                             &source_name,
                             &arguments,
-                            self.positions.get(call_start).copied(),
+                            self.positions.get(call_start).cloned(),
                         )?
                         .is_some();
                     if !is_kernel_primitive && self.peek() == Some(&Token::Semicolon) {
@@ -13817,9 +13865,17 @@ impl Parser {
         arguments: &[C0Expression],
         position: Option<SourcePosition>,
     ) -> Result<Option<C0Expression>, C0SyntaxError> {
+        if self.import_mode
+            && matches!(
+                source_name,
+                "READ_ONCE" | "WRITE_ONCE" | "rcu_assign_pointer" | "likely" | "unlikely"
+            )
+        {
+            return Ok(None);
+        }
         let wrong_arity = |expected: usize| {
             self.error_at_position(
-                position,
+                position.clone(),
                 format!(
                     "`{source_name}` expects {expected} argument{}",
                     if expected == 1 { "" } else { "s" }
@@ -13832,7 +13888,7 @@ impl Parser {
                     return Err(wrong_arity(1));
                 };
                 let (c_type, struct_name) =
-                    self.sequential_access_target(target, source_name, position)?;
+                    self.sequential_access_target(target, source_name, position.clone())?;
                 Ok(Some(C0Expression::SequentialRead {
                     target: Box::new(target.clone()),
                     c_type,
@@ -13844,7 +13900,7 @@ impl Parser {
                     return Err(wrong_arity(2));
                 };
                 let (c_type, struct_name) =
-                    self.sequential_access_target(target, source_name, position)?;
+                    self.sequential_access_target(target, source_name, position.clone())?;
                 self.validate_sequential_store_value(
                     target,
                     value,
@@ -13862,23 +13918,23 @@ impl Parser {
                 let [condition] = arguments else {
                     return Err(wrong_arity(1));
                 };
-                self.validate_kernel_condition(condition, source_name, position)?;
+                self.validate_kernel_condition(condition, source_name, position.clone())?;
                 Ok(Some(condition.clone()))
             }
             "__builtin_expect" => {
                 let [condition, expected] = arguments else {
                     return Err(wrong_arity(2));
                 };
-                self.validate_kernel_condition(condition, source_name, position)?;
+                self.validate_kernel_condition(condition, source_name, position.clone())?;
                 let Some(expected_type) = self.source_expression_type(expected) else {
                     return Err(self.error_at_position(
-                        position,
+                        position.clone(),
                         "`__builtin_expect` requires an integer constant prediction",
                     ));
                 };
                 if !is_integer_type(expected_type) {
                     return Err(self.error_at_position(
-                        position,
+                        position.clone(),
                         "`__builtin_expect` requires an integer constant prediction",
                     ));
                 }
@@ -14000,6 +14056,14 @@ impl Parser {
         source_name: &str,
         arguments: &[C0Expression],
     ) -> Result<Option<C0Statement>, C0SyntaxError> {
+        if self.import_mode
+            && matches!(
+                source_name,
+                "READ_ONCE" | "WRITE_ONCE" | "rcu_assign_pointer" | "likely" | "unlikely"
+            )
+        {
+            return Ok(None);
+        }
         match source_name {
             "WRITE_ONCE" | "rcu_assign_pointer" => {
                 if arguments.len() != 2 {
@@ -14040,7 +14104,7 @@ impl Parser {
             match self.peek() {
                 Some(Token::LParen) => {
                     let call_position =
-                        self.positions.get(self.position.saturating_sub(1)).copied();
+                        self.positions.get(self.position.saturating_sub(1)).cloned();
                     if let C0Expression::Field {
                         function_pointer_signature: Some(signature),
                         ..
@@ -14068,15 +14132,16 @@ impl Parser {
                     if let Some(result) = self.parse_kernel_primitive_expression(
                         &source_name,
                         &arguments,
-                        call_position,
+                        call_position.clone(),
                     )? {
                         expression = result;
                         continue;
                     }
                     if let Some(result) = parse_float_classification_call(&source_name, &arguments)
                     {
-                        expression = result
-                            .map_err(|reason| self.error_at_position(call_position, reason))?;
+                        expression = result.map_err(|reason| {
+                            self.error_at_position(call_position.clone(), reason)
+                        })?;
                         continue;
                     }
                     if source_name == "__builtin_expect" {
@@ -15746,7 +15811,7 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
 
     while index < chars.len() {
         let ch = chars[index];
-        let position = char_positions[index];
+        let position = char_positions[index].clone();
         if ch.is_whitespace() {
             index += 1;
             continue;
@@ -15833,8 +15898,8 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
         }
 
         if ch == '\'' {
-            let (value, next_index) =
-                parse_char_literal(&chars, index).map_err(|error| error.with_position(position))?;
+            let (value, next_index) = parse_char_literal(&chars, index)
+                .map_err(|error| error.with_position(position.clone()))?;
             tokens.push(Token::CharLiteral(value));
             positions.push(position);
             index = next_index;
@@ -15843,7 +15908,7 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
 
         if ch == '"' {
             let (value, next_index) = parse_string_literal(&chars, index)
-                .map_err(|error| error.with_position(position))?;
+                .map_err(|error| error.with_position(position.clone()))?;
             tokens.push(Token::StringLiteral(value));
             positions.push(position);
             index = next_index;
@@ -16102,13 +16167,16 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             position,
             arguments,
             ..
-        } => position.or_else(|| arguments.iter().find_map(first_embedded_call_position)),
+        } => position
+            .clone()
+            .or_else(|| arguments.iter().find_map(first_embedded_call_position)),
         C0Expression::IndirectCall {
             function,
             position,
             arguments,
             ..
         } => position
+            .clone()
             .or_else(|| first_embedded_call_position(function))
             .or_else(|| arguments.iter().find_map(first_embedded_call_position)),
         C0Expression::StatementExpression { value, .. } => first_embedded_call_position(value),

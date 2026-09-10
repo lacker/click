@@ -8,14 +8,15 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
-    DEFAULT_VERIFY_TIME_LIMIT, files_with_extension, find_projects, format_duration,
-    looks_like_source_location, parse_duration, parse_source_location, read_verifying_sources,
-    source_refs,
+    CInput, DEFAULT_VERIFY_TIME_LIMIT, files_with_extension, find_projects, format_duration,
+    looks_like_source_location, parse_duration, parse_source_location, read_c_inputs,
+    read_verifying_sources, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
 use click::surface::{
     VerifiedCTheorem, c0_external_dependencies, c0_function_names, c0_incremental_selection,
+    c0_prepared_external_dependencies, verify_c0_prepared_sources, verify_c0_prepared_sources_at,
     verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions, verifying_source_paths,
 };
 
@@ -183,7 +184,16 @@ fn verify_changed(
     for sidecar in sidecars {
         let sidecar = fs::canonicalize(&sidecar)
             .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
-        let (click_source, sources) = load_sidecar(&sidecar)?;
+        let (click_source, inputs) = load_sidecar_inputs(&sidecar)?;
+        if inputs.is_prepared() {
+            return Err(
+                "`--changed-since` is not supported for compiler-prepared projects".to_string(),
+            );
+        }
+        let sources = match &inputs {
+            CInput::Bundle(sources) => sources.clone(),
+            CInput::Prepared(_) => unreachable!(),
+        };
         let refs = source_refs(&sources);
         let baseline_attested = has_full_verification_marker(&repo, &baseline_commit, &sidecar)?;
         let mut full_rebuild = !baseline_attested;
@@ -494,7 +504,10 @@ fn record_full_verification(sidecar: &Path, also_attest: &[String]) -> Result<()
             repo.display()
         )
     })?;
-    let (click_source, _) = load_sidecar(&sidecar)?;
+    let (click_source, inputs) = load_sidecar_inputs(&sidecar)?;
+    if inputs.is_prepared() {
+        return Ok(());
+    }
     let mut tracked = vec![relative.to_path_buf()];
     let parent = relative.parent().unwrap_or_else(|| Path::new(""));
     tracked.extend(
@@ -648,11 +661,21 @@ fn plural(count: usize) -> &'static str {
 }
 
 fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
-    let (click_source, sources) = load_sidecar(click_path)?;
-    let dependencies =
-        c0_external_dependencies(&click_source, &source_refs(&sources)).map_err(click_message)?;
-    click::instrumentation::with_deadline(time_limit, || {
-        verify_c0_sources(&click_source, &source_refs(&sources)).map_err(|error| {
+    let (click_source, inputs) = load_sidecar_inputs(click_path)?;
+    let dependencies = match &inputs {
+        CInput::Bundle(sources) => {
+            c0_external_dependencies(&click_source, &source_refs(sources)).map_err(click_message)?
+        }
+        CInput::Prepared(imports) => {
+            c0_prepared_external_dependencies(&click_source, imports).map_err(click_message)?
+        }
+    };
+    let verified = click::instrumentation::with_deadline(time_limit, || {
+        let result = match &inputs {
+            CInput::Bundle(sources) => verify_c0_sources(&click_source, &source_refs(sources)),
+            CInput::Prepared(imports) => verify_c0_prepared_sources(&click_source, imports),
+        };
+        result.map_err(|error| {
             format!(
                 "sidecar `{}` failed under its {} limit: {}",
                 click_path.display(),
@@ -660,10 +683,12 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
                 error.message()
             )
         })
-    })
-    .map(|verified| print_external_dependencies(&dependencies, &verified))?;
-    if let Err(message) = record_full_verification(click_path, &[]) {
-        eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+    })?;
+    print_external_dependencies(&dependencies, &verified);
+    if !inputs.is_prepared() {
+        if let Err(message) = record_full_verification(click_path, &[]) {
+            eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+        }
     }
     Ok(())
 }
@@ -674,11 +699,25 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
-    let (click_source, sources) = load_sidecar(click_path)?;
-    let dependencies =
-        c0_external_dependencies(&click_source, &source_refs(&sources)).map_err(click_message)?;
-    click::instrumentation::with_deadline(time_limit, || {
-        verify_c0_sources_at(&click_source, &source_refs(&sources), line, column).map_err(|error| {
+    let (click_source, inputs) = load_sidecar_inputs(click_path)?;
+    let dependencies = match &inputs {
+        CInput::Bundle(sources) => {
+            c0_external_dependencies(&click_source, &source_refs(sources)).map_err(click_message)?
+        }
+        CInput::Prepared(imports) => {
+            c0_prepared_external_dependencies(&click_source, imports).map_err(click_message)?
+        }
+    };
+    let verified = click::instrumentation::with_deadline(time_limit, || {
+        let result = match &inputs {
+            CInput::Bundle(sources) => {
+                verify_c0_sources_at(&click_source, &source_refs(sources), line, column)
+            }
+            CInput::Prepared(imports) => {
+                verify_c0_prepared_sources_at(&click_source, imports, line, column)
+            }
+        };
+        result.map_err(|error| {
             format!(
                 "proof unit `{}:{line}:{column}` failed under its {} limit: {}",
                 click_path.display(),
@@ -686,8 +725,8 @@ fn verify_location(
                 error.message()
             )
         })
-    })
-    .map(|verified| print_external_dependencies(&dependencies, &verified))?;
+    })?;
+    print_external_dependencies(&dependencies, &verified);
     Ok(())
 }
 
@@ -714,6 +753,13 @@ fn load_sidecar(click_path: &Path) -> Result<LoadedSidecar, String> {
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
     let sources = read_verifying_sources(click_path, &click_source)?;
     Ok((click_source, sources))
+}
+
+fn load_sidecar_inputs(click_path: &Path) -> Result<(String, CInput), String> {
+    let click_source = fs::read_to_string(click_path)
+        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+    let inputs = read_c_inputs(click_path, &click_source)?;
+    Ok((click_source, inputs))
 }
 
 #[cfg(test)]

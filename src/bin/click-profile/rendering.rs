@@ -1025,7 +1025,8 @@ fn render_category(
         )
         .expect("writing a String cannot fail");
         if !step.failed
-            && let (TacticCategory::Smart, Some(position)) = (section.category, step.key.position)
+            && let (TacticCategory::Smart, Some(position)) =
+                (section.category, step.key.position.clone())
             && !blocked_expansion_sources.contains(&step.key.source_path)
         {
             render_expansion_command(output, &step.key, position, thresholds, time_limit);
@@ -1044,7 +1045,7 @@ fn format_work_units(work: usize) -> String {
 /// Renders a step's `PATH:LINE:COLUMN`, or just the path when the step has no
 /// surface tactic to point at.
 fn step_location(key: &StepKey) -> String {
-    match key.position {
+    match &key.position {
         Some(position) => format!(
             "{}:{}:{}",
             key.source_path.display(),

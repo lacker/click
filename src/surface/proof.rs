@@ -74,7 +74,10 @@ pub(super) use execution_planning::{
     verify_loop_execution_proofs,
 };
 use execution_state::*;
-pub(super) use execution_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
+pub(super) use execution_state::{
+    capture_c0_prepared_proof_site_expansion, capture_c0_prepared_tactic_expansion,
+    capture_c0_proof_site_expansion, capture_c0_tactic_expansion,
+};
 use fact_reasoning::*;
 pub(super) use fact_reasoning::{
     condition_polarity_equivalent, exactly_available_fact, search_condition_derivation,

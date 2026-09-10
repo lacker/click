@@ -99,11 +99,16 @@ mod verification;
 
 use checking::*;
 pub use expansion::{
-    CProofClaim, SmartTacticSourceSite, SourcePosition, c0_smart_tactic_source_sites,
-    c0_tactic_source_position, expand_c0_claim_source, expand_c0_claim_source_by_label,
+    CProofClaim, SmartTacticSourceSite, SourcePosition, c0_prepared_smart_tactic_source_sites,
+    c0_prepared_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    expand_c0_claim_source, expand_c0_claim_source_by_label,
+    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_tactic_source_at,
     expand_c0_tactic_source_at, verifying_source_paths,
 };
-use expansion::{ExpansionCapture, ProofSite, VerificationTarget, verification_target_at};
+use expansion::{
+    ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
+    verification_target_at_context,
+};
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_certificate, format_proof_tactics};
@@ -115,11 +120,13 @@ use validation::{
     describe_c0_type, describe_resource_clause, proposition_contains_at_expression,
     proposition_contains_old_expression, proposition_contains_resource_count,
 };
+pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;
 pub use verification::{
     C0IncrementalSelection, c0_external_dependencies, c0_function_names, c0_incremental_selection,
-    parse, verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions,
-    verify_click_theorems,
+    c0_prepared_external_dependencies, parse, verify_c0_prepared_sources,
+    verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_sources,
+    verify_c0_sources_at, verify_c0_sources_functions, verify_click_theorems,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
@@ -3891,6 +3898,9 @@ impl TheoremEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedCTheorem {
     pub source_path: String,
+    /// Fixed-size identity of all selected compiler imports on which this
+    /// theorem depends, when verification used the prepared-import route.
+    pub import_identity: Option<String>,
     pub function_block: FunctionBlock,
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
@@ -3978,6 +3988,7 @@ fn current_timing_tactic() -> Option<TimingTacticContext> {
 #[derive(Clone)]
 pub struct C0VerificationSession {
     c_sources: Vec<(String, String)>,
+    pub(crate) prepared_imports: Option<Vec<crate::languages::c::compiler_import::PreparedCImport>>,
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
 }

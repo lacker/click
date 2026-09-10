@@ -8,7 +8,7 @@ pub(super) fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>)
     let mut index = 0;
 
     while let Some(ch) = chars.get(index).copied() {
-        let position = char_positions[index];
+        let position = char_positions[index].clone();
         let tokens_before = tokens.len();
         match ch {
             '#' => {

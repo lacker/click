@@ -192,6 +192,28 @@ pub(in crate::surface) fn capture_c0_tactic_expansion(
     }
 }
 
+pub(in crate::surface) fn capture_c0_prepared_tactic_expansion(
+    click_source: &str,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    site: ProofSite,
+    source_index: usize,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let sources = CSourceContext::prepared(imports);
+    let verification =
+        verify_c0_sources_with_expansion_capture_context(click_source, &sources, &mut capture);
+    if let Some(result) = capture.result {
+        return result.map_err(ClickError::new);
+    }
+    match verification {
+        Err(error) => Err(error),
+        Ok(_) => Err(ClickError::new(format!(
+            "selected {} proof has no source tactic {source_index}",
+            site.description()
+        ))),
+    }
+}
+
 pub(in crate::surface) fn capture_c0_proof_site_expansion(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -216,6 +238,27 @@ pub(in crate::surface) fn capture_c0_proof_site_expansion(
                 site.description()
             )))
         }
+        Ok(_) => Err(ClickError::new(format!(
+            "verification did not retain a certificate for {}",
+            site.description()
+        ))),
+    }
+}
+
+pub(in crate::surface) fn capture_c0_prepared_proof_site_expansion(
+    click_source: &str,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    site: ProofSite,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let mut capture = ExpansionCapture::for_site(site.clone());
+    let sources = CSourceContext::prepared(imports);
+    let verification =
+        verify_c0_sources_with_expansion_capture_context(click_source, &sources, &mut capture);
+    if let Some(result) = capture.result {
+        return result.map_err(ClickError::new);
+    }
+    match verification {
+        Err(error) => Err(error),
         Ok(_) => Err(ClickError::new(format!(
             "verification did not retain a certificate for {}",
             site.description()

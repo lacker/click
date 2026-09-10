@@ -7,12 +7,14 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    self, MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
-    looks_like_mdtest, parse_duration, read_verifying_sources, shell_quote, source_refs,
+    self, CInput, MdTestExpectation, files_with_extension, find_mdtests, find_projects,
+    format_duration, looks_like_mdtest, parse_duration, read_c_inputs, shell_quote, source_refs,
 };
 use click::surface::{
-    C0VerificationSession, SourcePosition, c0_incremental_selection, c0_smart_tactic_source_sites,
-    c0_tactic_source_position, expand_c0_tactic_source_at, verify_c0_sources_at,
+    C0VerificationSession, SourcePosition, c0_incremental_selection,
+    c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_prepared_tactic_source_at,
+    expand_c0_tactic_source_at, verify_c0_prepared_sources_at, verify_c0_sources_at,
     verifying_source_paths,
 };
 
@@ -112,7 +114,7 @@ struct ConciseClaimProgress {
 }
 
 struct AuditSessionWorker {
-    click_path: PathBuf,
+    source: AuditSource,
     session: C0VerificationSession,
 }
 
@@ -120,9 +122,13 @@ impl AuditSessionWorker {
     fn start(click_path: &Path, limit: Duration) -> Result<Self, String> {
         let started = Instant::now();
         let source = load_audit_source(click_path)?;
-        let refs = source_refs(&source.c_sources);
-        let (session, _) = click::instrumentation::with_deadline(limit, || {
-            C0VerificationSession::new(&source.click_source, &refs)
+        let (session, _) = click::instrumentation::with_deadline(limit, || match &source.inputs {
+            CInput::Bundle(sources) => {
+                C0VerificationSession::new(&source.click_source, &source_refs(sources))
+            }
+            CInput::Prepared(imports) => {
+                C0VerificationSession::new_prepared(&source.click_source, imports)
+            }
         })
         .map_err(|error| error.message().to_string())?;
         ensure_phase_limit(
@@ -130,10 +136,7 @@ impl AuditSessionWorker {
             limit,
             "verification-session initialization",
         )?;
-        Ok(Self {
-            click_path: click_path.to_path_buf(),
-            session,
-        })
+        Ok(Self { source, session })
     }
 
     fn verify(
@@ -143,10 +146,15 @@ impl AuditSessionWorker {
         limit: Duration,
     ) -> Result<Duration, String> {
         let start = Instant::now();
-        let rewritten = load_audit_source_from_text(&self.click_path, click_source.to_string())?;
-        click::instrumentation::with_deadline(limit, || {
-            self.session
-                .verify_at(&rewritten.click_source, position.line, position.column)
+        click::instrumentation::with_deadline(limit, || match &self.source.inputs {
+            CInput::Bundle(_) => {
+                self.session
+                    .verify_at(click_source, position.line, position.column)
+            }
+            CInput::Prepared(_) => {
+                self.session
+                    .verify_at_prepared(click_source, position.line, position.column)
+            }
         })
         .map_err(|error| error.message().to_string())?;
         let elapsed = start.elapsed();
@@ -631,6 +639,7 @@ struct AuditSource {
     container_source: String,
     click_source: String,
     c_sources: Vec<(String, String)>,
+    inputs: CInput,
     line_offset: usize,
     mdtest: Option<cli::MdTest>,
 }
@@ -655,15 +664,21 @@ fn load_audit_source_from_text(
             container_source,
             click_source,
             c_sources: mdtest.c_sources.clone(),
+            inputs: CInput::Bundle(mdtest.c_sources.clone()),
             line_offset: mdtest.click_start_line.saturating_sub(1),
             mdtest: Some(mdtest),
         });
     }
-    let c_sources = read_verifying_sources(path, &container_source)?;
+    let inputs = read_c_inputs(path, &container_source)?;
+    let c_sources = match &inputs {
+        CInput::Bundle(sources) => sources.clone(),
+        CInput::Prepared(_) => Vec::new(),
+    };
     Ok(AuditSource {
         click_source: container_source.clone(),
         container_source,
         c_sources,
+        inputs,
         line_offset: 0,
         mdtest: None,
     })
@@ -687,25 +702,40 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
         let AuditSource {
             click_source,
             c_sources,
+            inputs,
             line_offset,
             ..
         } = source;
-        let refs = source_refs(&c_sources);
-        let syntactic_sites =
-            c0_smart_tactic_source_sites(&click_source, &refs).map_err(|error| {
-                format!(
-                    "could not inventory smart tactics in `{}`: {}",
-                    canonical_path.display(),
-                    error.message()
-                )
-            })?;
-        for syntactic in syntactic_sites {
-            let position = c0_tactic_source_position(
-                &click_source,
-                &refs,
-                &syntactic.claim_label,
-                syntactic.source_index,
+        let syntactic_sites = match &inputs {
+            CInput::Bundle(sources) => {
+                c0_smart_tactic_source_sites(&click_source, &source_refs(sources))
+            }
+            CInput::Prepared(imports) => {
+                c0_prepared_smart_tactic_source_sites(&click_source, imports)
+            }
+        }
+        .map_err(|error| {
+            format!(
+                "could not inventory smart tactics in `{}`: {}",
+                canonical_path.display(),
+                error.message()
             )
+        })?;
+        for syntactic in syntactic_sites {
+            let position = match &inputs {
+                CInput::Bundle(sources) => c0_tactic_source_position(
+                    &click_source,
+                    &source_refs(sources),
+                    &syntactic.claim_label,
+                    syntactic.source_index,
+                ),
+                CInput::Prepared(imports) => c0_prepared_tactic_source_position(
+                    &click_source,
+                    imports,
+                    &syntactic.claim_label,
+                    syntactic.source_index,
+                ),
+            }
             .map_err(|error| {
                 format!(
                     "could not resolve {} source {} in `{}`: {}",
@@ -718,6 +748,7 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
             let container_position = SourcePosition {
                 line: position.line + line_offset,
                 column: position.column,
+                origin: None,
             };
             let key = (
                 canonical_path.clone(),
@@ -992,6 +1023,7 @@ fn load_baseline_audit_source(
     Ok(Some(AuditSource {
         click_source: container_source.clone(),
         container_source,
+        inputs: CInput::Bundle(c_sources.clone()),
         c_sources,
         line_offset: 0,
         mdtest: None,
@@ -1145,24 +1177,28 @@ fn audit_site(
     );
     let phase_limit = remaining_phase_limit(deadline, expansion_limit)?;
     let expansion_started = Instant::now();
-    let expanded =
-        click::instrumentation::with_deadline(phase_limit, || expand_location(&location))?;
+    let expanded = click::instrumentation::with_deadline(phase_limit, || {
+        expand_location_with_source(&location, &worker.source)
+    })?;
     let expansion_elapsed = expansion_started.elapsed();
     ensure_phase_limit(expansion_elapsed, phase_limit, "expansion")?;
-    let original = fs::read_to_string(&site.click_path)
-        .map_err(|error| format!("failed to reread `{}`: {error}", site.click_path.display()))?;
+    let original = worker.source.container_source.clone();
     if expanded == original {
         return Err("expansion returned the original sidecar unchanged".to_string());
     }
-    let expanded_source = load_audit_source_from_text(&site.click_path, expanded.clone())
+    let expanded_click_source = rewritten_click_source(&worker.source, &expanded)
         .map_err(|error| format!("expanded proof container did not parse: {error}"))?;
-    let expanded_position = claim_source_position(&expanded_source, &site.claim)?;
+    let expanded_position = claim_source_position_for_inputs(
+        &expanded_click_source,
+        &worker.source.inputs,
+        &site.claim,
+    )?;
 
     // Expansion can insert or remove lines at the selected tactic.  Resolve
     // the proof unit again by claim instead of sending its now-stale source
     // coordinate to the retained verification session.
     let verification_elapsed = worker.verify(
-        &expanded,
+        &expanded_click_source,
         expanded_position,
         remaining_phase_limit(deadline, verification_limit)?,
     )?;
@@ -1179,14 +1215,16 @@ fn audit_site(
     // double the whole audit for no additional coverage.
     let cold_verification = if cold_reverify {
         let original_elapsed = cold_verify(
-            site,
             &original,
+            &worker.source,
+            &site.claim,
             remaining_phase_limit(deadline, verification_limit)?,
             "original proof-unit verification",
         )?;
         let expanded_elapsed = cold_verify(
-            site,
             &expanded,
+            &worker.source,
+            &site.claim,
             remaining_phase_limit(deadline, verification_limit)?,
             "expanded proof-unit verification",
         )?;
@@ -1194,14 +1232,16 @@ fn audit_site(
             // Timing-only findings get one fresh serial confirmation, matching
             // the ordinary tactic-budget gate's noise policy.
             let confirmed_original = cold_verify(
-                site,
                 &original,
+                &worker.source,
+                &site.claim,
                 remaining_phase_limit(deadline, verification_limit)?,
                 "confirmation original proof-unit verification",
             )?;
             let confirmed_expanded = cold_verify(
-                site,
                 &expanded,
+                &worker.source,
+                &site.claim,
                 remaining_phase_limit(deadline, verification_limit)?,
                 "confirmation expanded proof-unit verification",
             )?;
@@ -1235,7 +1275,12 @@ fn audit_site(
     // by claim because the rewrite moves and replaces tactics.
     let phase_limit = remaining_phase_limit(deadline, expansion_limit)?;
     let reexpansion_started = Instant::now();
-    let reexpanded = reexpand_source(&site.click_path, &site.claim, &expanded)?;
+    let reexpanded = reexpand_source_with_inputs(
+        &worker.source,
+        &site.claim,
+        &expanded_click_source,
+        &expanded,
+    )?;
     let reexpansion_elapsed = reexpansion_started.elapsed();
     ensure_phase_limit(reexpansion_elapsed, phase_limit, "re-expansion")?;
     if reexpanded != expanded {
@@ -1261,14 +1306,16 @@ fn audit_site(
 }
 
 fn cold_verify(
-    site: &AuditSite,
     source: &str,
+    original: &AuditSource,
+    claim_label: &str,
     verification_limit: Duration,
     label: &str,
 ) -> Result<Duration, String> {
     let started = Instant::now();
+    let rewritten_click_source = rewritten_click_source(original, source)?;
     click::instrumentation::with_deadline(verification_limit, || {
-        verify_rewritten(&site.click_path, &site.claim, source)
+        verify_rewritten_with_inputs(original, claim_label, &rewritten_click_source)
     })?;
     let elapsed = started.elapsed();
     ensure_phase_limit(elapsed, verification_limit, label)?;
@@ -1298,6 +1345,20 @@ fn audit_artifact_path(source: &Path) -> PathBuf {
 fn expand_location(location: &str) -> Result<String, String> {
     let (click_path, line, column) = cli::parse_source_location(location)?;
     let source = load_audit_source(&click_path)?;
+    expand_location_with_source_parts(&click_path, &source, line, column)
+}
+
+fn expand_location_with_source(location: &str, source: &AuditSource) -> Result<String, String> {
+    let (click_path, line, column) = cli::parse_source_location(location)?;
+    expand_location_with_source_parts(&click_path, source, line, column)
+}
+
+fn expand_location_with_source_parts(
+    click_path: &Path,
+    source: &AuditSource,
+    line: usize,
+    column: usize,
+) -> Result<String, String> {
     let click_line = if let Some(mdtest) = &source.mdtest {
         mdtest.click_line(line)?
     } else if line > 0 && line <= source.click_source.lines().count() {
@@ -1307,10 +1368,18 @@ fn expand_location(location: &str) -> Result<String, String> {
             "line {line} is outside the proof container's Click source"
         ));
     };
-    let refs = source_refs(&source.c_sources);
-    let expanded_click =
-        expand_c0_tactic_source_at(&source.click_source, &refs, click_line, column)
-            .map_err(|error| error.message().to_string())?;
+    let expanded_click = match &source.inputs {
+        CInput::Bundle(sources) => expand_c0_tactic_source_at(
+            &source.click_source,
+            &source_refs(sources),
+            click_line,
+            column,
+        ),
+        CInput::Prepared(imports) => {
+            expand_c0_prepared_tactic_source_at(&source.click_source, imports, click_line, column)
+        }
+    }
+    .map_err(|error| error.message().to_string())?;
     if looks_like_mdtest(&click_path) {
         source
             .mdtest
@@ -1333,19 +1402,55 @@ fn verify_rewritten(
     rewritten: &str,
 ) -> Result<(), String> {
     let source = load_audit_source_from_text(original_click_path, rewritten.to_string())?;
-    let refs = source_refs(&source.c_sources);
-    let position = claim_source_position(&source, claim_label)?;
-    verify_c0_sources_at(&source.click_source, &refs, position.line, position.column)
-        .map(|_| ())
-        .map_err(|error| error.message().to_string())
+    verify_rewritten_with_inputs(&source, claim_label, &source.click_source)
+}
+
+fn verify_rewritten_with_inputs(
+    source: &AuditSource,
+    claim_label: &str,
+    rewritten_click_source: &str,
+) -> Result<(), String> {
+    let position =
+        claim_source_position_for_inputs(rewritten_click_source, &source.inputs, claim_label)?;
+    match &source.inputs {
+        CInput::Bundle(sources) => verify_c0_sources_at(
+            rewritten_click_source,
+            &source_refs(sources),
+            position.line,
+            position.column,
+        ),
+        CInput::Prepared(imports) => verify_c0_prepared_sources_at(
+            rewritten_click_source,
+            imports,
+            position.line,
+            position.column,
+        ),
+    }
+    .map(|_| ())
+    .map_err(|error| error.message().to_string())
 }
 
 fn claim_source_position(
     source: &AuditSource,
     claim_label: &str,
 ) -> Result<SourcePosition, String> {
-    let refs = source_refs(&source.c_sources);
-    c0_tactic_source_position(&source.click_source, &refs, claim_label, 0).map_err(|error| {
+    claim_source_position_for_inputs(&source.click_source, &source.inputs, claim_label)
+}
+
+fn claim_source_position_for_inputs(
+    click_source: &str,
+    inputs: &CInput,
+    claim_label: &str,
+) -> Result<SourcePosition, String> {
+    let position = match inputs {
+        CInput::Bundle(sources) => {
+            c0_tactic_source_position(click_source, &source_refs(sources), claim_label, 0)
+        }
+        CInput::Prepared(imports) => {
+            c0_prepared_tactic_source_position(click_source, imports, claim_label, 0)
+        }
+    };
+    position.map_err(|error| {
         format!(
             "could not locate `{claim_label}` in the rewritten sidecar: {}",
             error.message()
@@ -1376,12 +1481,26 @@ fn reexpand_source(
 ) -> Result<String, String> {
     let original = load_audit_source(click_path)?;
     let rewritten_source = load_audit_source_from_text(click_path, rewritten.to_string())?;
-    let claim_sites = |source: &str, sources: &[(String, String)]| {
-        let refs = sources
-            .iter()
-            .map(|(name, source)| (name.as_str(), source.as_str()))
-            .collect::<Vec<_>>();
-        c0_smart_tactic_source_sites(source, &refs)
+    reexpand_source_with_inputs(
+        &original,
+        claim_label,
+        &rewritten_source.click_source,
+        rewritten,
+    )
+}
+
+fn reexpand_source_with_inputs(
+    original: &AuditSource,
+    claim_label: &str,
+    rewritten_click_source: &str,
+    rewritten_container: &str,
+) -> Result<String, String> {
+    let claim_sites = |source: &str, inputs: &CInput| {
+        let sites = match inputs {
+            CInput::Bundle(sources) => c0_smart_tactic_source_sites(source, &source_refs(sources)),
+            CInput::Prepared(imports) => c0_prepared_smart_tactic_source_sites(source, imports),
+        };
+        sites
             .map(|sites| {
                 sites
                     .into_iter()
@@ -1396,8 +1515,8 @@ fn reexpand_source(
                 )
             })
     };
-    let original_sites = claim_sites(&original.click_source, &original.c_sources)?;
-    let rewritten_sites = claim_sites(&rewritten_source.click_source, &rewritten_source.c_sources)?;
+    let original_sites = claim_sites(&original.click_source, &original.inputs)?;
+    let rewritten_sites = claim_sites(rewritten_click_source, &original.inputs)?;
     let mut unmatched_original = original_sites.clone();
     let introduced = rewritten_sites.iter().find(|rewritten| {
         let Some(index) = unmatched_original
@@ -1426,7 +1545,18 @@ fn reexpand_source(
             rewritten_sites.len(),
         ));
     }
-    Ok(rewritten.to_string())
+    Ok(rewritten_container.to_string())
+}
+
+fn rewritten_click_source(source: &AuditSource, rewritten: &str) -> Result<String, String> {
+    if source.mdtest.is_some() {
+        let mdtest = cli::parse_mdtest(&PathBuf::from("<expanded>"), rewritten)?;
+        mdtest
+            .click_source
+            .ok_or_else(|| "expanded proof container has no ```click block".to_string())
+    } else {
+        Ok(rewritten.to_string())
+    }
 }
 
 #[cfg(test)]

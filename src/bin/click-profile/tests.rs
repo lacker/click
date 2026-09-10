@@ -307,7 +307,11 @@ click timing: tactic example.contract 1 fold class simple statement 1 source 1 2
         .expect("the current timing format should parse");
     profile.verification_failure = Some("could not certify the claim".to_string());
     for step in &mut profile.slow_steps {
-        step.key.position = Some(SourcePosition { line: 1, column: 1 });
+        step.key.position = Some(SourcePosition {
+            line: 1,
+            column: 1,
+            origin: None,
+        });
     }
 
     assert_eq!(profile.accounting.total, Duration::ZERO);
@@ -642,7 +646,11 @@ fn generated_commands_quote_locations_and_artifacts() {
     render_expansion_command(
         &mut output,
         &key,
-        SourcePosition { line: 2, column: 3 },
+        SourcePosition {
+            line: 2,
+            column: 3,
+            origin: None,
+        },
         Thresholds::default(),
         DEFAULT_TIME_LIMIT,
     );
@@ -701,6 +709,7 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
         step.key.position = Some(SourcePosition {
             line: index + 10,
             column: 5,
+            origin: None,
         });
     }
 
@@ -785,6 +794,7 @@ click timing: failed tactic example.contract 0 simp class smart statement 1 sour
     profile.slow_steps[0].key.position = Some(SourcePosition {
         line: 10,
         column: 5,
+        origin: None,
     });
 
     let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
@@ -811,6 +821,7 @@ click timing: tactic example.contract 0 have class control statement 1 source 10
     profile.slow_steps[0].key.position = Some(SourcePosition {
         line: 10,
         column: 5,
+        origin: None,
     });
 
     let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
@@ -834,6 +845,7 @@ click timing: tactic example.contract 0 execute class smart statement 1 source 1
     successful.slow_steps[0].key.position = Some(SourcePosition {
         line: 12,
         column: 5,
+        origin: None,
     });
     let mut failed = parse_profile(
         "failed",
@@ -873,6 +885,7 @@ click timing: tactic example.contract 0 execute class smart statement 1 source 1
     profile.slow_steps[0].key.position = Some(SourcePosition {
         line: 12,
         column: 5,
+        origin: None,
     });
     profile.verification_failure = Some("a later tactic failed".to_string());
 

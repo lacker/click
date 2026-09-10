@@ -63,8 +63,16 @@ fn source_locations_parse_from_the_right_and_are_one_based() {
 fn named_claim_selection_is_exact_ordered_and_rejects_ambiguity() {
     let site = |path: &str, claim: &str, line| AuditSite {
         click_path: PathBuf::from(path),
-        position: SourcePosition { line, column: 1 },
-        click_position: SourcePosition { line, column: 1 },
+        position: SourcePosition {
+            line,
+            column: 1,
+            origin: None,
+        },
+        click_position: SourcePosition {
+            line,
+            column: 1,
+            origin: None,
+        },
         claim: claim.to_string(),
         tactic_name: "auto".to_string(),
     };
@@ -114,8 +122,16 @@ int32 unrelated(int32 x) { ensures result == x; } by auto;
 "#;
     let site = |claim: &str, line| AuditSite {
         click_path: PathBuf::from("example.click"),
-        position: SourcePosition { line, column: 1 },
-        click_position: SourcePosition { line, column: 1 },
+        position: SourcePosition {
+            line,
+            column: 1,
+            origin: None,
+        },
+        click_position: SourcePosition {
+            line,
+            column: 1,
+            origin: None,
+        },
         claim: claim.to_string(),
         tactic_name: "auto".to_string(),
     };
@@ -257,8 +273,16 @@ fn site_timing_output_distinguishes_measured_and_skipped_cold_work() {
 fn start_cursor_is_an_inclusive_global_lower_bound() {
     let site = |path: &str, line| AuditSite {
         click_path: PathBuf::from(path),
-        position: SourcePosition { line, column: 3 },
-        click_position: SourcePosition { line, column: 3 },
+        position: SourcePosition {
+            line,
+            column: 3,
+            origin: None,
+        },
+        click_position: SourcePosition {
+            line,
+            column: 3,
+            origin: None,
+        },
         claim: "claim".to_string(),
         tactic_name: "simp".to_string(),
     };
@@ -354,6 +378,7 @@ int32 example() {
         container_source: expanded.clone(),
         click_source: expanded,
         c_sources: vec![("example.c".to_string(), c_source.to_string())],
+        inputs: CInput::Bundle(vec![("example.c".to_string(), c_source.to_string())]),
         line_offset: 0,
         mdtest: None,
     };
@@ -448,6 +473,18 @@ fn markdown_inventory_and_expansion_use_container_coordinates() {
         load_audit_source_from_text(&path, expanded).expect("expanded markdown should re-extract");
     let refs = source_refs(&source.c_sources);
     verify_c0_sources(&source.click_source, &refs).expect("expanded markdown proof should verify");
+    let limit = Duration::from_secs(10);
+    let mut worker = AuditSessionWorker::start(&path, limit).unwrap();
+    audit_site(
+        site,
+        &mut worker,
+        limit,
+        limit,
+        Duration::from_secs(1),
+        true,
+        Instant::now() + Duration::from_secs(30),
+    )
+    .expect("markdown audit retains extracted Click coordinates");
 }
 
 #[test]
@@ -498,5 +535,47 @@ int32 write_selected(int32 p[2], int32 flag) {
         reexpand_source(&click_path, &site.claim, &expanded).unwrap(),
         expanded
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn prepared_audit_reuses_validated_inputs_across_sites() {
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-prepared-{}", std::process::id()));
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("unit.click");
+    let config = directory.join("unit.click.import.json");
+    fs::write(
+        directory.join("unit.c"),
+        "int identity(int x) { return x; }\n",
+    )
+    .unwrap();
+    fs::write(&path, "verifying \"unit.c\";\nint32 identity(int32 x) { ensures result == x; } by { execute(); simp(); }\n").unwrap();
+    fs::write(&config, serde_json::to_vec(&serde_json::json!({
+        "schema": 1, "target": "x86_64-linux-kernel", "compiler": "/usr/bin/gcc", "working_directory": ".",
+        "environment": {"allow": {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}},
+        "sources": [{"logical_source": "unit.c", "path": "unit.c", "args": [], "artifact": "unit.i"}]
+    })).unwrap()).unwrap();
+    click::languages::c::compiler_import::create_lock(&config).unwrap();
+    let sites = inventory_sites(std::slice::from_ref(&path)).unwrap();
+    assert!(sites.len() >= 2);
+    let limit = Duration::from_secs(10);
+    let mut worker = AuditSessionWorker::start(&path, limit).unwrap();
+    // An active audit has already selected an immutable input. Any attempt to
+    // reread the importer per tactic would now fail. A new audit must fail.
+    fs::remove_file(directory.join("unit.i")).unwrap();
+    for site in &sites {
+        audit_site(
+            site,
+            &mut worker,
+            limit,
+            limit,
+            Duration::from_secs(1),
+            true,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .unwrap();
+    }
+    assert!(AuditSessionWorker::start(&path, limit).is_err());
     fs::remove_dir_all(directory).unwrap();
 }

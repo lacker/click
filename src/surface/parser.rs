@@ -6421,7 +6421,7 @@ impl Parser {
         let Some(close) = self
             .matching_parentheses
             .get(self.position)
-            .copied()
+            .cloned()
             .flatten()
         else {
             return false;
@@ -6437,7 +6437,7 @@ impl Parser {
         let Some(close) = self
             .matching_parentheses
             .get(self.position)
-            .copied()
+            .cloned()
             .flatten()
         else {
             return false;
@@ -6474,7 +6474,7 @@ impl Parser {
         self.positions
             .get(self.position)
             .or_else(|| self.positions.last())
-            .copied()
+            .cloned()
     }
 
     /// Captures the position of the next unconsumed token so an error can
