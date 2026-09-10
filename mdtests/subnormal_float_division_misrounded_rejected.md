@@ -1,6 +1,7 @@
 # the mis-rounded subnormal quotient is rejected
 
-Companion to `subnormal_float_division_rounded.md`: bugbash §13 folded the
+Companion to `subnormal_float_division_rounded.md`: the subnormal-division bug
+folded the
 quotient below to `0x00000018`, so `ensures result == 2` verified before the
 fix. With correct round-to-nearest the quotient is `0x00000017`, so claiming
 the mis-rounded value must fail.

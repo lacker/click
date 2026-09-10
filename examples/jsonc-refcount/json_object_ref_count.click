@@ -4,5 +4,4 @@ int32 json_object_get_ref_count(struct json_object* obj) {
     requires loadable(obj->ref_count);
     views obj[0..1];
     ensures returns_ref_count: result == obj->ref_count;
-    immutable;
 } by auto;

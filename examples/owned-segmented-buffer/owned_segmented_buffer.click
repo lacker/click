@@ -124,14 +124,12 @@ int32 owned_segmented_buffer_get_first(
     requires 0 <= index;
     requires index < owner->first_len;
     views owned_segmented_buffer(owner);
-    immutable;
+
     ensures result == owner->first_data[index];
 } by {
     observe(owned_segmented_buffer(owner));
     observe(owned_segment(owner->first_data, owner->first_len));
     step();
-    frame() using {
-    }
     have result == owner->first_data[index] by {
         normalize();
     }

@@ -4936,6 +4936,11 @@ struct Parser {
     /// instead of silently overwriting the outer object. Sibling scopes may
     /// reuse a name because the earlier object is dead.
     scopes: Vec<Vec<ScopeBinding>>,
+    /// Names declared in a `for` initializer whose loop scope has closed.
+    /// C-source parsing intentionally permits unresolved cross-file calls and
+    /// object names for later validation, so this records only the specific
+    /// out-of-scope declarations that must not be treated as such names.
+    out_of_scope_names: BTreeSet<String>,
     next_scoped_name: u32,
     next_synthesized_call: u32,
     next_synthesized_aggregate: u32,
@@ -5063,6 +5068,7 @@ impl Parser {
             variable_pointee_constants: BTreeSet::new(),
             unions: BTreeMap::new(),
             scopes: Vec::new(),
+            out_of_scope_names: BTreeSet::new(),
             next_scoped_name: 0,
             next_synthesized_call: 0,
             next_synthesized_aggregate: 0,
@@ -5135,6 +5141,32 @@ impl Parser {
         }
     }
 
+    fn pop_for_scope(&mut self) {
+        let names = self
+            .scopes
+            .last()
+            .into_iter()
+            .flat_map(|scope| scope.iter())
+            .map(|binding| binding.source_name.clone())
+            .collect::<Vec<_>>();
+        self.pop_scope();
+        for name in names {
+            let remains_visible = self
+                .scopes
+                .iter()
+                .any(|scope| scope.iter().any(|binding| binding.source_name == name))
+                || self.globals.contains_key(&name)
+                || self.global_arrays.contains_key(&name)
+                || self.global_aggregates.contains_key(&name)
+                || self.global_aggregate_arrays.contains_key(&name);
+            if remains_visible {
+                self.out_of_scope_names.remove(&name);
+            } else {
+                self.out_of_scope_names.insert(name);
+            }
+        }
+    }
+
     fn resolve_name(&self, source_name: &str) -> String {
         self.scopes
             .iter()
@@ -5163,6 +5195,22 @@ impl Parser {
                     .map(|global| global.kernel_name().to_string())
             })
             .unwrap_or_else(|| source_name.to_string())
+    }
+
+    fn resolve_object_name(
+        &self,
+        source_name: &str,
+        position: Option<SourcePosition>,
+    ) -> Result<String, C0SyntaxError> {
+        let name = self.resolve_name(source_name);
+        if !self.out_of_scope_names.contains(source_name) {
+            Ok(name)
+        } else {
+            Err(self.error_at_position(
+                position,
+                format!("use of undeclared identifier `{source_name}`"),
+            ))
+        }
     }
 
     fn variable_is_constant(&self, name: &str) -> bool {
@@ -5515,6 +5563,7 @@ impl Parser {
                 self.error_at_previous(format!("`{name}` is already declared in this scope"))
             );
         }
+        self.out_of_scope_names.remove(name);
         let kernel_name = if self
             .scopes
             .iter()
@@ -5574,6 +5623,7 @@ impl Parser {
                 self.error_at_previous(format!("`{name}` is already declared in this scope"))
             );
         }
+        self.out_of_scope_names.remove(name);
         let kernel_name = format!("{name}#static{}", self.next_scoped_name);
         self.next_scoped_name = self.next_scoped_name.saturating_add(1);
         match self.scopes.last_mut() {
@@ -5946,6 +5996,7 @@ impl Parser {
         self.current_return_pointee_constant = previous_return_pointee_constant;
         let mut body = body_result?;
         self.pop_scope();
+        self.out_of_scope_names.clear();
         validate_function_returns(&body, header.return_type)?;
         if header.return_type == C0Type::Void {
             body = C0Statement::Seq(
@@ -8935,7 +8986,7 @@ impl Parser {
                     self.loop_contexts.push(CLoopContext::For);
                     let body = self.parse_controlled_statement("for")?;
                     self.loop_contexts.pop();
-                    self.pop_scope();
+                    self.pop_for_scope();
                     Ok(C0Statement::For {
                         initializer: Box::new(init),
                         condition,
@@ -10873,7 +10924,10 @@ impl Parser {
                 self.error_here("expected assignment target in for-loop initializer".to_string())
             );
         };
-        let name = self.resolve_name(&source_name);
+        let name = self.resolve_object_name(
+            &source_name,
+            self.positions.get(self.position.saturating_sub(1)).copied(),
+        )?;
         if self.variable_is_constant(&name) {
             return Err(self.error_here(format!(
                 "cannot assign to const-qualified lvalue `{source_name}`"
@@ -10912,7 +10966,10 @@ impl Parser {
                 )));
             }
         };
-        let name = self.resolve_name(&source_name);
+        let name = self.resolve_object_name(
+            &source_name,
+            self.positions.get(self.position.saturating_sub(1)).copied(),
+        )?;
         if self.variable_is_constant(&name) {
             return Err(self.error_here(format!(
                 "cannot update const-qualified lvalue `{source_name}`"
@@ -13173,6 +13230,9 @@ impl Parser {
             if let Some(Token::Ident(name)) = self.peek().cloned()
                 && !self.variable_types.contains_key(&self.resolve_name(&name))
             {
+                if self.out_of_scope_names.contains(&name) {
+                    return Err(self.error_here(format!("use of undeclared identifier `{name}`")));
+                }
                 self.position += 1;
                 return Ok(C0Expression::FunctionAddress(
                     self.resolve_function_name(&name),
@@ -14217,7 +14277,18 @@ impl Parser {
                 "NANF" => Ok(C0Expression::Float32Literal(0x7fc0_0000)),
                 _ => match self.enum_constants.get(&name) {
                     Some(value) => Ok(C0Expression::Int32Literal(*value as u32)),
-                    None => Ok(C0Expression::Variable(self.resolve_name(&name))),
+                    None => {
+                        if self.peek() == Some(&Token::LParen) {
+                            // A source file may call a function defined in a
+                            // different C source. The translation-unit linker
+                            // resolves that name after each source is parsed.
+                            Ok(C0Expression::Variable(self.resolve_name(&name)))
+                        } else {
+                            Ok(C0Expression::Variable(
+                                self.resolve_object_name(&name, at.position)?,
+                            ))
+                        }
+                    }
                 },
             },
             Some(Token::Number(number)) => {

@@ -136,6 +136,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     )?;
                     initialization_path_certificates.push(PathCertificate {
                         case_path: context.case_path.clone(),
+                        case_offsets: None,
                         certificate,
                     });
                 } else {
@@ -222,6 +223,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         final_exit_candidates.extend(result.final_exit_candidates);
                         preservation_path_certificates.push(PathCertificate {
                             case_path: context.case_path.clone(),
+                            case_offsets: None,
                             certificate: result.certificate,
                         });
                         for (item_index, certificate) in result.effect_certificates {
@@ -230,6 +232,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                                 .or_default()
                                 .push(PathCertificate {
                                     case_path: context.case_path.clone(),
+                                    case_offsets: None,
                                     certificate,
                                 });
                         }

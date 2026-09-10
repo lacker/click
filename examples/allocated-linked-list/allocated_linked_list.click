@@ -43,13 +43,11 @@ struct node* list_prepend(int32 value, struct node* tail) {
 int32 list_head(struct node* node) {
     requires node != 0;
     views allocated_list(node);
-    immutable;
 
     ensures result == node->value;
 } by {
     observe(allocated_list(node));
     execute();
-    frame();
     simp();
 }
 

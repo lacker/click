@@ -1234,8 +1234,9 @@ fn divide_decoded_floats(
     // wide, so the sticky bit in bit 0 can never collide with the rounding
     // bit. Jamming the remainder into a variable-width quotient instead
     // mis-rounds: a one-bit subnormal shift lands the sticky exactly on the
-    // rounding bit (bugbash §13), and fewer quotient bits than the format
-    // precision treats the jammed value as exact, drifting by many ulps.
+    // rounding bit (the subnormal-division regression), and fewer quotient
+    // bits than the format precision treats the jammed value as exact,
+    // drifting by many ulps.
     //
     // A positive adjustment widens the numerator and divides again; a
     // negative one divides by a widened divisor. Either way the single
@@ -2929,8 +2930,8 @@ mod float_evaluator_differential_tests {
     }
 
     /// Differential guard for the integer-space IEEE-754 evaluator
-    /// (bugbash §13). A fixed vector of operand bit patterns spanning signed
-    /// zeros, subnormals, infinities, NaNs, cancellation pairs, and
+    /// (the subnormal-division regression). A fixed vector of operand bit
+    /// patterns spanning signed zeros, subnormals, infinities, NaNs, cancellation pairs, and
     /// normal/subnormal boundary results, checked against correctly rounded
     /// results. Expected values were computed with exact rational arithmetic
     /// and confirmed against a C compiler on this profile. NaN cases expect
@@ -2939,8 +2940,8 @@ mod float_evaluator_differential_tests {
     fn float_binary_matches_reference() {
         use CFloatBinaryOperator::{Add, Divide, Multiply, Subtract};
         let cases = [
-            // Division: the path bugbash §13 fixed. The first case is the
-            // §13 regression itself: the sticky bit collided with the
+            // Division: the subnormal-division regression is fixed. The first
+            // case is the regression itself: the sticky bit collided with the
             // rounding bit and folded one ulp high (0x18, not 0x17).
             FloatCase {
                 name: "s13 subnormal dividend",

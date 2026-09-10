@@ -13540,3 +13540,118 @@ fn expanded_step_uses_the_whole_context_for_frame_evidence() {
     assert!(pipeline.contains("step();"), "{pipeline}");
     verify_c0_sources(&expanded, &c_sources).expect("the expanded pipeline proof should check");
 }
+
+#[test]
+fn loop_preservation_case_after_step_expands_in_place() {
+    let c_source = r#"
+        int32 count_once(int32 flag) {
+            int32 i;
+            i = 0;
+            while (i < 1) { i = i + 1; }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "count_once.c";
+        int32 count_once(int32 flag) {
+            ensures result == 1;
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 0;
+                invariant i <= 1;
+                initialize by simp;
+                preserve by {
+                    step();
+                    if flag == i {
+                        have flag == i by { assumption(); }
+                    } else {
+                        have not (flag == i) by { assumption(); }
+                    }
+                    close_invariants();
+                }
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("count_once.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("the preservation case after a step verifies");
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the loop proof expands");
+    let preserve = expanded
+        .find("preserve by")
+        .expect("the expansion keeps the preservation proof");
+    let body = &expanded[preserve..];
+    let step = body.find("step();").expect("the body step is retained");
+    let case = body
+        .find("if flag == i")
+        .expect("the proof case is retained");
+    assert!(
+        step < case,
+        "the case must stay after the step it follows: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("expanded proof failed independent verification: {error:?}\n{expanded}")
+    });
+}
+
+#[test]
+fn loop_preservation_case_before_step_expands_in_place() {
+    let c_source = r#"
+        int32 count_once(int32 flag) {
+            int32 i;
+            i = 0;
+            while (i < 1) { i = i + 1; }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "count_once.c";
+        int32 count_once(int32 flag) {
+            ensures result == 1;
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 0;
+                invariant i <= 1;
+                initialize by simp;
+                preserve by {
+                    if flag == i {
+                        have flag == i by { assumption(); }
+                    } else {
+                        have not (flag == i) by { assumption(); }
+                    }
+                    step();
+                    close_invariants();
+                }
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("count_once.c", c_source)];
+    verify_c0_sources(click_source, &sources)
+        .expect("the preservation case before a step verifies");
+    let expanded =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the loop proof expands");
+    let preserve = expanded
+        .find("preserve by")
+        .expect("the expansion keeps the preservation proof");
+    let body = &expanded[preserve..];
+    let case = body
+        .find("if flag == i")
+        .expect("the proof case is retained");
+    let step = body.find("step();").expect("the body step is retained");
+    assert!(
+        case < step,
+        "the case must stay before the step it precedes: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("expanded proof failed independent verification: {error:?}\n{expanded}")
+    });
+}

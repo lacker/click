@@ -1,16 +1,7 @@
-# Bug bash: open soundness holes and C mis-models
+# Bug bash: open tooling failures
 
-Five independent root causes. Every one has a reproduction that verifies
-today while stating something the C does not guarantee: a false postcondition,
-a definite answer where C leaves the behaviour undefined or unspecified, or a
-program C rejects that Click accepts. All are against C11/C17 on the LP64
-profile Click documents.
-
-One is critical: an ordinary contract over ordinary C is certified while
-false, with no unusual tactics. The other four are high: the trigger is
-narrower, an unusual construct or an out-of-range value, but the accepted
-claim is just as wrong. Nothing here is speculative; anything that could not
-be made to reproduce has been removed rather than left as a lead.
+Four remaining tooling failures are tracked here. They reject supported inputs
+or expose verifier reliability gaps.
 
 This is deliberately a bundle rather than one file per problem, so the set
 stays together while it is triaged. **Split it up as work starts**: when a
@@ -18,218 +9,14 @@ root cause is picked up, move its section into its own `issues/<name>.md`, add
 the Open-list line, and delete the section here. Delete this file when the
 last section is gone.
 
-Sections are grouped by severity, not by fix order. Several say what *not* to
-do: those directions were built and measured, and each broke sound proofs
-elsewhere or lost a capability the tree uses. Read them before starting.
+The following tooling failures block use rather than admitting false claims.
+Several entries say what *not* to do: those directions were built and
+measured, and each broke sound proofs elsewhere or lost a capability the tree
+uses. Read them before starting.
 
-## Reproducing
+## 1. `--changed-since` cannot resolve project-local headers
 
-Each regression is a self-contained pair. Write the files into an empty
-directory and run:
-
-```sh
-click verify --time-limit 30s t.click
-```
-
-Exit 0 is the bug. Every pair below was re-run against the release binary and
-reproduces. Each regression is intended to land as an mdtest whose `expect`
-block is a rejection, so the diagnostic in the acceptance criteria is a shape,
-not an exact string; where the fix makes a previously-rejected program verify
-instead, land the positive test too.
-
----
-
----
-
-## 9. A store through `&local` in an inline header helper is dropped
-
-**Severity: high.** The caller keeps the old value of a local the inlined body
-wrote through a pointer.
-
-**Violated invariant.** An inline helper executes on the caller's memory; a
-store through a pointer to a caller local is visible to later reads of that
-local by name.
-
-**Mechanism.** Inline bodies from headers are checked at the call site on the
-caller's memory (`src/languages/c/source.rs` expansion plus ordinary
-execution), but the store does not go through the address-escape path that
-syncs an address-taken local's named binding.
-
-**Regression** (`mdtests/inline_helper_store_dropped_rejected.md`), a header
-plus a source:
-
-```c
-/* include/hset.h */
-#ifndef HSET_H
-#define HSET_H
-static inline int32 set0(int32* p) {
-    p[0] = 9;
-    return 0;
-}
-#endif
-```
-
-```c
-/* t.c */
-#include "include/hset.h"
-
-int32 run_set0_local() {
-    int32 n;
-    int32 ignored;
-    n = 100;
-    ignored = set0(&n);
-    return n;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 run_set0_local() {
-    ensures result == 100;
-}
-```
-
-The function returns 9.
-
-**Acceptance criteria.**
-- The sidecar is rejected and `ensures result == 9` verifies instead.
-- The same test with the helper written as an ordinary function in the same
-  translation unit continues to behave (it already does), so the regression
-  pins the inline path specifically.
-
----
-
----
-
-## 13. ~~Range byte counts wrap modulo 2^32~~ — fixed
-
-**Status: fixed.** Range lowering now uses one canonical 32-bit byte-count
-helper. Direct loadability requirements and public spec loadability carry
-forward-range and no-overflow conditions; spec claims record them as proof
-obligations while the atomic loadability fact stays separate. Internal
-composite-resource summaries remain symbolic until their owning resource is
-used, preserving the existing resource-expansion contract.
-
-**Severity: high.** A huge or negative element range lowers to a tiny byte
-footprint, so a `loadable` fact is certified for memory that was never claimed.
-
-**Violated invariant.** The byte footprint of an element range is
-`(end - start) * element_width` without wrapping.
-
-**Mechanism.** Two sites multiply an element count by an element width with
-the ordinary 32-bit term constructor and no overflow obligation:
-`CMemoryRange::byte_footprint` (`src/kernel/primitives/contracts.rs:1197`),
-which runs only when two ranges have different element widths, and
-`loadable_base_and_bytes` (`src/surface/lowering/resource_lowering.rs:1357`),
-which builds the `CMemoryLoadable` byte count. The latter is the path this
-regression takes. It already rejects a constant reversed range, but the count
-here is the symbolic `n`, so the wrap happens later, when the kernel folds
-`n * 4` against the path's `n == 1073741825`.
-
-Measured signature, with `loadable(p[0..1])` required: `n = 2^30` (byte count
-folds to 0) and `n = 2^30 + 1` (folds to 4) both certify, while `n = 2^30 + 2`
-(folds to 8) is correctly rejected. `n = -1` also certifies, which is
-defensible: an empty range is vacuously loadable.
-
-A fix needs a decision rather than a local patch: either carry byte extents in
-64 bits, or emit a no-overflow obligation where an element range becomes a
-byte count. The
-memory model documents a 32-bit block extent, so the second is the smaller
-change but needs an obligation channel at both sites.
-
-**Regression** (`mdtests/range_byte_count_wraps_rejected.md`):
-
-```c
-int32 symn(int32 p[], int32 n) {
-    return 0;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 symn(int32 p[], int32 n) {
-    requires loadable(p[0..1]);
-    requires n == 1073741825;
-    ensures loadable(p[0..n]);
-}
-```
-
-`(n - 0) * 4` wraps to 4, so a one-element loadability fact certifies a
-4-gigabyte range. The mirror case is `views p[0..n]` with
-`n == -1073741823`, which authorizes reading `p[0]` from an empty view.
-
-**Acceptance criteria.**
-- Both the wrapping and the negative case are rejected.
-- Compute footprints in 64-bit, or emit a no-overflow obligation on range
-  lowering; either way empty and reversed ranges stay empty.
-- Audit the other range operations for the same gap: element-to-byte
-  arithmetic without a side condition appears wherever a range is measured.
-
----
-
----
-
-## 15. A `for` initializer's variable stays readable after the loop
-
-**Severity: high.** C0 accepts a program C rejects, and proves a value for the
-out-of-scope read.
-
-**Violated invariant.** A variable declared in a `for` initializer is scoped to
-the loop (C11 6.8.5p5). Naming it afterwards is a use of an undeclared
-identifier, which is a constraint violation, not a value.
-
-**Mechanism.** Not localized. `for` is lowered as sugar over `while` in
-`src/languages/c/syntax.rs`; the initializer's declaration is emitted into the
-enclosing block, so the binding outlives the loop it belongs to.
-
-**Regression** (`mdtests/for_initializer_scope_rejected.md`):
-
-```c
-int32 for_initializer_scope_rejected() {
-    int32 total = 0;
-    for (int32 i = 0; i < 3; i++) {
-        total = total + i;
-    }
-    return i;
-}
-```
-
-```click
-verifying "t.c";
-
-int32 for_initializer_scope_rejected() {
-    ensures result == 3;
-}
-```
-
-**Acceptance criteria.**
-- The C source is rejected with a source-positioned diagnostic naming `i`.
-- A `for` loop whose index is declared before the loop, and read after it,
-  still verifies.
-
----
-
----
-
-## Tooling failures
-
-These block use rather than admitting false claims, but the first one means the
-CLI and the fixture gate disagree about the same input, which is its own
-problem.
-
-**T1. `click verify` rejects every source that calls `realloc`.** Extracting
-the checked-in `mdtests/realloc_preserves_calloc_prefix.md` (expect: pass) into
-a directory and running `click verify t.click` gives
-`click: no C source defines realloc` and exit 1. The CLI's callee closure
-(`src/surface/verification.rs:1440-1458`, `c0_statement_calls`) treats the
-`realloc` builtin as an ordinary callee, while `malloc`, `calloc`, and `free`
-are dedicated statement forms; the harness entry point does not compute that
-closure. Documented `realloc` support is unreachable from the CLI. Acceptance:
-that mdtest's sources verify through `click verify`, and a CLI test pins it.
-
-**T2. `--changed-since` cannot resolve project-local headers.** A project with
+A project with
 `cap.h`, `m.c` containing `#include "cap.h"`, and a sidecar verifies with
 `click verify`, but `--changed-since HEAD` (and `--explain`) fails with
 `cannot resolve local include cap.h as cap.h in the source bundle`, with no
@@ -237,7 +24,8 @@ change in the tree. Incremental mode builds its source bundle without headers.
 Acceptance: incremental verification of a project with local headers works, and
 a header edit selects the functions whose translation units include it.
 
-**T3. A trivial theorem produces a smart proof with no certificate.**
+## 2. A trivial theorem produces a smart proof with no certificate
+
 `theorem small(x: int32) { requires x < 10; ensures x < 20; }` under the default
 prover fails with `smart proof for small.ensures_0 succeeded but did not
 produce a pure surface certificate`. `ensures x <= 10` works. This is the
@@ -245,13 +33,16 @@ produce a pure surface certificate`. `ensures x <= 10` works. This is the
 feature work. Acceptance: the theorem verifies, or the search declines promptly
 with an actionable diagnostic.
 
-**T4. `execute()` emits a certificate the checker rejects** for `break` inside
-an `if` inside a nested `while`. Same class as T3.
+## 3. `execute()` emits a certificate the checker rejects
 
-**T5. Panic (`unreachable!`) when a local struct initializer zero-fills a
-`float`/`double` field.** A crash, not a wrong answer. Acceptance: the
-initializer is either supported or rejected with a source-positioned
-diagnostic.
+This occurs for `break` inside an `if` inside a nested `while`, in the same
+class as item 2.
+
+## 4. Panic (`unreachable!`) when a local struct initializer zero-fills a
+`float`/`double` field
+
+A crash, not a wrong answer. Acceptance: the initializer is either supported
+or rejected with a source-positioned diagnostic.
 
 ---
 

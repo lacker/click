@@ -1397,6 +1397,7 @@ mod certificate_tests {
                         condition: condition.clone(),
                         value: true,
                     }],
+                    case_offsets: None,
                     certificate: assumption,
                 },
                 PathCertificate {
@@ -1404,6 +1405,7 @@ mod certificate_tests {
                         condition: condition.clone(),
                         value: false,
                     }],
+                    case_offsets: None,
                     certificate: normalize,
                 },
             ],
@@ -1450,6 +1452,7 @@ mod certificate_tests {
                         condition,
                         value: true,
                     }],
+                    case_offsets: None,
                     certificate: assumption,
                 },
                 PathCertificate {
@@ -1457,6 +1460,7 @@ mod certificate_tests {
                         condition: other,
                         value: false,
                     }],
+                    case_offsets: None,
                     certificate: normalize,
                 },
             ],

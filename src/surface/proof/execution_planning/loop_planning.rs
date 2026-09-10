@@ -500,10 +500,13 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
             })
             .collect::<Vec<_>>();
         let surface_tactics = leaf.path_certificate().to_proof_tactics();
-        let certificate =
+        let (certificate, selected_offsets) =
             certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
+        let case_offsets = selected_offsets
+            .or_else(|| recorded_case_offsets(&context_execution.presentation, case_path.len()));
         paths.push(PathCertificate {
             case_path,
+            case_offsets,
             certificate,
         });
     }
@@ -1679,7 +1682,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 closer_tactics.is_empty(),
             );
         }
-        let prefix = certificate_leaf_for_case_path(&claim_label, &source_tactics, &case_path)?;
+        let (prefix, selected_offsets) =
+            certificate_leaf_for_case_path(&claim_label, &source_tactics, &case_path)?;
+        let case_offsets = selected_offsets
+            .or_else(|| recorded_case_offsets(&context_execution.presentation, case_path.len()));
         let mut leaf_tactics = prefix.to_proof_tactics().to_vec();
         leaf_tactics.extend(closer_tactics);
         let certificate = ProofCertificate::from_proof_tactics(&leaf_tactics).map_err(|error| {
@@ -1689,6 +1695,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         })?;
         certificate_paths.push(PathCertificate {
             case_path: case_path.clone(),
+            case_offsets,
             certificate,
         });
         for (effect_index, ((item_index, item), check)) in
@@ -1709,6 +1716,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             )?;
             effect_certificate_paths[effect_index].push(PathCertificate {
                 case_path: case_path.clone(),
+                case_offsets: None,
                 certificate: effect_certificate,
             });
         }

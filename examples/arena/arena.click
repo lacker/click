@@ -42,7 +42,6 @@ int32 arena_region_length(struct region* region) {
     requires 0 <= region->start;
     requires region->start <= region->end;
     views arena_region(region);
-    immutable;
 
     ensures result == region->end - region->start;
 } by {
@@ -57,7 +56,6 @@ int32 arena_region_length(struct region* region) {
             }
         }
         step();
-        frame();
         simp();
     }
 }
@@ -67,7 +65,6 @@ int32 arena_read(struct region* region, int32 index) {
     requires defined(region->start + index) and
         region->start + index < region->end;
     views arena_region(region);
-    immutable;
 
     ensures result == region->arena->data[region->start + index];
 } by {
@@ -110,7 +107,6 @@ int32 arena_read(struct region* region, int32 index) {
             step();
             step();
             step();
-            frame();
             simp();
         }
     }
