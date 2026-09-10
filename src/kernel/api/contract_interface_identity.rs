@@ -339,6 +339,7 @@ impl Names {
         match argument {
             SpecPureFunctionArgument::Value(e)
             | SpecPureFunctionArgument::ArrayRef { pointer: e, .. } => self.expression(e),
+            SpecPureFunctionArgument::Integer(_) => {}
             SpecPureFunctionArgument::Algebraic(e) => self.algebraic(e),
         }
     }

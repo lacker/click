@@ -918,6 +918,7 @@ pub struct ResourceFieldProjection {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecPureFunctionArgument {
     Value(SpecExpression),
+    Integer(SpecIntegerExpression),
     Algebraic(SpecAlgebraicExpression),
     ArrayRef {
         memory: SpecMemory,
@@ -1124,6 +1125,7 @@ pub enum AlgebraicTermNode {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum PureFunctionArgument {
     Value(CValue),
+    Integer(IntegerTerm),
     Algebraic(AlgebraicTerm),
     ArrayRef {
         memory: CMemory,
@@ -1199,6 +1201,7 @@ impl AlgebraicTerm {
                                     Node::Value(v)
                                 }
                                 PureFunctionArgument::Algebraic(v) => Node::Algebraic(v),
+                                PureFunctionArgument::Integer(_) => continue,
                             });
                         }
                     }
@@ -1431,6 +1434,7 @@ impl PureFunctionArgument {
     fn is_well_formed(&self) -> bool {
         match self {
             Self::Value(_) => true,
+            Self::Integer(_) => true,
             Self::Algebraic(term) => term.is_well_formed(),
             Self::ArrayRef {
                 pointer,

@@ -866,6 +866,7 @@ fn substitute_integer_term(term: &IntegerTerm) -> SpecIntegerExpression {
             Box::new(substitute_integer_term(right.as_ref())),
         ),
         IntegerTerm::Machine(_) => SpecIntegerExpression::Term(term.clone()),
+        IntegerTerm::PureFunctionApplication { .. } => SpecIntegerExpression::Term(term.clone()),
     }
 }
 
@@ -3895,6 +3896,23 @@ fn evaluate_spec_pure_function_argument_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPureFunctionArgumentPath>> {
     match argument {
+        SpecPureFunctionArgument::Integer(expression) => Ok(
+            evaluate_spec_integer_expression_paths(
+                state,
+                expression,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| SpecPureFunctionArgumentPath {
+                value: PureFunctionArgument::Integer(path.value),
+                facts: path.facts,
+                obligations: path.obligations,
+            })
+            .collect(),
+        ),
         SpecPureFunctionArgument::Value(expression) => {
             Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,

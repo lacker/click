@@ -46,6 +46,12 @@ pub enum IntegerTerm {
     Add(SharedIntegerTerm, SharedIntegerTerm),
     Subtract(SharedIntegerTerm, SharedIntegerTerm),
     Multiply(SharedIntegerTerm, SharedIntegerTerm),
+    /// An opaque pure specification function application.  The body is
+    /// exposed only by the checked `unfold` rule.
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<PureFunctionArgument>,
+    },
 }
 
 impl Clone for IntegerTerm {
@@ -58,6 +64,10 @@ impl Clone for IntegerTerm {
             Self::Add(left, right) => Self::Add(left.clone(), right.clone()),
             Self::Subtract(left, right) => Self::Subtract(left.clone(), right.clone()),
             Self::Multiply(left, right) => Self::Multiply(left.clone(), right.clone()),
+            Self::PureFunctionApplication { name, arguments } => Self::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments.clone(),
+            },
         }
     }
 }
@@ -328,6 +338,11 @@ impl fmt::Debug for IntegerTerm {
                 .field(&left.id())
                 .field(&right.id())
                 .finish(),
+            Self::PureFunctionApplication { name, arguments } => formatter
+                .debug_struct("PureFunctionApplication")
+                .field("name", name)
+                .field("arguments", arguments)
+                .finish(),
         }
     }
 }
@@ -348,6 +363,7 @@ enum IntegerShallowKey {
     Add(u64, u64),
     Subtract(u64, u64),
     Multiply(u64, u64),
+    PureFunctionApplication(String, Vec<PureFunctionArgument>),
 }
 
 impl IntegerTerm {
@@ -390,6 +406,9 @@ impl IntegerTerm {
             Self::Add(left, right) => IntegerShallowKey::Add(left.id(), right.id()),
             Self::Subtract(left, right) => IntegerShallowKey::Subtract(left.id(), right.id()),
             Self::Multiply(left, right) => IntegerShallowKey::Multiply(left.id(), right.id()),
+            Self::PureFunctionApplication { name, arguments } => {
+                IntegerShallowKey::PureFunctionApplication(name.clone(), arguments.clone())
+            }
         }
     }
 }
@@ -608,6 +627,14 @@ fn fmt_integer_term(
             fmt_integer_shared(right, formatter, seen)?;
             write!(formatter, ")")
         }
+        IntegerTerm::PureFunctionApplication { name, arguments } => {
+            write!(formatter, "{name}(")?;
+            for (index, argument) in arguments.iter().enumerate() {
+                if index != 0 { write!(formatter, ", ")?; }
+                write!(formatter, "{argument:?}")?;
+            }
+            write!(formatter, ")")
+        }
     }
 }
 
@@ -697,7 +724,10 @@ mod tests {
                 continue;
             }
             match node.as_ref() {
-                IntegerTerm::Constant(_) | IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {}
+                IntegerTerm::Constant(_)
+                | IntegerTerm::Variable(_)
+                | IntegerTerm::Machine(_)
+                | IntegerTerm::PureFunctionApplication { .. } => {}
                 IntegerTerm::Negate(value) => pending.push(value.clone()),
                 IntegerTerm::Add(left, right)
                 | IntegerTerm::Subtract(left, right)

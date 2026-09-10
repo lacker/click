@@ -3321,6 +3321,7 @@ fn spec_pure_function_argument_supports_stateful_memory_refinement(
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_supports_stateful_memory_refinement(expression)
         }
+        SpecPureFunctionArgument::Integer(_) => false,
         // The refinement rule deliberately excludes algebraic values and
         // array snapshots until their stateful refinement laws are explicit.
         SpecPureFunctionArgument::Algebraic(_) | SpecPureFunctionArgument::ArrayRef { .. } => false,
@@ -3431,6 +3432,7 @@ fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionA
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_is_state_independent(expression)
         }
+        SpecPureFunctionArgument::Integer(_) => true,
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_is_state_independent(expression)
         }
@@ -3748,6 +3750,7 @@ fn spec_pure_function_argument_reads_current_parameter(
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_reads_current_parameter(expression, parameter_name)
         }
+        SpecPureFunctionArgument::Integer(_) => false,
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
         }
@@ -4434,6 +4437,7 @@ fn spec_pure_function_argument_current_parameter_accesses(
                 unknown_read,
             );
         }
+        SpecPureFunctionArgument::Integer(_) => {}
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_current_parameter_accesses(
                 expression,

@@ -2265,6 +2265,9 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<crate::kernel::SpecIntegerExpression, String> {
+        if let ContractExpression::Call { name, arguments } = expression {
+            return self.lower_click_function_call_to_integer_spec(name, arguments, environment);
+        }
         if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
             let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
             if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =
@@ -2300,6 +2303,49 @@ impl AnnotationLowerer<'_> {
             });
         }
         lower_contract_integer_to_spec(expression, &environment.integer_values)
+    }
+
+    fn lower_click_function_call_to_integer_spec(
+        &mut self,
+        name: &str,
+        arguments: &[ContractExpression],
+        environment: &SpecElaborationContext,
+    ) -> Result<crate::kernel::SpecIntegerExpression, String> {
+        let definition = self
+            .click_function_environment
+            .get(name)
+            .ok_or_else(|| format!("unknown function `{name}`"))?
+            .clone();
+        let definition =
+            self.instantiate_click_function_for_call(&definition, arguments, environment)?;
+        if arguments.len() != definition.parameters().len() {
+            return Err(format!(
+                "function `{}` expects {} argument(s), got {}",
+                definition.name(),
+                definition.parameters().len(),
+                arguments.len()
+            ));
+        }
+        if definition.return_type() != &ClickType::Integer {
+            return Err(format!("function `{name}` does not return an Integer value"));
+        }
+        let mut lowered = Vec::with_capacity(arguments.len());
+        for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+            if parameter.click_type() != &ClickType::Integer {
+                return Err(format!("Integer function `{name}` has a non-Integer parameter"));
+            }
+            let value = self.lower_contract_integer_to_spec(argument, environment)?;
+            let crate::kernel::SpecIntegerExpression::Term(value) = value else {
+                return Err("Integer function arguments must be symbolic terms".to_string());
+            };
+            lowered.push(crate::kernel::PureFunctionArgument::Integer(value));
+        }
+        Ok(crate::kernel::SpecIntegerExpression::Term(
+            crate::kernel::IntegerTerm::PureFunctionApplication {
+                name: definition.name().to_string(),
+                arguments: lowered,
+            },
+        ))
     }
 
     fn lower_contract_expression_to_spec(
@@ -3092,10 +3138,15 @@ impl AnnotationLowerer<'_> {
                     "function `{}` has unresolved type parameter `{name}`",
                     definition.name()
                 )),
-                ClickType::Integer => Err(format!(
-                    "function `{}` has an unsupported Integer parameter",
-                    definition.name()
-                )),
+                ClickType::Integer => {
+                    let value = self.lower_contract_integer_to_spec(argument, environment)?;
+                    let crate::kernel::SpecIntegerExpression::Term(value) = value else {
+                        return Err("Integer function arguments must be symbolic terms".to_string());
+                    };
+                    Ok(crate::kernel::SpecPureFunctionArgument::Integer(
+                        crate::kernel::SpecIntegerExpression::Term(value),
+                    ))
+                }
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),

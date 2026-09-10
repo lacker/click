@@ -1634,7 +1634,14 @@ fn validate_algebraic_expression(
             let function = click_functions.get(name);
             let actual_types = arguments
                 .iter()
-                .map(|argument| {
+                .enumerate()
+                .map(|(index, argument)| {
+                    if function
+                        .and_then(|function| function.parameters.get(index))
+                        .is_some_and(|parameter| parameter.click_type() == &ClickType::Integer)
+                    {
+                        return Ok(Some(ClickType::Integer));
+                    }
                     let algebraic = validate_algebraic_expression(
                         argument,
                         variables,
