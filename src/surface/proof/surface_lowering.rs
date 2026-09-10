@@ -74,6 +74,10 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
+                // A pure goal's universal binders are named only by this
+                // goal's retained bindings; the theorem's parameter values
+                // do not mention them.
+                let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
                 lower_pure_theorem_proposition_with_algebraic_and_integer_values(
                     context.claim_label,
@@ -211,6 +215,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
+                let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
                 lower_pure_theorem_proposition_with_algebraic_and_integer_values(
                     context.claim_label,
@@ -334,6 +339,7 @@ impl<'a> Proof<'a> {
                 {
                     return Ok((recorded.clone(), None));
                 }
+                let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
                 super::pure_theorems::lower_pure_theorem_proposition_recording_introductions(
                     context.claim_label,
