@@ -953,9 +953,12 @@ impl<'a> Proof<'a> {
         };
         // A `have` stated at an execution frontier proves its goal from the
         // frontier's facts alone. After an explicit checked resource unfold,
-        // materialize only a selected separation goal from the compact
-        // composition; call postconditions remain lazy so source expansion
-        // preserves their anchored rewrites.
+        // materialize a selected separation goal from the compact composition
+        // with the context's facts; before one, the composition is still
+        // checked authority for what ownership alone proves (two ranges owned
+        // at entry are disjoint), while a separation that needs call
+        // postconditions stays lazy so source expansion preserves their
+        // anchored rewrites.
         let at_frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let resource_unfolded = self
             .execution()
@@ -963,7 +966,8 @@ impl<'a> Proof<'a> {
         let mut body_facts = if !at_frontier || resource_unfolded {
             self.facts().with_selected_resource_separation(&body_kernel)
         } else {
-            self.facts().clone()
+            self.facts()
+                .with_selected_composition_separation(&body_kernel)
         };
         // A `have` stated at an execution frontier may use the frontier's
         // effect facts exactly as the shared mid-execution law offers them.

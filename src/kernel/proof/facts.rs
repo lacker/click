@@ -479,6 +479,25 @@ impl ProofFacts {
         }
     }
 
+    /// Like [`Self::with_selected_resource_separation`], but the separation
+    /// must follow from the resource compositions alone: two owned ranges of
+    /// one valid composition are disjoint by the algebra, with no condition
+    /// fact involved. A separation that needs contextual facts (a call
+    /// postcondition relating two ranges, say) is not materialized, so its
+    /// proof keeps an explicit derivation.
+    pub(crate) fn with_selected_composition_separation(&self, goal: &Proposition) -> Self {
+        if matches!(
+            goal,
+            Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
+        ) && !self.contains(goal)
+            && self.assumptions.compositions_only().proves(goal)
+        {
+            self.with_fact(goal.clone())
+        } else {
+            self.clone()
+        }
+    }
+
     /// Materializes one selected equality across a checked chain of load
     /// variables. This keeps the ordinary `Assumption` checker exact while
     /// allowing a new fixed-state goal to consume equality transport explicitly

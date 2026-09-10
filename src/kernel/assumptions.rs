@@ -2326,6 +2326,17 @@ impl PureFactContext {
     /// and other contextual facts. Resource-definition projection uses this
     /// to detect ownership conflicts that a contradictory fact from the same
     /// definition must not conceal.
+    /// A context holding only this context's resource compositions: what
+    /// ownership alone proves, independent of any condition or other fact.
+    pub(crate) fn compositions_only(&self) -> Self {
+        let mut context = Self::new();
+        for resources in self.resource_compositions.iter() {
+            context =
+                context.assume_proposition(Proposition::CResourceComposition(resources.clone()));
+        }
+        context
+    }
+
     pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
