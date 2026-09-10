@@ -924,16 +924,24 @@ fn expand_declared_resource_proposition(
                 resource_definitions,
             )?),
         }),
-        ClickProposition::ForAll { c_type, name, body } => Ok(ClickProposition::ForAll {
-            c_type,
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        } => Ok(ClickProposition::ForAll {
+            click_type: c_type,
             name,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
                 resource_definitions,
             )?),
         }),
-        ClickProposition::Exists { c_type, name, body } => Ok(ClickProposition::Exists {
-            c_type,
+        ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => Ok(ClickProposition::Exists {
+            click_type: c_type,
             name,
             body: Box::new(expand_declared_resource_proposition(
                 *body,

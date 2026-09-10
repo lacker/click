@@ -1288,13 +1288,21 @@ fn annotate_surface_at_snapshot(
                 let right = child();
                 ClickProposition::Implies(child(), right)
             }
-            ClickProposition::ForAll { c_type, name, .. } => ClickProposition::ForAll {
-                c_type: *c_type,
+            ClickProposition::ForAll {
+                click_type: c_type,
+                name,
+                ..
+            } => ClickProposition::ForAll {
+                click_type: c_type.clone(),
                 name: name.clone(),
                 body: child(),
             },
-            ClickProposition::Exists { c_type, name, .. } => ClickProposition::Exists {
-                c_type: *c_type,
+            ClickProposition::Exists {
+                click_type: c_type,
+                name,
+                ..
+            } => ClickProposition::Exists {
+                click_type: c_type.clone(),
                 name: name.clone(),
                 body: child(),
             },

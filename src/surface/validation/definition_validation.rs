@@ -560,10 +560,23 @@ fn validate_contract_applications_in_proposition(
             click_functions,
             context,
         ),
-        ClickProposition::ForAll { c_type, name, body }
-        | ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        }
+        | ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let mut variables = variables.clone();
-            variables.insert(name.clone(), *c_type);
+            variables.insert(
+                name.clone(),
+                c_type.c_type().ok_or_else(|| {
+                    ClickError::new("only C quantifier binders are currently supported")
+                })?,
+            );
             validate_contract_applications_in_proposition(
                 body,
                 contracts,

@@ -870,12 +870,12 @@ pub enum ClickProposition {
     Not(Box<ClickProposition>),
     Implies(Box<ClickProposition>, Box<ClickProposition>),
     ForAll {
-        c_type: C0Type,
+        click_type: ClickType,
         name: String,
         body: Box<ClickProposition>,
     },
     Exists {
-        c_type: C0Type,
+        click_type: ClickType,
         name: String,
         body: Box<ClickProposition>,
     },

@@ -983,13 +983,21 @@ fn instantiate_proposition(
         ClickProposition::Implies(left, right) => {
             ClickProposition::Implies(Box::new(recurse(left)?), Box::new(recurse(right)?))
         }
-        ClickProposition::ForAll { c_type, name, body } => ClickProposition::ForAll {
-            c_type: *c_type,
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        } => ClickProposition::ForAll {
+            click_type: instantiate_click_type(c_type, substitution)?,
             name: name.clone(),
             body: Box::new(recurse(body)?),
         },
-        ClickProposition::Exists { c_type, name, body } => ClickProposition::Exists {
-            c_type: *c_type,
+        ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => ClickProposition::Exists {
+            click_type: instantiate_click_type(c_type, substitution)?,
             name: name.clone(),
             body: Box::new(recurse(body)?),
         },

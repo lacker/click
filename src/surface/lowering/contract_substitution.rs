@@ -144,8 +144,12 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
                 active,
             )?),
         )),
-        ClickProposition::ForAll { c_type, name, body } => Ok(ClickProposition::ForAll {
-            c_type: *c_type,
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        } => Ok(ClickProposition::ForAll {
+            click_type: c_type.clone(),
             name: name.clone(),
             body: Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
@@ -154,8 +158,12 @@ pub(in crate::surface) fn unfold_click_predicates_in_proposition_with_active(
                 active,
             )?),
         }),
-        ClickProposition::Exists { c_type, name, body } => Ok(ClickProposition::Exists {
-            c_type: *c_type,
+        ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => Ok(ClickProposition::Exists {
+            click_type: c_type.clone(),
             name: name.clone(),
             body: Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
@@ -328,22 +336,30 @@ fn substitute_click_proposition_nonlogical(
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: substitute_contract_expression(expression, substitutions)?,
         }),
-        ClickProposition::ForAll { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
             let (name, body) = prepare_click_proposition_binding_body(name, body, &scoped)?;
             Ok(ClickProposition::ForAll {
-                c_type: *c_type,
+                click_type: c_type.clone(),
                 name,
                 body: Box::new(body),
             })
         }
-        ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let mut scoped = substitutions.clone();
             scoped.remove(name);
             let (name, body) = prepare_click_proposition_binding_body(name, body, &scoped)?;
             Ok(ClickProposition::Exists {
-                c_type: *c_type,
+                click_type: c_type.clone(),
                 name,
                 body: Box::new(body),
             })
@@ -916,17 +932,25 @@ fn rewrite_click_proposition_expression(
             let (body, changed) = rewrite_proposition(body);
             (ClickProposition::Not(Box::new(body)), changed)
         }
-        ClickProposition::ForAll { c_type, name, body }
-        | ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        }
+        | ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let (body, changed) = rewrite_proposition(body);
             let rewritten = match proposition {
                 ClickProposition::ForAll { .. } => ClickProposition::ForAll {
-                    c_type: *c_type,
+                    click_type: c_type.clone(),
                     name: name.clone(),
                     body: Box::new(body),
                 },
                 ClickProposition::Exists { .. } => ClickProposition::Exists {
-                    c_type: *c_type,
+                    click_type: c_type.clone(),
                     name: name.clone(),
                     body: Box::new(body),
                 },
@@ -1634,20 +1658,28 @@ pub(in crate::surface) fn apply_contract_let_expressions_to_proposition(
                 *right, bindings,
             )?),
         )),
-        ClickProposition::ForAll { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let scoped = contract_lets_without_name(bindings, &name);
             Ok(ClickProposition::ForAll {
-                c_type,
+                click_type: c_type,
                 name,
                 body: Box::new(apply_contract_let_expressions_to_proposition(
                     *body, &scoped,
                 )?),
             })
         }
-        ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let scoped = contract_lets_without_name(bindings, &name);
             Ok(ClickProposition::Exists {
-                c_type,
+                click_type: c_type,
                 name,
                 body: Box::new(apply_contract_let_expressions_to_proposition(
                     *body, &scoped,
@@ -1721,7 +1753,7 @@ pub(in crate::surface) fn wrap_contract_where_lets_proposition(
             ));
         };
         proposition = ClickProposition::Exists {
-            c_type: *c_type,
+            click_type: ClickType::C(*c_type),
             name: binding.name.clone(),
             body: Box::new(ClickProposition::And(
                 Box::new(condition),

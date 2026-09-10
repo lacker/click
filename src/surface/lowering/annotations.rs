@@ -1708,10 +1708,17 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecProposition, String> {
         match proposition {
-            ClickProposition::ForAll { c_type, name, body } => {
+            ClickProposition::ForAll {
+                click_type: c_type,
+                name,
+                body,
+            } => {
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
-                let c_type = c_type.to_kernel_type();
+                let c_type = c_type
+                    .c_type()
+                    .ok_or("only C quantifier binders are currently supported")?
+                    .to_kernel_type();
                 let value = match c_type {
                     CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
                     c_type if c_type.is_pointer() => {
@@ -1763,10 +1770,17 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecProposition, String> {
         match proposition {
-            ClickProposition::Exists { c_type, name, body } => {
+            ClickProposition::Exists {
+                click_type: c_type,
+                name,
+                body,
+            } => {
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
-                let c_type = c_type.to_kernel_type();
+                let c_type = c_type
+                    .c_type()
+                    .ok_or("only C quantifier binders are currently supported")?
+                    .to_kernel_type();
                 let value = match c_type {
                     CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
                     c_type if c_type.is_pointer() => {

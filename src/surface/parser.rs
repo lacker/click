@@ -2868,7 +2868,7 @@ impl Parser {
             };
             let body = self.parse_proposition()?;
             return Ok(ClickProposition::Exists {
-                c_type,
+                click_type: ClickType::C(c_type),
                 name: binding.name,
                 body: Box::new(ClickProposition::And(Box::new(condition), Box::new(body))),
             });
@@ -2894,7 +2894,7 @@ impl Parser {
             let body = self.parse_proposition()?;
             self.expect(Token::RBrace)?;
             return Ok(ClickProposition::ForAll {
-                c_type,
+                click_type: ClickType::C(c_type),
                 name,
                 body: Box::new(body),
             });
@@ -2920,7 +2920,7 @@ impl Parser {
             let body = self.parse_proposition()?;
             self.expect(Token::RBrace)?;
             return Ok(ClickProposition::Exists {
-                c_type,
+                click_type: ClickType::C(c_type),
                 name,
                 body: Box::new(body),
             });

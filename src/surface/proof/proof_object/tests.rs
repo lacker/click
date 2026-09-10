@@ -1711,7 +1711,7 @@ fn fixed_state_witness_refines_existential_transactionally_with_constant_local_w
         right: ContractExpression::CFragment(CExpression::Value(int32(7))),
     };
     let surface_goal = ClickProposition::Exists {
-        c_type: C0Type::Int32,
+        click_type: ClickType::C(C0Type::Int32),
         name: "chosen".to_string(),
         body: Box::new(expected_surface),
     };
@@ -1800,7 +1800,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
     let binder_expression = ContractExpression::CFragment(CExpression::Variable(binder.clone()));
     let constant = |value| ContractExpression::CFragment(CExpression::Value(int32(value)));
     let surface_goal = ClickProposition::ForAll {
-        c_type: C0Type::Int32,
+        click_type: ClickType::C(C0Type::Int32),
         name: binder.clone(),
         body: Box::new(ClickProposition::Comparison {
             left: binder_expression.clone(),
@@ -2524,7 +2524,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
         right: variable("x"),
     };
     let quantified_surface = ClickProposition::ForAll {
-        c_type: C0Type::Int32,
+        click_type: ClickType::C(C0Type::Int32),
         name: "k".to_string(),
         body: Box::new(ClickProposition::Implies(
             Box::new(ClickProposition::Comparison {

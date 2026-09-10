@@ -91,10 +91,23 @@ pub(super) fn validate_proposition_expression_types(
         | ClickProposition::At {
             proposition: body, ..
         } => validate_proposition_expression_types(body, variables, click_functions, context),
-        ClickProposition::ForAll { c_type, name, body }
-        | ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        }
+        | ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let mut body_variables = variables.clone();
-            body_variables.insert(name.clone(), *c_type);
+            body_variables.insert(
+                name.clone(),
+                c_type.c_type().ok_or_else(|| {
+                    ClickError::new("only C quantifier binders are currently supported")
+                })?,
+            );
             validate_proposition_expression_types(body, &body_variables, click_functions, context)
         }
         ClickProposition::RangeAll {

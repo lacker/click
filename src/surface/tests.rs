@@ -1812,7 +1812,7 @@ fn current_index(base: &str, index: u32) -> ContractExpression {
 #[test]
 fn contract_substitution_renames_colliding_logical_binders() {
     let proposition = ClickProposition::ForAll {
-        c_type: C0Type::Int32,
+        click_type: ClickType::C(C0Type::Int32),
         name: "i".to_string(),
         body: Box::new(ClickProposition::Comparison {
             left: current_var("argument"),

@@ -427,12 +427,12 @@ fn synthesize_surface_quantified_proposition(
             )?);
             Some(match proposition {
                 Proposition::ForAll { .. } => ClickProposition::ForAll {
-                    c_type: C0Type::Int32,
+                    click_type: ClickType::C(C0Type::Int32),
                     name,
                     body,
                 },
                 Proposition::Exists { .. } => ClickProposition::Exists {
-                    c_type: C0Type::Int32,
+                    click_type: ClickType::C(C0Type::Int32),
                     name,
                     body,
                 },

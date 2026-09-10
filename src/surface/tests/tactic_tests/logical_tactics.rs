@@ -666,7 +666,7 @@ fn parses_contract_level_let_where_bindings() {
     assert!(matches!(
         ensure.ensure(),
         Ensure::Proposition(ClickProposition::Exists {
-            c_type: C0Type::Int32,
+            click_type: ClickType::C(C0Type::Int32),
             name,
             body,
         }) if name == "k"
@@ -692,7 +692,7 @@ fn parses_proposition_let_where_bindings() {
     assert!(matches!(
         ensure.ensure(),
         Ensure::Proposition(ClickProposition::Exists {
-            c_type: C0Type::Int32,
+            click_type: ClickType::C(C0Type::Int32),
             name,
             ..
         }) if name == "k"

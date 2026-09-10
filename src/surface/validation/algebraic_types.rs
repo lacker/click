@@ -950,10 +950,23 @@ fn validate_algebraic_proposition(
             definitions,
             context,
         ),
-        ClickProposition::ForAll { c_type, name, body }
-        | ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        }
+        | ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let mut variables = variables.clone();
-            variables.insert(name.clone(), *c_type);
+            variables.insert(
+                name.clone(),
+                c_type.c_type().ok_or_else(|| {
+                    ClickError::new("only C quantifier binders are currently supported")
+                })?,
+            );
             validate_algebraic_proposition(
                 body,
                 &variables,
@@ -2161,10 +2174,18 @@ fn validate_generic_proposition_types(
                 context,
             )
         }
-        ClickProposition::ForAll { c_type, name, body }
-        | ClickProposition::Exists { c_type, name, body } => {
+        ClickProposition::ForAll {
+            click_type: c_type,
+            name,
+            body,
+        }
+        | ClickProposition::Exists {
+            click_type: c_type,
+            name,
+            body,
+        } => {
             let mut variables = variables.clone();
-            variables.insert(name.clone(), ClickType::C(*c_type));
+            variables.insert(name.clone(), c_type.clone());
             validate_generic_proposition_types(
                 body,
                 &variables,

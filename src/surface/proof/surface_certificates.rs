@@ -5705,12 +5705,17 @@ pub(super) fn comparison_snapshot_variants(
                 .collect(),
         );
     }
-    if let ClickProposition::ForAll { c_type, name, body } = proposition {
+    if let ClickProposition::ForAll {
+        click_type: c_type,
+        name,
+        body,
+    } = proposition
+    {
         return Some(
             comparison_snapshot_variants(body, selectors)?
                 .into_iter()
                 .map(|body| ClickProposition::ForAll {
-                    c_type: *c_type,
+                    click_type: c_type.clone(),
                     name: name.clone(),
                     body: Box::new(body),
                 })

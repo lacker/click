@@ -34,19 +34,27 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                     at_precedence(proposition, 0)
                 ),
             ),
-            ClickProposition::ForAll { c_type, name, body } => (
+            ClickProposition::ForAll {
+                click_type: c_type,
+                name,
+                body,
+            } => (
                 5,
                 format!(
                     "forall ({name}: {}) {{ {} }}",
-                    describe_c0_type(*c_type),
+                    validation::describe_click_type(c_type),
                     at_precedence(body, 0)
                 ),
             ),
-            ClickProposition::Exists { c_type, name, body } => (
+            ClickProposition::Exists {
+                click_type: c_type,
+                name,
+                body,
+            } => (
                 5,
                 format!(
                     "exists ({name}: {}) {{ {} }}",
-                    describe_c0_type(*c_type),
+                    validation::describe_click_type(c_type),
                     at_precedence(body, 0)
                 ),
             ),
