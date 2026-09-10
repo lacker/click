@@ -553,6 +553,101 @@ The pure resource observation/rewrite deltas above are now migrated as well.
 other authority consumers in the inventory. Broader resource matching/ownership
 and definition-evaluation rules remain separate work.
 
+### Quantified-conversion census (2026-09-09)
+
+Measured at `423a4e9a`, after resource pure-delta migration, in an isolated
+worktree/build directory. Temporary probes in
+`quantified_equivalent_available_fact` counted candidate comparisons, not proof
+sites or all quantified lookups. Ordinary verification covered 25 example
+projects (the existing `multifile-registry` quarantine excluded) and 1,118
+markdown fixtures, including expected failures. Both fixture gates passed.
+
+| Corpus | Exact/current binder match, both simp directions succeed | Beyond current binder match, both succeed | Only one direction succeeds | Neither succeeds |
+| --- | ---: | ---: | ---: | ---: |
+| Examples | 4 | 0 | 0 | 3 |
+| Markdown fixtures | 107 | 17 | 28 | 130 |
+
+All 28 one-way comparisons succeeded only in the reverse direction and were
+correctly rejected by the mutual-equivalence helper. The 17 successful
+nontrivial-to-the-current-matcher comparisons occur in just three fixtures:
+
+- `copy_n_segment_invariant`: one kernel `matching_quantified_facts` success,
+  reached by `apply_assumption` while smart closure tries its simple steps.
+- `fill_tail_old_prefix_segment`: two surface smart-premise syntax matches.
+- `loop_sorted_range_invariant`: two kernel matches while fixed-state loop
+  initialization calls `with_selected_load_equality_bridge`, plus twelve
+  surface smart-premise syntax matches.
+
+The fourteen surface matches all come from
+`smart_closures.rs::available_surface_fact`'s local `matches_kernel`
+closure; they select a surface form
+for a kernel premise rather than independently closing a kernel goal. Targeted
+runs with caller/stack probes distinguished those uses from the three
+kernel matches. A successful fallback attempt does not establish that the
+fixture needs it: another checked planning route may still work when denied.
+
+Static authority/consumer inventory:
+
+- `ProofFacts::matching_quantified_facts` filters an indexed bucket using the
+  one-binder matcher, then mutual simp. It feeds pure `assumption`,
+  cross-effect availability/matching, `apply_instantiate`, and selected-load
+  bridge setup. `matching_quantified_fact` currently collects all matches
+  before taking the first; migration should avoid retaining this unnecessary
+  whole-bucket proof search.
+- Surface pure/fixed-state `instantiate using` and `transport using` checks
+  call the helper directly to recognize listed facts. Smart goal closure may
+  turn its answer into an `Assumption` proof step. These are not all merely
+  optional premise-selection heuristics.
+- Other surface uses select/recover snapshot-qualified syntax, match atomic
+  or restricted-simp targets, and omit an already-instantiated quantified
+  premise. `pure_fact_is_available` also uses it for the surface implication
+  extraction checker. Audit callers when changing the shared helper, not just
+  the kernel bucket filter.
+
+Two different notions must stay separate. `quantified_binder_equivalent`
+substitutes the outer binder and compares the body; it does not cover all
+nested quantifier/range-fold alpha-renaming. The existing
+`QuantifiedEquivalenceKey` handles nested binders, but deliberately **omits load
+memory snapshots**. Key equality is candidate selection, not proof authority;
+accepting it directly could identify facts before and after a write. A
+replacement structural matcher must preserve free-variable identities,
+capture avoidance, sorts, and exact load/snapshot identity, with no contextual
+memory or logical reasoning hidden inside it.
+
+**Denial experiment:** replace the shared helper's mutual simp with only exact
+equality or the existing binder matcher, leaving all other planning/checking
+paths intact. All 25 examples and 1,118 markdown fixtures still pass their
+expected verdicts, without any proof-body or C edits. Across the 2,081 unit/CLI
+tests, the semantic failure is
+`quantified_check_key_canonicalizes_range_fold_binders`: it expects a universal
+containing a range fold to match after renaming the universal, accumulator, and
+item binders. The temporary environment-controlled probe also trips the
+intentional `kernel_source_reads_no_environment_variable` source-policy test;
+that is an instrumentation artifact, not a dependency on conversion. Neither
+probe nor denial switch is retained. These results concern ordinary fixture
+verification and existing unit/expansion tests, not an exhaustive corpus audit
+of all smart expansion sites or quarantined examples.
+
+Recommended implementation order:
+
+1. Add a search-free, capture-safe structural alpha matcher covering nested
+   quantifiers and range-fold binders, while preserving exact snapshot/load
+   identities. Keep the snapshot-blind index only for candidate selection.
+   Pin renamed-binder positives and changed-free-variable, capture, changed
+   snapshot/store, sort, and logical-conversion negatives. Include multi-size
+   deterministic work tests over binder depth and unrelated context facts;
+   ordinary single-match availability should not collect every candidate.
+2. Replace mutual simp in the shared availability helper and kernel matching
+   with that structural rule. The denial census does not currently require
+   any fixture proof edits or a new proof construct. Existing smart planners
+   already find alternatives in the three observed fixtures; retain and audit
+   those emitted proof bodies rather than promoting an index hit to authority.
+3. Run the full gate and targeted expansion audits for the three named fixtures
+   plus nested-binder/instantiation regressions. If a genuine conversion is
+   needed, construct it with explicit introductions, instantiation, rewrites,
+   or transport and retain that proof; do not restore a boolean simp fallback.
+   Then proceed to the separate context-free-normalization census.
+
 ### Pointer-offset effect-equality census (2026-09-09)
 
 Measured at `6f0fdf7a`, after the loop back-edge migration, across all 26 example
