@@ -7553,15 +7553,20 @@ fn definition_has_population_wide_body(
                 .all(resource_spec_has_snapshot_independent_footprint))
 }
 
+/// Population quantity relations are decided by exact routes only: syntactic
+/// identity, constant folding, an indexed exact fact lookup, and the retained
+/// atomic condition checker on the bare condition. No general proposition
+/// search runs here; a relation that only follows logically becomes an
+/// explicit obligation at the consuming operation.
 fn population_quantity_is_zero(quantity: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
     quantity == &Bitvector32Term::Constant(0)
-        || assumptions.proves(&Proposition::ConditionIs(
+        || quantity_condition_holds(
+            assumptions,
             ConditionTerm::Bitvector32Equal(
                 Box::new(quantity.clone()),
                 Box::new(Bitvector32Term::Constant(0)),
             ),
-            true,
-        ))
+        )
 }
 
 fn population_quantity_is_positive(
@@ -7569,13 +7574,13 @@ fn population_quantity_is_positive(
     assumptions: &PureFactContext,
 ) -> bool {
     quantity.as_const().is_some_and(|value| value > 0)
-        || assumptions.proves(&Proposition::ConditionIs(
+        || quantity_condition_holds(
+            assumptions,
             ConditionTerm::Bitvector32SignedGreaterThan(
                 Box::new(quantity.clone()),
                 Box::new(Bitvector32Term::Constant(0)),
             ),
-            true,
-        ))
+        )
 }
 
 fn population_quantities_are_equal(
@@ -7584,10 +7589,18 @@ fn population_quantities_are_equal(
     assumptions: &PureFactContext,
 ) -> bool {
     left == right
-        || assumptions.proves(&Proposition::ConditionIs(
+        || quantity_condition_holds(
+            assumptions,
             ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
-            true,
-        ))
+        )
+}
+
+/// Exact lookup first, then the frozen atomic condition checker. Both routes
+/// are indexed in the ambient fact set; neither recurses through logical
+/// structure nor scans unrelated propositions.
+fn quantity_condition_holds(assumptions: &PureFactContext, condition: ConditionTerm) -> bool {
+    assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
+        || assumptions.decide(&condition) == Some(true)
 }
 
 fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
