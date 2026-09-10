@@ -106,7 +106,22 @@ int32 vector_copy(
                 assumption();
             }
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
-                normalize();
+                intro();
+                intro();
+                intro();
+                intro();
+                extract(0 <= k);
+                extract(k < i);
+                have i == 0 by {
+                    normalize();
+                }
+                have not (0 <= k) by {
+                    arithmetic() using {
+                        k < i;
+                        i == 0;
+                    }
+                }
+                contradiction(0 <= k);
             }
         }
         preserve by {
@@ -328,13 +343,13 @@ int32 vector_grow(struct vector* owner) {
             normalize();
         }
         have result == 0 implies owner->cap == old(owner->cap) by {
-            normalize();
+            simp();
         }
         have result == 0 implies owner->data == old(owner->data) by {
-            normalize();
+            simp();
         }
         have result == 1 implies owner->cap == (old(owner->cap) + 1) by {
-            normalize();
+            simp();
         }
         assumption();
         assumption();
@@ -397,13 +412,13 @@ int32 vector_grow(struct vector* owner) {
             normalize();
         }
         have result == 0 implies owner->cap == old(owner->cap) by {
-            normalize();
+            simp();
         }
         have result == 0 implies owner->data == old(owner->data) by {
-            normalize();
+            simp();
         }
         have result == 1 implies owner->cap == (old(owner->cap) + 1) by {
-            normalize();
+            simp();
         }
         assumption();
         assumption();
@@ -645,13 +660,13 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 right();
             }
             have result == 0 implies owner->len == old(owner->len) by {
-                normalize();
+                simp();
             }
             have result == 0 implies owner->cap == old(owner->cap) by {
-                normalize();
+                simp();
             }
             have result == 0 implies owner->data == old(owner->data) by {
-                normalize();
+                simp();
             }
             have result == 1 implies owner->len == (old(owner->len) + 1) by {
                 intro();
@@ -788,13 +803,13 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
             right();
         }
         have result == 0 implies owner->len == old(owner->len) by {
-            normalize();
+            simp();
         }
         have result == 0 implies owner->cap == old(owner->cap) by {
-            normalize();
+            simp();
         }
         have result == 0 implies owner->data == old(owner->data) by {
-            normalize();
+            simp();
         }
         have result == 1 implies owner->len == (old(owner->len) + 1) by {
             intro();
@@ -1076,6 +1091,7 @@ int32 vector_replace_if(
             step();
             have replace != 0 implies selected == replacement by {
                 rewrite(selected == replacement);
+                intro();
                 normalize();
             }
             have not replace != 0 implies selected == original by {

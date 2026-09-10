@@ -1242,10 +1242,15 @@ impl<'a> Proof<'a> {
             .apply_intro(|current, introduction| {
                 let mut surface_bindings = current.surface_bindings.clone();
                 let surface = match (introduction, current.surface.as_deref()) {
-                    (
-                        PropositionIntroduction::Implication,
-                        Some(ClickProposition::Implies(_, consequent)),
-                    ) => Some(Arc::new(consequent.as_ref().clone())),
+                    (PropositionIntroduction::Implication, Some(surface)) => {
+                        surface_implication_parts(surface)
+                            .map(|(_, consequent)| Arc::new(consequent))
+                            // Definedness premises introduced by lowering are
+                            // intentionally absent from Surface syntax. Keep
+                            // the written goal focused while `intro` exposes
+                            // one such kernel implication at a time.
+                            .or_else(|| Some(Arc::new(surface.clone())))
+                    }
                     (
                         PropositionIntroduction::Universal { variable },
                         Some(ClickProposition::ForAll { name, body, .. }),

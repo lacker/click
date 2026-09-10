@@ -538,6 +538,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     click_function_environment: &ClickFunctionEnvironment,
     surface_propositions: &SurfacePropositionMap,
     prelowered_goal: Option<&Proposition>,
+    exact_proof_goal: Option<&Proposition>,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<PlannedPointPureGoal, ClickError> {
     let fact = if let Some(prelowered_goal) = prelowered_goal {
@@ -568,11 +569,12 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     // This replaces the former source rewrite that copied every theorem
     // requirement into an unchecked `apply using` certificate.
     if Proof::supports_linear_source(proof) {
+        let proof_goal = exact_proof_goal.cloned().unwrap_or_else(|| fact.clone());
         let root = Proof::for_fixed_state_surface_goal(
             claim_label,
             proof_index,
             available,
-            fact.clone(),
+            proof_goal,
             proposition.clone(),
             parameters,
             arguments,

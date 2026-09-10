@@ -121,12 +121,12 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
                 let obligation_context =
                     format!("loop {loop_index} invariant {invariant_index} entry");
-                let expected_goal = entry_obligations
+                let exact_expected_goal = entry_obligations
                     .iter()
                     .find(|obligation| obligation.context() == Some(&obligation_context))
                     .map(|obligation| obligation.proposition().clone());
                 let planning_assumptions = assumptions_from_propositions(&planning_available);
-                let expected_goal = expected_goal.map(|mut expected_goal| {
+                let expected_goal = exact_expected_goal.clone().map(|mut expected_goal| {
                     while let Proposition::Implies(antecedent, body) = &expected_goal {
                         if !planning_assumptions.proves(antecedent) {
                             break;
@@ -134,6 +134,17 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         expected_goal = body.as_ref().clone();
                     }
                     expected_goal
+                });
+                let planning_facts =
+                    crate::kernel::proof::ProofFacts::from_ordered(&planning_available);
+                let proof_goal = exact_expected_goal.map(|mut proof_goal| {
+                    while let Proposition::Implies(antecedent, body) = &proof_goal {
+                        if !planning_facts.contains(antecedent) {
+                            break;
+                        }
+                        proof_goal = body.as_ref().clone();
+                    }
+                    proof_goal
                 });
                 // Planning an invariant's entry proof is proof search, not
                 // check. Classify it by the `by` clause the search is
@@ -172,6 +183,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         environment.click_function_environment,
                         &context.surface_propositions,
                         expected_goal.as_ref(),
+                        proof_goal.as_ref(),
                         environment.theorem_environment,
                     )
                 };

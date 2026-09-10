@@ -31,10 +31,51 @@ pub(super) fn surface_logical_children(
     }
 }
 
+pub(super) fn surface_implication_parts(
+    goal: &ClickProposition,
+) -> Option<(ClickProposition, ClickProposition)> {
+    match goal {
+        ClickProposition::Implies(antecedent, consequent) => {
+            Some((antecedent.as_ref().clone(), consequent.as_ref().clone()))
+        }
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => {
+            let (antecedent, consequent) = surface_implication_parts(proposition)?;
+            Some((
+                ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(antecedent),
+                },
+                ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(consequent),
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn plan_context_free_normalization(
     goal: &Proposition,
     surface_goal: &ClickProposition,
 ) -> Option<Vec<ProofTactic>> {
+    plan_context_free_normalization_with_assumptions(goal, surface_goal, &[])
+}
+
+fn plan_context_free_normalization_with_assumptions(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+    assumptions: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    if assumptions
+        .iter()
+        .any(|(kernel, _)| kernel == goal || condition_polarity_equivalent(kernel, goal))
+    {
+        return Some(vec![ProofTactic::Assumption]);
+    }
     match goal {
         Proposition::And(left, right) => {
             let surface_children = surface_logical_children(surface_goal, true);
@@ -45,13 +86,23 @@ pub(super) fn plan_context_free_normalization(
                 .as_ref()
                 .map_or(surface_goal, |(_, right)| right);
             Some(vec![ProofTactic::Both(ProofBoth {
-                left_tactics: plan_context_free_normalization(left, surface_left)?,
-                right_tactics: plan_context_free_normalization(right, surface_right)?,
+                left_tactics: plan_context_free_normalization_with_assumptions(
+                    left,
+                    surface_left,
+                    assumptions,
+                )?,
+                right_tactics: plan_context_free_normalization_with_assumptions(
+                    right,
+                    surface_right,
+                    assumptions,
+                )?,
             })])
         }
         Proposition::Or(left, right) => {
             let (surface_left, surface_right) = surface_logical_children(surface_goal, false)?;
-            if let Some(proof) = plan_context_free_normalization(left, &surface_left) {
+            if let Some(proof) =
+                plan_context_free_normalization_with_assumptions(left, &surface_left, assumptions)
+            {
                 return Some(vec![
                     ProofTactic::Have(ProofHave {
                         proposition: surface_left,
@@ -60,7 +111,9 @@ pub(super) fn plan_context_free_normalization(
                     ProofTactic::Left,
                 ]);
             }
-            if let Some(proof) = plan_context_free_normalization(right, &surface_right) {
+            if let Some(proof) =
+                plan_context_free_normalization_with_assumptions(right, &surface_right, assumptions)
+            {
                 return Some(vec![
                     ProofTactic::Have(ProofHave {
                         proposition: surface_right,
@@ -71,8 +124,80 @@ pub(super) fn plan_context_free_normalization(
             }
             None
         }
-        _ => crate::kernel::proof::fact_reasoning::normalizes_context_free_leaf(goal)
-            .then(|| vec![ProofTactic::Normalize]),
+        Proposition::Implies(antecedent, consequent) => {
+            let (surface_antecedent, surface_consequent) = surface_implication_parts(surface_goal)?;
+            let mut tactics = vec![ProofTactic::Intro];
+            if crate::kernel::proof::fact_reasoning::normalizes_context_free(&Proposition::Not(
+                Box::new(antecedent.as_ref().clone()),
+            )) {
+                tactics.push(ProofTactic::Contradiction(surface_antecedent));
+                return Some(tactics);
+            }
+            let mut introduced = assumptions.to_vec();
+            introduced.push((antecedent.as_ref().clone(), surface_antecedent.clone()));
+            let mut conjuncts = Vec::new();
+            collect_surface_conjunct_pairs(antecedent, &surface_antecedent, &mut conjuncts)?;
+            if conjuncts.len() > 1 {
+                for (kernel, surface) in conjuncts {
+                    introduced.push((kernel, surface));
+                }
+            }
+            tactics.extend(plan_context_free_normalization_with_assumptions(
+                consequent,
+                &surface_consequent,
+                &introduced,
+            )?);
+            Some(tactics)
+        }
+        _ if crate::kernel::proof::fact_reasoning::normalizes_context_free_leaf(goal) => {
+            Some(vec![ProofTactic::Normalize])
+        }
+        _ => {
+            let condition_pairs = assumptions
+                .iter()
+                .filter(|(kernel, _)| {
+                    crate::kernel::proof::fact_reasoning::is_single_normalization_condition(kernel)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let condition_kernels = condition_pairs
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            (!condition_kernels.is_empty()
+                && crate::kernel::proof::fact_reasoning::normalize_using_conditions(
+                    goal,
+                    &condition_kernels,
+                    &crate::kernel::proof::ProofFacts::from_ordered(&condition_kernels),
+                )
+                .is_ok())
+            .then(|| {
+                vec![ProofTactic::NormalizeUsing(
+                    condition_pairs
+                        .into_iter()
+                        .map(|(_, surface)| surface)
+                        .collect(),
+                )]
+            })
+        }
+    }
+}
+
+fn collect_surface_conjunct_pairs(
+    goal: &Proposition,
+    surface_goal: &ClickProposition,
+    conjuncts: &mut Vec<(Proposition, ClickProposition)>,
+) -> Option<()> {
+    match goal {
+        Proposition::And(left, right) => {
+            let (surface_left, surface_right) = surface_logical_children(surface_goal, true)?;
+            collect_surface_conjunct_pairs(left, &surface_left, conjuncts)?;
+            collect_surface_conjunct_pairs(right, &surface_right, conjuncts)
+        }
+        _ => {
+            conjuncts.push((goal.clone(), surface_goal.clone()));
+            Some(())
+        }
     }
 }
 

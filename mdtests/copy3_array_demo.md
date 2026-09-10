@@ -46,9 +46,18 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                 }
             }
             have forall (k: int32) { 0 <= k and k < 3 implies src[k] == old(src[k]) } by {
+                intro();
+                intro();
+                intro();
+                intro();
                 normalize();
             }
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
+                intro();
+                intro();
+                intro();
+                intro();
+                intro();
                 normalize();
             }
         }
@@ -150,7 +159,7 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                             enumerate();
                         } and {
                             both {
-                                normalize();
+                                simp();
                             } and {
                                 both {
                                     intro();

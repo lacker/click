@@ -990,14 +990,21 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
 }
 
 /// Transitional leaf check for structural-normalization migration:
-/// top-level conjunction and disjunction construction must be explicit, while
-/// the remaining logical constructors continue through the compatibility path
-/// below.
+/// top-level conjunction, disjunction, and implication construction must be
+/// explicit, while the remaining logical constructors continue through the
+/// compatibility path below.
 pub(crate) fn normalizes_context_free_leaf(goal: &Proposition) -> bool {
-    if matches!(goal, Proposition::And(_, _) | Proposition::Or(_, _)) {
+    if matches!(
+        goal,
+        Proposition::And(_, _) | Proposition::Or(_, _) | Proposition::Implies(_, _)
+    ) {
         return false;
     }
     normalizes_context_free(goal)
+}
+
+pub(crate) fn is_single_normalization_condition(proposition: &Proposition) -> bool {
+    crate::kernel::spec::proposition_as_single_condition(proposition).is_some()
 }
 
 /// Reduce only checked, explicitly cited conditions; never search ambient facts.

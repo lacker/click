@@ -199,16 +199,16 @@ int32 tree_is_leaf(struct node* node) {
     }
     if at(function.entry, node->left) != at(function.entry, 0) {
         have result == 1 implies node->left == 0 by {
-            normalize();
+            simp();
         }
         have result == 1 implies node->right == 0 by {
-            normalize();
+            simp();
         }
         have node->left != 0 implies result == 0 by {
-            normalize();
+            simp();
         }
         have node->left == 0 implies node->right != 0 implies result == 0 by {
-            normalize();
+            simp();
         }
         have node->left == 0 implies node->right == 0 implies result == 1 by {
             intro();
@@ -227,16 +227,16 @@ int32 tree_is_leaf(struct node* node) {
     } else {
         if at(function.entry, node->right) != at(function.entry, 0) {
             have result == 1 implies node->left == 0 by {
-                normalize();
+                simp();
             }
             have result == 1 implies node->right == 0 by {
-                normalize();
+                simp();
             }
             have node->left != 0 implies result == 0 by {
-                normalize();
+                simp();
             }
             have node->left == 0 implies node->right != 0 implies result == 0 by {
-                normalize();
+                simp();
             }
             have node->left == 0 implies node->right == 0 implies result == 1 by {
                 intro();
@@ -256,10 +256,12 @@ int32 tree_is_leaf(struct node* node) {
         } else {
             have result == 1 implies node->left == 0 by {
                 rewrite(node->left == 0);
+                intro();
                 normalize();
             }
             have result == 1 implies node->right == 0 by {
                 rewrite(node->right == 0);
+                intro();
                 normalize();
             }
             have node->left != 0 implies result == 0 by {
@@ -272,7 +274,7 @@ int32 tree_is_leaf(struct node* node) {
                 contradiction(node->right == 0);
             }
             have node->left == 0 implies node->right == 0 implies result == 1 by {
-                normalize();
+                simp();
             }
             have result == 0 or result == 1 by {
                 have result == 1 by { normalize(); }

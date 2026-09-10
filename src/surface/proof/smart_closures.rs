@@ -1027,6 +1027,23 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(closed));
         }
+        // A selected execution path can make the antecedent false through a
+        // short derivation rather than an already-indexed exact opposite.
+        // Prove and retain that opposite first; after `intro`, ordinary
+        // contradiction checks the two explicit facts.
+        let negated_antecedent = negate_click_proposition(surface_antecedent);
+        if let Some(scope) =
+            attempt::candidate_outcome(self.begin_have(negated_antecedent.clone()))?
+            && let Some(proved) = scope.try_simp_closure()?
+            && let Some(with_opposite) = attempt::candidate_outcome(proved.join())?
+            && let Some(with_antecedent) =
+                attempt::candidate_outcome(with_opposite.apply_step(ProofStep::Intro))?
+            && let Some(closed) = attempt::candidate_outcome(
+                with_antecedent.apply_step(ProofStep::Contradiction(negated_antecedent)),
+            )?
+        {
+            return Ok(Some(closed));
+        }
         let mut conjuncts = Vec::new();
         if matches!(surface_antecedent, ClickProposition::And(_, _)) {
             collect_surface_conjunct_leaves(surface_antecedent, &mut conjuncts);
@@ -1117,12 +1134,14 @@ impl<'a> Proof<'a> {
                 introduced_surfaces,
             );
         }
+        if matches!(goal, Proposition::Implies(_, _))
+            && let Some((surface_antecedent, _)) = surface_implication_parts(surface_goal)
+        {
+            return self.try_implication_simp_closure(&surface_antecedent, introduced_surfaces);
+        }
         match (surface_goal, goal) {
             (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
                 self.try_structural_forall_simp_closure(surface_goal, introduced_surfaces)
-            }
-            (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
-                self.try_implication_simp_closure(surface_antecedent, introduced_surfaces)
             }
             // A predicate-call goal unfolds to its body, which the
             // structural arms and logical closers then work over. Repeat

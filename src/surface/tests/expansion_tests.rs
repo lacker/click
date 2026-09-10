@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn context_free_implication_simp_expands_intro_and_rechecks() {
+    let source = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by { simp(); }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("smart implication proof should verify");
+    let offset = source.find("simp();").expect("expected smart tactic");
+    let position = expansion::position_at_offset(source, offset);
+    let expanded = expand_c0_tactic_source_at(source, &[], position.line, position.column).unwrap();
+    assert!(expanded.contains("intro();"), "{expanded}");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &[])
+        .expect("expanded implication introduction should independently recheck");
+    let missing_intro = expanded.replacen("intro();", "", 1);
+    verify_c0_sources(&missing_intro, &[])
+        .expect_err("removing the retained introduction must invalidate the proof");
+}
+
+#[test]
 fn context_free_disjunction_simp_expands_choice_and_rechecks() {
     for (goal, choice) in [
         ("1 == 1 or 2 == 3", "left();"),

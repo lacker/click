@@ -1283,6 +1283,106 @@ theorem choose_right() {
 }
 
 #[test]
+fn normalization_does_not_hide_context_free_implication_derivation() {
+    let opaque = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by { normalize(); }
+}
+"#;
+    let error = verify_c0_sources(opaque, &[])
+        .expect_err("normalize must not construct an implication proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+
+    let explicit = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by {
+        intro();
+        assumption();
+    }
+}
+"#;
+    verify_c0_sources(explicit, &[]).expect("the explicit implication proof should verify");
+
+    let opaque_using = r#"
+theorem cited_implication(x: int32) {
+    requires x == 0;
+    ensures x == 0 implies x == 0 by { normalize() using { x == 0; } }
+}
+"#;
+    let error = verify_c0_sources(opaque_using, &[])
+        .expect_err("normalize using must not construct an implication proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
+}
+
+#[test]
+fn smart_context_free_implication_retains_explicit_introduction() {
+    let source = r#"
+theorem reflexive_implication(x: int32) {
+    ensures x == 0 implies x == 0 by { simp(); }
+}
+
+theorem true_consequent(x: int32) {
+    ensures x == 0 implies 1 == 1 by { simp(); }
+}
+
+theorem nested_choice(x: int32) {
+    ensures x == 0 implies (x == 0 or 1 == 2) by { simp(); }
+}
+
+theorem conjunctive_guard(x: int32, y: int32) {
+    ensures (x == 0 and y == 1) implies x == 0 by { simp(); }
+}
+
+theorem false_guard(x: int32) {
+    ensures 1 == 2 implies x == 0 by { simp(); }
+}
+"#;
+    let verified =
+        verify_click_theorems(source).expect("smart context-free implication proofs should verify");
+
+    assert_eq!(
+        verified[0]
+            .proof_tactics()
+            .expect("expected reflexive implication certificate"),
+        &[ProofTactic::Intro, ProofTactic::Assumption]
+    );
+    assert_eq!(
+        verified[1]
+            .proof_tactics()
+            .expect("expected true-consequent certificate"),
+        &[ProofTactic::Intro, ProofTactic::Normalize]
+    );
+    assert!(matches!(
+        verified[2]
+            .proof_tactics()
+            .expect("expected nested disjunction certificate")
+            .as_slice(),
+        [ProofTactic::Intro, ProofTactic::Left]
+    ));
+    assert!(matches!(
+        verified[3]
+            .proof_tactics()
+            .expect("expected conjunctive-guard certificate")
+            .as_slice(),
+        [ProofTactic::Intro, ProofTactic::Assumption]
+    ));
+    assert!(matches!(
+        verified[4]
+            .proof_tactics()
+            .expect("expected false-guard certificate")
+            .as_slice(),
+        [
+            ProofTactic::Have(ProofHave {
+                proof: SourceProof::Script(body),
+                ..
+            }),
+            ProofTactic::Intro,
+            ProofTactic::Contradiction(_)
+        ] if matches!(body.as_slice(), [ProofTactic::Normalize])
+    ));
+}
+
+#[test]
 fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     let current = ClickProposition::Comparison {
         left: current_var("x"),
