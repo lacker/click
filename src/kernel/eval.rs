@@ -51,7 +51,9 @@ pub(crate) use memory_loads::registered_load_origin_for_variable;
 pub(crate) use memory_loads::terms_have_same_canonical_form;
 pub(crate) use memory_loads::viewed_as_memory_load;
 pub(super) use memory_loads::*;
-pub(crate) use memory_loads::{clear_load_canonicalization_caches, clear_load_variable_registry};
+pub(crate) use memory_loads::{
+    begin_load_origin_epoch, clear_load_canonicalization_caches, clear_load_variable_registry,
+};
 #[cfg(test)]
 pub(crate) use memory_loads::{load_variable_registry_len, with_load_variable_registry_capacity};
 pub(super) use operators::pointer_offset_by_bytes_paths;

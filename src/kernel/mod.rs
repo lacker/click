@@ -147,6 +147,12 @@ impl VerificationSession {
     }
 }
 
+/// Begins a new load-origin epoch for the function about to be verified;
+/// see `registered_load_origin_for_variable`. Ids stay session-wide.
+pub fn begin_load_origin_epoch() {
+    eval::begin_load_origin_epoch();
+}
+
 impl Drop for VerificationSession {
     fn drop(&mut self) {
         VERIFICATION_SESSION_DEPTH.with(|depth| depth.set(depth.get() - 1));

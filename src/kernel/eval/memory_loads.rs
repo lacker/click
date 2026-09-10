@@ -842,9 +842,18 @@ pub(crate) fn is_load_variable_defining_fact(proposition: &Proposition) -> bool 
 }
 
 thread_local! {
+    /// Load variable -> (canonical memory, pointer, first-seen live origin,
+    /// the origin epoch that origin was recorded in).
     static LOAD_VARIABLE_REGISTRY: std::cell::RefCell<
-        std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory)>,
+        std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory, u64)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// The current origin epoch. A load variable's id names one load for the
+    /// whole session, but the live snapshot transport resolves through is
+    /// first-seen within one verified function: the surface begins a new
+    /// epoch per function, and the next mint in a new epoch replaces an
+    /// origin recorded under an older one, which belongs to a DAG the
+    /// current function's effect snapshots never connect to.
+    static LOAD_ORIGIN_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static LOAD_VARIABLE_CACHE: std::cell::RefCell<
         std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -872,6 +881,15 @@ pub(crate) fn clear_load_canonicalization_caches() {
 
 pub(crate) fn clear_load_variable_registry() {
     LOAD_VARIABLE_REGISTRY.with(|registry| registry.borrow_mut().clear());
+    LOAD_ORIGIN_EPOCH.with(|epoch| epoch.set(0));
+}
+
+/// Starts a new load-origin epoch: the next mint of any load variable
+/// records its live origin afresh, so origins registered while verifying an
+/// earlier function do not answer transport in this one. Ids and their
+/// canonical loads are untouched.
+pub(crate) fn begin_load_origin_epoch() {
+    LOAD_ORIGIN_EPOCH.with(|epoch| epoch.set(epoch.get() + 1));
 }
 
 /// The load represented by a load variable minted on this thread.
@@ -885,15 +903,17 @@ pub(crate) fn registered_load_for_variable(
         registry
             .borrow()
             .get(variable)
-            .map(|(memory, pointer, _)| (memory.clone(), pointer.clone()))
+            .map(|(memory, pointer, _, _)| (memory.clone(), pointer.clone()))
     })
 }
 
-/// The first-seen live snapshot a load variable was minted from.
-/// The canonical form is a jumped placeholder unsuited to frame checks;
-/// transport resolves through this origin, which is DAG-connected and
-/// cell-comparable to later effect snapshots. First-seen is deterministic
-/// because mint order is execution order.
+/// The first-seen live snapshot a load variable was minted from in the
+/// current origin epoch. The canonical form is a jumped placeholder unsuited
+/// to frame checks; transport resolves through this origin, which is
+/// DAG-connected and cell-comparable to later effect snapshots of the
+/// function that minted it. First-seen is deterministic because mint order
+/// is execution order; per-epoch because two functions in one session can
+/// mint the same variable from unconnected snapshots.
 pub(crate) fn registered_load_origin_for_variable(
     variable: &Variable,
 ) -> Option<(SharedCMemory, Pointer)> {
@@ -901,7 +921,7 @@ pub(crate) fn registered_load_origin_for_variable(
         registry
             .borrow()
             .get(variable)
-            .map(|(_, pointer, origin)| (origin.clone(), pointer.clone()))
+            .map(|(_, pointer, origin, _)| (origin.clone(), pointer.clone()))
     })
 }
 
@@ -2197,13 +2217,22 @@ pub(crate) fn load_variable_for_cell_with_origin(
     pointer.hash(&mut hasher);
     let hash = hasher.finish();
     let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
+    let current_epoch = LOAD_ORIGIN_EPOCH.with(std::cell::Cell::get);
     LOAD_VARIABLE_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        if let Some((known_memory, known_pointer, _)) = registry.get(&variable) {
+        if let Some((known_memory, known_pointer, known_origin, known_epoch)) =
+            registry.get_mut(&variable)
+        {
             assert!(
                 known_memory == memory && known_pointer == pointer,
                 "load-variable collision: {variable:?} represents two distinct loads"
             );
+            // An origin from an earlier epoch was minted by another
+            // function; this function's first mint is its origin.
+            if *known_epoch != current_epoch {
+                *known_origin = origin.clone();
+                *known_epoch = current_epoch;
+            }
         } else {
             assert!(
                 registry.len() < load_variable_registry_capacity(),
@@ -2212,7 +2241,15 @@ pub(crate) fn load_variable_for_cell_with_origin(
                  it is the only collision guard for load-variable ids",
                 registry.len()
             );
-            registry.insert(variable, (memory.clone(), pointer.clone(), origin.clone()));
+            registry.insert(
+                variable,
+                (
+                    memory.clone(),
+                    pointer.clone(),
+                    origin.clone(),
+                    current_epoch,
+                ),
+            );
         }
     });
     variable

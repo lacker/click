@@ -1006,6 +1006,10 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
+        // Load-variable origins are first-seen per verified function: an
+        // origin minted while verifying an earlier function belongs to a
+        // memory DAG this function's effect snapshots never connect to.
+        crate::kernel::begin_load_origin_epoch();
         if function_block.is_external() {
             continue;
         }
