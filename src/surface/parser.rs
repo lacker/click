@@ -4591,6 +4591,21 @@ impl Parser {
                 && self.contract_bracket_is_range()
             {
                 match &lowered {
+                    // An inline array field already denotes its address and
+                    // carries its element type; unwrapping it to the raw byte
+                    // pointer would index the range in four-byte cells. Keep
+                    // the typed base so the slice keeps the element width.
+                    CExpression::TypedLoad {
+                        value_type:
+                            CType::Int32Array(_)
+                            | CType::UInt8Array(_)
+                            | CType::Int16Array(_)
+                            | CType::UInt16Array(_)
+                            | CType::UInt32Array(_)
+                            | CType::Int64Array(_)
+                            | CType::UInt64Array(_),
+                        ..
+                    } => None,
                     CExpression::TypedLoad { pointer, .. } => Some((**pointer).clone()),
                     _ => None,
                 }
