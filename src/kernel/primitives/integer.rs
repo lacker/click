@@ -67,6 +67,7 @@ pub struct SharedIntegerTerm(Arc<SharedIntegerNode>);
 struct SharedIntegerNode {
     id: u64,
     term: IntegerTerm,
+    max_variable: Option<Variable>,
 }
 
 impl SharedIntegerTerm {
@@ -76,6 +77,10 @@ impl SharedIntegerTerm {
 
     pub(crate) fn as_ref(&self) -> &IntegerTerm {
         &self.0.term
+    }
+
+    pub(crate) fn max_variable(&self) -> Option<Variable> {
+        self.0.max_variable
     }
 
     pub(crate) fn intern(term: IntegerTerm) -> Self {
@@ -210,6 +215,17 @@ enum IntegerShallowKey {
 }
 
 impl IntegerTerm {
+    pub(crate) fn max_variable(&self) -> Option<Variable> {
+        match self {
+            Self::Constant(_) => None,
+            Self::Variable(variable) => Some(*variable),
+            Self::Negate(value) => value.max_variable(),
+            Self::Add(left, right) | Self::Subtract(left, right) | Self::Multiply(left, right) => {
+                left.max_variable().max(right.max_variable())
+            }
+        }
+    }
+
     fn shallow_key(&self) -> IntegerShallowKey {
         match self {
             Self::Constant(value) => IntegerShallowKey::Constant(value.clone()),
@@ -271,7 +287,12 @@ impl IntegerInterner {
             .next_id
             .checked_add(1)
             .expect("mathematical Integer node identity exhausted");
-        let node = Arc::new(SharedIntegerNode { id, term });
+        let max_variable = term.max_variable();
+        let node = Arc::new(SharedIntegerNode {
+            id,
+            term,
+            max_variable,
+        });
         self.nodes
             .entry(fingerprint)
             .or_default()
@@ -549,6 +570,26 @@ mod tests {
             assert_eq!(
                 shared.id(),
                 SharedIntegerTerm::from(shared.as_ref().clone()).id()
+            );
+        }
+    }
+
+    #[test]
+    fn shared_integer_max_variable_is_cached_across_dag_sizes() {
+        for depth in [8, 16, 32, 64] {
+            let mut term = IntegerTerm::var(Variable(100));
+            for _ in 0..depth {
+                term = IntegerTerm::add(term.clone(), term.clone());
+            }
+            let shared = SharedIntegerTerm::from(term);
+            assert_eq!(shared_node_count(&shared), depth + 1);
+            assert_eq!(shared.max_variable(), Some(Variable(100)));
+
+            let high = Variable(1_000 + depth as u64);
+            let with_high = IntegerTerm::add(shared.as_ref().clone(), IntegerTerm::var(high));
+            assert_eq!(
+                SharedIntegerTerm::from(with_high).max_variable(),
+                Some(high)
             );
         }
     }
