@@ -5,7 +5,7 @@ theorem integer_quantifier_shadow(z: Integer) {
     requires z == 0;
     ensures forall (z: Integer) { z == 0 } by {
         intro();
-        have z == 0 by { assumption(); }
+        have z == z by { normalize(); }
         assumption();
     }
 }

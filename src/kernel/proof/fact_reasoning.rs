@@ -981,6 +981,13 @@ mod arithmetic_tests {
 }
 
 pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
+    if let Proposition::ConditionIs(condition, value) = goal {
+        match condition {
+            ConditionTerm::IntegerEqual(left, right) if left == right => return *value,
+            ConditionTerm::IntegerNotEqual(left, right) if left == right => return !*value,
+            _ => {}
+        }
+    }
     PureFactContext::new()
         .derive_atomic_proposition(goal)
         .or_else(|| PureFactContext::new().derive_proposition(goal))
