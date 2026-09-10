@@ -442,13 +442,16 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(context) => crate::surface::lower_integer_certificate_proposition(
-                surface,
-                &context.theorem_context.integer_values,
-            )
-            .map_err(|message| {
-                self.step_error(format!("could not lower {description}: {message}"))
-            }),
+            ProofContext::Pure(context) => {
+                let integer_values = self
+                    .proposition_obligation()
+                    .map(|goal| &goal.integer_values)
+                    .unwrap_or(&context.theorem_context.integer_values);
+                crate::surface::lower_integer_certificate_proposition(surface, integer_values)
+                    .map_err(|message| {
+                        self.step_error(format!("could not lower {description}: {message}"))
+                    })
+            }
             _ => self.lower_surface_proposition_direct(surface, description),
         }
     }
@@ -480,6 +483,7 @@ impl<'a> Proof<'a> {
                         }),
                     ) => {
                         if *click_type == ClickType::Integer {
+                            surface_bindings = surface_bindings.without_key(name);
                             integer_values = integer_values.with_inserted(
                                 name.clone(),
                                 crate::kernel::SpecIntegerExpression::Term(
@@ -487,6 +491,7 @@ impl<'a> Proof<'a> {
                                 ),
                             );
                         } else {
+                            integer_values = integer_values.without_key(name);
                             surface_bindings = surface_bindings.with_inserted(
                                 name.clone(),
                                 ContractExpression::CFragment(CExpression::Value(CValue::Int32(

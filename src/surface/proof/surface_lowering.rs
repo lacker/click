@@ -70,12 +70,10 @@ impl<'a> Proof<'a> {
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
-                let mut integer_values = context.theorem_context.integer_values.clone();
-                if let Some(goal) = self.proposition_obligation() {
-                    for (name, value) in goal.integer_values.iter() {
-                        integer_values = integer_values.with_inserted(name.clone(), value.clone());
-                    }
-                }
+                let integer_values = self
+                    .proposition_obligation()
+                    .map(|goal| &goal.integer_values)
+                    .unwrap_or(&context.theorem_context.integer_values);
                 if let Some(recorded) = context
                     .theorem_context
                     .surface_requirements
@@ -231,12 +229,10 @@ impl<'a> Proof<'a> {
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
-                let mut integer_values = context.theorem_context.integer_values.clone();
-                if let Some(goal) = self.proposition_obligation() {
-                    for (name, value) in goal.integer_values.iter() {
-                        integer_values = integer_values.with_inserted(name.clone(), value.clone());
-                    }
-                }
+                let integer_values = self
+                    .proposition_obligation()
+                    .map(|goal| &goal.integer_values)
+                    .unwrap_or(&context.theorem_context.integer_values);
                 let result = if proposition_uses_integer(surface, &integer_values) {
                     lower_pure_theorem_proposition_with_integer_values(
                         context.claim_label,

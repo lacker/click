@@ -871,6 +871,12 @@ trait OpenBranchConstruction {
         kernel: Proposition,
         surface: ClickProposition,
     ) -> Self;
+    fn surface_proposition_in_with_integer_values(
+        state: BranchState,
+        kernel: Proposition,
+        surface: ClickProposition,
+        integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    ) -> Self;
     fn surface_proposition_at_outcome(
         state: BranchState,
         outcome: Arc<OutcomeProofData>,
@@ -914,6 +920,25 @@ impl OpenBranchConstruction for OpenBranch {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
                     integer_values: PersistentMap::default(),
+                },
+            )),
+            state,
+        )
+    }
+
+    fn surface_proposition_in_with_integer_values(
+        state: BranchState,
+        kernel: Proposition,
+        surface: ClickProposition,
+        integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    ) -> Self {
+        Self::new(
+            Obligation::Proposition(PropositionObligation::new(
+                kernel,
+                PropositionPresentation {
+                    surface: Some(Arc::new(surface)),
+                    surface_bindings: PersistentMap::default(),
+                    integer_values,
                 },
             )),
             state,

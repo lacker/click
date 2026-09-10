@@ -256,7 +256,12 @@ impl<'a> Proof<'a> {
                 };
                 surface_goal
                     .map(|surface| {
-                        OpenBranch::surface_proposition_in(context.clone(), goal.clone(), surface)
+                        OpenBranch::surface_proposition_in_with_integer_values(
+                            context.clone(),
+                            goal.clone(),
+                            surface,
+                            theorem_context.integer_values.clone(),
+                        )
                     })
                     .unwrap_or_else(|| OpenBranch::proposition_in(context, goal))
             }),
