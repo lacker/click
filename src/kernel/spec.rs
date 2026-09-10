@@ -18,6 +18,13 @@ pub(super) struct SpecExpressionPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct SpecIntegerPath {
+    value: IntegerTerm,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecSequencePath {
     value: SequenceTerm,
     facts: Vec<ExecutionPureFact>,
@@ -158,31 +165,76 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             operator,
             right,
         } => {
-            let left = lower_spec_integer_expression(left, budget)?;
-            let right = lower_spec_integer_expression(right, budget)?;
-            let condition = match operator {
-                IntegerComparisonOperator::Equal => ConditionTerm::integer_equal(left, right),
-                IntegerComparisonOperator::NotEqual => {
-                    ConditionTerm::integer_not_equal(left, right)
+            let left_paths = evaluate_spec_integer_expression_paths(
+                state,
+                left,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+            let mut result = Vec::new();
+            for left_path in left_paths {
+                let path_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &left_path.facts,
+                    &left_path.obligations,
+                );
+                for right_path in evaluate_spec_integer_expression_paths(
+                    state,
+                    right,
+                    loop_entry_state,
+                    &path_assumptions,
+                    algebraic_bindings,
+                    budget,
+                )? {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &left_path.facts,
+                        &left_path.obligations,
+                        &right_path.facts,
+                        &right_path.obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    let condition = match operator {
+                        IntegerComparisonOperator::Equal => ConditionTerm::integer_equal(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::NotEqual => ConditionTerm::integer_not_equal(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::LessThan => ConditionTerm::integer_less_than(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::LessEqual => ConditionTerm::integer_less_equal(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::GreaterThan => {
+                            ConditionTerm::integer_greater_than(
+                                left_path.value.clone(),
+                                right_path.value.clone(),
+                            )
+                        }
+                        IntegerComparisonOperator::GreaterEqual => {
+                            ConditionTerm::integer_greater_equal(
+                                left_path.value.clone(),
+                                right_path.value.clone(),
+                            )
+                        }
+                    };
+                    result.push(SpecPropositionPath {
+                        proposition: Proposition::ConditionIs(condition, true),
+                        facts,
+                        obligations,
+                    });
                 }
-                IntegerComparisonOperator::LessThan => {
-                    ConditionTerm::integer_less_than(left, right)
-                }
-                IntegerComparisonOperator::LessEqual => {
-                    ConditionTerm::integer_less_equal(left, right)
-                }
-                IntegerComparisonOperator::GreaterThan => {
-                    ConditionTerm::integer_greater_than(left, right)
-                }
-                IntegerComparisonOperator::GreaterEqual => {
-                    ConditionTerm::integer_greater_equal(left, right)
-                }
-            };
-            Ok(vec![SpecPropositionPath {
-                proposition: Proposition::ConditionIs(condition, true),
-                facts: Vec::new(),
-                obligations: Vec::new(),
-            }])
+            }
+            Ok(result)
         }
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             lower_spec_algebraic_comparison_at_state(
@@ -637,21 +689,141 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
     }
 }
 
-fn lower_spec_integer_expression(
+fn evaluate_spec_integer_expression_paths(
+    state: &CState,
     expression: &SpecIntegerExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<IntegerTerm> {
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
     budget.consume_expression_step()?;
-    let SpecIntegerExpression::Term(term) = expression;
-    let work = term.as_const().map_or(1, |value| {
-        usize::try_from(value.bits())
-            .unwrap_or(usize::MAX)
-            .saturating_add(1)
-    });
-    if crate::instrumentation::deadline_exceeded_with_work(work) {
-        return Err(ExecutionLimit::Deadline);
+    match expression {
+        SpecIntegerExpression::Term(term) => Ok(vec![SpecIntegerPath {
+            value: term.clone(),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]),
+        SpecIntegerExpression::FromMachine(machine) => {
+            evaluate_spec_expression_paths_with_algebraic_bindings(
+                state,
+                machine,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| {
+                let ty = MachineIntegerType::from_c_type(path.value.c_type())
+                    .ok_or(ExecutionLimit::Paths)?;
+                let bits = c_value_bitvector_term(&path.value).ok_or(ExecutionLimit::Paths)?;
+                let value = IntegerTerm::from_machine(ty, bits).ok_or(ExecutionLimit::Paths)?;
+                Ok(SpecIntegerPath {
+                    value,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            })
+            .collect()
+        }
+        SpecIntegerExpression::Negate(inner) => evaluate_spec_integer_expression_paths(
+            state,
+            inner,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )
+        .map(|paths| {
+            paths
+                .into_iter()
+                .map(|mut path| {
+                    path.value = IntegerTerm::negate(path.value);
+                    path
+                })
+                .collect()
+        }),
+        SpecIntegerExpression::Add(left, right) => evaluate_integer_binary_paths(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            IntegerTerm::add,
+        ),
+        SpecIntegerExpression::Subtract(left, right) => evaluate_integer_binary_paths(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            IntegerTerm::subtract,
+        ),
+        SpecIntegerExpression::Multiply(left, right) => evaluate_integer_binary_paths(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            IntegerTerm::multiply,
+        ),
     }
-    Ok(term.clone())
+}
+
+fn evaluate_integer_binary_paths(
+    state: &CState,
+    left: &SpecIntegerExpression,
+    right: &SpecIntegerExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+    combine: fn(IntegerTerm, IntegerTerm) -> IntegerTerm,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    let left_paths = evaluate_spec_integer_expression_paths(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    let mut result = Vec::new();
+    for left_path in left_paths {
+        let path_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_spec_integer_expression_paths(
+            state,
+            right,
+            loop_entry_state,
+            &path_assumptions,
+            algebraic_bindings,
+            budget,
+        )? {
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            result.push(SpecIntegerPath {
+                value: combine(left_path.value.clone(), right_path.value),
+                facts,
+                obligations,
+            });
+        }
+    }
+    Ok(result)
 }
 
 #[allow(clippy::too_many_arguments)]

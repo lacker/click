@@ -669,7 +669,9 @@ fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    let SpecIntegerExpression::Term(term) = expression;
+    let SpecIntegerExpression::Term(term) = expression else {
+        return;
+    };
     collect_integer_variables(term, variables);
 }
 

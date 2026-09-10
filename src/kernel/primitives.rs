@@ -866,6 +866,11 @@ pub enum SpecIntegerExpression {
     /// A pure mathematical value. Shared children preserve specification
     /// abbreviations without copying their expanded expression trees.
     Term(IntegerTerm),
+    FromMachine(Box<SpecExpression>),
+    Negate(Box<Self>),
+    Add(Box<Self>, Box<Self>),
+    Subtract(Box<Self>, Box<Self>),
+    Multiply(Box<Self>, Box<Self>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
