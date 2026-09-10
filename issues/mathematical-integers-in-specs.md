@@ -201,7 +201,16 @@ to guard against checking only the final result.
 - Numeric work checks must consume the active verification budget before the
   operation. Recording a testing counter after arithmetic is insufficient.
   Keep the expression-visit budget separate from magnitude-dependent cost;
-  do not simulate a weighted charge with a loop of unit checkpoints.
+  do not simulate a weighted charge with a loop of unit checkpoints. Setup
+  lowering runs before tactics start, so each numeric operation also checks
+  the configured simple-operation allowance (the default when unconfigured).
+  A constant-squaring alias chain must fail before the oversized multiplication.
+- Structural substitution and generic rewriting preserve raw shared arithmetic
+  nodes. They must not eagerly evaluate newly constant expressions: substituting
+  `2` into a repeated-squaring DAG can otherwise allocate an enormous numeral
+  from a tiny proof. Validate a shared replacement once, then charge its shallow
+  root copy at each occurrence. Regressions cover both paths at depths
+  8/16/32/64, including many occurrences of a growing shared replacement.
 - Explicit arithmetic certificates permit zero premises for tautologies.
   Validate indices before allocating storage; a sparse enormous premise index
   must fail locally. Every supplied premise must be exactly available, and

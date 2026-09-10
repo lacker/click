@@ -190,16 +190,21 @@ impl<'a> TermRewrite<'a> {
         self.visit();
         let result = match shared.as_ref() {
             IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => shared.as_ref().clone(),
-            IntegerTerm::Negate(value) => IntegerTerm::negate(self.integer_shared(value)),
-            IntegerTerm::Add(left, right) => {
-                IntegerTerm::add(self.integer_shared(left), self.integer_shared(right))
-            }
-            IntegerTerm::Subtract(left, right) => {
-                IntegerTerm::subtract(self.integer_shared(left), self.integer_shared(right))
-            }
-            IntegerTerm::Multiply(left, right) => {
-                IntegerTerm::multiply(self.integer_shared(left), self.integer_shared(right))
-            }
+            // Rewriting preserves the symbolic DAG. In particular, it must
+            // not fold a repeated symbolic expression into a giant literal.
+            IntegerTerm::Negate(value) => IntegerTerm::Negate(self.integer_shared(value).into()),
+            IntegerTerm::Add(left, right) => IntegerTerm::Add(
+                self.integer_shared(left).into(),
+                self.integer_shared(right).into(),
+            ),
+            IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
+                self.integer_shared(left).into(),
+                self.integer_shared(right).into(),
+            ),
+            IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
+                self.integer_shared(left).into(),
+                self.integer_shared(right).into(),
+            ),
         };
         self.integer_cache.insert(shared.id(), result.clone());
         result
@@ -794,6 +799,38 @@ mod tests {
             assert_eq!(rewrite.term(&input), expected);
             assert!(rewrite.changed);
             assert_eq!(rewrite.visits, 2 + 2 * size);
+        }
+    }
+
+    #[test]
+    fn integer_rewrite_preserves_shared_repeated_squaring() {
+        for depth in [8, 16, 32, 64] {
+            let mut expression = IntegerTerm::constant_i64(2);
+            for _ in 0..depth {
+                let child: SharedIntegerTerm = expression.into();
+                expression = IntegerTerm::Multiply(child.clone(), child);
+            }
+            let input = Term::Integer(expression);
+            let conditions = HashMap::new();
+            let mut rewrite = TermRewrite::for_conditions(&conditions);
+            let Term::Integer(output) = rewrite.term(&input) else {
+                unreachable!()
+            };
+            assert_eq!(&Term::Integer(output.clone()), &input);
+            let root: SharedIntegerTerm = output.into();
+            let mut pending = vec![root];
+            let mut seen = std::collections::BTreeSet::new();
+            while let Some(node) = pending.pop() {
+                if !seen.insert(node.id()) {
+                    continue;
+                }
+                if let IntegerTerm::Multiply(left, right) = node.as_ref() {
+                    pending.push(left.clone());
+                    pending.push(right.clone());
+                }
+            }
+            assert_eq!(seen.len(), depth + 1);
+            assert!(rewrite.visits <= depth + 4);
         }
     }
 }

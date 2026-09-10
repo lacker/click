@@ -551,6 +551,20 @@ pub fn deadline_exceeded() -> bool {
     deadline_exceeded_with_work(1)
 }
 
+/// Bound one magnitude-dependent operation even during setup, before a tactic
+/// starts. An outer deadline cannot interrupt a single BigInt allocation, and
+/// installing tactic-limit configuration alone does not create an active tactic.
+/// Setup uses the configured simple-operation allowance; active tactics retain
+/// their own allowance and also consume their cumulative work budget.
+pub(crate) fn numeric_operation_work_exceeded(units: usize) -> bool {
+    let active_limit =
+        ACTIVE_TACTICS.with(|active| active.borrow().last().and_then(|active| active.work_limit));
+    let limit = active_limit.unwrap_or_else(|| {
+        TACTIC_WORK_LIMITS.with(|limits| limits.borrow().last().copied().unwrap_or_default().simple)
+    });
+    deadline_exceeded_with_work(units) || units > limit
+}
+
 /// Check the active limits before an operation with an explicit work cost.
 /// Numeric kernels use this for magnitude-dependent work: a BigInt product
 /// must consume its allowance before multiplication, not just count a unit

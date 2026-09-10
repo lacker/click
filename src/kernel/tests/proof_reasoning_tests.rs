@@ -4221,6 +4221,84 @@ fn forall_integer_application_work_is_linear_in_nested_binders() {
 }
 
 #[test]
+fn forall_integer_application_preserves_repeated_squaring_as_a_shared_expression() {
+    let binder = Variable(750);
+    let mut measurements = Vec::new();
+    for depth in [8, 16, 32, 64] {
+        let mut term = IntegerTerm::var(binder);
+        for _ in 0..depth {
+            let child: SharedIntegerTerm = term.into();
+            term = IntegerTerm::Multiply(child.clone(), child);
+        }
+        let quantified = Proposition::ForAll {
+            var: binder,
+            sort: Sort::Integer,
+            body: Box::new(Proposition::Equal(
+                Term::Integer(term),
+                Term::Integer(IntegerTerm::constant_i64(0)),
+            )),
+        };
+        let (theorem, work) = crate::instrumentation::measure_deterministic_work(|| {
+            prove_forall_integer_application(&quantified, IntegerTerm::constant_i64(2), &[])
+                .expect("structural instantiation remains bounded")
+        });
+        let Proposition::Implies(_, body) = theorem.proposition() else {
+            panic!("application")
+        };
+        let Proposition::Equal(Term::Integer(term), _) = body.as_ref() else {
+            panic!("equality")
+        };
+        let mut current = term;
+        for _ in 0..depth {
+            let IntegerTerm::Multiply(left, right) = current else {
+                panic!("instantiation must not evaluate repeated squares")
+            };
+            assert_eq!(left.id(), right.id(), "substitution preserves sharing");
+            current = left.as_ref();
+        }
+        assert_eq!(current, &IntegerTerm::constant_i64(2));
+        measurements.push(work);
+    }
+    for pair in measurements.windows(2) {
+        assert!(pair[1] <= pair[0] * 3, "{measurements:?}");
+    }
+}
+
+#[test]
+fn forall_integer_application_charges_shared_replacement_only_once() {
+    let binder = Variable(751);
+    let mut measurements = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let mut replacement = IntegerTerm::var(Variable(752));
+        let mut body = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        for _ in 0..size {
+            let child: SharedIntegerTerm = replacement.into();
+            replacement = IntegerTerm::Add(child.clone(), child);
+            body = Proposition::And(
+                Box::new(Proposition::Equal(
+                    Term::Integer(IntegerTerm::var(binder)),
+                    Term::Integer(IntegerTerm::constant_i64(0)),
+                )),
+                Box::new(body),
+            );
+        }
+        let quantified = Proposition::ForAll {
+            var: binder,
+            sort: Sort::Integer,
+            body: Box::new(body),
+        };
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            prove_forall_integer_application(&quantified, replacement, &[])
+                .expect("shared replacement application")
+        });
+        measurements.push(work);
+    }
+    for pair in measurements.windows(2) {
+        assert!(pair[1] <= pair[0] * 3, "{measurements:?}");
+    }
+}
+
+#[test]
 fn simultaneous_proposition_substitution_does_not_rewrite_installed_values() {
     let first = Variable(540);
     let second = Variable(541);

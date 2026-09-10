@@ -1356,7 +1356,7 @@ fn lower_contract_integer_to_spec(
     check_integer_lowering_work(1)?;
     match expression {
         ContractExpression::IntegerLiteral(value) => {
-            check_integer_lowering_work(value.len().saturating_mul(4))?;
+            check_integer_lowering_work(value.len().saturating_mul(value.len().saturating_add(4)))?;
             let value = value
                 .parse::<num_bigint::BigInt>()
                 .map_err(|_| format!("invalid Integer literal `{value}`"))?;
@@ -1421,8 +1421,11 @@ fn integer_root_work(term: &crate::kernel::IntegerTerm) -> usize {
 }
 
 fn check_integer_lowering_work(work: usize) -> Result<(), String> {
-    if crate::instrumentation::deadline_exceeded_with_work(work.max(1)) {
-        Err("Integer lowering exceeded the active verification work budget".into())
+    if crate::instrumentation::numeric_operation_work_exceeded(work.max(1)) {
+        Err(
+            "Integer lowering exceeded the numeric operation or active verification work budget"
+                .into(),
+        )
     } else {
         Ok(())
     }

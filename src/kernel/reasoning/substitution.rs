@@ -1468,51 +1468,6 @@ fn collect_integer_bound_variables_seen(
     }
 }
 
-// Recursive Integer-term substitution is retained as the foundation helper;
-// proposition and mixed machine-carrier traversal lands with its callers.
-#[allow(dead_code)]
-pub(crate) fn substitute_integer_variable(
-    term: &IntegerTerm,
-    from: Variable,
-    to: &IntegerTerm,
-) -> IntegerTerm {
-    let mut memo = HashMap::new();
-    substitute_integer_variable_shared(&term.clone().into(), from, to, &mut memo)
-}
-
-fn substitute_integer_variable_shared(
-    shared: &SharedIntegerTerm,
-    from: Variable,
-    to: &IntegerTerm,
-    memo: &mut HashMap<u64, IntegerTerm>,
-) -> IntegerTerm {
-    if let Some(result) = memo.get(&shared.id()) {
-        return result.clone();
-    }
-    let result = match shared.as_ref() {
-        IntegerTerm::Constant(value) => IntegerTerm::Constant(value.clone()),
-        IntegerTerm::Variable(variable) if *variable == from => to.clone(),
-        IntegerTerm::Variable(variable) => IntegerTerm::Variable(*variable),
-        IntegerTerm::Negate(value) => {
-            IntegerTerm::negate(substitute_integer_variable_shared(value, from, to, memo))
-        }
-        IntegerTerm::Add(left, right) => IntegerTerm::add(
-            substitute_integer_variable_shared(left, from, to, memo),
-            substitute_integer_variable_shared(right, from, to, memo),
-        ),
-        IntegerTerm::Subtract(left, right) => IntegerTerm::subtract(
-            substitute_integer_variable_shared(left, from, to, memo),
-            substitute_integer_variable_shared(right, from, to, memo),
-        ),
-        IntegerTerm::Multiply(left, right) => IntegerTerm::multiply(
-            substitute_integer_variable_shared(left, from, to, memo),
-            substitute_integer_variable_shared(right, from, to, memo),
-        ),
-    };
-    memo.insert(shared.id(), result.clone());
-    result
-}
-
 /// The proposition fragment accepted by checked mathematical-integer
 /// instantiation.  Integer binders are deliberately kept separate from the
 /// machine and resource proposition carriers: cloning an unsupported carrier
@@ -1536,8 +1491,13 @@ pub(crate) fn substitute_integer_variable_in_pure_proposition(
     to: &IntegerTerm,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
     let mut reserved = BTreeSet::new();
-    let replacement_work = integer_term_weight(to);
-    integer_work(replacement_work)?;
+    // Traverse the replacement once, then charge only the shallow root copy
+    // at each occurrence. Shared descendants are not copied by substitution.
+    validate_integer_pure_term(to, &mut reserved)?;
+    let replacement_work = match to {
+        IntegerTerm::Constant(value) => value.bits() as usize + 1,
+        _ => 1,
+    };
     validate_integer_pure_proposition(proposition, &mut reserved)?;
     let mut replacement_variables = BTreeSet::new();
     collect_integer_bound_variables(to, &mut replacement_variables);
@@ -1567,42 +1527,6 @@ fn integer_work(units: usize) -> Result<(), IntegerPureSubstitutionError> {
         Err(IntegerPureSubstitutionError::WorkLimitExceeded)
     } else {
         Ok(())
-    }
-}
-
-fn integer_term_weight(term: &IntegerTerm) -> usize {
-    let mut seen = BTreeSet::new();
-    integer_term_weight_seen(term, &mut seen)
-}
-
-fn integer_term_weight_seen(term: &IntegerTerm, seen: &mut BTreeSet<u64>) -> usize {
-    match term {
-        IntegerTerm::Constant(value) => value.bits() as usize + 2,
-        IntegerTerm::Variable(_) => 1,
-        IntegerTerm::Negate(value) => {
-            if !seen.insert(value.id()) {
-                0
-            } else {
-                1usize.saturating_add(integer_term_weight_seen(value, seen))
-            }
-        }
-        IntegerTerm::Add(left, right)
-        | IntegerTerm::Subtract(left, right)
-        | IntegerTerm::Multiply(left, right) => {
-            let left_weight = if seen.insert(left.id()) {
-                integer_term_weight_seen(left, seen)
-            } else {
-                0
-            };
-            let right_weight = if seen.insert(right.id()) {
-                integer_term_weight_seen(right, seen)
-            } else {
-                0
-            };
-            1usize
-                .saturating_add(left_weight)
-                .saturating_add(right_weight)
-        }
     }
 }
 
@@ -2036,15 +1960,18 @@ fn substitute_integer_pure_term_dag(
             if let Some(result) = memo.get(&key) {
                 return Ok(result.clone());
             }
-            let result = IntegerTerm::negate(substitute_integer_pure_term_dag(
-                value,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-                memo,
-            )?);
+            let result = IntegerTerm::Negate(
+                substitute_integer_pure_term_dag(
+                    value,
+                    from,
+                    to,
+                    shadowed,
+                    renamings,
+                    replacement_work,
+                    memo,
+                )?
+                .into(),
+            );
             memo.insert(key, result.clone());
             Ok(result)
         }
@@ -2117,10 +2044,12 @@ fn substitute_integer_binary_dag(
         replacement_work,
         memo,
     )?;
+    // Substitution is structural. Evaluating newly constant arithmetic here
+    // could turn a small repeated-squaring DAG into an unbounded allocation.
     let result = match operation {
-        0 => IntegerTerm::add(left, right),
-        1 => IntegerTerm::subtract(left, right),
-        _ => IntegerTerm::multiply(left, right),
+        0 => IntegerTerm::Add(left.into(), right.into()),
+        1 => IntegerTerm::Subtract(left.into(), right.into()),
+        _ => IntegerTerm::Multiply(left.into(), right.into()),
     };
     memo.insert(key, result.clone());
     Ok(result)

@@ -25,6 +25,39 @@ fn integer_parameter_preserves_machine_literal_and_cast_behavior() {
 }
 
 #[test]
+fn integer_constant_aliases_are_bounded_before_a_tactic_starts() {
+    // Context lowering has no active tactic. Even without an outer deadline,
+    // a tiny repeated-squaring source must fail before a giant multiplication.
+    for depth in [8, 16, 32, 64] {
+        let mut source = String::from("theorem bounded() { let a0: Integer = 2;\n");
+        for index in 1..=depth {
+            source.push_str(&format!(
+                "let a{index}: Integer = a{} * a{};\n",
+                index - 1,
+                index - 1
+            ));
+        }
+        source.push_str(&format!(
+            "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ assumption(); }} }}"
+        ));
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 1000,
+            smart: 1000,
+            control: 1000,
+        };
+        let error = crate::instrumentation::with_tactic_work_limits(limits, || {
+            verify_click_theorems(&source)
+        })
+        .expect_err("constant squaring must be bounded during setup");
+        assert!(error.message().contains("numeric operation"), "{error:?}");
+        if depth >= 16 {
+            let error = verify_click_theorems(&source).expect_err("default setup numeric limit");
+            assert!(error.message().contains("numeric operation"), "{error:?}");
+        }
+    }
+}
+
+#[test]
 fn integer_symbolic_aliases_keep_simple_verification_bounded() {
     let mut measured = Vec::new();
     for depth in [8, 16, 32, 64] {
