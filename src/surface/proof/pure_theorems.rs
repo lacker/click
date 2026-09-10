@@ -3594,12 +3594,38 @@ pub(super) fn lower_pure_theorem_proposition_with_integer_values(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
+    lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+        theorem_name,
+        proposition,
+        values,
+        array_refs,
+        &BTreeMap::new(),
+        integer_values,
+        memory,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
     let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
         proposition,
         &PureFactContext::new(),
         values,
         array_refs,
+        algebraic_values,
         integer_values,
         &state,
         &state,
@@ -3623,21 +3649,17 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_with_algebraic_values(
+    lower_pure_theorem_proposition_with_algebraic_and_integer_values(
+        theorem_name,
         proposition,
-        &PureFactContext::new(),
         values,
         array_refs,
         algebraic_values,
-        &state,
-        &state,
-        None,
-        &RecordedSnapshots::new(),
+        &crate::persistent::PersistentMap::default(),
+        memory,
         predicate_environment,
         click_function_environment,
     )
-    .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
 
 /// A pure theorem's proposition lowered at its parameter state by the
