@@ -226,12 +226,13 @@ expanded left partition.
 examples/owned-segmented-buffer/
 ```
 
-This fixture defines an `owned_segment(data, len)` composite resource and an
-outer `owned_segmented_buffer(owner)` that contains two segment resources. It
-exercises explicit observation and unfolding through nested owned composites,
-mutation of one child while framing the other, and swapping the child-resource
-parameters by changing only the outer metadata. A modular pipeline composes
-initialization, both child mutations, and a nested first-child read.
+This fixture defines one `owned_segmented_buffer(owner)` composite resource
+over four metadata fields and the two backing ranges they select. Each setter
+transfers exactly the cell it writes: it views the metadata and owns a single
+element of one segment, so the other segment and the rest of its own are
+framed by ownership with no effect clause. The swap changes only metadata and
+refolds the same two ranges in the opposite order. A modular pipeline composes
+initialization, both segment mutations, and a first-segment read.
 
 ## How to read an example project
 
