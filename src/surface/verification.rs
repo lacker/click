@@ -1024,14 +1024,14 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
         // certification spans take precedence in the active-work snapshot.
         let _verifier_core_timing = VerificationTimingPhase::new("verifier-core");
         let function_timing_start = std::time::Instant::now();
-        let (source_path, parsed_function) = parsed_sources
-            .get(function_block.signature.name())
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{}` is not defined by any `verifying` source",
-                    function_block.signature.name()
-                ))
-            })?;
+        let (_, source_path, parsed_function) =
+            parsed_function_for_source_name(&parsed_sources, function_block.signature.name())?
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{}` is not defined by any `verifying` source",
+                        function_block.signature.name()
+                    ))
+                })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_region_proof_clauses(&function_block, parsed_function)?;
         let verified_loop_rules = verify_loop_execution_proofs(
@@ -1669,23 +1669,21 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             "selected {claim:?} proof for `{function_name}` is not an explicit tactic script"
         ))
     })?;
-    let parsed_function = &parsed_sources
-        .get(&function_name)
-        .ok_or_else(|| ClickError::new(format!("no C source defines `{function_name}`")))?
-        .1;
-    let statement_calls = c0_statement_calls(parsed_function);
-    let mut required = BTreeSet::from([function_name]);
+    let Some((kernel_name, _, _)) =
+        parsed_function_for_source_name(parsed_sources, &function_name)?
+    else {
+        return Err(ClickError::new(format!(
+            "no C source defines `{function_name}`"
+        )));
+    };
+    let mut required = BTreeSet::new();
     // Expansion is defined only for an already-correct complete proof unit.
     // Capturing some post-execution tactics also legitimately continues past
     // their source location before the surface certificate is complete. Load
     // every callee of the selected function so capture and final rewritten
     // verification use the same dependency closure. Unrelated functions are
     // still excluded by this targeted traversal.
-    let mut pending = statement_calls
-        .iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut pending = vec![kernel_name.clone()];
     while let Some(dependency) = pending.pop() {
         if !required.insert(dependency.clone()) {
             continue;
@@ -1694,6 +1692,7 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             pending.extend(c0_statement_calls(parsed).into_iter().flatten());
         }
     }
+    required.insert(function_name);
     Ok(required)
 }
 
@@ -1718,8 +1717,11 @@ pub(in crate::surface) fn tactic_expansion_dependency_context(
         return Ok(None);
     }
 
-    let mut paths = BTreeMap::from([(function_name.clone(), vec![function_name.clone()])]);
-    let mut pending = vec![function_name.clone()];
+    let root_kernel_name = parsed_function_for_source_name(&parsed_sources, function_name)?
+        .map(|(kernel_name, _, _)| kernel_name.clone())
+        .ok_or_else(|| ClickError::new(format!("no C source defines `{function_name}`")))?;
+    let mut paths = BTreeMap::from([(root_kernel_name.clone(), vec![function_name.clone()])]);
+    let mut pending = vec![root_kernel_name];
     let mut cursor = 0;
     while let Some(name) = pending.get(cursor).cloned() {
         cursor += 1;
@@ -1776,7 +1778,20 @@ fn verification_required_functions_with_blocks(
         )));
     }
     let mut required = BTreeSet::new();
-    let mut pending = vec![function_name.to_string()];
+    let mut pending = if let Some((kernel_name, _, _)) =
+        parsed_function_for_source_name(parsed_sources, function_name)?
+    {
+        vec![kernel_name.clone()]
+    } else if function_blocks
+        .iter()
+        .any(|function| function.is_external() && function.signature().name() == function_name)
+    {
+        vec![function_name.to_string()]
+    } else {
+        return Err(ClickError::new(format!(
+            "no C source defines `{function_name}`"
+        )));
+    };
     while let Some(name) = pending.pop() {
         if !required.insert(name.clone()) {
             continue;
@@ -1792,6 +1807,7 @@ fn verification_required_functions_with_blocks(
         };
         pending.extend(c0_statement_calls(parsed).into_iter().flatten());
     }
+    required.insert(function_name.to_string());
     Ok(required)
 }
 
@@ -2400,6 +2416,29 @@ fn parse_c_source_unit(
     syntax::parse_translation_unit_for_source(expanded.source(), source_path).map_err(|error| {
         ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
     })
+}
+
+/// Looks up a C definition using the spelling visible to Click. Header-local
+/// inline bodies have a translation-unit-qualified kernel name, so sidecar
+/// contracts must match `C0Function::source_name()` rather than the execution
+/// identity returned by `C0Function::name()`.
+fn parsed_function_for_source_name<'a>(
+    parsed_sources: &'a BTreeMap<String, (String, syntax::C0Function)>,
+    source_name: &str,
+) -> Result<Option<(&'a String, &'a String, &'a syntax::C0Function)>, ClickError> {
+    let mut matches = parsed_sources
+        .iter()
+        .filter(|(_, (_, function))| function.source_name() == source_name)
+        .map(|(kernel_name, (source_path, function))| (kernel_name, source_path, function));
+    let Some(first) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(ClickError::new(format!(
+            "source-named inline function `{source_name}` has multiple translation-unit-local definitions"
+        )));
+    }
+    Ok(Some(first))
 }
 
 pub(in crate::surface) fn parse_c_layouts(
@@ -3468,7 +3507,7 @@ pub(in crate::surface) fn build_function_environment(
     for (_, function) in parsed_sources.values() {
         let function = match function_blocks
             .iter()
-            .find(|block| block.signature().name() == function.name())
+            .find(|block| block.signature().name() == function.source_name())
         {
             Some(function_block) => {
                 let (resource_requires, resource_ensures, borrowed_resource_ensures) =

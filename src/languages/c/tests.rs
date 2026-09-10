@@ -3032,6 +3032,40 @@ fn c0_parses_multiple_definitions_and_forward_prototypes() {
 }
 
 #[test]
+fn c0_rejects_conflicting_inline_linkage_declarations() {
+    for source in [
+        "static inline int32 helper(int32 value); int32 helper(int32 value) { return value; }",
+        "int32 helper(int32 value); static inline int32 helper(int32 value) { return value; }",
+        "static __always_inline int32 helper(int32 value); int32 helper(int32 value) { return value; }",
+    ] {
+        let error = syntax::parse_functions(source)
+            .expect_err("internal and external function declarations must not be mixed");
+        assert!(
+            error
+                .message()
+                .contains("conflicting declarations for function `helper`"),
+            "{}: {}",
+            source,
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn c0_static_inline_prototypes_select_the_internal_body() {
+    let functions = syntax::parse_functions_for_source(
+        "static inline int32 helper(int32 value);\n\
+         static inline int32 helper(int32 value) { return value + 1; }\n\
+         int32 run(int32 value) { return helper(value); }",
+        "inline-prototype.c",
+    )
+    .expect("matching static inline declarations should select the inline body");
+
+    assert_eq!(functions[0].name(), "helper#inline:inline-prototype.c");
+    assert_eq!(functions[1].name(), "run");
+}
+
+#[test]
 fn c0_rejects_conflicting_function_prototypes() {
     let error = syntax::parse_functions(
         r#"

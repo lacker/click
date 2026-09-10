@@ -137,6 +137,9 @@ pub struct C0Function {
     return_pointee_constant: bool,
     return_struct_name: Option<String>,
     return_pointer_struct_name: Option<String>,
+    /// The C spelling used by a sidecar contract. Header-provided internal
+    /// functions use a translation-unit-qualified kernel name in `name`.
+    source_name: String,
     name: String,
     inline_body: bool,
     parameters: Vec<C0Parameter>,
@@ -2237,6 +2240,7 @@ impl C0Function {
             return_pointee_constant: false,
             return_struct_name: None,
             return_pointer_struct_name: None,
+            source_name: name.clone(),
             name,
             inline_body: false,
             program_entry_state: None,
@@ -2259,6 +2263,10 @@ impl C0Function {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn source_name(&self) -> &str {
+        &self.source_name
     }
 
     pub fn parameters(&self) -> &[C0Parameter] {
@@ -5208,6 +5216,7 @@ pub(crate) struct C0FunctionHeader {
     /// by the including translation unit so separate TUs get separate
     /// instances of a shared header helper.
     name: String,
+    internal_linkage: bool,
     parameters: Vec<C0Parameter>,
 }
 
@@ -5226,6 +5235,7 @@ fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader
         && left.return_pointee_constant == right.return_pointee_constant
         && left.return_struct_name == right.return_struct_name
         && left.return_pointer_struct_name == right.return_pointer_struct_name
+        && left.internal_linkage == right.internal_linkage
         && left.parameters.len() == right.parameters.len()
         && left
             .parameters
@@ -6229,6 +6239,7 @@ impl Parser {
             return_pointee_constant: header.return_pointee_constant,
             return_struct_name: header.return_struct_name,
             return_pointer_struct_name: header.return_pointer_struct_name,
+            source_name: header.source_name,
             name: header.name,
             inline_body,
             program_entry_state: None,
@@ -6321,6 +6332,7 @@ impl Parser {
             return_pointer_struct_name,
             source_name,
             name,
+            internal_linkage,
             parameters,
         })
     }

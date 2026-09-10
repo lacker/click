@@ -9,8 +9,10 @@ Linux `rbtree.h` and `rbtree_augmented.h` contain essential `static inline` and
 also carry `__attribute__((always_inline))` metadata. `lib/rbtree.c` calls those helpers,
 including `rb_set_parent_color`, `__rb_change_child`, and
 `__rb_erase_augmented`; treating them as unverified declarations would move
-the core algorithm outside the proof. GNU alignment attributes, richer inline
-signatures, and sidecar contracts for header helpers remain follow-up work.
+the core algorithm outside the proof. GNU alignment attributes and richer
+inline signatures remain follow-up work; source-named sidecar contracts can
+also verify an inline helper directly without changing its inline call
+semantics.
 Since 2026-09-05 an inline body executes on the caller's own memory and
 resources with no contract boundary, so helpers that read and write fields
 (`rb_set_parent`, `rb_link_node`) verify at their call sites, and a helper
@@ -48,7 +50,9 @@ opaque contracts.
 - Included headers may contribute supported `static inline` or
   `static __always_inline` function
   definitions as well as declarations; those helpers execute their checked C
-  bodies at call sites and do not yet have sidecar contracts. The
+  bodies at call sites. A sidecar contract may name an inline helper by its
+  ordinary C spelling for direct verification, but calls still execute the
+  body rather than applying that contract as a call boundary. The
   declaration-only `always_inline` attribute is accepted in its two supported
   spellings and placements.
 - `static inline` and the selected GNU always-inline spelling
