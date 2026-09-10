@@ -2964,9 +2964,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
             operator,
             right,
         } => SpecProposition::IntegerComparison {
-            left: left.clone(),
+            left: substitute_bitvector_variable_in_spec_integer(left, from, to),
             operator: *operator,
-            right: right.clone(),
+            right: substitute_bitvector_variable_in_spec_integer(right, from, to),
         },
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             SpecProposition::AlgebraicComparison {
@@ -3107,6 +3107,50 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
             element_width: *element_width,
         },
         proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_spec_integer(
+    expression: &SpecIntegerExpression,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SpecIntegerExpression {
+    match expression {
+        SpecIntegerExpression::Term(term) => {
+            SpecIntegerExpression::Term(substitute_bitvector_variable_in_integer(term, from, to))
+        }
+        SpecIntegerExpression::FromMachine(machine) => {
+            SpecIntegerExpression::FromMachine(Box::new(
+                substitute_bitvector_variable_in_spec_expression(machine, from, to),
+            ))
+        }
+        SpecIntegerExpression::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
+            substitute_bitvector_variable_in_spec_integer(inner, from, to),
+        )),
+        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                right, from, to,
+            )),
+        ),
+        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                right, from, to,
+            )),
+        ),
+        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                left, from, to,
+            )),
+            Box::new(substitute_bitvector_variable_in_spec_integer(
+                right, from, to,
+            )),
+        ),
     }
 }
 
