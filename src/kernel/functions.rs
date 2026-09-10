@@ -3525,7 +3525,9 @@ fn spec_expression_reads_current_parameter(
 ) -> bool {
     match expression {
         SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => false,
-        SpecExpression::IntegerToMachine { .. } => false,
+        SpecExpression::IntegerToMachine { value, .. } => {
+            spec_integer_expression_reads_current_parameter(value, parameter_name)
+        }
         SpecExpression::CExpression(expression) => {
             c_expression_mentions_variable(expression, parameter_name)
         }
@@ -3603,12 +3605,36 @@ fn spec_expression_reads_current_parameter(
     }
 }
 
+fn spec_integer_expression_reads_current_parameter(
+    expression: &SpecIntegerExpression,
+    parameter_name: &str,
+) -> bool {
+    match expression {
+        SpecIntegerExpression::Term(_) => false,
+        SpecIntegerExpression::FromMachine(machine) => {
+            spec_expression_reads_current_parameter(machine, parameter_name)
+        }
+        SpecIntegerExpression::Negate(inner) => {
+            spec_integer_expression_reads_current_parameter(inner, parameter_name)
+        }
+        SpecIntegerExpression::Add(left, right)
+        | SpecIntegerExpression::Subtract(left, right)
+        | SpecIntegerExpression::Multiply(left, right) => {
+            spec_integer_expression_reads_current_parameter(left, parameter_name)
+                || spec_integer_expression_reads_current_parameter(right, parameter_name)
+        }
+    }
+}
+
 fn spec_proposition_reads_current_parameter(
     proposition: &SpecProposition,
     parameter_name: &str,
 ) -> bool {
     match proposition {
-        SpecProposition::IntegerComparison { .. } => false,
+        SpecProposition::IntegerComparison { left, right, .. } => {
+            spec_integer_expression_reads_current_parameter(left, parameter_name)
+                || spec_integer_expression_reads_current_parameter(right, parameter_name)
+        }
         SpecProposition::AlgebraicComparison { left, right, .. } => {
             spec_algebraic_expression_reads_current_parameter(left, parameter_name)
                 || spec_algebraic_expression_reads_current_parameter(right, parameter_name)
