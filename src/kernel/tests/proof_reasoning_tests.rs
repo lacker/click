@@ -3918,6 +3918,266 @@ fn forall_int32_application_avoids_capturing_the_argument_variable() {
 }
 
 #[test]
+fn forall_integer_application_preserves_exact_guard_and_wide_argument() {
+    let binder = Variable(600);
+    let bound = IntegerTerm::var(binder);
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::IntegerGreaterEqual(
+            Box::new(bound.clone()),
+            Box::new(IntegerTerm::constant_i64(0)),
+        ),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(Box::new(bound.clone()), Box::new(bound.clone())),
+        true,
+    );
+    let quantified = Proposition::ForAll {
+        var: binder,
+        sort: Sort::Integer,
+        body: Box::new(Proposition::Implies(
+            Box::new(premise),
+            Box::new(conclusion),
+        )),
+    };
+    let wide = IntegerTerm::parse_constant("340282366920938463463374607431768211457")
+        .expect("wide integer constant");
+    let instantiated_premise = Proposition::ConditionIs(
+        ConditionTerm::IntegerGreaterEqual(
+            Box::new(wide.clone()),
+            Box::new(IntegerTerm::constant_i64(0)),
+        ),
+        true,
+    );
+    let instantiated_conclusion = Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(Box::new(wide.clone()), Box::new(wide)),
+        true,
+    );
+    let theorem = prove_forall_integer_application(
+        &quantified,
+        IntegerTerm::parse_constant("340282366920938463463374607431768211457").unwrap(),
+        std::slice::from_ref(&instantiated_premise),
+    )
+    .expect("wide mathematical integer application should be certified");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(quantified),
+            Box::new(Proposition::Implies(
+                Box::new(instantiated_premise),
+                Box::new(instantiated_conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
+fn forall_integer_application_rejects_wrong_or_changed_guards() {
+    let binder = Variable(610);
+    let bound = IntegerTerm::var(binder);
+    let guard = Proposition::ConditionIs(
+        ConditionTerm::IntegerGreaterEqual(
+            Box::new(bound.clone()),
+            Box::new(IntegerTerm::constant_i64(0)),
+        ),
+        true,
+    );
+    let quantified = Proposition::ForAll {
+        var: binder,
+        sort: Sort::Integer,
+        body: Box::new(Proposition::Implies(
+            Box::new(guard),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(Box::new(bound.clone()), Box::new(bound)),
+                true,
+            )),
+        )),
+    };
+    let value = IntegerTerm::constant_i64(4);
+    let changed = Proposition::ConditionIs(
+        ConditionTerm::IntegerGreaterEqual(
+            Box::new(value.clone()),
+            Box::new(IntegerTerm::constant_i64(1)),
+        ),
+        true,
+    );
+    assert!(prove_forall_integer_application(&quantified, value.clone(), &[]).is_none());
+    assert!(prove_forall_integer_application(&quantified, value, &[changed]).is_none());
+
+    let wrong_sort = Proposition::ForAll {
+        var: binder,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(
+                Box::new(IntegerTerm::var(binder)),
+                Box::new(IntegerTerm::constant_i64(0)),
+            ),
+            true,
+        )),
+    };
+    assert!(
+        prove_forall_integer_application(&wrong_sort, IntegerTerm::constant_i64(4), &[]).is_none()
+    );
+}
+
+#[test]
+fn forall_integer_application_renames_nested_forall_and_exists_once() {
+    let outer = Variable(620);
+    let repeated = Variable(621);
+    let body = Proposition::ForAll {
+        var: repeated,
+        sort: Sort::Integer,
+        body: Box::new(Proposition::Exists {
+            name: "repeated".into(),
+            var: repeated,
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(
+                    Box::new(IntegerTerm::var(outer)),
+                    Box::new(IntegerTerm::var(repeated)),
+                ),
+                true,
+            )),
+        }),
+    };
+    let quantified = Proposition::ForAll {
+        var: outer,
+        sort: Sort::Integer,
+        body: Box::new(body),
+    };
+    let theorem = prove_forall_integer_application(&quantified, IntegerTerm::var(repeated), &[])
+        .expect("capture-avoiding integer application should be certified");
+    let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+        panic!("application theorem should retain its quantified premise");
+    };
+    let Proposition::ForAll {
+        var: renamed_forall,
+        body,
+        ..
+    } = conclusion.as_ref()
+    else {
+        panic!("nested forall should remain in the conclusion");
+    };
+    let Proposition::Exists {
+        var: renamed_exists,
+        body,
+        ..
+    } = body.as_ref()
+    else {
+        panic!("nested exists should remain in the conclusion");
+    };
+    assert_ne!(*renamed_forall, repeated);
+    assert_ne!(*renamed_exists, repeated);
+    assert_ne!(*renamed_forall, *renamed_exists);
+    assert!(matches!(
+        body.as_ref(),
+        Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true)
+            if left.as_ref() == &IntegerTerm::var(repeated)
+                && right.as_ref() == &IntegerTerm::var(*renamed_exists)
+    ));
+}
+
+#[test]
+fn forall_integer_application_rejects_unsupported_carriers_and_nested_sorts() {
+    let binder = Variable(630);
+    let unsupported = Proposition::ForAll {
+        var: binder,
+        sort: Sort::Integer,
+        body: Box::new(Proposition::Equal(
+            Term::Bitvector32(Bitvector32Term::Constant(1)),
+            Term::Bitvector32(Bitvector32Term::Constant(1)),
+        )),
+    };
+    assert!(
+        prove_forall_integer_application(&unsupported, IntegerTerm::constant_i64(1), &[]).is_none()
+    );
+    let nested_machine_sort = Proposition::ForAll {
+        var: binder,
+        sort: Sort::Integer,
+        body: Box::new(Proposition::ForAll {
+            var: Variable(631),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(
+                    Box::new(IntegerTerm::var(binder)),
+                    Box::new(IntegerTerm::constant_i64(0)),
+                ),
+                true,
+            )),
+        }),
+    };
+    assert!(
+        prove_forall_integer_application(&nested_machine_sort, IntegerTerm::constant_i64(1), &[])
+            .is_none()
+    );
+}
+
+fn nested_integer_forall(depth: usize, capture: bool) -> Proposition {
+    let outer = Variable(700);
+    let mut body = Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(
+            Box::new(IntegerTerm::var(outer)),
+            Box::new(IntegerTerm::constant_i64(0)),
+        ),
+        true,
+    );
+    for index in (0..depth).rev() {
+        let var = if capture {
+            Variable(701)
+        } else {
+            Variable(701 + index as u64)
+        };
+        body = Proposition::ForAll {
+            var,
+            sort: Sort::Integer,
+            body: Box::new(body),
+        };
+    }
+    Proposition::ForAll {
+        var: outer,
+        sort: Sort::Integer,
+        body: Box::new(body),
+    }
+}
+
+#[test]
+fn forall_integer_application_work_is_linear_in_nested_binders() {
+    std::thread::Builder::new()
+        .name("integer-quantifier-scaling".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            for capture in [false, true] {
+                let mut measurements = Vec::new();
+                for depth in [16, 32, 64, 128] {
+                    let quantified = nested_integer_forall(depth, capture);
+                    let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                        prove_forall_integer_application(
+                            &quantified,
+                            if capture {
+                                IntegerTerm::var(Variable(701))
+                            } else {
+                                IntegerTerm::constant_i64(7)
+                            },
+                            &[],
+                        )
+                        .expect("nested Integer application")
+                    });
+                    measurements.push(work);
+                }
+                for pair in measurements.windows(2) {
+                    assert!(
+                        pair[1] <= pair[0] * 3 + 32,
+                        "capture={capture}: {measurements:?}"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn simultaneous_proposition_substitution_does_not_rewrite_installed_values() {
     let first = Variable(540);
     let second = Variable(541);

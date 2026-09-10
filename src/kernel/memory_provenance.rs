@@ -3252,6 +3252,44 @@ pub fn prove_forall_int32_application(
     )))
 }
 
+/// Instantiates one universally quantified mathematical-integer fact in the
+/// checked pure logical fragment.  The supplied premises must exactly match
+/// the implication guards exposed by the instantiated body; unsupported
+/// carriers are rejected by the fallible substitution authority.
+pub fn prove_forall_integer_application(
+    quantified: &Proposition,
+    value: IntegerTerm,
+    premises: &[Proposition],
+) -> Option<Theorem> {
+    let Proposition::ForAll { var, sort, body } = quantified else {
+        return None;
+    };
+    if *sort != Sort::Integer {
+        return None;
+    }
+    let mut instantiated =
+        substitute_integer_variable_in_pure_proposition(body, *var, &value).ok()?;
+    for premise in premises {
+        let Proposition::Implies(expected, body) = instantiated else {
+            return None;
+        };
+        if expected.as_ref() != premise {
+            return None;
+        }
+        instantiated = *body;
+    }
+    if matches!(instantiated, Proposition::Implies(_, _)) {
+        return None;
+    }
+    let application = premises.iter().rev().fold(instantiated, |body, premise| {
+        Proposition::Implies(Box::new(premise.clone()), Box::new(body))
+    });
+    Some(Theorem::new(Proposition::Implies(
+        Box::new(quantified.clone()),
+        Box::new(application),
+    )))
+}
+
 fn prove_c_condition_fact_transport_with_assumptions(
     fact: &Proposition,
     after: &CMemory,

@@ -1480,6 +1480,397 @@ pub(crate) fn substitute_integer_variable(
     }
 }
 
+/// The proposition fragment accepted by checked mathematical-integer
+/// instantiation.  Integer binders are deliberately kept separate from the
+/// machine and resource proposition carriers: cloning an unsupported carrier
+/// here would make a proof object appear instantiated while leaving an
+/// occurrence of the old variable behind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IntegerPureSubstitutionError {
+    UnsupportedCarrier,
+    UnsupportedSort,
+    FreshVariableExhausted,
+}
+
+/// Capture-avoiding substitution for the complete pure Integer proposition
+/// fragment.  Validation and replacement each visit the source once.  The
+/// mutable renaming environment gives nested binders lexical scope without
+/// cloning a complete suffix for every binder.
+pub(crate) fn substitute_integer_variable_in_pure_proposition(
+    proposition: &Proposition,
+    from: Variable,
+    to: &IntegerTerm,
+) -> Result<Proposition, IntegerPureSubstitutionError> {
+    let mut reserved = BTreeSet::new();
+    validate_integer_pure_proposition(proposition, &mut reserved)?;
+    let mut replacement_variables = BTreeSet::new();
+    collect_integer_bound_variables(to, &mut replacement_variables);
+    reserved.extend(replacement_variables.iter().copied());
+    reserved.insert(from);
+    let mut next = reserved
+        .iter()
+        .next_back()
+        .map_or(0, |variable| variable.0)
+        .saturating_add(1);
+    let mut renamings = BTreeMap::new();
+    substitute_integer_pure_proposition(
+        proposition,
+        from,
+        to,
+        &replacement_variables,
+        &mut reserved,
+        &mut next,
+        false,
+        &mut renamings,
+    )
+}
+
+fn validate_integer_pure_proposition(
+    proposition: &Proposition,
+    variables: &mut BTreeSet<Variable>,
+) -> Result<(), IntegerPureSubstitutionError> {
+    crate::instrumentation::record_deterministic_work(1);
+    match proposition {
+        Proposition::Equal(Term::Integer(left), Term::Integer(right)) => {
+            collect_integer_bound_variables(left, variables);
+            collect_integer_bound_variables(right, variables);
+            Ok(())
+        }
+        Proposition::Equal(_, _) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+        Proposition::ConditionIs(condition, _) => {
+            validate_integer_pure_condition(condition, variables)
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            validate_integer_pure_proposition(left, variables)?;
+            validate_integer_pure_proposition(right, variables)
+        }
+        Proposition::Not(body) => validate_integer_pure_proposition(body, variables),
+        Proposition::ForAll { var, sort, body } => {
+            if *sort != Sort::Integer {
+                return Err(IntegerPureSubstitutionError::UnsupportedSort);
+            }
+            variables.insert(*var);
+            validate_integer_pure_proposition(body, variables)
+        }
+        Proposition::Exists {
+            var, sort, body, ..
+        } => {
+            if *sort != Sort::Integer {
+                return Err(IntegerPureSubstitutionError::UnsupportedSort);
+            }
+            variables.insert(*var);
+            validate_integer_pure_proposition(body, variables)
+        }
+        _ => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+    }
+}
+
+fn validate_integer_pure_condition(
+    condition: &ConditionTerm,
+    variables: &mut BTreeSet<Variable>,
+) -> Result<(), IntegerPureSubstitutionError> {
+    let (left, right) = match condition {
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => (left, right),
+        _ => return Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+    };
+    collect_integer_bound_variables(left, variables);
+    collect_integer_bound_variables(right, variables);
+    Ok(())
+}
+
+fn fresh_integer_variable(
+    reserved: &mut BTreeSet<Variable>,
+    next: &mut u64,
+) -> Result<Variable, IntegerPureSubstitutionError> {
+    loop {
+        let candidate = Variable(*next);
+        if reserved.insert(candidate) {
+            *next = next
+                .checked_add(1)
+                .ok_or(IntegerPureSubstitutionError::FreshVariableExhausted)?;
+            return Ok(candidate);
+        }
+        *next = next
+            .checked_add(1)
+            .ok_or(IntegerPureSubstitutionError::FreshVariableExhausted)?;
+    }
+}
+
+fn substitute_integer_pure_proposition(
+    proposition: &Proposition,
+    from: Variable,
+    to: &IntegerTerm,
+    replacement_variables: &BTreeSet<Variable>,
+    reserved: &mut BTreeSet<Variable>,
+    next: &mut u64,
+    shadowed: bool,
+    renamings: &mut BTreeMap<Variable, Variable>,
+) -> Result<Proposition, IntegerPureSubstitutionError> {
+    crate::instrumentation::record_deterministic_work(1);
+    match proposition {
+        Proposition::Equal(Term::Integer(left), Term::Integer(right)) => Ok(Proposition::Equal(
+            Term::Integer(substitute_integer_pure_term(
+                left, from, to, shadowed, renamings,
+            )),
+            Term::Integer(substitute_integer_pure_term(
+                right, from, to, shadowed, renamings,
+            )),
+        )),
+        Proposition::ConditionIs(condition, value) => Ok(Proposition::ConditionIs(
+            substitute_integer_pure_condition(condition, from, to, shadowed, renamings),
+            *value,
+        )),
+        Proposition::And(left, right) => Ok(Proposition::And(
+            Box::new(substitute_integer_pure_proposition(
+                left,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?),
+            Box::new(substitute_integer_pure_proposition(
+                right,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?),
+        )),
+        Proposition::Or(left, right) => Ok(Proposition::Or(
+            Box::new(substitute_integer_pure_proposition(
+                left,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?),
+            Box::new(substitute_integer_pure_proposition(
+                right,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?),
+        )),
+        Proposition::Not(body) => Ok(Proposition::Not(Box::new(
+            substitute_integer_pure_proposition(
+                body,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?,
+        ))),
+        Proposition::Implies(left, right) => Ok(Proposition::Implies(
+            Box::new(substitute_integer_pure_proposition(
+                left,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?),
+            Box::new(substitute_integer_pure_proposition(
+                right,
+                from,
+                to,
+                replacement_variables,
+                reserved,
+                next,
+                shadowed,
+                renamings,
+            )?),
+        )),
+        Proposition::ForAll { var, sort, body } => substitute_integer_quantifier(
+            false,
+            None,
+            *var,
+            sort,
+            body,
+            from,
+            to,
+            replacement_variables,
+            reserved,
+            next,
+            shadowed,
+            renamings,
+        ),
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => substitute_integer_quantifier(
+            true,
+            Some(name),
+            *var,
+            sort,
+            body,
+            from,
+            to,
+            replacement_variables,
+            reserved,
+            next,
+            shadowed,
+            renamings,
+        ),
+        _ => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn substitute_integer_quantifier(
+    exists: bool,
+    name: Option<&String>,
+    var: Variable,
+    sort: &Sort,
+    body: &Proposition,
+    from: Variable,
+    to: &IntegerTerm,
+    replacement_variables: &BTreeSet<Variable>,
+    reserved: &mut BTreeSet<Variable>,
+    next: &mut u64,
+    shadowed: bool,
+    renamings: &mut BTreeMap<Variable, Variable>,
+) -> Result<Proposition, IntegerPureSubstitutionError> {
+    if *sort != Sort::Integer {
+        return Err(IntegerPureSubstitutionError::UnsupportedSort);
+    }
+    let renamed = !shadowed && var != from && replacement_variables.contains(&var);
+    let new_var = if renamed {
+        fresh_integer_variable(reserved, next)?
+    } else {
+        var
+    };
+    let previous = renamings.insert(var, new_var);
+    let transformed = substitute_integer_pure_proposition(
+        body,
+        from,
+        to,
+        replacement_variables,
+        reserved,
+        next,
+        shadowed || var == from,
+        renamings,
+    );
+    match previous {
+        Some(previous) => {
+            renamings.insert(var, previous);
+        }
+        None => {
+            renamings.remove(&var);
+        }
+    }
+    let body = transformed?;
+    if exists {
+        Ok(Proposition::Exists {
+            name: name.cloned().unwrap_or_default(),
+            var: new_var,
+            sort: sort.clone(),
+            body: Box::new(body),
+        })
+    } else {
+        Ok(Proposition::ForAll {
+            var: new_var,
+            sort: sort.clone(),
+            body: Box::new(body),
+        })
+    }
+}
+
+fn substitute_integer_pure_condition(
+    condition: &ConditionTerm,
+    from: Variable,
+    to: &IntegerTerm,
+    shadowed: bool,
+    renamings: &BTreeMap<Variable, Variable>,
+) -> ConditionTerm {
+    let (operator, left, right) = match condition {
+        ConditionTerm::IntegerLessThan(left, right) => (0, left, right),
+        ConditionTerm::IntegerLessEqual(left, right) => (1, left, right),
+        ConditionTerm::IntegerGreaterThan(left, right) => (2, left, right),
+        ConditionTerm::IntegerGreaterEqual(left, right) => (3, left, right),
+        ConditionTerm::IntegerEqual(left, right) => (4, left, right),
+        ConditionTerm::IntegerNotEqual(left, right) => (5, left, right),
+        _ => unreachable!("pure Integer validation precedes substitution"),
+    };
+    let left = Box::new(substitute_integer_pure_term(
+        left, from, to, shadowed, renamings,
+    ));
+    let right = Box::new(substitute_integer_pure_term(
+        right, from, to, shadowed, renamings,
+    ));
+    match operator {
+        0 => ConditionTerm::IntegerLessThan(left, right),
+        1 => ConditionTerm::IntegerLessEqual(left, right),
+        2 => ConditionTerm::IntegerGreaterThan(left, right),
+        3 => ConditionTerm::IntegerGreaterEqual(left, right),
+        4 => ConditionTerm::IntegerEqual(left, right),
+        _ => ConditionTerm::IntegerNotEqual(left, right),
+    }
+}
+
+fn substitute_integer_pure_term(
+    term: &IntegerTerm,
+    from: Variable,
+    to: &IntegerTerm,
+    shadowed: bool,
+    renamings: &BTreeMap<Variable, Variable>,
+) -> IntegerTerm {
+    crate::instrumentation::record_deterministic_work(1);
+    match term {
+        IntegerTerm::Constant(value) => IntegerTerm::Constant(value.clone()),
+        IntegerTerm::Variable(variable) => {
+            if let Some(renamed) = renamings.get(variable) {
+                IntegerTerm::Variable(*renamed)
+            } else if !shadowed && *variable == from {
+                to.clone()
+            } else {
+                IntegerTerm::Variable(*variable)
+            }
+        }
+        IntegerTerm::Negate(value) => IntegerTerm::negate(substitute_integer_pure_term(
+            value, from, to, shadowed, renamings,
+        )),
+        IntegerTerm::Add(left, right) => IntegerTerm::add(
+            substitute_integer_pure_term(left, from, to, shadowed, renamings),
+            substitute_integer_pure_term(right, from, to, shadowed, renamings),
+        ),
+        IntegerTerm::Subtract(left, right) => IntegerTerm::subtract(
+            substitute_integer_pure_term(left, from, to, shadowed, renamings),
+            substitute_integer_pure_term(right, from, to, shadowed, renamings),
+        ),
+        IntegerTerm::Multiply(left, right) => IntegerTerm::multiply(
+            substitute_integer_pure_term(left, from, to, shadowed, renamings),
+            substitute_integer_pure_term(right, from, to, shadowed, renamings),
+        ),
+    }
+}
+
 fn substitute_bitvector_variable_in_algebraic_term(
     term: &AlgebraicTerm,
     from: Variable,
