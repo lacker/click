@@ -72,7 +72,24 @@ impl<'a> Proof<'a> {
                     .outcome_fixed_state_view()
                     .expect("a focused outcome judgment resolves its fixed-state view");
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                if !proposition_contains_old_expression(&surface) {
+                // An available historical fact is not the meaning of a
+                // current-state expression with the same spelling: an entry
+                // resource fact such as `cell[0] == 8` survives the store of 7,
+                // and reusing it for a proof `if` condition would make the
+                // condition and its negation lower against different states.
+                // Resolve current-state expressions against the outcome's own
+                // snapshot. Fully anchored spellings are different: their
+                // recorded identity deliberately names that historical fact.
+                let explicitly_anchored = match &surface {
+                    ClickProposition::At { .. } => true,
+                    ClickProposition::PredicateCall { arguments, .. } => {
+                        matches!(arguments.first(), Some(ContractExpression::At { selector, .. })
+                            if arguments.iter().all(|argument| matches!(argument,
+                                ContractExpression::At { selector: other, .. } if other == selector)))
+                    }
+                    _ => false,
+                };
+                if explicitly_anchored && !proposition_contains_old_expression(&surface) {
                     if let Some(recorded) = view
                         .surface_propositions
                         .available_kernel_matching(&surface, |kernel| self.facts().contains(kernel))
