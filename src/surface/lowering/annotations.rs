@@ -2274,30 +2274,34 @@ impl AnnotationLowerer<'_> {
                     .iter()
                     .find(|arm| arm.variant == *variant)
                     .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
-                let mut values = environment.integer_values.clone();
-                for (name, field) in arm.bindings.iter().zip(fields) {
-                    if let crate::kernel::SpecAlgebraicValue::Integer(value) = field {
-                        values.insert(name.clone(), value.clone());
-                    }
+                if arm.bindings.len() != fields.len() {
+                    return Err("datatype match field count mismatch".into());
                 }
                 let mut body_environment = environment.clone();
-                body_environment.integer_values = values;
+                for (name, field) in arm.bindings.iter().zip(fields) {
+                    body_environment.integer_values.remove(name);
+                    body_environment.values.remove(name);
+                    body_environment.algebraic_values.remove(name);
+                    body_environment.array_refs.remove(name);
+                    match field {
+                        crate::kernel::SpecAlgebraicValue::Integer(value) => {
+                            body_environment
+                                .integer_values
+                                .insert(name.clone(), value.clone());
+                        }
+                        crate::kernel::SpecAlgebraicValue::C(value) => {
+                            body_environment.values.insert(name.clone(), value.clone());
+                        }
+                        crate::kernel::SpecAlgebraicValue::Algebraic(value) => {
+                            body_environment
+                                .algebraic_values
+                                .insert(name.clone(), value.clone());
+                        }
+                    }
+                }
                 return self.lower_contract_integer_to_spec(&arm.body, &body_environment);
             }
-            let mut lowered_arms = Vec::new();
-            for arm in arms {
-                let body = self.lower_contract_integer_to_spec(&arm.body, environment)?;
-                lowered_arms.push(crate::kernel::SpecIntegerMatchArm {
-                    variant: arm.variant.clone(),
-                    bindings: arm.bindings.clone(),
-                    binding_types: Vec::new(),
-                    body: Box::new(body),
-                });
-            }
-            return Ok(crate::kernel::SpecIntegerExpression::AlgebraicMatch {
-                scrutinee: Box::new(scrutinee),
-                arms: lowered_arms,
-            });
+            return Err("symbolic Integer-valued datatype matches are not supported yet".into());
         }
         lower_contract_integer_to_spec(expression, &environment.integer_values)
     }

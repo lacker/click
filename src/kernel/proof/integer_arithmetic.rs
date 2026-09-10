@@ -535,7 +535,6 @@ fn collect_integer_affine_terms(
                     terms.insert(atom, merged);
                 }
             }
-            IntegerTerm::Machine(_) => return None,
             IntegerTerm::Negate(child) => {
                 if !add_weight(&mut weights, child.id(), -weight) {
                     return None;
