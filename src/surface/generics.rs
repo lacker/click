@@ -316,11 +316,21 @@ pub(super) fn instantiate_function_for_surface_call_with_variables(
     instantiate_function(definition, &substitution)
 }
 
+pub(super) fn default_numeral_click_type(expression: &ContractExpression) -> Option<ClickType> {
+    let CExpression::Value(value) = contract_expression_as_c_fragment(expression)? else {
+        return None;
+    };
+    Some(ClickType::C(c0_type_from_kernel(value.c_type())))
+}
+
 fn syntactic_expression_type(
     expression: &ContractExpression,
     variables: &BTreeMap<String, ClickType>,
 ) -> Option<ClickType> {
     match expression {
+        ContractExpression::IntegerLiteral(_) | ContractExpression::Negate(_) => {
+            default_numeral_click_type(expression)
+        }
         ContractExpression::AlgebraicVariable { algebraic_type, .. }
         | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
             Some(ClickType::Algebraic(algebraic_type.clone()))

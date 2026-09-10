@@ -734,7 +734,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
     let nonnegative = ClickProposition::Comparison {
         left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
         operator: ComparisonOperator::GreaterEqual,
-        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        right: ContractExpression::IntegerLiteral("0".into()),
     };
     let tactics = vec![
         ProofTactic::Mark("before_step".to_string()),
@@ -773,12 +773,12 @@ fn canonical_tactic_printer_round_trips_cases_certificate() {
     let nonnegative = ClickProposition::Comparison {
         left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
         operator: ComparisonOperator::GreaterEqual,
-        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        right: ContractExpression::IntegerLiteral("0".into()),
     };
     let negative = ClickProposition::Comparison {
         left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
         operator: ComparisonOperator::LessThan,
-        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        right: ContractExpression::IntegerLiteral("0".into()),
     };
     let disjunction =
         ClickProposition::Or(Box::new(nonnegative.clone()), Box::new(negative.clone()));
