@@ -969,6 +969,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::Cast {
             expression,
             target_type,
+            ..
         } => {
             let spelling = match target_type {
                 CType::Int16 => "int16".to_string(),
@@ -1317,6 +1318,7 @@ fn aligned_sugar(proposition: &ClickProposition) -> Option<(&CExpression, u64)> 
     let ContractExpression::CFragment(CExpression::Cast {
         expression: pointer,
         target_type: CType::UInt64,
+        ..
     }) = address.as_ref()
     else {
         return None;

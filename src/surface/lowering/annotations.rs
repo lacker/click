@@ -3158,6 +3158,7 @@ impl AnnotationLowerer<'_> {
             CExpression::Cast {
                 expression,
                 target_type,
+                ..
             } if *target_type == CType::UInt32 || target_type.is_pointer() => {
                 Ok(SpecExpression::Cast(
                     Box::new(self.lower_c_fragment_to_spec(expression, environment)?),

@@ -594,6 +594,10 @@ pub enum CExpression {
     Cast {
         expression: Box<CExpression>,
         target_type: CType,
+        /// Whether the cast result points at a volatile pointer-valued cell.
+        /// This carries the C qualifier in `T * volatile *` into a following
+        /// dereference without confusing it with volatile `T` storage.
+        pointee_volatile: bool,
     },
     Conditional {
         condition: Box<CExpression>,
@@ -1674,6 +1678,7 @@ pub struct CGlobal {
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
     pub(super) volatile: bool,
+    pub(super) pointee_volatile: bool,
     pub(super) constant: bool,
     pub(super) pointee_constant: bool,
 }
@@ -1720,6 +1725,7 @@ pub struct CStaticLocal {
     pub(super) c_type: CType,
     pub(super) initial_value: CValue,
     pub(super) volatile: bool,
+    pub(super) pointee_volatile: bool,
     pub(super) constant: bool,
     pub(super) pointee_constant: bool,
 }

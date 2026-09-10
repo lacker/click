@@ -2414,7 +2414,7 @@ pub(in crate::surface) fn parse_c_layouts(
                 };
                 value = value
                     .with_pointer_pointee_constant(global.is_constant())
-                    .with_pointer_pointee_volatile(global.is_volatile());
+                    .with_pointer_pointee_volatile(global.pointee_is_volatile());
                 let expression = if value_type.is_object_pointer() {
                     CExpression::Value(value)
                 } else {
@@ -2532,7 +2532,7 @@ pub(in crate::surface) fn parse_c_layouts(
                     };
                     value = value
                         .with_pointer_pointee_constant(local.is_constant())
-                        .with_pointer_pointee_volatile(local.is_volatile());
+                        .with_pointer_pointee_volatile(local.pointee_is_volatile());
                     let expression = if value_type.is_object_pointer() {
                         CExpression::Value(value)
                     } else {

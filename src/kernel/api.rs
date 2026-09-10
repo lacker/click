@@ -673,9 +673,18 @@ pub fn composite_resource_witness_values(
 }
 
 pub fn c_cast(expression: CExpression, target_type: CType) -> CExpression {
+    c_cast_with_pointee_volatile(expression, target_type, false)
+}
+
+pub fn c_cast_with_pointee_volatile(
+    expression: CExpression,
+    target_type: CType,
+    pointee_volatile: bool,
+) -> CExpression {
     CExpression::Cast {
         expression: Box::new(expression),
         target_type,
+        pointee_volatile,
     }
 }
 

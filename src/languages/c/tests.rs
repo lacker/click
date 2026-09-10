@@ -358,6 +358,18 @@ fn c0_small_volatile_model_rejects_unsupported_pointer_depth() {
         (
             r#"
             struct record {
+                int32 value;
+            };
+            int32 pointer() {
+                volatile struct record *value;
+                return 0;
+            }
+            "#,
+            "supports scalar objects and pointers to scalar objects",
+        ),
+        (
+            r#"
+            struct record {
                 volatile int32 value;
             };
             int32 field() {
@@ -422,6 +434,107 @@ fn c0_pointer_volatile_accesses_preserve_pointee_metadata_and_order() {
     assert!(accesses[1].starts_with("__click_volatile_read_"));
     assert!(accesses[2].starts_with("__click_volatile_write_"));
     assert!(accesses[3].starts_with("__click_volatile_read_"));
+}
+
+#[test]
+fn c0_pointer_object_volatile_accesses_preserve_pointer_provenance() {
+    let functions = syntax::parse_functions(
+        r#"
+        struct node { int32 value; };
+
+        int32 direct(struct node * volatile node) {
+            node = node;
+            return 0;
+        }
+
+        int32 *indirect(int32 *node) {
+            int32 * volatile slot = node;
+            int32 * volatile *cell = (int32 * volatile *)&slot;
+            *cell = node;
+            slot = *cell;
+            return slot;
+        }
+        "#,
+    )
+    .expect("pointer-object volatile declarations and casts should parse");
+
+    let direct_parameter = &functions[0].parameters()[0];
+    assert!(direct_parameter.is_volatile());
+    assert!(!direct_parameter.pointee_is_volatile());
+    let indirect_body = format!("{:?}", functions[1].body());
+    assert!(indirect_body.matches("pointee_volatile: true").count() >= 2);
+
+    let node_pointer = crate::kernel::Pointer {
+        block: crate::kernel::PointerBlock::ExternalArgument,
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let node = crate::kernel::CValue::typed_pointer(
+        node_pointer.clone(),
+        crate::kernel::CType::Int32Pointer,
+    );
+    let direct_execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        functions[0].to_kernel_function(),
+        vec![crate::kernel::CExpression::Value(node.clone())],
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(direct_execution.paths().len(), 1);
+    let direct_accesses = direct_execution.paths()[0]
+        .facts()
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact.proposition(),
+                crate::kernel::Proposition::Predicate { name, .. }
+                    if name.starts_with("__click_volatile_")
+            )
+        })
+        .count();
+    assert_eq!(direct_accesses, 2);
+
+    let indirect_execution = crate::kernel::prove_symbolic_c_function_execution_paths(
+        crate::kernel::CState::new(),
+        functions[1].to_kernel_function(),
+        vec![crate::kernel::CExpression::Value(node)],
+        crate::kernel::PureFactContext::new(),
+    );
+    assert_eq!(indirect_execution.paths().len(), 1);
+    let accesses = indirect_execution.paths()[0]
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            crate::kernel::Proposition::Predicate { name, .. }
+                if name.starts_with("__click_volatile_") =>
+            {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 5);
+    assert!(accesses[0].starts_with("__click_volatile_write_"));
+    assert!(accesses[1].starts_with("__click_volatile_write_"));
+    assert!(accesses[2].starts_with("__click_volatile_read_"));
+    assert!(accesses[3].starts_with("__click_volatile_write_"));
+    assert!(accesses[4].starts_with("__click_volatile_read_"));
+
+    let mut proposition = indirect_execution.paths()[0].theorem().proposition();
+    while let crate::kernel::Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome:
+            crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::CValue::Pointer(pointer),
+                ..
+            },
+        ..
+    } = proposition
+    else {
+        panic!("pointer-valued volatile accesses should preserve the return pointer")
+    };
+    assert_eq!(pointer.pointer(), &node_pointer);
+    assert_eq!(pointer.c_type(), crate::kernel::CType::Int32Pointer);
 }
 
 #[test]

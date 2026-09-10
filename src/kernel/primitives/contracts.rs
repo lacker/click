@@ -123,6 +123,7 @@ impl CGlobal {
             c_type,
             initial_value,
             volatile: false,
+            pointee_volatile: false,
             constant: false,
             pointee_constant: false,
         }
@@ -150,6 +151,15 @@ impl CGlobal {
 
     pub fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
+    pub fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
         self
     }
 
@@ -404,6 +414,7 @@ impl CStaticLocal {
             c_type,
             initial_value,
             volatile: false,
+            pointee_volatile: false,
             constant: false,
             pointee_constant: false,
         }
@@ -431,6 +442,15 @@ impl CStaticLocal {
 
     pub fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
+    pub fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
         self
     }
 

@@ -41,9 +41,11 @@ fn substitute_c_expression_variables(
         Cast {
             expression: body,
             target_type,
+            pointee_volatile,
         } => Cast {
             expression: unary(body),
             target_type: *target_type,
+            pointee_volatile: *pointee_volatile,
         },
         FloatClassification {
             expression: body,
@@ -1586,6 +1588,7 @@ fn ranking_term(
         Cast {
             expression,
             target_type: CType::Int32 | CType::UInt8,
+            ..
         } => ranking_term(expression, variables),
         Cast { .. }
         | FloatNegate(_)
@@ -1704,6 +1707,7 @@ fn contains_known_pointer_expression(
         Cast {
             expression,
             target_type,
+            ..
         } => {
             target_type.is_pointer()
                 || contains_known_pointer_expression(expression, pointer_variables)
@@ -1848,6 +1852,7 @@ fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpre
         SpecExpression::Cast(value, target_type) => Some(CExpression::Cast {
             expression: Box::new(spec_expression_to_c_expression(value)?),
             target_type: *target_type,
+            pointee_volatile: false,
         }),
         _ => None,
     }

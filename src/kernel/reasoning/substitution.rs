@@ -1564,11 +1564,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
         CExpression::Cast {
             expression,
             target_type,
+            pointee_volatile,
         } => CExpression::Cast {
             expression: Box::new(substitute_bitvector_variable_in_c_expression(
                 expression, from, to,
             )),
             target_type: *target_type,
+            pointee_volatile: *pointee_volatile,
         },
         CExpression::Conditional {
             condition,
@@ -4382,11 +4384,13 @@ fn substitute_pointer_variable_in_c_expression(
         CExpression::Cast {
             expression,
             target_type,
+            pointee_volatile,
         } => CExpression::Cast {
             expression: Box::new(substitute_pointer_variable_in_c_expression(
                 expression, from, to,
             )),
             target_type: *target_type,
+            pointee_volatile: *pointee_volatile,
         },
         CExpression::Conditional {
             condition,

@@ -821,6 +821,7 @@ impl Parser {
             Some(target_type) => CExpression::Cast {
                 expression: Box::new(expression.clone()),
                 target_type,
+                pointee_volatile: false,
             },
             None => expression.clone(),
         }
@@ -5256,6 +5257,7 @@ impl Parser {
             return Ok(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(expression),
                 target_type,
+                pointee_volatile: false,
             }));
         }
         if self.peek() == Some(&Token::Minus) {
@@ -5839,6 +5841,7 @@ impl Parser {
             return Ok(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
+                pointee_volatile: false,
             }));
         }
 
@@ -6698,6 +6701,7 @@ fn aligned_proposition(pointer: CExpression, alignment: u64) -> ClickProposition
             Box::new(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
+                pointee_volatile: false,
             })),
             Box::new(uint64(alignment - 1)),
         ),

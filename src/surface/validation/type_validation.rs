@@ -1046,6 +1046,7 @@ fn infer_c_expression_type(
         CExpression::Cast {
             expression: _,
             target_type,
+            ..
         } => match target_type {
             CType::Int16 => Some(C0Type::Int16),
             CType::Int32 => Some(C0Type::Int32),

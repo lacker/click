@@ -5419,21 +5419,22 @@ pub(super) fn bind_c_function_arguments(
         .iter()
         // Taking the address of a pointer parameter's pointee (for example
         // `&p[1]`) mentions `p` while addressing the pointed-to object, not the
-        // parameter object itself. Pointer-to-pointer parameters are outside
-        // the current C type model, so only scalar parameter objects need a
-        // callee stack slot here.
+        // parameter object itself. A volatile pointer parameter is different:
+        // its own object is the access, so it needs an address-backed slot for
+        // the volatile event to name.
         .filter(|parameter| {
             (address_taken.contains(parameter.name()) || parameter.is_volatile())
-                && matches!(
-                    parameter.c_type(),
-                    CType::Int16
-                        | CType::Int32
-                        | CType::UInt8
-                        | CType::UInt16
-                        | CType::UInt32
-                        | CType::Float32
-                        | CType::Float64
-                )
+                && (parameter.is_volatile() && parameter.c_type().is_pointer()
+                    || matches!(
+                        parameter.c_type(),
+                        CType::Int16
+                            | CType::Int32
+                            | CType::UInt8
+                            | CType::UInt16
+                            | CType::UInt32
+                            | CType::Float32
+                            | CType::Float64
+                    ))
         })
         .map(|parameter| parameter.name())
         .collect::<BTreeSet<_>>();
@@ -5732,7 +5733,7 @@ fn initialize_c_function_globals_owned(
             global.c_type(),
             slot.clone(),
             global.is_volatile(),
-            false,
+            global.pointee_is_volatile(),
             global.is_constant(),
             global.pointee_is_constant(),
         );
@@ -5742,7 +5743,7 @@ fn initialize_c_function_globals_owned(
                 global.c_type(),
                 slot,
                 global.is_volatile(),
-                false,
+                global.pointee_is_volatile(),
                 global.is_constant(),
                 global.pointee_is_constant(),
             );
@@ -5940,7 +5941,7 @@ fn initialize_c_function_globals_owned(
             static_local.c_type(),
             slot.clone(),
             static_local.is_volatile(),
-            false,
+            static_local.pointee_is_volatile(),
             static_local.is_constant(),
             static_local.pointee_is_constant(),
         );
@@ -5956,7 +5957,7 @@ fn initialize_c_function_globals_owned(
                 static_local.c_type(),
                 slot,
                 static_local.is_volatile(),
-                false,
+                static_local.pointee_is_volatile(),
                 static_local.is_constant(),
                 static_local.pointee_is_constant(),
             );
@@ -8013,6 +8014,7 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
             SpecExpression::CExpression(CExpression::Cast {
                 expression,
                 target_type: CType::UInt64 | CType::Int64,
+                ..
             }) => matches!(expression.as_ref(), CExpression::Variable(name) if name == witness),
             SpecExpression::Add(left, right) => {
                 mentions_witness_address(left, witness) || mentions_witness_address(right, witness)

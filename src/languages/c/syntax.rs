@@ -188,6 +188,7 @@ pub struct C0Global {
     tentative: bool,
     file_static: bool,
     volatile: bool,
+    pointee_volatile: bool,
     constant: bool,
     pointee_constant: bool,
 }
@@ -203,6 +204,7 @@ impl C0Global {
             tentative: false,
             file_static: false,
             volatile: false,
+            pointee_volatile: false,
             constant: false,
             pointee_constant: false,
         }
@@ -223,6 +225,7 @@ impl C0Global {
             tentative: false,
             file_static: false,
             volatile: false,
+            pointee_volatile: false,
             constant: false,
             pointee_constant: false,
         }
@@ -244,6 +247,7 @@ impl C0Global {
             tentative: false,
             file_static: true,
             volatile: false,
+            pointee_volatile: false,
             constant: false,
             pointee_constant: false,
         }
@@ -293,6 +297,10 @@ impl C0Global {
         self.volatile
     }
 
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
     pub fn is_constant(&self) -> bool {
         self.constant
     }
@@ -303,6 +311,11 @@ impl C0Global {
 
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
         self
     }
 
@@ -349,6 +362,7 @@ impl C0Global {
             value,
         )
         .with_volatile(self.is_volatile())
+        .with_pointee_volatile(self.pointee_is_volatile())
         .with_constant(self.is_constant())
         .with_pointee_constant(self.pointee_is_constant())
     }
@@ -1000,6 +1014,7 @@ pub struct C0StaticLocal {
     c_type: C0Type,
     initializer: C0Expression,
     volatile: bool,
+    pointee_volatile: bool,
     constant: bool,
     pointee_constant: bool,
 }
@@ -1110,6 +1125,7 @@ impl C0StaticLocal {
             c_type,
             initializer,
             volatile: false,
+            pointee_volatile: false,
             constant: false,
             pointee_constant: false,
         }
@@ -1135,6 +1151,10 @@ impl C0StaticLocal {
         self.volatile
     }
 
+    pub fn pointee_is_volatile(&self) -> bool {
+        self.pointee_volatile
+    }
+
     pub fn is_constant(&self) -> bool {
         self.constant
     }
@@ -1145,6 +1165,11 @@ impl C0StaticLocal {
 
     fn with_volatile(mut self, volatile: bool) -> Self {
         self.volatile = volatile;
+        self
+    }
+
+    fn with_pointee_volatile(mut self, pointee_volatile: bool) -> Self {
+        self.pointee_volatile = pointee_volatile;
         self
     }
 
@@ -1194,6 +1219,7 @@ impl C0StaticLocal {
             value,
         )
         .with_volatile(self.is_volatile())
+        .with_pointee_volatile(self.pointee_is_volatile())
         .with_constant(self.is_constant())
         .with_pointee_constant(self.pointee_is_constant())
     }
@@ -1485,8 +1511,26 @@ struct ParsedType {
     enum_name: Option<String>,
     union_name: Option<String>,
     is_volatile: bool,
+    /// Volatile qualifiers indexed from the outermost object type. Bit 0 is
+    /// the declared object, bit 1 its immediate pointee, and deeper bits are
+    /// retained long enough to reject unsupported qualifier depth precisely.
+    volatile_levels: u8,
     is_constant: bool,
     pointee_constant: bool,
+}
+
+impl ParsedType {
+    fn object_is_volatile(&self) -> bool {
+        self.volatile_levels & 1 != 0
+    }
+
+    fn pointee_is_volatile(&self) -> bool {
+        self.volatile_levels & 2 != 0
+    }
+
+    fn has_deeper_volatile(&self) -> bool {
+        self.volatile_levels & !3 != 0
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1995,6 +2039,10 @@ pub enum C0Expression {
         /// The struct tag of a pointer cast target, so field access through
         /// the cast result resolves the same layout as a declared pointer.
         struct_name: Option<String>,
+        /// Volatility of the pointer-valued cell reached by this pointer.
+        /// This is the qualifier in `T * volatile *`, not volatility of the
+        /// storage designated by `T *`.
+        pointee_volatile: bool,
     },
     Conditional {
         condition: Box<C0Expression>,
@@ -3291,8 +3339,15 @@ impl C0Expression {
             }
             Self::FunctionAddress(name) => crate::kernel::c_function_address(name.clone()),
             Self::Cast {
-                expression, c_type, ..
-            } => crate::kernel::c_cast(expression.to_kernel_expression(), c_type.to_kernel_type()),
+                expression,
+                c_type,
+                pointee_volatile,
+                ..
+            } => crate::kernel::c_cast_with_pointee_volatile(
+                expression.to_kernel_expression(),
+                c_type.to_kernel_type(),
+                *pointee_volatile,
+            ),
             Self::Conditional {
                 condition,
                 then_branch,
@@ -6282,6 +6337,7 @@ impl Parser {
             let layout = self.scalar_struct_value_layout(&struct_name)?;
             Some((struct_name, layout))
         } else {
+            self.validate_volatile_type(&parsed_type)?;
             if (parsed_type.struct_name.is_some() && struct_pointer_name.is_none())
                 || parsed_type.enum_name.is_some()
                 || parsed_type.union_name.is_some()
@@ -6706,7 +6762,8 @@ impl Parser {
                                     struct_pointer_name.clone(),
                                     initializer,
                                 )
-                                .with_volatile(parsed_type.is_volatile)
+                                .with_volatile(parsed_type.object_is_volatile())
+                                .with_pointee_volatile(parsed_type.pointee_is_volatile())
                                 .with_constant(parsed_type.is_constant)
                                 .with_pointee_constant(parsed_type.pointee_constant)
                                 .with_tentative(tentative)
@@ -6717,7 +6774,8 @@ impl Parser {
                                     struct_pointer_name.clone(),
                                     initializer,
                                 )
-                                .with_volatile(parsed_type.is_volatile)
+                                .with_volatile(parsed_type.object_is_volatile())
+                                .with_pointee_volatile(parsed_type.pointee_is_volatile())
                                 .with_constant(parsed_type.is_constant)
                                 .with_pointee_constant(parsed_type.pointee_constant)
                                 .with_tentative(tentative)
@@ -6729,7 +6787,8 @@ impl Parser {
                                 parsed_type.c_type,
                                 struct_pointer_name.clone(),
                             )
-                            .with_volatile(parsed_type.is_volatile)
+                            .with_volatile(parsed_type.object_is_volatile())
+                            .with_pointee_volatile(parsed_type.pointee_is_volatile())
                             .with_constant(parsed_type.is_constant)
                             .with_pointee_constant(parsed_type.pointee_constant)
                         }),
@@ -7930,16 +7989,7 @@ impl Parser {
                     "enum parameters are not supported; use enum values in struct fields",
                 ));
             }
-            if parsed_type.is_volatile
-                && (parsed_type.struct_name.is_some()
-                    || parsed_type.enum_name.is_some()
-                    || parsed_type.union_name.is_some()
-                    || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
-            {
-                return Err(self.error_here(
-                    "the sequential volatile model supports scalar objects and pointers to scalar objects",
-                ));
-            }
+            self.validate_volatile_type(&parsed_type)?;
             if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
                 return Err(self.error_here(
                     "the small volatile model does not support volatile function-pointer objects",
@@ -8013,8 +8063,8 @@ impl Parser {
                 .as_ref()
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
-            let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
-            let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
+            let object_volatile = parsed_type.object_is_volatile();
+            let pointee_volatile = parsed_type.pointee_is_volatile();
             let object_constant = parsed_type.is_constant && !array_parameter;
             let pointee_constant =
                 parsed_type.pointee_constant || (parsed_type.is_constant && array_parameter);
@@ -8147,6 +8197,7 @@ impl Parser {
                 enum_name: None,
                 union_name: None,
                 is_volatile: false,
+                volatile_levels: 0,
                 is_constant: false,
                 pointee_constant: false,
             },
@@ -8167,6 +8218,7 @@ impl Parser {
                     Some(union_name)
                 },
                 is_volatile: false,
+                volatile_levels: 0,
                 is_constant: false,
                 pointee_constant: false,
             },
@@ -8184,6 +8236,7 @@ impl Parser {
                     Some(enum_name)
                 },
                 is_volatile: false,
+                volatile_levels: 0,
                 is_constant: false,
                 pointee_constant: false,
             },
@@ -8202,8 +8255,16 @@ impl Parser {
         };
 
         let mut c_type = parsed.c_type;
+        let mut volatile_levels = parsed.volatile_levels;
+        if is_volatile {
+            volatile_levels |= 1;
+        }
         let mut object_constant = is_constant || parsed.is_constant;
         let mut pointee_constant = parsed.pointee_constant;
+        if self.peek_ident() == Some("volatile") {
+            self.position += 1;
+            volatile_levels |= 1;
+        }
         if self.peek_ident() == Some("const") {
             self.position += 1;
             object_constant = true;
@@ -8218,6 +8279,7 @@ impl Parser {
             let base_constant = object_constant;
             object_constant = false;
             self.position += 1;
+            volatile_levels <<= 1;
             c_type = match c_type {
                 C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
@@ -8288,6 +8350,10 @@ impl Parser {
                 self.position += 1;
                 object_constant = true;
             }
+            if self.peek_ident() == Some("volatile") {
+                self.position += 1;
+                volatile_levels |= 1;
+            }
             saw_pointer = true;
             if parsed.union_name.is_some() {
                 return Err(
@@ -8303,10 +8369,37 @@ impl Parser {
             struct_name: parsed.struct_name,
             enum_name: parsed.enum_name,
             union_name: parsed.union_name,
-            is_volatile: is_volatile || parsed.is_volatile,
+            is_volatile: volatile_levels != 0,
+            volatile_levels,
             is_constant: object_constant,
             pointee_constant,
         })
+    }
+
+    fn validate_volatile_type(&self, parsed_type: &ParsedType) -> Result<(), C0SyntaxError> {
+        if !parsed_type.is_volatile {
+            return Ok(());
+        }
+        // The sequential model tracks the object and its immediate pointee
+        // independently. A qualifier below that boundary would require a
+        // recursive qualified-type representation that the C0 memory model
+        // intentionally does not provide.
+        if parsed_type.has_deeper_volatile()
+            || parsed_type.union_name.is_some()
+            || parsed_type.enum_name.is_some()
+            || (parsed_type.struct_name.is_some()
+                && (!parsed_type.c_type.is_pointer()
+                    || (parsed_type.pointee_is_volatile()
+                        && !parsed_type
+                            .c_type
+                            .pointee_type()
+                            .is_some_and(C0Type::is_pointer))))
+        {
+            return Err(self.error_here(
+                "the sequential volatile model supports scalar objects and pointers to scalar objects",
+            ));
+        }
+        Ok(())
     }
 
     /// Parses the parenthesized declarator in `int32 (*callback)(int32)`.
@@ -8511,6 +8604,7 @@ impl Parser {
             enum_name: None,
             union_name: None,
             is_volatile: false,
+            volatile_levels: 0,
             is_constant: false,
             pointee_constant: false,
         })
@@ -8904,6 +8998,7 @@ impl Parser {
                             expression: Box::new(expression),
                             c_type: C0Type::Int32,
                             struct_name: None,
+                            pointee_volatile: false,
                         }
                     } else {
                         expression
@@ -10151,16 +10246,7 @@ impl Parser {
                 "const-qualified local objects are not supported in this slice; use file-scope or static storage",
             ));
         }
-        if parsed_type.is_volatile
-            && (parsed_type.struct_name.is_some()
-                || parsed_type.enum_name.is_some()
-                || parsed_type.union_name.is_some()
-                || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
-        {
-            return Err(self.error_here(
-                "the sequential volatile model supports scalar objects and pointers to scalar objects",
-            ));
-        }
+        self.validate_volatile_type(&parsed_type)?;
         if parsed_type.is_volatile && self.peek() == Some(&Token::LParen) {
             return Err(self.error_here(
                 "the small volatile model does not support volatile function-pointer objects",
@@ -10319,8 +10405,8 @@ impl Parser {
                 c_type = C0Type::UInt8Pointer;
             }
             self.variable_types.insert(name.clone(), c_type);
-            let object_volatile = parsed_type.is_volatile && !c_type.is_pointer();
-            let pointee_volatile = parsed_type.is_volatile && c_type.is_scalar_pointer();
+            let object_volatile = parsed_type.object_is_volatile();
+            let pointee_volatile = parsed_type.pointee_is_volatile();
             let object_constant = parsed_type.is_constant;
             let pointee_constant = parsed_type.pointee_constant;
             if object_constant {
@@ -10433,16 +10519,7 @@ impl Parser {
     fn parse_static_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect_ident_spelling("static")?;
         let parsed_type = self.parse_type()?;
-        if parsed_type.is_volatile
-            && (parsed_type.struct_name.is_some()
-                || parsed_type.enum_name.is_some()
-                || parsed_type.union_name.is_some()
-                || (parsed_type.c_type.is_pointer() && !parsed_type.c_type.is_scalar_pointer()))
-        {
-            return Err(self.error_here(
-                "the sequential volatile model supports scalar objects and pointers to scalar objects",
-            ));
-        }
+        self.validate_volatile_type(&parsed_type)?;
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
             if parsed_type.is_volatile {
                 return Err(self.error_here(
@@ -10673,7 +10750,8 @@ impl Parser {
                 self.static_locals.insert(
                     kernel_name.clone(),
                     C0StaticLocal::new(source_name, kernel_name, parsed_type.c_type, initializer)
-                        .with_volatile(parsed_type.is_volatile)
+                        .with_volatile(parsed_type.object_is_volatile())
+                        .with_pointee_volatile(parsed_type.pointee_is_volatile())
                         .with_constant(parsed_type.is_constant)
                         .with_pointee_constant(parsed_type.pointee_constant),
                 );
@@ -10874,19 +10952,14 @@ impl Parser {
         if is_plain_struct_type(&parsed_type) {
             return Err(self.error_here("only pointer-to-struct types are supported"));
         }
-        if parsed_type.is_volatile && parsed_type.c_type.is_pointer() {
-            return Err(self.error_here(
-                "the small volatile model supports only direct scalar integer objects",
-            ));
-        }
+        self.validate_volatile_type(&parsed_type)?;
         let mut initializers = Vec::new();
         loop {
             let source_name = self.expect_ident("for-loop local name")?;
             let name = self.declare_name(&source_name)?;
             self.variable_types.insert(name.clone(), parsed_type.c_type);
-            let object_volatile = parsed_type.is_volatile && !parsed_type.c_type.is_pointer();
-            let pointee_volatile =
-                parsed_type.is_volatile && parsed_type.c_type.is_scalar_pointer();
+            let object_volatile = parsed_type.object_is_volatile();
+            let pointee_volatile = parsed_type.pointee_is_volatile();
             let object_constant = parsed_type.is_constant;
             let pointee_constant = parsed_type.pointee_constant;
             if object_constant {
@@ -12305,6 +12378,7 @@ impl Parser {
                 expression,
                 c_type,
                 struct_name,
+                pointee_volatile,
             } => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((
@@ -12313,6 +12387,7 @@ impl Parser {
                         expression: Box::new(expression),
                         c_type,
                         struct_name,
+                        pointee_volatile,
                     },
                 ))
             }
@@ -12717,6 +12792,7 @@ impl Parser {
             expression: Box::new(expression),
             c_type: common_type,
             struct_name: None,
+            pointee_volatile: false,
         }
     }
 
@@ -13100,6 +13176,7 @@ impl Parser {
             expression: Box::new(pointer),
             c_type: C0Type::UInt8Pointer,
             struct_name: None,
+            pointee_volatile: false,
         };
         let byte_offset = C0Expression::Multiply(
             Box::new(offset),
@@ -13132,8 +13209,16 @@ impl Parser {
         self.position += 1;
         let parsed_type = self.parse_type()?;
         self.expect(Token::RParen)?;
+        let volatile_pointer_object_cast = parsed_type.pointee_is_volatile()
+            && parsed_type
+                .c_type
+                .pointee_type()
+                .is_some_and(C0Type::is_pointer)
+            && !parsed_type.has_deeper_volatile();
         if parsed_type.c_type.is_pointer()
-            && (parsed_type.pointee_constant || parsed_type.is_constant || parsed_type.is_volatile)
+            && (parsed_type.pointee_constant
+                || parsed_type.is_constant
+                || (parsed_type.is_volatile && !volatile_pointer_object_cast))
         {
             return Err(self.error_at_previous(
                 "qualified pointer cast destinations are not supported; cast qualification cannot be discarded",
@@ -13176,6 +13261,7 @@ impl Parser {
             expression: Box::new(expression),
             c_type,
             struct_name,
+            pointee_volatile: volatile_pointer_object_cast,
         });
     }
 
@@ -13445,6 +13531,7 @@ impl Parser {
                                 expression: Box::new(expression),
                                 c_type: C0Type::UInt8Pointer,
                                 struct_name: None,
+                                pointee_volatile: false,
                             };
                             let offset = C0Expression::Multiply(
                                 Box::new(first_index),
@@ -14007,7 +14094,11 @@ impl Parser {
             return Ok(());
         }
 
-        let actual_struct_name = self.struct_pointer_name(expression);
+        let actual_struct_name = if expected.pointee_type().is_some_and(C0Type::is_pointer) {
+            self.struct_pointer_pointer_name(expression)
+        } else {
+            self.struct_pointer_name(expression)
+        };
         if actual != expected || actual_struct_name.as_deref() != expected_struct_name {
             return Err(cast_position.error(format!(
                 "incompatible C pointer types: retyping object-pointer casts are unsupported; expected {expected:?}, got {actual:?}"
