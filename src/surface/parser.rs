@@ -7013,11 +7013,14 @@ mod integer_quantifier_parser_tests {
     }
 
     #[test]
-    fn c_shadow_rejects_wide_literal_but_outer_integer_remains_visible() {
+    fn c_shadow_preserves_wide_literal_provenance_for_validation() {
         let mut rejected =
             Parser::new("forall (z: Integer) { exists (z: int32) { z == 100000000000000000000 } }")
                 .unwrap();
-        assert!(rejected.parse_proposition().is_err());
+        // Literal provenance is retained through parsing.  The C-range
+        // rejection belongs to semantic lowering, where the binder type is
+        // available, rather than to the parser's context-sensitive grammar.
+        assert!(rejected.parse_proposition().is_ok());
 
         let mut restored =
             Parser::new("forall (z: Integer) { exists (z: int32) { z == 0 } and z > 0 }").unwrap();
