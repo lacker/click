@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (22)
+## P1: before launch (12)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -55,10 +55,6 @@ them. A gap that only a different program would hit is P2.
 
 Soundness and kernel shape:
 
-- [Keep loop-entry snapshots stable during preservation](loop-entry-snapshot.md)
-- [Keep modified by-value struct copies out of caller postconditions](by-value-struct-postconditions.md)
-- [Preserve aliases for pointers reloaded from caller-visible memory](reloaded-local-pointer.md)
-- [Give automatic objects fresh lifetime on block re-entry](automatic-block-reentry-lifetime.md)
 - [Keep proof search out of kernel authority](simplify-kernel.md)
 - [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
@@ -68,13 +64,8 @@ C import and execution:
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify inline function definitions reached through headers](inline-functions-in-headers.md)
-- [Model the GNU C expression and declaration forms used by rbtree](gnu-c-extensions.md)
-- [Model C `_Bool` and `bool`](c-bool.md)
-- [Support pointer-to-pointer forms for struct pointers](struct-pointer-indirection.md)
 - [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
-- [Model sequential scalar and pointer-qualified volatile objects](volatile-objects.md)
-- [Model volatile accesses to pointer-valued objects](volatile-pointer-objects.md)
 
 Specification and proof:
 
