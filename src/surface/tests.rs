@@ -1802,7 +1802,7 @@ fn current_var(name: &str) -> ContractExpression {
 }
 
 fn current_int(value: u32) -> ContractExpression {
-    current(CExpression::Value(int32(value)))
+    ContractExpression::IntegerLiteral(value.to_string())
 }
 
 fn current_index(base: &str, index: u32) -> ContractExpression {

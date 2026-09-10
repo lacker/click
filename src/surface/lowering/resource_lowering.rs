@@ -1041,9 +1041,35 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
     argument: &ContractExpression,
 ) -> Result<CExpression, ClickError> {
     match argument {
-        ContractExpression::IntegerLiteral(_) | ContractExpression::Negate(_) => Err(
-            ClickError::new("mathematical Integer values are not valid C resource arguments"),
-        ),
+        ContractExpression::IntegerLiteral(text) => {
+            let value = text.parse::<u64>().map_err(|_| {
+                ClickError::new("an arbitrary Integer literal requires Integer context")
+            })?;
+            let value = if value <= i32::MAX as u64 {
+                CValue::Int32(Bitvector32Term::Constant(value as u32))
+            } else if value <= i64::MAX as u64 {
+                CValue::Int64(Bitvector32Term::Int64Constant(value as i64))
+            } else {
+                CValue::UInt64(Bitvector32Term::UInt64Constant(value))
+            };
+            Ok(CExpression::Value(value))
+        }
+        ContractExpression::Negate(expression) => {
+            if let ContractExpression::IntegerLiteral(text) = expression.as_ref()
+                && let Ok(value) = text.parse::<u64>()
+                && value <= (i32::MAX as u64) + 1
+            {
+                return Ok(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(0u32.wrapping_sub(value as u32)),
+                )));
+            }
+            Ok(CExpression::Subtract(
+                Box::new(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(0),
+                ))),
+                Box::new(resource_argument_to_c_expression(expression)?),
+            ))
+        }
         ContractExpression::ResourceField(_) => Err(ClickError::new(
             "resource fields are symbolic Click values, not C arguments",
         )),

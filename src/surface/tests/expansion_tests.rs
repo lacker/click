@@ -7224,7 +7224,7 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
                     ProofTactic::If(inner) if inner.condition == ClickProposition::Comparison {
                         left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
                         operator: ComparisonOperator::GreaterEqual,
-                        right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0)))),
+                        right: ContractExpression::IntegerLiteral("0".into()),
                     }
                 ))
         ),
