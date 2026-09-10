@@ -82,6 +82,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             condition,
             invariant_checks,
             effect_checks,
+            resource_specs,
             body,
             do_while,
             ..
@@ -154,6 +155,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         condition,
                         invariant_checks,
                         effect_checks,
+                        resource_specs,
                         body,
                         &assumptions,
                     )
@@ -163,6 +165,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         condition,
                         invariant_checks,
                         effect_checks,
+                        resource_specs,
                         body,
                         &assumptions,
                     )

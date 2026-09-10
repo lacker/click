@@ -1918,10 +1918,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             invariant,
             invariant_checks,
             effect_checks,
+            resource_specs,
             body,
             do_while,
         } => CStatement::While {
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
+            resource_specs: resource_specs
+                .iter()
+                .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+                .collect(),
             invariant: invariant
                 .iter()
                 .map(|proposition| {
@@ -4617,10 +4622,15 @@ fn substitute_pointer_variable_in_c_statement(
             invariant,
             invariant_checks,
             effect_checks,
+            resource_specs,
             body,
             do_while,
         } => CStatement::While {
             condition: substitute_pointer_variable_in_c_expression(condition, from, to),
+            resource_specs: resource_specs
+                .iter()
+                .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
+                .collect(),
             invariant: invariant
                 .iter()
                 .map(|proposition| {

@@ -3258,6 +3258,7 @@ fn checked_condition_event(
             invariant,
             invariant_checks,
             effect_checks,
+            resource_specs,
             body,
             ..
         } if &condition == proved_condition => {
@@ -3267,6 +3268,7 @@ fn checked_condition_event(
                     invariant,
                     invariant_checks,
                     effect_checks,
+                    resource_specs,
                     do_while: false,
                     body: body.clone(),
                 };
@@ -4168,6 +4170,7 @@ impl ExecutionProofCore {
                     invariant,
                     invariant_checks,
                     effect_checks,
+                    resource_specs,
                     do_while: true,
                     body,
                 } if !matches!(proved_statement, CStatement::While { .. }) => {
@@ -4185,6 +4188,7 @@ impl ExecutionProofCore {
                         invariant: invariant.clone(),
                         invariant_checks: invariant_checks.clone(),
                         effect_checks: effect_checks.clone(),
+                        resource_specs: resource_specs.clone(),
                         do_while: false,
                         body: body.clone(),
                     };
@@ -4291,6 +4295,7 @@ impl ExecutionProofCore {
                 invariant,
                 invariant_checks,
                 effect_checks,
+                resource_specs,
                 body,
                 ..
             } => {
@@ -4300,6 +4305,7 @@ impl ExecutionProofCore {
                         invariant: invariant.clone(),
                         invariant_checks: invariant_checks.clone(),
                         effect_checks: effect_checks.clone(),
+                        resource_specs: resource_specs.clone(),
                         do_while: false,
                         body: body.clone(),
                     };

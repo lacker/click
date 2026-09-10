@@ -270,6 +270,7 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn check_loop_state_join(
         &self,
         loop_entry_state: &CState,
+        loop_head_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
         composite_resource_definitions: &[CCompositeResourceDefinition],
@@ -318,8 +319,12 @@ impl<'a> Proof<'a> {
         {
             return Ok(());
         }
+        // Heap lifetime and resource ownership are compared against the head
+        // the body actually started from. That is the loop entry context for
+        // an ordinary loop, and the loop's own narrower resource context when
+        // the loop declares `owns` or `views` clauses of its own.
         crate::kernel::c_loop_state_components_match_at_back_edge(
-            loop_entry_state,
+            loop_head_state,
             &execution.core.state,
             &assumptions,
             composite_resource_definitions,
@@ -337,6 +342,7 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn prepare_loop_invariant_bundle(
         &self,
         loop_entry_state: &CState,
+        loop_head_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
         invariant_surfaces: &[ClickProposition],
@@ -345,6 +351,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Option<Self>, ClickError> {
         self.check_loop_state_join(
             loop_entry_state,
+            loop_head_state,
             condition,
             invariant_checks,
             composite_resource_definitions,

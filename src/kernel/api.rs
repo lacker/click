@@ -197,6 +197,7 @@ pub fn c_loop_preservation_contexts(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
@@ -205,6 +206,7 @@ pub fn c_loop_preservation_contexts(
         condition,
         invariant_checks,
         effect_checks,
+        resource_specs,
         body,
         assumptions,
         false,
@@ -219,6 +221,7 @@ pub fn c_do_while_preservation_contexts(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
@@ -227,6 +230,7 @@ pub fn c_do_while_preservation_contexts(
         condition,
         invariant_checks,
         effect_checks,
+        resource_specs,
         body,
         assumptions,
         true,
@@ -239,6 +243,7 @@ fn c_loop_preservation_contexts_with_mode(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
     do_while: bool,
@@ -257,15 +262,22 @@ fn c_loop_preservation_contexts_with_mode(
     collect_assumption_variables(assumptions, &mut existing_variables);
     let mut variables =
         KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing_variables);
-    let (top_state, whole_loop_effect_summaries) = prepare_loop_top_state(
+    let head = prepare_loop_top_state(
         loop_entry_state,
         effect_checks,
+        resource_specs,
         body,
         assumptions,
         &mut budget,
         &mut variables,
     )
     .map_err(|error| format!("could not prepare loop effects: {error:?}"))?;
+    if let Some(failure) = head.resource_failures.first() {
+        return Err(failure.clone());
+    }
+    // Preservation runs the body with the loop's declared resources.
+    let top_state = head.body;
+    let whole_loop_effect_summaries = head.summaries;
     let whole_loop_effect_facts = whole_loop_effect_summaries
         .iter()
         .cloned()
@@ -1086,8 +1098,27 @@ pub fn c_while_with_invariant_and_effect_checks(
         invariant,
         invariant_checks,
         effect_checks,
+        resource_specs: Vec::new(),
         do_while: false,
         body: Box::new(body),
+    }
+}
+
+impl CStatement {
+    /// Declares the resources a loop holds for itself.
+    ///
+    /// An empty declaration leaves the loop inheriting the enclosing resource
+    /// context, which is what every loop without `owns` or `views` clauses
+    /// does. A statement that is not a loop head keeps its shape: only a loop
+    /// carries resource declarations.
+    pub fn with_loop_resource_specs(mut self, specs: Vec<CResourceSpec>) -> Self {
+        if specs.is_empty() {
+            return self;
+        }
+        if let Self::While { resource_specs, .. } = &mut self {
+            *resource_specs = specs;
+        }
+        self
     }
 }
 
@@ -1106,6 +1137,7 @@ pub fn c_do_while_with_invariant_and_effect_checks(
         invariant: Vec::new(),
         invariant_checks,
         effect_checks,
+        resource_specs: Vec::new(),
         do_while: true,
         body: Box::new(body),
     }
@@ -2051,6 +2083,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         invariant,
         invariant_checks,
         effect_checks,
+        resource_specs,
         body,
         do_while,
     } = &statement
@@ -2076,6 +2109,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         invariant,
         invariant_checks,
         effect_checks,
+        resource_specs,
         body,
         &assumptions,
         &environment,

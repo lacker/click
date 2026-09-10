@@ -1584,6 +1584,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         let checked = if invariant_checks.is_empty() {
             leaf.check_loop_state_join(
                 preservation.loop_entry_state(),
+                preservation.state(),
                 condition,
                 &[],
                 environment.function.composite_resource_definitions(),
@@ -1598,6 +1599,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         } else {
             leaf.prepare_loop_invariant_bundle(
                 preservation.loop_entry_state(),
+                preservation.state(),
                 condition,
                 invariant_checks,
                 &invariant_surfaces,
@@ -1628,8 +1630,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         join_facts.extend(crate::kernel::certified_store_equations(
             &checked_execution.core.effect_facts,
         ));
+        // The body must return to the head it started from, which carries the
+        // loop's own resource context when the loop declares one.
         if crate::kernel::c_loop_state_components_match_at_back_edge(
-            preservation.loop_entry_state(),
+            preservation.state(),
             &checked_execution.core.state,
             &assumptions_from_propositions(&join_facts),
             environment.function.composite_resource_definitions(),

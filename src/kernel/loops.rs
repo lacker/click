@@ -1045,6 +1045,7 @@ pub(super) fn execute_c_statement_verification_paths(
             invariant,
             invariant_checks,
             effect_checks,
+            resource_specs,
             body,
             do_while,
         } if !invariant_checks.is_empty() || !effect_checks.is_empty() => {
@@ -1054,6 +1055,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 invariant,
                 invariant_checks,
                 effect_checks,
+                resource_specs,
                 body,
                 assumptions,
                 environment,
@@ -1165,6 +1167,7 @@ pub(super) fn execute_c_while_verification_paths(
     invariant: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1179,6 +1182,7 @@ pub(super) fn execute_c_while_verification_paths(
         invariant,
         invariant_checks,
         effect_checks,
+        resource_specs,
         body,
         assumptions,
         Some(environment),
@@ -1340,6 +1344,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     invariant: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1357,6 +1362,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         invariant,
         invariant_checks,
         effect_checks,
+        resource_specs,
         body,
         assumptions,
         (!preservation_proven).then_some(environment),
@@ -1376,6 +1382,7 @@ fn execute_c_while_exit_paths(
     invariant: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
     preservation_environment: Option<&CExecutionEnvironment>,
@@ -1405,13 +1412,22 @@ fn execute_c_while_exit_paths(
             budget,
         )?
     };
-    let (top_state, whole_loop_effect_summaries) =
-        prepare_loop_top_state(state, effect_checks, body, assumptions, budget, variables)?;
+    let head = prepare_loop_top_state(
+        state,
+        effect_checks,
+        resource_specs,
+        body,
+        assumptions,
+        budget,
+        variables,
+    )?;
+    let top_state = head.top.clone();
+    let whole_loop_effect_summaries = head.summaries.clone();
     let (preservation_obligations, mut final_exit_paths) =
         if let Some(environment) = preservation_environment {
             let summary = collect_loop_preservation_summary(
                 state,
-                &top_state,
+                &head,
                 condition,
                 invariant_checks,
                 effect_checks,
@@ -1429,6 +1445,13 @@ fn execute_c_while_exit_paths(
             (Vec::new(), Vec::new())
         };
     let mut loop_check_obligations = Vec::new();
+    // A loop may only declare resources the enclosing context actually holds.
+    for failure in &head.resource_failures {
+        loop_check_obligations.push(
+            ProofObligation::verification_condition(false_equals_true_proposition())
+                .with_context(failure.clone()),
+        );
+    }
     append_required_proof_obligations(&mut loop_check_obligations, assumptions, &entry_obligations);
     append_required_proof_obligations(
         &mut loop_check_obligations,
@@ -1486,7 +1509,7 @@ fn execute_c_while_exit_paths(
                     continue;
                 };
                 paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::Normal(candidate.state().clone()),
+                    outcome: CStatementOutcome::Normal(head.restored_exit_state(candidate.state())),
                     facts,
                     obligations,
                 });
@@ -1705,7 +1728,7 @@ pub(super) struct LoopPreservationSummary {
 
 pub(super) fn collect_loop_preservation_summary(
     loop_entry_state: &CState,
-    top_state: &CState,
+    head: &CLoopHead,
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
@@ -1720,6 +1743,9 @@ pub(super) fn collect_loop_preservation_summary(
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
     let mut final_exit_paths = Vec::new();
+    // The body executes from the loop's own resource context; everything the
+    // enclosing frame withheld is returned on the way out.
+    let top_state = &head.body;
     let composite_resource_definitions = environment
         .functions
         .values()
@@ -1880,7 +1906,9 @@ pub(super) fn collect_loop_preservation_summary(
                                         &final_path_obligations,
                                     );
                                     final_exit_paths.push(CStatementExecutionPath {
-                                        outcome: CStatementOutcome::Normal(next_state.clone()),
+                                        outcome: CStatementOutcome::Normal(
+                                            head.restored_exit_state(&next_state),
+                                        ),
                                         facts: final_path_facts,
                                         obligations: final_obligations,
                                     });
@@ -1929,7 +1957,9 @@ pub(super) fn collect_loop_preservation_summary(
                             &final_path_obligations,
                         );
                         final_exit_paths.push(CStatementExecutionPath {
-                            outcome: CStatementOutcome::Normal(next_state),
+                            outcome: CStatementOutcome::Normal(
+                                head.restored_exit_state(&next_state),
+                            ),
                             facts: final_path_facts,
                             obligations: final_obligations,
                         });
@@ -2033,14 +2063,52 @@ pub(super) fn collect_whole_loop_effect_summaries(
         .collect()
 }
 
+/// The abstract head of one loop.
+///
+/// `top` is the state the enclosing frame continues from; `body` is the state
+/// the body executes from. They differ only in the resource context, and only
+/// when the loop declares resources of its own: the body then owns exactly
+/// what the loop declared, and the rest of the enclosing frame's resources are
+/// withheld until the loop exits.
+pub(super) struct CLoopHead {
+    pub(super) top: CState,
+    pub(super) body: CState,
+    pub(super) summaries: Vec<Proposition>,
+    /// Why a declared loop resource could not be taken from the enclosing
+    /// resource context. A non-empty list is a verification failure.
+    pub(super) resource_failures: Vec<String>,
+}
+
+impl CLoopHead {
+    /// Whether the body executes with a narrower resource context than the
+    /// enclosing frame holds.
+    pub(super) fn narrows_resources(&self) -> bool {
+        self.body.resources() != self.top.resources()
+    }
+
+    /// The enclosing frame's resource context, restored onto a state the body
+    /// left with the loop's declared resources intact. A body that changed
+    /// that context keeps its own: the withheld resources are returned only
+    /// against an unchanged loop-level exchange.
+    pub(super) fn restored_exit_state(&self, state: &CState) -> CState {
+        if !self.narrows_resources() || state.resources() != self.body.resources() {
+            return state.clone();
+        }
+        state
+            .clone()
+            .with_resource_context(self.top.resources().clone())
+    }
+}
+
 pub(super) fn prepare_loop_top_state(
     entry_state: &CState,
     effect_checks: &[CLoopEffectCheck],
+    resource_specs: &[CResourceSpec],
     body: &CStatement,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
-) -> ExecutionResult<(CState, Vec<Proposition>)> {
+) -> ExecutionResult<CLoopHead> {
     let include_mutable_summaries = statement_may_write_memory(entry_state, body);
     let (effect_ranges, all_ranges_evaluable) = evaluate_whole_loop_effect_ranges(
         entry_state,
@@ -2108,7 +2176,110 @@ pub(super) fn prepare_loop_top_state(
         top_state = top_state.with_memory(framed_memory);
         summaries = collect_whole_loop_effect_summaries(entry_state, &top_state, &effect_ranges);
     }
-    Ok((top_state, summaries))
+    let (body_state, resource_failures) =
+        loop_body_resource_context(entry_state, &top_state, resource_specs, assumptions, budget)?;
+    Ok(CLoopHead {
+        top: top_state,
+        body: body_state,
+        summaries,
+        resource_failures,
+    })
+}
+
+/// Builds the resource context a declaring loop's body executes with.
+///
+/// The loop takes its declared resources out of the enclosing context, exactly
+/// as a call takes a callee's requirements out of its caller's. What remains is
+/// viewed rather than owned, so a body store outside the loop's owned memory
+/// fails at the store for want of a resource, and the loop's havoc footprint
+/// is the memory it owns. A loop that declares views of its own keeps no
+/// ambient read authority either.
+fn loop_body_resource_context(
+    entry_state: &CState,
+    top_state: &CState,
+    resource_specs: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<(CState, Vec<String>)> {
+    if resource_specs.is_empty() {
+        return Ok((top_state.clone(), Vec::new()));
+    }
+    let declared =
+        match evaluate_function_resource_context(entry_state, resource_specs, assumptions, budget)?
+        {
+            Ok(declared) => declared,
+            Err(error) => {
+                return Ok((
+                    top_state.clone(),
+                    vec![format!(
+                        "loop declares a resource the enclosing function does not hold: {error:?}"
+                    )],
+                ));
+            }
+        };
+    let mut withheld = entry_state.resources().clone();
+    for fact in declared.facts() {
+        let Some(remaining) = withheld.clone().without_fact(fact, assumptions) else {
+            return Ok((
+                top_state.clone(),
+                vec![format!(
+                    "loop declares a resource the enclosing function does not hold: {fact:?}"
+                )],
+            ));
+        };
+        withheld = remaining;
+    }
+    let mut body_resources = declared.clone();
+    if !resource_specs.iter().any(resource_spec_is_view) {
+        for fact in withheld.facts() {
+            let Some(viewed) = viewed_form_of_resource_fact(fact) else {
+                continue;
+            };
+            if body_resources.satisfies_fact(&viewed, assumptions) {
+                continue;
+            }
+            match body_resources
+                .clone()
+                .try_compose_with_fact(viewed, assumptions)
+            {
+                Ok(composed) => body_resources = composed,
+                // An un-composable remainder is read authority the body
+                // simply does not get; it is not a contract failure.
+                Err(_) => continue,
+            }
+        }
+    }
+    Ok((
+        top_state.clone().with_resource_context(body_resources),
+        Vec::new(),
+    ))
+}
+
+/// Whether a declared loop resource asks only to read.
+fn resource_spec_is_view(spec: &CResourceSpec) -> bool {
+    match spec {
+        CResourceSpec::ViewMemory(_) => true,
+        CResourceSpec::OwnMemory(_) => false,
+        CResourceSpec::Instance { resource, .. } | CResourceSpec::Quantified { resource, .. } => {
+            resource_spec_is_view(resource)
+        }
+        CResourceSpec::Composite { access, .. } | CResourceSpec::Token { access, .. } => {
+            *access == CResourceAccessMode::View
+        }
+    }
+}
+
+/// The read-only form of a resource the loop did not declare. Memory and
+/// composite resources have one; an exclusive token or instance does not, so
+/// the body simply does not hold it.
+fn viewed_form_of_resource_fact(fact: &CResourceFact) -> Option<CResourceFact> {
+    match fact {
+        CResourceFact::View(_) => Some(fact.clone()),
+        CResourceFact::Own(resource @ (CResource::Memory(_) | CResource::Composite { .. }), _) => {
+            Some(CResourceFact::View(resource.clone()))
+        }
+        CResourceFact::Own(CResource::Token { .. } | CResource::Instance(_), _) => None,
+    }
 }
 
 pub(super) fn collect_loop_effect_check_obligations(

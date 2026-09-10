@@ -436,6 +436,17 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 };
                 line(output, &body_prefix, &format!("decreases {rendered};"));
             }
+            for resource in loop_clause.resources() {
+                let keyword = match resource_access(resource) {
+                    ResourceAccessMode::Own => "owns",
+                    ResourceAccessMode::View => "views",
+                };
+                line(
+                    output,
+                    &body_prefix,
+                    &format!("{keyword} {};", format_resource_target(resource)),
+                );
+            }
             for item in loop_clause.items() {
                 match item.kind() {
                     StructuralItemKind::Invariant => {

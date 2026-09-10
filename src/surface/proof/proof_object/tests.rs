@@ -8381,6 +8381,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
         let prepared = joined
             .prepare_loop_invariant_bundle(
                 &CState::new(),
+                &CState::new(),
                 &CExpression::Value(int32(1)),
                 &checks,
                 &[surface.clone(), legacy_surface.clone()],

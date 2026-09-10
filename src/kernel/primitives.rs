@@ -1593,6 +1593,11 @@ pub enum CStatement {
         invariant: Vec<Proposition>,
         invariant_checks: Vec<CLoopInvariantCheck>,
         effect_checks: Vec<CLoopEffectCheck>,
+        /// Resources the loop declares for itself. An empty list means the
+        /// body executes with the enclosing resource context; a declaration
+        /// narrows that context to exactly these resources, with everything
+        /// else the enclosing frame owns viewed rather than owned.
+        resource_specs: Vec<CResourceSpec>,
         /// Whether the body runs before the first condition check, as in C's
         /// `do ... while` statement.
         do_while: bool,

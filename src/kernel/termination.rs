@@ -2813,6 +2813,7 @@ mod address_escape_tests {
             invariant: Vec::new(),
             invariant_checks: Vec::new(),
             effect_checks: Vec::new(),
+            resource_specs: Vec::new(),
             do_while: false,
             body: Box::new(branch),
         };

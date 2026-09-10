@@ -1627,5 +1627,27 @@ cell, does not authorize the store. Resource slices of global and static
 arrays use the array's declared element width, so `owns bytes[0..1]` on a
 `uint8` array covers one byte.
 
+A loop may declare resources of its own beside its invariants, in the same
+`owns` and `views` spellings a contract uses:
+
+<!-- verified-example: mdtests/loop_owns_clause_frames_other_owned_memory.md -->
+```click
+loop {
+    owns p[0..n];
+    invariant i >= 0;
+    invariant i <= n;
+}
+```
+
+A declared resource must be one the enclosing function already holds; a loop
+cannot own what its function does not. The loop then has the shape of a callee:
+its body executes owning exactly what the loop declared, with everything else
+the function owns viewed rather than owned, so a body store outside the loop's
+owned memory is rejected at the store. The loop's write footprint is the memory
+it owns, so the function's other owned memory keeps its pre-loop value with no
+invariant naming it. A loop that declares only `views` owns nothing and so
+writes nothing. With no declaration, a loop inherits everything the function
+owns, which is the default footprint an omitted clause already means.
+
 Loop-level and step-level effects are described in [proof-workflow.md](../../concepts/proof-workflow.md)
 and [memory-model.md](../../concepts/memory-model.md).
