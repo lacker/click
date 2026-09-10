@@ -3983,6 +3983,7 @@ fn prove_pure_theorem_goal(
         post_state: &state,
         result: None,
         recorded_snapshots: &recorded_snapshots,
+        integer_values: &context.integer_values,
     };
     available = apply_theorem_applications_to_available(
         theorem_environment,
@@ -4047,6 +4048,7 @@ fn prove_pure_theorem_tactics(
         post_state: &state,
         result: None,
         recorded_snapshots: &recorded_snapshots,
+        integer_values: &context.integer_values,
     };
     let mut available = requires.to_vec();
     let mut unfolded_predicates = Vec::new();

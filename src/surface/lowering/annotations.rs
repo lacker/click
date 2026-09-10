@@ -1348,7 +1348,7 @@ pub(in crate::surface) fn lower_integer_certificate_proposition(
     }
 }
 
-fn lower_contract_integer_to_spec(
+pub(in crate::surface) fn lower_contract_integer_to_spec(
     expression: &ContractExpression,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
 ) -> Result<crate::kernel::SpecIntegerExpression, String> {

@@ -474,6 +474,7 @@ impl<'a> Proof<'a> {
         })?;
         let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
         let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+        let integer_values = crate::persistent::PersistentMap::default();
         let application_context = TheoremApplicationContext {
             values: &values,
             array_refs: &array_refs,
@@ -481,6 +482,7 @@ impl<'a> Proof<'a> {
             post_state: state,
             result,
             recorded_snapshots,
+            integer_values: &integer_values,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let mut lowering_assumptions = self.facts().assumptions().clone();
@@ -644,6 +646,7 @@ impl<'a> Proof<'a> {
             post_state: &state,
             result: None,
             recorded_snapshots: &recorded_snapshots,
+            integer_values: &context.theorem_context.integer_values,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let requirements = lower_theorem_application_requirements_with_assumptions(

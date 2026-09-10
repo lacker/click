@@ -7,6 +7,8 @@ pub(super) struct TheoremApplicationContext<'a> {
     pub(super) post_state: &'a CState,
     pub(super) result: Option<&'a CValue>,
     pub(super) recorded_snapshots: &'a RecordedSnapshots,
+    pub(super) integer_values:
+        &'a crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
 }
 
 pub(super) fn apply_theorem_applications_to_available(
@@ -175,7 +177,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         ));
     }
 
-    let (values, array_refs, algebraic_values) = theorem_application_bindings(
+    let (values, array_refs, algebraic_values, integer_values) = theorem_application_bindings(
         &theorem,
         application,
         context,
@@ -197,18 +199,20 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     let pre_state = bind(context.pre_state);
     let post_state = bind(context.post_state);
     let lower = |proposition: &ClickProposition| {
-        lower_fixed_state_proposition_through_kernel_with_algebraic_values(
+        lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
             proposition,
             lowering_assumptions,
             &values,
             &array_refs,
             &algebraic_values,
+            &integer_values,
             &pre_state,
             &post_state,
             None,
             context.recorded_snapshots,
             predicate_environment,
             click_function_environment,
+            &BTreeSet::new(),
         )
     };
 
@@ -460,6 +464,7 @@ pub(super) fn theorem_application_bindings(
         BTreeMap<String, CValue>,
         ClickArrayRefs,
         BTreeMap<String, SpecAlgebraicExpression>,
+        crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     ),
     String,
 > {
@@ -467,7 +472,16 @@ pub(super) fn theorem_application_bindings(
     let mut values = BTreeMap::new();
     let mut array_refs = BTreeMap::new();
     let mut algebraic_values = BTreeMap::new();
+    let mut integer_values = context.integer_values.clone();
     for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
+        if parameter.click_type() == &ClickType::Integer {
+            let value = crate::surface::lowering::lower_contract_integer_to_spec(
+                argument,
+                &integer_values,
+            )?;
+            integer_values = integer_values.with_inserted(parameter.name().to_string(), value);
+            continue;
+        }
         let Some(parameter_type) = parameter.click_type().c_type() else {
             let ClickType::Algebraic(expected_type) = parameter.click_type() else {
                 return Err(format!(
@@ -604,7 +618,7 @@ pub(super) fn theorem_application_bindings(
             values.insert(parameter.name().to_string(), value);
         }
     }
-    Ok((values, array_refs, algebraic_values))
+    Ok((values, array_refs, algebraic_values, integer_values))
 }
 
 fn theorem_application_error(

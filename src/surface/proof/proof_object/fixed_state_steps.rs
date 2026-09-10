@@ -203,6 +203,7 @@ impl<'a> Proof<'a> {
             post_state: &state,
             result: None,
             recorded_snapshots: &recorded_snapshots,
+            integer_values: &context.theorem_context.integer_values,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let applied = apply_theorem_applications_to_available(

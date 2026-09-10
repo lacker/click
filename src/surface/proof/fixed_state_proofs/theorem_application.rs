@@ -181,6 +181,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
     })?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
     let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let integer_values = crate::persistent::PersistentMap::default();
     let application_context = TheoremApplicationContext {
         values: &values,
         array_refs: &array_refs,
@@ -188,6 +189,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         post_state: state,
         result,
         recorded_snapshots,
+        integer_values: &integer_values,
     };
     let conclusions = instantiate_theorem_application_with_assumptions(
         theorem_environment,
@@ -240,7 +242,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
         predicate_environment,
         click_function_environment,
     )?;
-    let (values, array_refs, algebraic_values) = theorem_application_bindings(
+    let (values, array_refs, algebraic_values, _integer_values) = theorem_application_bindings(
         &theorem,
         application,
         context,
