@@ -210,19 +210,15 @@ pub(crate) fn snapshot_blind_proposition_key(
     proposition: &Proposition,
 ) -> SnapshotBlindPropositionKey {
     match proposition {
-        Proposition::ConditionIs(condition, _)
-            if matches!(
-                condition,
-                ConditionTerm::IntegerLessThan(_, _)
-                    | ConditionTerm::IntegerLessEqual(_, _)
-                    | ConditionTerm::IntegerGreaterThan(_, _)
-                    | ConditionTerm::IntegerGreaterEqual(_, _)
-                    | ConditionTerm::IntegerEqual(_, _)
-                    | ConditionTerm::IntegerNotEqual(_, _)
-            ) =>
-        {
-            SnapshotBlindPropositionKey::Exact(proposition.clone())
-        }
+        Proposition::ConditionIs(
+            ConditionTerm::IntegerLessThan(_, _)
+            | ConditionTerm::IntegerLessEqual(_, _)
+            | ConditionTerm::IntegerGreaterThan(_, _)
+            | ConditionTerm::IntegerGreaterEqual(_, _)
+            | ConditionTerm::IntegerEqual(_, _)
+            | ConditionTerm::IntegerNotEqual(_, _),
+            _,
+        ) => SnapshotBlindPropositionKey::Exact(proposition.clone()),
         Proposition::ConditionIs(condition, value) => {
             SnapshotBlindPropositionKey::Condition(snapshot_blind_condition_key(condition), *value)
         }
@@ -647,7 +643,6 @@ enum IntegerTermBinaryOp {
 fn alpha_integer_key(
     term: &IntegerTerm,
     bindings: &mut BTreeMap<Variable, usize>,
-    next_binder: &mut usize,
 ) -> Option<AlphaIntegerKey> {
     crate::instrumentation::record_deterministic_work(1);
     Some(match term {
@@ -659,22 +654,22 @@ fn alpha_integer_key(
             AlphaIntegerKey::Variable(alpha_variable_key::<false>(*variable, bindings)?)
         }
         IntegerTerm::Negate(value) => {
-            AlphaIntegerKey::Negate(Box::new(alpha_integer_key(value, bindings, next_binder)?))
+            AlphaIntegerKey::Negate(Box::new(alpha_integer_key(value, bindings)?))
         }
         IntegerTerm::Add(left, right) => AlphaIntegerKey::Binary {
             operator: IntegerTermBinaryOp::Add,
-            left: Box::new(alpha_integer_key(left, bindings, next_binder)?),
-            right: Box::new(alpha_integer_key(right, bindings, next_binder)?),
+            left: Box::new(alpha_integer_key(left, bindings)?),
+            right: Box::new(alpha_integer_key(right, bindings)?),
         },
         IntegerTerm::Subtract(left, right) => AlphaIntegerKey::Binary {
             operator: IntegerTermBinaryOp::Subtract,
-            left: Box::new(alpha_integer_key(left, bindings, next_binder)?),
-            right: Box::new(alpha_integer_key(right, bindings, next_binder)?),
+            left: Box::new(alpha_integer_key(left, bindings)?),
+            right: Box::new(alpha_integer_key(right, bindings)?),
         },
         IntegerTerm::Multiply(left, right) => AlphaIntegerKey::Binary {
             operator: IntegerTermBinaryOp::Multiply,
-            left: Box::new(alpha_integer_key(left, bindings, next_binder)?),
-            right: Box::new(alpha_integer_key(right, bindings, next_binder)?),
+            left: Box::new(alpha_integer_key(left, bindings)?),
+            right: Box::new(alpha_integer_key(right, bindings)?),
         },
     })
 }
@@ -1120,33 +1115,33 @@ fn alpha_condition_key<const ALLOW_LOADS: bool>(
         ),
         ConditionTerm::IntegerLessThan(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::LessThan,
-            alpha_integer_key(left, bindings, next_binder)?,
-            alpha_integer_key(right, bindings, next_binder)?,
+            alpha_integer_key(left, bindings)?,
+            alpha_integer_key(right, bindings)?,
         ),
         ConditionTerm::IntegerLessEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::LessEqual,
-            alpha_integer_key(left, bindings, next_binder)?,
-            alpha_integer_key(right, bindings, next_binder)?,
+            alpha_integer_key(left, bindings)?,
+            alpha_integer_key(right, bindings)?,
         ),
         ConditionTerm::IntegerGreaterThan(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::GreaterThan,
-            alpha_integer_key(left, bindings, next_binder)?,
-            alpha_integer_key(right, bindings, next_binder)?,
+            alpha_integer_key(left, bindings)?,
+            alpha_integer_key(right, bindings)?,
         ),
         ConditionTerm::IntegerGreaterEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::GreaterEqual,
-            alpha_integer_key(left, bindings, next_binder)?,
-            alpha_integer_key(right, bindings, next_binder)?,
+            alpha_integer_key(left, bindings)?,
+            alpha_integer_key(right, bindings)?,
         ),
         ConditionTerm::IntegerEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::Equal,
-            alpha_integer_key(left, bindings, next_binder)?,
-            alpha_integer_key(right, bindings, next_binder)?,
+            alpha_integer_key(left, bindings)?,
+            alpha_integer_key(right, bindings)?,
         ),
         ConditionTerm::IntegerNotEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::NotEqual,
-            alpha_integer_key(left, bindings, next_binder)?,
-            alpha_integer_key(right, bindings, next_binder)?,
+            alpha_integer_key(left, bindings)?,
+            alpha_integer_key(right, bindings)?,
         ),
         _ => return None,
     })
