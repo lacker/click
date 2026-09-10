@@ -94,6 +94,70 @@ expansions spell those choices instead of relying on the kernel to reconstruct
 them. Quantifier construction and logical construction nested under quantifiers
 still need the same treatment before this boundary is complete.
 
+#### Quantifier migration prerequisites
+
+An abandoned prototype established that rejecting `ForAll` in the normalization
+leaf is mechanically small but exposes older Surface/lowering seams. Do not
+repeat that change as a single fixture-migration patch. Fix these prerequisites
+first, each as a coherent green change. No implementation from that prototype
+landed; the notes below are the retained result.
+
+- A written proposition and its lowered kernel goal are not necessarily
+  isomorphic. Lowering can insert loadability and definedness implications that
+  have no Surface connective. `intro` must distinguish those guards from a
+  written implication using exact lowering provenance; it must keep the written
+  Surface goal focused while hidden guards are introduced.
+- Universal introduction must retain the exact binder substitution used by the
+  kernel. Pure-proof lowering, fixed-state lowering, `extract`, arithmetic
+  premises, and contradiction citations must all consult that retained binding
+  rather than independently choosing or reconstructing a binder.
+- Introducing an implication changes the fact context. Re-lowering its written
+  antecedent afterward can produce zero paths when the antecedent is
+  inconsistent, even though the already-lowered kernel antecedent is the exact
+  fact that `intro` added. Retain the checked Surface-to-kernel antecedent and
+  its structural subfacts at introduction time; do not rediscover them by
+  re-lowering under the changed context.
+- Loop initialization currently has a path that removes already-known leading
+  implications while planning an invariant proof, then serializes that proof
+  inside a combined certificate whose independent checker sees the complete
+  obligation. Construction and independent verification must use the same
+  exact goal. If a lowering guard is part of the checked obligation, its
+  discharge must appear in the retained certificate rather than being silently
+  removed only during planning.
+
+These are provenance and goal-identity requirements, not invitations to add
+new kernel reasoning. In particular, do not pair a Surface antecedent with a
+kernel antecedent merely because their logical constructors have the same
+shape after lowering failed. Do not synthesize a negated kernel fact from a
+remembered positive fact. Both approaches make certificate text cease to be an
+exact account of the checked proposition. The correspondence must come from
+the successful lowering that created the obligation or from a checked
+structural refinement of that retained correspondence.
+
+The failed prototype passed a small pure theorem with `forall`, implication,
+conjunction, and disjunction, but the full library exposed quantified memory
+invariants and vacuous arithmetic guards. The next implementation must cover at
+least these cases before changing the normalization leaf:
+
+- a pure universal whose body nests implication, conjunction, and disjunction;
+- a vacuous quantified implication such as
+  `0 <= k and k < 0 implies ...`, expanded into explicit checked introductions
+  and cited leaf evidence;
+- quantified memory predicates such as `all_le_range`, including the hidden
+  loadability implications introduced by lowering;
+- loop-entry and loop-preservation certificates such as the bubble-sort and
+  `copy3` fixtures; and
+- quantified outcome proofs that retain their selected instantiations and
+  transports.
+
+For each case, verify the smart source, inspect the expansion for explicit
+`intro` and nested logical steps, parse and independently verify that expansion,
+and check that deleting or reordering a required introduction is rejected. A
+fixture edit that merely adds enough `intro` calls for one lowering context is
+not sufficient: the same retained certificate must check at every site that
+consumes it. Do not mark this migration complete until `scripts/check.sh`
+passes.
+
 ### Pure-theorem authority
 
 `api.rs::prove_universally_quantified_pure_implication` proves the conclusion
@@ -164,10 +228,14 @@ module does not complete the migration.
 Each item should land as a coherent green change with its own focused and
 scaling regressions.
 
-1. Split context-free definitional normalization from logical derivation. In
-   progress: top-level conjunction, disjunction, and implication construction
-   is explicit; quantifier construction and logical construction nested under
-   quantifiers remain.
+1. Finish splitting context-free definitional normalization from logical
+   derivation. Top-level conjunction, disjunction, and implication construction
+   is explicit. Before rejecting quantified normalization leaves: (a) retain
+   exact Surface/kernel binder and antecedent provenance through hidden
+   lowering guards, (b) make loop certificate construction and independent
+   verification use the same complete goal, and (c) migrate quantifier
+   construction plus nested logical structure with the regressions listed
+   above.
 2. Retain checked pure-theorem completions and remove the second proof.
 3. Delete unused legacy theorem constructors after confirming their callers.
 4. Migrate call, refinement, and resource consumers one evidence type at a
