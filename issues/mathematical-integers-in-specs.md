@@ -261,22 +261,41 @@ language yet. Review established these additional implementation requirements:
   it once and update only the introduced name; do not merge or copy an entire
   binding overlay on every tactic.
 
-Review found a blocker in repeated universal introduction: each step validates,
-substitutes, and copies the remaining boxed proposition body. A proof with `n`
-nested binders and `n` explicit `intro()` steps therefore performs quadratic work.
-Sharing binding environments fixes unrelated-context copying but does not fix
-this suffix traversal. Feature work must not route around it with a smart tactic
-or larger budget.
+### User-approved deferral of deep-quantifier scaling (2026-09-10)
 
-The required regression constructs nested Integer universal goals at depths
-8/16/32/64, introduces all binders with simple steps, and measures the complete
-checked path. Include both empty assumptions and an ambient quantified premise
-with overlapping binder identities, plus the negative same-variable ambient-fact
-case. The fix must preserve carrier checks and capture avoidance while making
-work approximately linear in the statement and certificate. It likely needs a
-shared or scoped proposition representation and reusable checked binder metadata;
-changing only the fresh-variable search is insufficient. This is a verifier
-representation change, not a change to `Integer` semantics or C execution.
+The user explicitly chose to defer the quadratic work in repeated universal
+introduction and continue the mathematical Integer feature. This is a narrow
+exception to the repository's general scaling requirement for this known path;
+it supersedes the earlier instruction to stop Integer work on this finding.
+
+Each introduction currently validates, substitutes, and copies the remaining
+boxed proposition body. With `n` nested binders and `n` explicit `intro()` steps,
+this creates quadratic work. The reduced test at depths 8/16/32/64 measured
+122/370/1250/4546 deterministic work units in the freshening helper, both with
+empty assumptions and with an ambient quantified tautology using overlapping
+binder identities. These are lower bounds on the complete proof path because
+additional proof-state and Surface statement copying is excluded.
+
+This was a synthetic stress test. We have not identified a realistic Integer
+proof that becomes impractically slow because of deep quantifier nesting. Do not
+make a general shared-proposition or deferred-substitution refactor a prerequisite
+for shipping the otherwise working quantifier feature. Retain the reproduction
+and revisit this cost when realistic proof workloads expose it.
+
+The deferral does not relax proof correctness or existing work limits. Preserve
+Integer carrier checks, capture-avoiding substitution, exact binder mappings in
+expanded proofs, and rejection of invalid proofs. Do not bypass validation, raise
+budgets, or change C programs. Other tooling failures and unrelated scaling
+requirements remain subject to the repository policy.
+
+A future fix should measure complete checked introduction at several depths,
+including empty assumptions, ambient bound/free variable collisions, and source
+expansion followed by independent verification. Sharing immutable proposition
+bodies, retaining checked type/scope metadata, and avoiding repeated eager
+renaming are likely parts of that fix. Simply skipping validation on a fresh
+binder would be unsound; changing only the fresh-variable search is insufficient.
+This refactor is deferred, not claimed complete, and is not an acceptance blocker
+for the mathematical Integer feature under this user-approved exception.
 
 ## Implementation and integration sequence
 
