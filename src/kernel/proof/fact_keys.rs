@@ -1069,6 +1069,7 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         Bitvector32Term::PointerAddress(pointer) => AlphaBitvectorKey::Address(Box::new(
             alpha_pointer_key::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
         )),
+        Bitvector32Term::IntegerToMachine { .. } => return None,
         Bitvector32Term::Int64From32(value) => AlphaBitvectorKey::Int64From32(Box::new(
             alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),

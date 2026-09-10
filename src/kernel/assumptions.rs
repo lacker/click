@@ -1152,6 +1152,10 @@ fn hash_memory_blind_bitvector<H: std::hash::Hasher>(term: &Bitvector32Term, has
         }
         Bitvector32Term::ClickFunctionApplication { .. }
         | Bitvector32Term::AlgebraicMatch { .. } => std::hash::Hash::hash(term, hasher),
+        Bitvector32Term::IntegerToMachine { value, destination } => {
+            std::hash::Hash::hash(destination, hasher);
+            std::hash::Hash::hash(value, hasher);
+        }
     }
 }
 
@@ -1337,6 +1341,7 @@ fn collect_bitvector_memory_load_keys(
         }
         Bitvector32Term::ClickFunctionApplication { .. }
         | Bitvector32Term::AlgebraicMatch { .. } => {}
+        Bitvector32Term::IntegerToMachine { .. } => {}
     }
 }
 

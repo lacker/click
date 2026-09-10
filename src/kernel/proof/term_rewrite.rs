@@ -650,6 +650,7 @@ impl<'a> TermRewrite<'a> {
             Bitvector32Term::PointerAddress(pointer) => {
                 Bitvector32Term::PointerAddress(Box::new(self.pointer(pointer)))
             }
+            Bitvector32Term::IntegerToMachine { .. } => v.clone(),
             Bitvector32Term::Float32Binary {
                 operator,
                 left,

@@ -432,7 +432,8 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
                         }
                     }
                     Bitvector32Term::ClickFunctionApplication { .. }
-                    | Bitvector32Term::AlgebraicMatch { .. } => {
+                    | Bitvector32Term::AlgebraicMatch { .. }
+                    | Bitvector32Term::IntegerToMachine { .. } => {
                         use std::hash::{Hash, Hasher};
                         let mut hasher = std::collections::hash_map::DefaultHasher::new();
                         term.hash(&mut hasher);

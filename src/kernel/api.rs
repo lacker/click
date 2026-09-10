@@ -5083,7 +5083,8 @@ fn rewrite_int32_term_by_exact_equality(
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
         | Bitvector32Term::UInt64BitwiseNot(_)
-        | Bitvector32Term::RangeFold { .. } => term.clone(),
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => term.clone(),
     }
 }
 

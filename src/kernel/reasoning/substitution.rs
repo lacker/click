@@ -1181,6 +1181,9 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
         Bitvector32Term::PointerAddress(pointer) => {
             collect_pointer_offset_bound_variables(&pointer.offset, variables);
         }
+        Bitvector32Term::IntegerToMachine { value, .. } => {
+            collect_integer_bound_variables(value, variables);
+        }
         Bitvector32Term::Int64Constant(_) | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -4394,6 +4397,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         Bitvector32Term::PointerAddress(pointer) => Bitvector32Term::PointerAddress(Box::new(
             substitute_bitvector_variable_in_pointer(pointer, from, to),
         )),
+        Bitvector32Term::IntegerToMachine { value, destination } => {
+            Bitvector32Term::IntegerToMachine {
+                value: substitute_bitvector_variable_in_shared_integer(
+                    value,
+                    from,
+                    to,
+                    &mut std::collections::HashMap::new(),
+                ),
+                destination: *destination,
+            }
+        }
     }
 }
 
@@ -6770,5 +6784,51 @@ mod pointee_const_return_tests {
             )
             .return_pointee_is_constant()
         );
+    }
+}
+
+#[cfg(test)]
+mod integer_to_machine_substitution_tests {
+    use super::*;
+
+    #[test]
+    fn integer_to_machine_substitution_descends_math_payload_and_keeps_destination() {
+        let payload = crate::kernel::SharedIntegerTerm::from(IntegerTerm::Machine(
+            crate::kernel::SharedMachineIntegerTerm::intern(
+                crate::kernel::MachineIntegerType::Int32,
+                Bitvector32Term::Variable(Variable(701)),
+            ),
+        ));
+        let term = Bitvector32Term::IntegerToMachine {
+            value: payload.clone(),
+            destination: crate::kernel::MachineIntegerType::UInt32,
+        };
+        let replaced = substitute_bitvector_variable(
+            &term,
+            Variable(701),
+            &Bitvector32Term::Variable(Variable(702)),
+        );
+        let Bitvector32Term::IntegerToMachine { value, destination } = replaced else {
+            panic!("substitution changed the carrier shape")
+        };
+        assert_eq!(destination, crate::kernel::MachineIntegerType::UInt32);
+        assert!(matches!(value.as_ref(), IntegerTerm::Machine(machine)
+            if machine.ty() == crate::kernel::MachineIntegerType::Int32
+                && machine.value() == &Bitvector32Term::Variable(Variable(702))));
+    }
+
+    #[test]
+    fn integer_to_machine_substitution_reuses_unchanged_shared_payload() {
+        let payload = crate::kernel::SharedIntegerTerm::from(IntegerTerm::Variable(Variable(703)));
+        let term = Bitvector32Term::IntegerToMachine {
+            value: payload.clone(),
+            destination: crate::kernel::MachineIntegerType::Int32,
+        };
+        let replaced =
+            substitute_bitvector_variable(&term, Variable(704), &Bitvector32Term::Constant(0));
+        let Bitvector32Term::IntegerToMachine { value, .. } = replaced else {
+            panic!("substitution changed the carrier shape")
+        };
+        assert_eq!(value.id(), payload.id());
     }
 }

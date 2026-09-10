@@ -1298,6 +1298,10 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         Bitvector32Term::PointerAddress(pointer) => {
             collect_pointer_bitvector_variables(pointer, variables);
         }
+        Bitvector32Term::IntegerToMachine { value, .. } => {
+            let mut seen = BTreeSet::new();
+            collect_shared_integer_variables(value, variables, &mut seen);
+        }
     }
 }
 

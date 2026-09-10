@@ -158,6 +158,10 @@ pub enum Bitvector32Term {
     /// is interpreted as address arithmetic; tag bits are handled by checked
     /// rewrites on top of this term.
     PointerAddress(Box<Pointer>),
+    IntegerToMachine {
+        value: SharedIntegerTerm,
+        destination: MachineIntegerType,
+    },
     Int64From32(Box<Bitvector32Term>),
     UInt64From32(Box<Bitvector32Term>),
     /// Unsigned narrowing modulo 2^32; the operand is a signed or unsigned
