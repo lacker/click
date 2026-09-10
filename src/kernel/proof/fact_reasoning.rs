@@ -984,6 +984,13 @@ mod arithmetic_tests {
 }
 
 pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
+    if let Proposition::ConditionIs(condition, value) = goal {
+        match condition {
+            ConditionTerm::IntegerEqual(left, right) if left == right => return *value,
+            ConditionTerm::IntegerNotEqual(left, right) if left == right => return !*value,
+            _ => {}
+        }
+    }
     PureFactContext::new()
         .derive_atomic_proposition(goal)
         .or_else(|| PureFactContext::new().derive_proposition(goal))
@@ -3115,4 +3122,44 @@ fn separations_equal_modulo_proven_snapshots(
     };
     ranges_equal(left_a, right_a) && ranges_equal(left_b, right_b)
         || ranges_equal(left_a, right_b) && ranges_equal(left_b, right_a)
+}
+
+#[cfg(test)]
+mod integer_reflexivity_tests {
+    use super::*;
+    use crate::kernel::{IntegerTerm, MachineIntegerType};
+
+    #[test]
+    fn integer_reflexivity_normalization_checks_polarity_and_exact_terms() {
+        for term in [
+            IntegerTerm::Variable(Variable(920)),
+            IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(Variable(920)),
+            )
+            .unwrap(),
+        ] {
+            let equal = ConditionTerm::IntegerEqual(term.clone().into(), term.clone().into());
+            let unequal = ConditionTerm::IntegerNotEqual(term.clone().into(), term.clone().into());
+            assert!(normalizes_context_free(&Proposition::ConditionIs(
+                equal.clone(),
+                true
+            )));
+            assert!(!normalizes_context_free(&Proposition::ConditionIs(
+                equal, false
+            )));
+            assert!(normalizes_context_free(&Proposition::ConditionIs(
+                unequal.clone(),
+                false
+            )));
+            assert!(!normalizes_context_free(&Proposition::ConditionIs(
+                unequal, true
+            )));
+            let successor = IntegerTerm::add(term.clone(), IntegerTerm::constant_i64(1));
+            assert!(!normalizes_context_free(&Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(term.into(), successor.into()),
+                true,
+            )));
+        }
+    }
 }

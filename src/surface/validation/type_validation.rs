@@ -224,6 +224,9 @@ fn integer_expression_kind(
 ) -> Option<bool> {
     match expression {
         ContractExpression::IntegerLiteral(_) => Some(false),
+        ContractExpression::Call { name, arguments } if name == "to_integer" => {
+            (arguments.len() == 1).then_some(true)
+        }
         ContractExpression::Binding(name) => {
             (locals.contains(name) || integer_bindings.contains(name)).then_some(true)
         }
@@ -295,6 +298,23 @@ fn validate_comparison_expression_types(
     click_functions: &BTreeMap<String, ClickFunctionType>,
     context: &str,
 ) -> Result<(), ClickError> {
+    let mut locals = BTreeSet::new();
+    let no_integer_parameters = BTreeSet::new();
+    let left_kind = integer_expression_kind(left, &no_integer_parameters, &mut locals);
+    let right_kind = integer_expression_kind(right, &no_integer_parameters, &mut locals);
+    if left_kind == Some(true) || right_kind == Some(true) {
+        if left_kind.is_none() || right_kind.is_none() {
+            return Err(ClickError::new(format!(
+                "mathematical Integer expressions cannot be compared with C values in {context}"
+            )));
+        }
+        if operator == ComparisonOperator::In {
+            return Err(ClickError::new(format!(
+                "mathematical Integer expressions do not support `in` comparisons in {context}"
+            )));
+        }
+        return Ok(());
+    }
     let left_type = infer_spec_value_type(left, variables, click_functions, context)?;
     let right_type = infer_spec_value_type(right, variables, click_functions, context)?;
     match (left_type, right_type) {
@@ -490,6 +510,18 @@ fn infer_spec_value_type(
             )
             .map_err(ClickError::new)?;
             infer_spec_value_type(&substituted, variables, click_functions, context)
+        }
+        ContractExpression::Call { name, arguments } if name == "to_integer" => {
+            let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
+            if let Some(actual) =
+                infer_contract_expression_type(argument, variables, click_functions, context)?
+                && !machine_integer_source_type(actual)
+            {
+                return Err(ClickError::new(
+                    "to_integer expects a signed or unsigned machine integer",
+                ));
+            }
+            Ok(SpecValueType::Integer)
         }
         ContractExpression::Call { name, arguments } => {
             let Some(function) = click_functions.get(name) else {
@@ -1183,6 +1215,25 @@ pub(super) fn infer_contract_expression_type(
             )
             .map_err(ClickError::new)?;
             infer_contract_expression_type(&substituted, variables, click_functions, context)
+        }
+        ContractExpression::Call { name, arguments } if is_integer_conversion(name) => {
+            let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
+            if name == "to_integer" {
+                if let Some(actual) =
+                    infer_contract_expression_type(argument, variables, click_functions, context)?
+                    && !machine_integer_source_type(actual)
+                {
+                    return Err(ClickError::new(
+                        "to_integer expects a signed or unsigned machine integer",
+                    ));
+                }
+                Ok(None)
+            } else {
+                // Integer parameter names are deliberately absent from this C
+                // environment. The Integer-aware validator and kernel lowerer
+                // check the argument; this helper supplies the C result type.
+                Ok(integer_conversion_target(name))
+            }
         }
         ContractExpression::Call { name, arguments } => {
             let Some(function) = click_functions.get(name) else {
@@ -1921,7 +1972,8 @@ fn validate_contract_expression_calls(
             validate_contract_expression_calls(body, click_functions, context)
         }
         ContractExpression::Call { name, arguments } => {
-            let Some(arity) = click_functions.get(name) else {
+            let builtin_arity = is_integer_conversion(name).then_some(1);
+            let Some(arity) = builtin_arity.as_ref().or_else(|| click_functions.get(name)) else {
                 return Err(ClickError::new(format!(
                     "unknown function `{name}` in {context}"
                 )));
