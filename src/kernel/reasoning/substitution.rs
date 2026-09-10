@@ -1446,7 +1446,7 @@ fn collect_integer_bound_variables_seen(
     seen: &mut BTreeSet<u64>,
 ) {
     match term {
-        IntegerTerm::Constant(_) => {}
+        IntegerTerm::Constant(_) | IntegerTerm::Machine(_) => {}
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1608,6 +1608,7 @@ fn validate_integer_pure_term_seen(
     integer_work(1)?;
     match term {
         IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
+        IntegerTerm::Machine(_) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
             Ok(())
@@ -1945,6 +1946,7 @@ fn substitute_integer_pure_term_dag(
             integer_work(value.bits() as usize + 1)?;
             Ok(IntegerTerm::Constant(value.clone()))
         }
+        IntegerTerm::Machine(value) => Ok(IntegerTerm::Machine(value.clone())),
         IntegerTerm::Variable(variable) => {
             if let Some(renamed) = renamings.get(variable) {
                 Ok(IntegerTerm::Variable(*renamed))

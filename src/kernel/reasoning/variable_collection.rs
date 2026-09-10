@@ -1140,6 +1140,7 @@ fn collect_integer_variables_seen(
 ) {
     match term {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1163,6 +1164,7 @@ fn collect_shared_integer_variables(
     }
     match term.as_ref() {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }

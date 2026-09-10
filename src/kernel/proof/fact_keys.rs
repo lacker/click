@@ -4,7 +4,9 @@
 //! A key match is never proof authority: the checked snapshot bridge still
 //! validates every selected candidate.
 
-use crate::kernel::{AlgebraicTerm, IntegerComparisonOperator, IntegerTerm, Sort};
+use crate::kernel::{
+    AlgebraicTerm, IntegerComparisonOperator, IntegerTerm, MachineIntegerType, Sort,
+};
 use crate::kernel::{
     Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
     CFloatCondition, CMemoryRange, CResource, ConditionTerm, Pointer, PointerBlock,
@@ -489,7 +491,7 @@ enum AlphaVariableKey {
     Free(Variable),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaBitvectorBinaryOp {
     Add,
     Subtract,
@@ -528,7 +530,7 @@ enum AlphaBitvectorBinaryOp {
     Float64(CFloatBinaryOperator),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaBitvectorKey {
     Constant(u32),
     Int64Constant(i64),
@@ -565,7 +567,7 @@ enum AlphaBitvectorKey {
     UInt64FromInt64(Box<Self>),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPointerOffsetKey {
     Constant(i64),
     Variable(AlphaVariableKey),
@@ -581,7 +583,7 @@ enum AlphaPointerOffsetKey {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPointerBlockKey {
     Concrete(String),
     StringLiteral { identity: String, bytes: Vec<u8> },
@@ -592,13 +594,13 @@ enum AlphaPointerBlockKey {
     Heap(u64),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 struct AlphaPointerKey {
     block: AlphaPointerBlockKey,
     offset: AlphaPointerOffsetKey,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaConditionBinaryOp {
     SignedLessThan,
     SignedLessEqual,
@@ -612,7 +614,7 @@ enum AlphaConditionBinaryOp {
     ShiftLeftOverflows,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaConditionKey {
     Constant(bool),
     Variable(AlphaVariableKey),
@@ -632,6 +634,7 @@ struct AlphaIntegerKey {
 enum AlphaIntegerNode {
     Constant(BigInt),
     Variable(AlphaVariableKey),
+    Machine(MachineIntegerType, AlphaBitvectorKey),
     Negate(usize),
     Binary {
         operator: IntegerTermBinaryOp,
@@ -676,6 +679,10 @@ fn alpha_integer_node(
         IntegerTerm::Variable(variable) => {
             AlphaIntegerNode::Variable(alpha_variable_key::<false>(*variable, bindings)?)
         }
+        IntegerTerm::Machine(value) => AlphaIntegerNode::Machine(
+            value.ty(),
+            alpha_bitvector_key::<false>(value.value(), bindings, &mut 0)?,
+        ),
         IntegerTerm::Negate(value) => {
             AlphaIntegerNode::Negate(alpha_integer_node(value, bindings, memo, nodes)?)
         }
