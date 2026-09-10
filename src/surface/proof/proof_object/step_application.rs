@@ -460,6 +460,7 @@ impl<'a> Proof<'a> {
         self.state
             .apply_intro(|current, introduction| {
                 let mut surface_bindings = current.surface_bindings.clone();
+                let mut integer_values = current.integer_values.clone();
                 let surface = match (introduction, current.surface.as_deref()) {
                     (PropositionIntroduction::Implication, Some(surface)) => {
                         surface_implication_parts(surface)
@@ -472,14 +473,27 @@ impl<'a> Proof<'a> {
                     }
                     (
                         PropositionIntroduction::Universal { variable },
-                        Some(ClickProposition::ForAll { name, body, .. }),
+                        Some(ClickProposition::ForAll {
+                            click_type,
+                            name,
+                            body,
+                        }),
                     ) => {
-                        surface_bindings = surface_bindings.with_inserted(
-                            name.clone(),
-                            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
-                                Bitvector32Term::Variable(variable),
-                            ))),
-                        );
+                        if *click_type == ClickType::Integer {
+                            integer_values = integer_values.with_inserted(
+                                name.clone(),
+                                crate::kernel::SpecIntegerExpression::Term(
+                                    crate::kernel::IntegerTerm::var(variable),
+                                ),
+                            );
+                        } else {
+                            surface_bindings = surface_bindings.with_inserted(
+                                name.clone(),
+                                ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                                    Bitvector32Term::Variable(variable),
+                                ))),
+                            );
+                        }
                         Some(Arc::new(body.as_ref().clone()))
                     }
                     _ => None,
@@ -487,6 +501,7 @@ impl<'a> Proof<'a> {
                 PropositionPresentation {
                     surface,
                     surface_bindings,
+                    integer_values,
                 }
             })
             .map_err(|error| match error {
