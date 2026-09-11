@@ -2302,10 +2302,13 @@ impl Parser {
                         | C0Type::UInt8PointerPointer
                         | C0Type::Float32PointerPointer
                         | C0Type::Float64PointerPointer
+                        // A callback field is an eight-byte pointer value,
+                        // matching the C boundary's own by-value field set.
+                        | C0Type::FunctionPointer(_)
                 )
             {
                 return Err(self.error(format!(
-                    "struct-by-value currently supports modeled integer and floating-point fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, embedded struct fields, and named union fields; `struct {struct_name}` contains a function pointer or unsupported field shape"
+                    "struct-by-value currently supports modeled integer and floating-point fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, function-pointer fields, embedded struct fields, and named union fields; `struct {struct_name}` contains an unsupported field shape"
                 )));
             }
         }

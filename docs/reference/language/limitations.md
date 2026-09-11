@@ -77,11 +77,17 @@ fixed-dimensional local arrays of those structs support nested structs,
 fixed-dimensional scalar arrays, embedded-struct arrays, nested element groups,
 and zero-filled omitted members and elements. Designated field initializers for
 those locals support scalar and nested embedded-struct fields; static/file-scope
-designated initializers and array designators remain unsupported. Function-pointer fields, unions,
+designated initializers and array designators remain unsupported. Unions and
 conditional expressions over copyable structs require matching branch types
 and copy only the selected branch into fresh address-backed storage.
-Function-pointer fields, packed layout, and union forms outside the named
-embedded read-only slice remain unsupported. Address-taking of modeled
+A function-pointer field is an eight-byte callback value that keeps its
+declared signature: it is copied like a data-pointer field, and a file-scope
+or function-local static object may bind one to a function address in a
+positional or designated initializer. A load through such a field yields that
+concrete address, so the indirect call dispatches to exactly that function.
+Writes to a `const` table remain rejected.
+Packed layout and union forms outside the named embedded read-only slice
+remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
 fields and nested embedded-struct leaves, preserves the field's ABI offset and
 allocation provenance; pointer forms for unsupported scalar widths remain

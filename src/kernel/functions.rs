@@ -6783,7 +6783,10 @@ fn zero_aggregate_fields(
             | CType::Int32PointerPointer
             | CType::UInt8PointerPointer
             | CType::Float32PointerPointer
-            | CType::Float64PointerPointer => (field.c_type(), 1),
+            | CType::Float64PointerPointer
+            // Static storage zero-initializes a callback field to a null
+            // function pointer, just like a data-pointer field.
+            | CType::FunctionPointer(_) => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Float32Array(length) => (CType::Float32, length),
@@ -6808,7 +6811,8 @@ fn zero_aggregate_fields(
             | CType::Int32PointerPointer
             | CType::UInt8PointerPointer
             | CType::Float32PointerPointer
-            | CType::Float64PointerPointer => CValue::typed_pointer(Pointer::null(), element_type),
+            | CType::Float64PointerPointer
+            | CType::FunctionPointer(_) => CValue::typed_pointer(Pointer::null(), element_type),
             CType::Int16Array(_)
             | CType::Int32Array(_)
             | CType::UInt8Array(_)
@@ -6819,8 +6823,7 @@ fn zero_aggregate_fields(
             | CType::Float32Array(_)
             | CType::Float64Array(_)
             | CType::Void
-            | CType::VoidPointer
-            | CType::FunctionPointer(_) => {
+            | CType::VoidPointer => {
                 continue;
             }
             CType::Int16Pointer
@@ -6965,7 +6968,8 @@ fn aggregate_copy_reads_uninitialized(
             CType::Int32Pointer
             | CType::UInt8Pointer
             | CType::Int32PointerPointer
-            | CType::UInt8PointerPointer => (field.c_type(), 1),
+            | CType::UInt8PointerPointer
+            | CType::FunctionPointer(_) => (field.c_type(), 1),
             _ => continue,
         };
         for index in 0..element_count {
@@ -7080,7 +7084,10 @@ fn copy_aggregate_fields(
             CType::Int32Pointer
             | CType::UInt8Pointer
             | CType::Int32PointerPointer
-            | CType::UInt8PointerPointer => (field.c_type(), 1),
+            | CType::UInt8PointerPointer
+            // A callback field is an eight-byte pointer value; carry it so a
+            // copied table still dispatches to the same concrete target.
+            | CType::FunctionPointer(_) => (field.c_type(), 1),
             // A field this copy cannot carry must not leave the destination's
             // previous value in place: C copies every member, so a stale cell
             // would be readable as the destination's old contents. Drop those

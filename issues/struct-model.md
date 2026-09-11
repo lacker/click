@@ -15,9 +15,13 @@ pointers, modeled function-pointer callback fields, named read-only unions, and
 fixed-dimensional arrays of embedded structs. Function-pointer fields retain
 their structural callback key and nominal signature metadata; a compatible
 concrete function address can be stored, loaded into a local callback, and
-called. Structs whose fields are only `int16`, `int32`, `uint8`, `uint16`,
+called. A file-scope or function-local static object may also bind such a
+field to a function address in a positional or designated initializer, and a
+load through the field yields that concrete address.
+Structs whose fields are only `int16`, `int32`, `uint8`, `uint16`,
 `uint32`, `int64`, `uint64`, named enum fields,
-fixed-dimensional scalar arrays, recursively embedded structs, or
+fixed-dimensional scalar arrays, data-pointer or function-pointer fields,
+recursively embedded structs, or
 fixed-dimensional arrays of embedded structs can be parameters, locals,
 assignments, and returns by value; each operation uses fresh address-backed
 storage and copies modeled leaf fields and array cells recursively.

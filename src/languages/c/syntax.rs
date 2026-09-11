@@ -1006,6 +1006,21 @@ fn kernel_aggregate_initializer_value(
                 c_type.to_kernel_type(),
             ))
         }
+        // A callback field holds a function address or the null pointer. The
+        // address is stored already retagged with the field's declared
+        // signature, exactly as a store through a pointer coerces `&f` before
+        // writing the cell, so a later load dispatches to the concrete target.
+        C0Type::FunctionPointer(_) => match initializer {
+            C0Expression::Int32Literal(0) => Some(crate::kernel::CValue::typed_pointer(
+                crate::kernel::Pointer::null(),
+                c_type.to_kernel_type(),
+            )),
+            C0Expression::FunctionAddress(name) => Some(crate::kernel::CValue::typed_pointer(
+                crate::kernel::Pointer::function(name.clone()),
+                c_type.to_kernel_type(),
+            )),
+            _ => None,
+        },
         C0Type::Int16
         | C0Type::Bool
         | C0Type::Int32
@@ -6041,10 +6056,14 @@ impl Parser {
                         | C0Type::UInt8PointerPointer
                         | C0Type::Float32PointerPointer
                         | C0Type::Float64PointerPointer
+                        // A callback field is an eight-byte pointer value like
+                        // any data pointer; the layout keeps its signature so
+                        // a load through it still dispatches exactly.
+                        | C0Type::FunctionPointer(_)
                 )
             {
                 return Err(self.error_here(format!(
-                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, embedded struct fields, and named union fields; `struct {struct_name}` contains a function pointer or unsupported field shape"
+                    "struct-by-value currently supports int16, int32, uint8, uint16, uint32, int64, uint64, named enum fields, fixed scalar arrays, fixed-dimensional embedded-struct arrays, data-pointer fields, function-pointer fields, embedded struct fields, and named union fields; `struct {struct_name}` contains an unsupported field shape"
                 )));
             }
         }
@@ -9934,6 +9953,29 @@ impl Parser {
         }
 
         let value = self.parse_expression()?;
+        // A callback field takes a function address or the null pointer. The
+        // field's own signature is the expected one, so the check is the same
+        // one an assignment through a pointer already performs.
+        if matches!(field.c_type, C0Type::FunctionPointer(_)) {
+            let expected = field
+                .function_pointer_signature
+                .as_ref()
+                .expect("a function-pointer field carries its signature");
+            self.validate_function_pointer_value(expected, &value)?;
+            if !matches!(
+                value,
+                C0Expression::Int32Literal(0) | C0Expression::FunctionAddress(_)
+            ) {
+                return Err(self.error_here(
+                    "aggregate callback initializers currently support only a function address or the null pointer literal",
+                ));
+            }
+            return Ok(vec![C0AggregateInitializer::new(
+                field_offset,
+                field.c_type,
+                value,
+            )]);
+        }
         validate_aggregate_initializer(self, field.c_type, &value)?;
         Ok(vec![C0AggregateInitializer::new(
             field_offset,
@@ -11234,9 +11276,20 @@ impl Parser {
                 | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
                 | C0Type::Float32PointerPointer
-                | C0Type::Float64PointerPointer => (field.c_type, 1),
+                | C0Type::Float64PointerPointer
+                // A callback field copies as the eight-byte pointer value it
+                // is, keeping the destination's declared signature.
+                | C0Type::FunctionPointer(_) => (field.c_type, 1),
                 _ => unreachable!("validated struct value field shape"),
             };
+            let element_signature = matches!(element_type, C0Type::FunctionPointer(_))
+                .then(|| {
+                    layout
+                        .fields
+                        .get(&field.name)
+                        .and_then(|field| field.function_pointer_signature.clone())
+                })
+                .flatten();
             let element_width = element_type.abi_size_bytes();
             for index in 0..element_count {
                 let element_offset = field
@@ -11255,7 +11308,7 @@ impl Parser {
                         pointer: Box::new(source_pointer),
                         field_type: element_type,
                         field_struct_name: None,
-                        function_pointer_signature: None,
+                        function_pointer_signature: element_signature.clone(),
                         array_shape: None,
                     },
                     value_type: Some(element_type),
