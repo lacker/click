@@ -148,9 +148,17 @@ mod tests {
             ("int64", "-9223372036854775808", "9223372036854775807"),
             ("uint64", "0", "18446744073709551615"),
         ] {
-            for requirement in [format!("z >= {lower}"), format!("z <= {upper}")] {
+            for requirements in [
+                vec![format!("z >= {lower}")],
+                vec![format!("z <= {upper}")],
+                Vec::new(),
+            ] {
+                let requires = requirements
+                    .into_iter()
+                    .map(|requirement| format!(" requires {requirement};"))
+                    .collect::<String>();
                 let source = format!(
-                    "theorem conversion(z: Integer) {{ requires {requirement}; ensures to_integer(to_{target}(z)) == z by simp; }}"
+                    "theorem conversion(z: Integer) {{{requires} ensures to_{target}(z) == to_{target}(z) by simp; }}"
                 );
                 assert!(
                     verify_c0_sources(&source, &[]).is_err(),

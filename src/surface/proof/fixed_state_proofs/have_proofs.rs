@@ -245,6 +245,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
             assumptions,
         )?;
     refuse_impossible_loads(&obligations)?;
+    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
     Ok((lowered, introductions))
 }
 
@@ -672,6 +673,39 @@ fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn refuse_unproved_conversion_bounds(
+    obligations: &[Proposition],
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    for obligation in obligations {
+        if !contains_integer_range_condition(obligation) {
+            continue;
+        }
+        if !assumptions.proves(obligation) {
+            return Err("the proposition requires an established Integer conversion bound".into());
+        }
+    }
+    Ok(())
+}
+
+fn contains_integer_range_condition(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::IntegerGreaterEqual(..) | ConditionTerm::IntegerLessEqual(..),
+            true,
+        ) => true,
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            contains_integer_range_condition(left) || contains_integer_range_condition(right)
+        }
+        Proposition::Not(body)
+        | Proposition::ForAll { body, .. }
+        | Proposition::Exists { body, .. } => contains_integer_range_condition(body),
+        _ => false,
+    }
 }
 
 /// The states a fixed-state lowering runs at, with the values in scope at
