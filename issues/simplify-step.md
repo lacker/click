@@ -184,6 +184,21 @@ existential over `CInt32`, pre-existing; and a `both` on a guard conjunct
 leaves a body below it unrenderable when the written form cannot travel
 with either arm, the conjunct-guard record the normalization planner lacks.
 
+Found by the function-contracts campaign (2026-09-11), two more simple
+discharges `simp` does not perform:
+
+3. **A constructor disequality.** Goal `r.model != Mark::Clear()` with
+   premise `r.model == Mark::Set()` is left as `¬(algebraic(…) =
+   algebraic(…))` with every candidate rejected on shape. Distinct
+   constructors of one `spec enum` are unequal by definition; this is one
+   checked rule, not a search.
+4. **Orienting a pure-function equation across a call.** After
+   `step(AugmentRotate(rotated))`, the retained pre-call fact
+   `shape_left(old(r.model)) == middle_model` is not used to close
+   `rotated.model == Shape::Node(...)`; `mdtests/augment_rotate_model_callback.md`
+   restates it with an explicit `rewrite`. The `rewrite` finds the fact, so
+   the gap is selection, not availability.
+
 ## Intended regression
 
 `mdtests/call_precondition_disjunction_is_an_obligation.md` with

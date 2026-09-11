@@ -72,6 +72,19 @@ contract effects.
 The `cstr` predicate layer still exists only on the spec side over uint8
 buffers.
 
+Found by the function-contracts campaign (2026-09-11): resources over
+file-scope objects are not yet expressible. `fold(suite(&table))` for a
+`static const struct` callback table demands `owns
+global:table#file-static:...[0..2]`, which no contract can hold, so
+`mdtests/rb_augment_callbacks_table.md` states the three field contracts
+directly with `views object(augment)` instead of a composite. Relatedly,
+`object(&static_object)` is not spellable (`object(...) currently expects a
+named C struct pointer parameter`), so a caller cannot state
+`separate(memory(object(&table)), memory(object(parent)))`, and a file-static
+block and an external-argument block are not automatically separate. The
+regression is that table fixture with a `callback_suite(&dummy_callbacks)`
+composite folded once at startup and viewed by the helper.
+
 ## Violated invariant
 
 Click should model every supported object with static storage duration as

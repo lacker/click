@@ -90,6 +90,23 @@ reversed. Surface planning should own the arithmetic algorithm and produce the
 evidence consumed by the kernel, rather than calling the authoritative checker
 as a planning oracle.
 
+### Gaps found by the function-contracts campaign (2026-09-11)
+
+Two linear facts that `simp` and `arithmetic() using` should close but do
+not, each with the fixture that had to route around it:
+
+- `0 <= a`, `0 <= b`, `defined(a + b)` does not yield `0 <= a + b`; `simp`
+  reports "simplified proposition was not true: signed less-or-equal is
+  true". `mdtests/const_callback_table_abstract.md` uses constant-returning
+  callbacks instead of an `Addition`/`Difference` pair with result bounds.
+- `i2 == i1 + 1`, `i5 == i2 + 1` does not yield `i5 == i1 + 2` across two
+  calls: `simp` declines, `arithmetic() using` refuses the `Integer`-typed
+  premises ("premise 0 is not a supported signed int32 comparison"), and
+  because call successors record no synthesized `old(...)`, the intermediate
+  value has no surface spelling for a `have`. `mdtests/c_call_binder_transport.md`
+  therefore proves one increment, not the `twice` example the function-contracts
+  outline wrote. Both belong to the explicit certificate this issue proposes.
+
 ## Intended regression
 
 Add a proof whose supported signed-arithmetic expression is nested more than
