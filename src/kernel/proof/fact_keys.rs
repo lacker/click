@@ -1288,12 +1288,10 @@ fn alpha_integer_node(
                 } else {
                     bindings.bitvector.insert(*item, previous);
                 }
+            } else if item_is_integer {
+                bindings.integer.remove(item);
             } else {
-                if item_is_integer {
-                    bindings.integer.remove(item);
-                } else {
-                    bindings.bitvector.remove(item);
-                }
+                bindings.bitvector.remove(item);
             }
             if let Some(previous) = old_accumulator {
                 bindings.integer.insert(*accumulator, previous);
