@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 6, and 14, plus the package 0
-census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10): packages 1, 2, 3, 6, 7, 11 (first slice), 14,
+and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -680,6 +680,25 @@ introduction, and deleting it from the certificate is rejected at validation.
 
 ### Package 7: lowering provenance for hidden guards and binders
 
+**Landed** 2026-09-10 (four commits, "Record lowering provenance for hidden
+guards and binders" through "Regress the retained antecedent against a
+refuted re-lowering"). The record is `LoweringIntroductions` in
+`path_facts.rs`: a linear head chain of the lowered proposition, outermost
+first, one entry per introducible node (`PathFactGuard`, `ObligationGuard`,
+`WrittenImplication`, `WrittenNegation`, `WrittenUniversal`). The kernel
+`Proposition` is unchanged; `SpecPropositionPath` carries the chain and
+`c_lower_spec_proposition_at_state_with_provenance` returns it. All three
+prerequisite bullets are done for goals that lowering produced; `intro`,
+`extract`, `contradiction`, `arithmetic using`, `normalize using`, and
+pure-proof lowering consult the retained binding. Two limits remain, both
+other packages' territory: kernel-built obligations from calls and loop
+bundles (`functions.rs`, `loops.rs`) carry no chain and fall back to
+structural refinement of the written form (packages 4 and 10), and
+`plan_context_free_normalization_with_assumptions` still pairs by shape
+below the recorded chain (package 8). The `invariant_lowering_under_guards`
+replacement was not done; package 8's owner does it while migrating the
+planner.
+
 **Entry points.** `src/kernel/reasoning/path_facts.rs::wrap_path_context`
 (about line 72; folds path obligations and facts into kernel `Implies` nodes
 with no Surface connective) and `wrap_proof_facts` (about line 29); the
@@ -834,6 +853,20 @@ requirement obligations are path-guarded.
 
 ### Package 11: contract refinement
 
+**First slice landed** 2026-09-10 ("Decide contract refinement clauses by
+exact routes only"). All four `proves` calls route through
+`refinement_route_proves`: `proves_exact`, then `decide` on a bare
+`ConditionIs` or its negation. The antecedent-assumption clone is deleted;
+an `Implies` clause holds when its antecedent is exactly refuted or its
+consequent holds alone. Four fixtures now reach the previously unreached
+arms. Findings: `decide` proves `x < x + 1` but not `x + 1 > x`, an
+orientation gap in the frozen checker worth knowing before packages 10(b)
+and 13; `assume_contract_proposition` and `prove_contract_propositions`
+still call `proves` and belong to package 10; `recorded_equality_class`
+builds its memoized index by one scan of condition facts per context, an
+indexing debt under the efficiency contract. The second slice below is
+still open.
+
 **Entry point.** `src/kernel/functions.rs::contract_refinement_proves` (about
 line 3088). A second hand-rolled prover: sequence-elementwise descent, `Or`
 arm choice, `And`, `Implies` with antecedent assumption, then a search over
@@ -950,6 +983,14 @@ deterministic work does not regress.
 
 ### Package 16: delete prover calls inside the frozen checkers
 
+**Landed** 2026-09-10 ("Delete prover calls inside the frozen atomic
+checkers" and its test repin). All six calls deleted, none kept. Sound
+completeness narrowing: `decide` no longer bridges an algebraic `Equal`
+premise to its condition form or sees distinct constructors in the condition
+form; only two synthetic unit tests exercised that, and they now pin the
+exact route. A local closure named `proves` in `memory_reasoning.rs` remains
+and is exact.
+
 **Entry points.** `src/kernel/assumptions/condition_reasoning/decision.rs::decide_algebraic_equality`
 (two `proves` calls near the top of the file) and
 `src/kernel/assumptions/memory_reasoning.rs::pointer_access_in_range` (four
@@ -969,9 +1010,8 @@ regression and the deletion becomes an explicit obligation instead.
 
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 6, 14. Running or next: 7 (in flight), 16 and 11
-(independent of everything unlanded except that 11 waits for 4 only in its
-second slice). One owner in sequence: 4, then 13, then 8 (8 also needs 7).
+Landed: 0, 1, 2, 3, 6, 7, 11 first slice, 14, 16. One owner in sequence,
+in flight: 4, then 13, then 8.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
