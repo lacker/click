@@ -28,7 +28,188 @@ fn ranking_member_diagnostic(ranking_measures: &[CExpression]) -> String {
     )
 }
 
+/// A premise the bundle closer may hand to `arithmetic() using`, as the
+/// exact pair of lowered kernel proposition and the source text that lowers
+/// to it. Only the loop head's guard and invariants at iteration entry and
+/// the function's written preconditions ever become one of these.
+pub(in crate::surface::proof) type NamedArithmeticPremise = (Proposition, ClickProposition);
+
+/// Splits a written contract clause into the conjuncts a source proof would
+/// cite one at a time. The walk is over the written proposition only; it
+/// reads no fact context.
+fn written_conjuncts(surface: &ClickProposition, collected: &mut Vec<ClickProposition>) {
+    match surface {
+        ClickProposition::And(left, right) => {
+            written_conjuncts(left, collected);
+            written_conjuncts(right, collected);
+        }
+        _ => collected.push(surface.clone()),
+    }
+}
+
 impl<'a> Proof<'a> {
+    /// The named premises a smart bundle closure may cite for a ranking
+    /// member: the loop guard and the declared invariants, both read at
+    /// iteration entry, then the function's written preconditions.
+    ///
+    /// The candidate list is exactly what the loop head and the contract
+    /// name. A candidate is kept only when it lowers here, is exactly
+    /// available, and is a premise the arithmetic checker supports, so the
+    /// work is one indexed lookup and one classification per named clause and
+    /// does not grow with unrelated ambient facts.
+    fn named_arithmetic_premises(
+        &self,
+        bundle: &InvariantBodyContext,
+        requires: &[Requirement],
+    ) -> Vec<NamedArithmeticPremise> {
+        let trivial = Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true);
+        let mut candidates = bundle.loop_head_premises.clone();
+        for requirement in requires {
+            if let Some(proposition) = requirement.proposition() {
+                written_conjuncts(proposition, &mut candidates);
+            }
+        }
+        let mut cited = Vec::new();
+        for surface in candidates {
+            let Ok(lowered) =
+                self.lower_cited_surface_proposition(&surface, "loop closure premise")
+            else {
+                continue;
+            };
+            if !self.facts().exact_available_across_effects(&lowered, &[]) {
+                continue;
+            }
+            // The premise classification is the checker's own: a clause it
+            // would reject as unsupported must not be cited, or one unusable
+            // premise would lose the whole candidate.
+            if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
+                &trivial,
+                std::slice::from_ref(&lowered),
+            )
+            .is_err()
+            {
+                continue;
+            }
+            // Two written spellings of one clause can lower to the same fact
+            // here. Cite it once: a repeated premise is checked again for no
+            // gain and prints as noise in the expansion.
+            if cited
+                .iter()
+                .any(|(existing, _): &NamedArithmeticPremise| existing == &lowered)
+            {
+                continue;
+            }
+            cited.push((lowered, surface));
+        }
+        cited
+    }
+
+    /// Closes the back-edge bundle by descending its fixed structure.
+    ///
+    /// The bundle is a right-nested conjunction of members, and a tuple
+    /// measure's decrease member is a right-nested disjunction over pivots.
+    /// This planner therefore tries only three checked operations: `both`
+    /// over a conjunction, `left`/`right` over a pivot disjunction, and at a
+    /// member one `arithmetic() using` step over the named premises above or
+    /// the ordinary smart closer. Every candidate advances this same `Proof`,
+    /// so the retained certificate is the explicit proof `click expand`
+    /// prints and re-verifies.
+    pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
+        &self,
+        premises: &[NamedArithmeticPremise],
+    ) -> Result<Option<Self>, ClickError> {
+        check_verification_deadline()?;
+        let (Some(goal), Some(surface_goal)) = (self.goal().cloned(), self.surface_goal().cloned())
+        else {
+            return Ok(None);
+        };
+        if matches!(goal, Proposition::And(_, _))
+            && crate::surface::proof::surface_certificates::surface_logical_children(
+                &surface_goal,
+                true,
+            )
+            .is_some()
+        {
+            let (split_proof, split, ids) = self.split_focused_both()?;
+            let marker = split_proof.checkpoint();
+            let Some(left) = split_proof
+                .focus_branch(ids[0])?
+                .plan_invariant_bundle_closure(premises)?
+            else {
+                return Ok(None);
+            };
+            let Some(right) = left
+                .focus_branch(ids[1])?
+                .plan_invariant_bundle_closure(premises)?
+            else {
+                return Ok(None);
+            };
+            return attempt::candidate_outcome(right.join_focused_both(&marker, split, ids));
+        }
+        if matches!(goal, Proposition::Or(_, _))
+            && let Some((surface_left, surface_right)) =
+                crate::surface::proof::surface_certificates::surface_logical_children(
+                    &surface_goal,
+                    false,
+                )
+        {
+            for (surface, closer) in [
+                (surface_left, ProofStep::Left),
+                (surface_right, ProofStep::Right),
+            ] {
+                let selected = (|| {
+                    let Some(scope) = attempt::candidate_outcome(self.begin_have(surface))? else {
+                        return Ok(None);
+                    };
+                    let Some(scope) = scope.plan_invariant_bundle_closure(premises)? else {
+                        return Ok(None);
+                    };
+                    let Some(joined) = attempt::candidate_outcome(scope.join())? else {
+                        return Ok(None);
+                    };
+                    attempt::candidate_outcome(joined.apply_step(closer))
+                })();
+                if let Some(selected) = selected? {
+                    return Ok(Some(selected));
+                }
+            }
+            return Ok(None);
+        }
+        self.close_bundle_member(premises)
+    }
+
+    /// One bundle member. The arithmetic candidate is tried first: its
+    /// admission test is the kernel's own affine checker over the named
+    /// premise list, so a miss costs one pass over that list rather than a
+    /// search. The ordinary smart closer answers every other member.
+    fn close_bundle_member(
+        &self,
+        premises: &[NamedArithmeticPremise],
+    ) -> Result<Option<Self>, ClickError> {
+        if !premises.is_empty()
+            && let Some(goal) = self.goal()
+        {
+            let kernels = premises
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(goal, &kernels)
+                .is_ok()
+            {
+                let cited = premises
+                    .iter()
+                    .map(|(_, surface)| surface.clone())
+                    .collect::<Vec<_>>();
+                if let Some(closed) =
+                    attempt::candidate_outcome(self.apply_step(ProofStep::ArithmeticUsing(cited)))?
+                {
+                    return Ok(Some(closed));
+                }
+            }
+        }
+        self.try_simp_closure()
+    }
+
     pub(super) fn apply_execution_statement_step(
         &self,
         step: ProofStep,
@@ -257,6 +438,21 @@ impl<'a> Proof<'a> {
                     ClickError::new(format!("{}{detail}", error.message()))
                 }
             })?;
+        // A smart closure request is the one body this planner owns:
+        // `close_invariants()`, `close_invariants by { simp(); }`, the omitted
+        // preservation body, and the region `simp()` all reach here as the
+        // single `simp` script. When the ordinary closer declines it, descend
+        // the bundle's own structure and offer each member the loop head's and
+        // the contract's named arithmetic premises.
+        let attempted = match attempted {
+            Some(completed) => Some(completed),
+            None if body == [ProofTactic::Simp] => {
+                let premises =
+                    root.named_arithmetic_premises(bundle, context.function_block.requires());
+                root.plan_invariant_bundle_closure(&premises)?
+            }
+            None => None,
+        };
         let Some(completed) = attempted else {
             return Err(self.step_error(format!(
                 "closure body did not prove every invariant obligation{}",

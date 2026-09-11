@@ -152,7 +152,14 @@ ranking members the bundle now carries.
 Arithmetic premises for those members are the cited ones only, so a member is
 closed with `arithmetic() using { ... }` naming the guard, precondition, and
 invariant facts it needs. The iteration's entry values are available as
-`at(statement(N).entry, x)`, the same spelling loop-body premises use.
+`at(statement(N).entry, x)`, the same spelling loop-body premises use. The
+smart closer cites from one named set: the loop's declared invariants, the
+loop guard, and the function's written preconditions, each in whichever of
+those two spellings holds where the member is proved. An inequality that is
+in scope but is none of those is not a candidate, so a member that needs one
+fails at that member instead of being closed by a search over ambient facts;
+cite it by hand in a `close_invariants by { ... }` body, or declare it as an
+invariant.
 <!-- verified-example: mdtests/c_decreases_lexicographic_loop.md -->
 ```click
 loop {

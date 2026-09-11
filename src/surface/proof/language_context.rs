@@ -63,6 +63,15 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     pub(in crate::surface::proof) iteration_entry_selector: Option<SnapshotSelector>,
     pub(in crate::surface::proof) checks: Vec<CLoopInvariantCheck>,
     pub(in crate::surface::proof) ranking_measures: Vec<CExpression>,
+    /// The loop head's own premises: the declared invariants as written,
+    /// then those invariants and, for a pre-tested loop, the guard, re-read
+    /// at iteration entry. A smart bundle closure may cite these and the
+    /// function's written preconditions when it closes a ranking member by
+    /// arithmetic; nothing else is a candidate, so the premise set is named
+    /// by the loop head and the contract rather than selected from the
+    /// ambient fact context. A spelling that is not exactly available where
+    /// the member is proved is dropped before any candidate is tried.
+    pub(in crate::surface::proof) loop_head_premises: Vec<ClickProposition>,
 }
 
 /// The per-proof constants of an execution proof: which claim is being
