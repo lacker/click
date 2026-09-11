@@ -206,6 +206,84 @@ fn normalized_resource_spec_evaluation_preserves_indexed_lookup_scaling() {
 }
 
 #[test]
+fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
+    let variable = Variable(77_700);
+    let quantity = CExpression::Value(int32(Bitvector32Term::Variable(variable)));
+    let spec = CResourceSpec::new(
+        CResourceTerm::Token {
+            name: "permit".into(),
+            arguments: vec![quantity.clone()],
+            parameter_types: vec![CType::Int32],
+        },
+        CResourceAccessMode::Own,
+        CResourceQuantity::Count(quantity),
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Entry,
+    )
+    .unwrap();
+    let substituted = crate::kernel::reasoning::substitute_bitvector_variable_in_resource_spec(
+        &spec,
+        variable,
+        &Bitvector32Term::Constant(3),
+    );
+    assert_eq!(substituted.access(), CResourceAccessMode::Own);
+    assert_eq!(substituted.role(), CResourceTransferRole::Borrow);
+    assert_eq!(substituted.snapshot(), CResourceSnapshot::Entry);
+    assert!(matches!(
+        substituted.quantity(),
+        CResourceQuantity::Count(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Constant(3)
+        )))
+    ));
+    assert!(matches!(
+        substituted.term(),
+        CResourceTerm::Token { arguments, .. }
+            if matches!(arguments.as_slice(), [CExpression::Value(CValue::Int32(Bitvector32Term::Constant(3)))])
+    ));
+
+    let schema = ResourceFieldSchema::new(vec![]).unwrap();
+    let instance = CResourceSpec::instance(
+        variable,
+        "cell".into(),
+        schema,
+        CResourceSpec::composite(CResourceAccessMode::Own, "cell".into(), vec![], vec![]),
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Entry,
+    )
+    .unwrap();
+    let inner = instance
+        .instance_resource_spec()
+        .expect("validated instance has a reconstructible inner term");
+    assert_eq!(inner.access(), CResourceAccessMode::Own);
+    assert_eq!(inner.quantity(), &CResourceQuantity::One);
+    assert_eq!(inner.role(), CResourceTransferRole::Borrow);
+    assert_eq!(inner.snapshot(), CResourceSnapshot::Entry);
+
+    assert!(matches!(
+        CResourceSpec::new(
+            CResourceTerm::Instance {
+                identity: variable,
+                binder: "cell".into(),
+                schema: ResourceFieldSchema::new(vec![]).unwrap(),
+                resource: Box::new(CResourceTerm::Composite {
+                    name: "cell".into(),
+                    arguments: vec![],
+                    parameter_types: vec![],
+                }),
+            },
+            CResourceAccessMode::View,
+            CResourceQuantity::One,
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        ),
+        Err(CResourceSpecError::InvalidAccess {
+            family: ResourceFamily::Instance,
+            access: CResourceAccessMode::View,
+        })
+    ));
+}
+
+#[test]
 fn owned_range_access_survives_learning_a_symbolic_pointer_alias() {
     let cell = Pointer::symbolic(Variable(100));
     let slot = Pointer {

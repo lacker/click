@@ -3859,11 +3859,11 @@ pub enum CResourceSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CResourceSpec {
-    pub(super) term: CResourceTerm,
-    pub(super) access: CResourceAccessMode,
-    pub(super) quantity: CResourceQuantity,
-    pub(super) role: CResourceTransferRole,
-    pub(super) snapshot: CResourceSnapshot,
+    term: CResourceTerm,
+    access: CResourceAccessMode,
+    quantity: CResourceQuantity,
+    role: CResourceTransferRole,
+    snapshot: CResourceSnapshot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

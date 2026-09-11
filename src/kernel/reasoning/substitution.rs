@@ -940,7 +940,7 @@ fn collect_c_resource_spec_bound_variables(
     resource: &CResourceSpec,
     variables: &mut BTreeSet<Variable>,
 ) {
-    match &resource.term {
+    match resource.term() {
         CResourceTerm::Instance { resource, .. } => {
             collect_c_resource_term_bound_variables(resource, variables)
         }
@@ -953,7 +953,7 @@ fn collect_c_resource_spec_bound_variables(
             }
         }
     }
-    if let CResourceQuantity::Count(quantity) = &resource.quantity {
+    if let CResourceQuantity::Count(quantity) = resource.quantity() {
         collect_c_expression_bound_variables(quantity, variables);
     }
 }
@@ -3830,18 +3830,19 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CResourceSpec {
-    CResourceSpec {
-        term: substitute_bitvector_variable_in_resource_term(&resource.term, from, to),
-        access: resource.access,
-        quantity: match &resource.quantity {
+    CResourceSpec::new(
+        substitute_bitvector_variable_in_resource_term(resource.term(), from, to),
+        resource.access(),
+        match resource.quantity() {
             CResourceQuantity::One => CResourceQuantity::One,
             CResourceQuantity::Count(quantity) => CResourceQuantity::Count(
                 substitute_bitvector_variable_in_c_expression(quantity, from, to),
             ),
         },
-        role: resource.role,
-        snapshot: resource.snapshot,
-    }
+        resource.role(),
+        resource.snapshot(),
+    )
+    .expect("bitvector substitution preserves resource validity")
 }
 
 fn substitute_bitvector_variable_in_resource_term(
@@ -6833,18 +6834,19 @@ fn substitute_pointer_variable_in_resource_spec(
     from: Variable,
     to: &Pointer,
 ) -> CResourceSpec {
-    CResourceSpec {
-        term: substitute_pointer_variable_in_resource_term(&resource.term, from, to),
-        access: resource.access,
-        quantity: match &resource.quantity {
+    CResourceSpec::new(
+        substitute_pointer_variable_in_resource_term(resource.term(), from, to),
+        resource.access(),
+        match resource.quantity() {
             CResourceQuantity::One => CResourceQuantity::One,
             CResourceQuantity::Count(quantity) => CResourceQuantity::Count(
                 substitute_pointer_variable_in_c_expression(quantity, from, to),
             ),
         },
-        role: resource.role,
-        snapshot: resource.snapshot,
-    }
+        resource.role(),
+        resource.snapshot(),
+    )
+    .expect("pointer substitution preserves resource validity")
 }
 
 fn substitute_pointer_variable_in_resource_term(

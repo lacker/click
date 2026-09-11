@@ -225,17 +225,23 @@ rejected counted views, rejected instance views and non-composite instance
 bodies, and indexed lookup scaling at sizes 16, 32, 64, and 128. The
 deterministic-work ratio assertion passed. Existing resource, contract, heap,
 surface, callback, expansion, certification, and rejection tests retain their
-outcomes.
+outcomes. The follow-up review makes the normalized carrier fields private;
+interface normalization and substitutions rebuild through `CResourceSpec::new`,
+while instance-inner reconstruction reports an explicit contract error if its
+validated invariant is ever violated. A focused regression checks substituted
+quantity/term metadata, instance-inner access/quantity/role/snapshot metadata,
+and public rejection of an invalid instance view.
 
 Checks in the W1 worktree all passed: `cargo check --all-targets` (0),
 `MDTEST_FILTER=resource cargo nextest run --test mdtests --no-capture` (0),
 `cargo nextest run --lib resource_tests contract_execution_tests heap_tests`
 (172/172), `cargo fmt --check` and `git diff --check` (0), and the unfiltered
-`scripts/check.sh` gate (0; 2555 tests plus the 14 fixture/example checks).
-The tested commit is the W1 implementation plus this handoff; the manager
-should commit it without merging or pushing from this worktree. No verified
-blockers remain; G2/G3 and later R1-R6 behavior remain assigned to later
-chunks.
+`scripts/check.sh` gate (0; 2556 tests plus the 14 fixture/example checks).
+The tested W1 implementation is committed as `69fdd385`; this follow-up
+review hardens its construction boundary and is recorded in the separate
+fixup commit following it. The manager should integrate both commits without
+merging or pushing from this worktree. No verified blockers remain; G2/G3 and
+later R1-R6 behavior remain assigned to later chunks.
 
 ## Language-preservation contract
 

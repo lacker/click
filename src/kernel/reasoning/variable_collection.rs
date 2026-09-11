@@ -1563,7 +1563,7 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
     resource: &CResourceSpec,
     variables: &mut BTreeSet<Variable>,
 ) {
-    match &resource.term {
+    match resource.term() {
         CResourceTerm::Instance { resource, .. } => {
             collect_resource_term_bitvector_variables(resource, variables)
         }
@@ -1581,7 +1581,7 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
             }
         }
     }
-    if let CResourceQuantity::Count(quantity) = &resource.quantity {
+    if let CResourceQuantity::Count(quantity) = resource.quantity() {
         collect_c_expression_bitvector_variables(quantity, variables);
     }
 }

@@ -11649,12 +11649,19 @@ pub(super) fn evaluate_function_resource_spec(
             resource: inner_term,
             ..
         } => {
-            let inner = CResourceSpec {
-                term: (**inner_term).clone(),
-                access: CResourceAccessMode::Own,
-                quantity: CResourceQuantity::One,
-                role: resource.role(),
-                snapshot: resource.snapshot(),
+            let inner = match CResourceSpec::new(
+                (**inner_term).clone(),
+                CResourceAccessMode::Own,
+                CResourceQuantity::One,
+                resource.role(),
+                resource.snapshot(),
+            ) {
+                Ok(inner) => inner,
+                Err(error) => {
+                    return Ok(Err(CRuntimeError::FunctionContract(format!(
+                        "invalid named resource body: {error}"
+                    ))));
+                }
             };
             let required =
                 match evaluate_function_resource_spec(state, &inner, assumptions, budget)? {

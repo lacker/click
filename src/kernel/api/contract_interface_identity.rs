@@ -524,7 +524,28 @@ impl Names {
         }
     }
     fn resource_spec(&mut self, resource: &mut CResourceSpec) {
-        match &mut resource.term {
+        let mut term = resource.term().clone();
+        self.resource_term(&mut term);
+        let quantity = match resource.quantity() {
+            CResourceQuantity::One => CResourceQuantity::One,
+            CResourceQuantity::Count(quantity) => {
+                let mut quantity = quantity.clone();
+                self.c(&mut quantity);
+                CResourceQuantity::Count(quantity)
+            }
+        };
+        *resource = CResourceSpec::new(
+            term,
+            resource.access(),
+            quantity,
+            resource.role(),
+            resource.snapshot(),
+        )
+        .expect("interface identity normalization preserves resource validity");
+    }
+
+    fn resource_term(&mut self, resource: &mut CResourceTerm) {
+        match resource {
             // A binder's spelling is a name, not part of the interface: the
             // identity beside it is the semantic key, exactly as a parameter's
             // type rather than its name is. Erase it so two declarations that
@@ -536,26 +557,6 @@ impl Names {
                 self.resource_term(resource);
             }
             CResourceTerm::Memory(s) => self.segment(s),
-            CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
-                for e in arguments {
-                    self.c(e);
-                }
-            }
-        }
-        if let CResourceQuantity::Count(quantity) = &mut resource.quantity {
-            self.c(quantity);
-        }
-    }
-
-    fn resource_term(&mut self, resource: &mut CResourceTerm) {
-        match resource {
-            CResourceTerm::Instance {
-                binder, resource, ..
-            } => {
-                binder.clear();
-                self.resource_term(resource);
-            }
-            CResourceTerm::Memory(segment) => self.segment(segment),
             CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
                 for e in arguments {
                     self.c(e);
