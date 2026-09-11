@@ -27,16 +27,19 @@ impl<'a> Proof<'a> {
         let mut proof = self.clone();
         let mut introduced_facts = Vec::new();
         let mut advanced = false;
+        let mut retried_requirements = BTreeSet::new();
         loop {
             match proof.current_statement_index()? {
                 Some(current) if current == target => break,
                 Some(current) if current < target => {}
                 Some(_) | None => return Ok(None),
             }
-            let next = proof.try_statement_step()?;
+            let next =
+                proof.try_smart_statement_step(ProofStep::Step, &mut retried_requirements)?;
             let Some(next) = next else {
                 return Ok(None);
             };
+            retried_requirements.clear();
             for fact in next.added_facts() {
                 if !introduced_facts.contains(fact) {
                     introduced_facts.push(fact.clone());
@@ -83,7 +86,9 @@ impl<'a> Proof<'a> {
                 if !proof.is_at_execution_branch()? {
                     return Ok(None);
                 }
-                let Some(next) = proof.try_focused_execute_to_exit()? else {
+                let Some(next) =
+                    proof.try_focused_execute_to_exit_with_retries(&mut retried_requirements)?
+                else {
                     return Ok(None);
                 };
                 next

@@ -4195,6 +4195,7 @@ impl<'a> Proof<'a> {
     /// selection: the checked step either advances the frontier or reports why
     /// the statement cannot run here. An undecided C `if` is left to the
     /// structural branch driver.
+    #[cfg(test)]
     pub(in crate::surface::proof) fn try_statement_step(&self) -> Result<Option<Self>, ClickError> {
         self.try_statement_step_with_apply(|proof| proof.apply_step(ProofStep::Step))
     }

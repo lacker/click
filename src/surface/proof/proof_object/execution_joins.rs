@@ -1,6 +1,8 @@
 //! Execution branch preparation, sibling arms, and join merging.
 
 use super::*;
+use crate::kernel::proof::PropositionIdentityKey;
+use std::collections::BTreeSet;
 
 impl<'a> Proof<'a> {
     /// Opens the C `if` at an execution frontier into its kernel-feasible
@@ -2052,10 +2054,22 @@ impl<'a> Proof<'a> {
     /// reaches function exit. A nested C `if` recurses through an in-`Proof`
     /// split whose arms are focused branch runs of this same search; any other
     /// structural frontier is a search miss.
+    #[cfg(test)]
     pub(in crate::surface::proof) fn try_focused_execute_to_exit(
         &self,
     ) -> Result<Option<Self>, ClickError> {
-        self.try_focused_execute_to_exit_within(Vec::new())
+        self.try_focused_execute_to_exit_within(Vec::new(), &mut BTreeSet::new())
+    }
+
+    /// Smart focused execution variant used by automatic execution callers.
+    /// Retry identities belong to this one search and are threaded through
+    /// nested branch arms, so a repeated refusal cannot grow an unbounded
+    /// retained-have chain.
+    pub(in crate::surface::proof) fn try_focused_execute_to_exit_with_retries(
+        &self,
+        retried_requirements: &mut BTreeSet<PropositionIdentityKey>,
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_focused_execute_to_exit_within(Vec::new(), retried_requirements)
     }
 
     /// The nested-branch execute-to-exit recursion. `enclosing` is the chain
@@ -2066,6 +2080,7 @@ impl<'a> Proof<'a> {
     fn try_focused_execute_to_exit_within(
         &self,
         enclosing: Vec<&ExecutionSplit<'a>>,
+        retried_requirements: &mut BTreeSet<PropositionIdentityKey>,
     ) -> Result<Option<Self>, ClickError> {
         let mut proof = self.clone();
         let mut enclosing = enclosing;
@@ -2079,8 +2094,11 @@ impl<'a> Proof<'a> {
             if proof.is_at_function_exit() {
                 return Ok(Some(proof));
             }
-            if let Some(next) = proof.try_statement_step()? {
+            if let Some(next) =
+                proof.try_smart_statement_step(ProofStep::Step, retried_requirements)?
+            {
                 proof = next;
+                retried_requirements.clear();
                 continue;
             }
             if !proof.is_at_execution_branch()? {
@@ -2096,7 +2114,7 @@ impl<'a> Proof<'a> {
                 arm_enclosing.push(&record);
                 let Some(next) = advanced
                     .focus_split_arm(&record, take_then)?
-                    .try_focused_execute_to_exit_within(arm_enclosing)?
+                    .try_focused_execute_to_exit_within(arm_enclosing, retried_requirements)?
                 else {
                     return Ok(None);
                 };
@@ -2107,6 +2125,7 @@ impl<'a> Proof<'a> {
             } else {
                 advanced.join_focused_execution_terminal(&record)?
             };
+            retried_requirements.clear();
         }
     }
 

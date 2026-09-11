@@ -3333,8 +3333,9 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
     let theorem_environment = TheoremEnvironment::new(&[]);
-    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return 0; }")
-        .expect("test C function should parse");
+    let parsed_function =
+        syntax::parse_function("int32 identity(int32 x) { int32 y = x; return y; }")
+            .expect("test C function should parse");
     let function = parsed_function.to_kernel_function();
     let function_environment = CExecutionEnvironment::new();
     let resource_environment = ResourceEnvironment::new(&[]);
@@ -3369,6 +3370,13 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         &click_function_environment,
         &theorem_environment,
     );
+    let Some((until, _)) = root
+        .try_linear_execute_until_descendant(&CodeRegionRef::Statement(1))
+        .expect("execute_until should use the checked smart step route")
+    else {
+        panic!("execute_until should advance to its target");
+    };
+    assert!(matches!(until.certificate().steps(), [ProofStep::Step]));
     let refusal = ClickError::new("injected unresolved requirement")
         .with_unresolved_requirement(&ProofObligation::verification_condition(requirement));
     let mut retried = BTreeSet::new();

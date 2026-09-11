@@ -1326,7 +1326,10 @@ pub(super) fn solve_nested_have<'a>(
 pub(in crate::surface::proof) fn preservation_smart_step<'a>(
     proof: Proof<'a>,
 ) -> Result<Proof<'a>, ClickError> {
-    let advanced = if let Some(stepped) = proof.try_statement_step()? {
+    let mut retried_requirements = std::collections::BTreeSet::new();
+    let advanced = if let Some(stepped) =
+        proof.try_smart_statement_step(ProofStep::Step, &mut retried_requirements)?
+    {
         stepped
     } else {
         proof.apply_planned_smart_step(0)?
@@ -1679,7 +1682,10 @@ fn advance_focused_execution_arm<'a>(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
         ) {
-            let Some(next) = proof.try_focused_execute_to_exit()? else {
+            let mut retried_requirements = std::collections::BTreeSet::new();
+            let Some(next) =
+                proof.try_focused_execute_to_exit_with_retries(&mut retried_requirements)?
+            else {
                 return decline();
             };
             next
