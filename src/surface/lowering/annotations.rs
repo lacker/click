@@ -2501,10 +2501,10 @@ impl AnnotationLowerer<'_> {
             ContractExpression::Call { name, arguments } if name == "to_integer" => {
                 let argument = integer_conversion_argument(name, arguments)?;
                 if let Ok(nat) = self.lower_contract_algebraic_to_spec(argument, environment)
-                    && nat.algebraic_type.name == "Nat"
+                    && crate::kernel::is_conversion_nat_type(&nat.algebraic_type)
                 {
                     return Ok(SpecIntegerExpression::PureFunctionApplication {
-                        name: "nat_to_integer".to_string(),
+                        name: "to_integer".to_string(),
                         arguments: vec![crate::kernel::SpecPureFunctionArgument::Algebraic(nat)],
                     });
                 }

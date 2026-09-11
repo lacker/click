@@ -1895,8 +1895,22 @@ fn integer_round_trip_destination(name: &str) -> Option<crate::kernel::MachineIn
     })
 }
 
+fn is_nat_integer_law_name(name: &str) -> bool {
+    matches!(
+        name,
+        "nat_integer_zero"
+            | "nat_integer_succ"
+            | "nat_integer_nonnegative"
+            | "nat_integer_round_trip"
+            | "integer_nat_round_trip"
+            | "integer_to_nat_zero"
+            | "integer_to_nat_succ"
+    )
+}
+
 pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
     integer_round_trip_destination(name).is_some()
+        || is_nat_integer_law_name(name)
         || matches!(
             name,
             "int32_add_defined_by_integer_bounds"
@@ -1950,6 +1964,9 @@ fn verify_kernel_standard_theorem_axiom(
     goal: Proposition,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let (parameter_count, requirement_count) = match theorem.name() {
+        "nat_integer_zero" | "integer_to_nat_zero" => (0, 0),
+        "nat_integer_succ" | "nat_integer_nonnegative" | "nat_integer_round_trip" => (1, 0),
+        "integer_nat_round_trip" | "integer_to_nat_succ" => (1, 1),
         name if integer_round_trip_destination(name).is_some() => (1, 2),
         "int32_add_defined_by_integer_bounds" => (2, 2),
         "int32_add_to_integer" | "int32_subtract_to_integer" => (2, 1),
@@ -1998,7 +2015,20 @@ fn verify_kernel_standard_theorem_axiom(
             "`{claim_label}` does not have the declaration shape required by its kernel axiom",
         )));
     }
-    let axiom = if let Some(destination) = integer_round_trip_destination(theorem.name()) {
+    let axiom = if is_nat_integer_law_name(theorem.name()) {
+        let proposition = context
+            .requires
+            .iter()
+            .rev()
+            .fold(goal.clone(), |body, requirement| {
+                Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+            });
+        crate::kernel::check_nat_integer_law(theorem.name(), &proposition).ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` declaration does not match its kernel Nat conversion law"
+            ))
+        })?
+    } else if let Some(destination) = integer_round_trip_destination(theorem.name()) {
         let parameter = &theorem.parameters()[0];
         let Some(crate::kernel::SpecIntegerExpression::Term(value)) =
             context.integer_values.get(parameter.name())

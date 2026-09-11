@@ -1516,9 +1516,16 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                             value.as_ref().clone(),
                             crate::kernel::IntegerTerm::Constant(0.into()),
                         );
-                        obligations.push(ProofObligation::verification_condition(
-                            Proposition::ConditionIs(nonnegative, true),
-                        ));
+                        let required = Proposition::ConditionIs(nonnegative, true);
+                        if super::check_nat_integer_law("nat_integer_nonnegative", &required)
+                            .is_none()
+                        {
+                            retain_required_conversion_obligation(
+                                &mut obligations,
+                                assumptions,
+                                required,
+                            );
+                        }
                     }
                     SpecAlgebraicPath {
                         value: AlgebraicTerm {

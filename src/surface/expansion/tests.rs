@@ -2221,3 +2221,53 @@ theorem int32_le_antisymmetric() {
     assert_eq!(sites[0].claim_label, "int32_le_antisymmetric.ensures_0");
     assert_eq!(sites[0].tactic_name, "simp");
 }
+
+#[test]
+fn builtin_nat_integer_laws_expand_and_reject_invalid_conversions() {
+    for (parameters, requirements, goal, application) in [
+        ("", "", "to_integer(Nat::Zero) == 0", "nat_integer_zero()"),
+        (
+            "n: Nat",
+            "",
+            "to_integer(Nat::Succ(n)) == to_integer(n) + 1",
+            "nat_integer_succ(n)",
+        ),
+        (
+            "n: Nat",
+            "",
+            "to_integer(n) >= 0",
+            "nat_integer_nonnegative(n)",
+        ),
+        (
+            "n: Nat",
+            "",
+            "to_nat(to_integer(n)) == n",
+            "nat_integer_round_trip(n)",
+        ),
+        (
+            "z: Integer",
+            "requires z >= 0;",
+            "to_integer(to_nat(z)) == z",
+            "integer_nat_round_trip(z)",
+        ),
+        ("", "", "to_nat(0) == Nat::Zero", "integer_to_nat_zero()"),
+    ] {
+        let source = format!(
+            "theorem client({parameters}) {{ {requirements} ensures {goal} by {{ apply({application}); }} }}"
+        );
+        verify_c0_sources(&source, &[])
+            .unwrap_or_else(|error| panic!("{source}\n{}", error.message()));
+        let expanded = expand_c0_claim_source_by_label(&source, &[], "client.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+    }
+    for source in [
+        "theorem bad(z: Integer) { ensures to_integer(to_nat(z)) == z by { apply(integer_nat_round_trip(z)); } }",
+        "theorem bad() { ensures to_nat(-1) == to_nat(-1) by normalize; }",
+        "theorem bad(x: int32) { ensures to_nat(x) == to_nat(x) by normalize; }",
+        "theorem bad() { ensures to_integer(Nat::Zero) == 1 by { apply(nat_integer_zero()); } }",
+        "theorem bad() { ensures to_nat() == Nat::Zero by normalize; }",
+        "theorem bad(z: Integer) { requires z >= 0; ensures to_nat(z, z) == to_nat(z) by normalize; }",
+    ] {
+        assert!(verify_c0_sources(source, &[]).is_err(), "{source}");
+    }
+}

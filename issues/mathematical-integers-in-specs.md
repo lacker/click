@@ -455,3 +455,19 @@ can use it. Source tests remove each bound in turn and independently reverify
 expanded applications. Boundary models check the emitted propositions against
 modular conversion and signed interpretation for all seven widths/carriers,
 including values outside their ranges and beyond 64 bits.
+
+## Nat conversion law review (2026-09-10)
+
+The builtin `to_integer(Nat)` observation and checked `to_nat(Integer)` conversion
+have reserved meanings independent of ordinary function bodies. Their kernel
+laws validate the complete Zero/Succ Nat schema, exact operation names and
+argument counts, conclusion, and nonnegative guard. They must never infer the
+meaning of a user function merely because it is named `nat_to_integer`.
+
+The laws cover Zero, successor observation, nonnegative observations, both
+round trips, and conversion of zero. Reverse conversion remains symbolic even
+for very large Integers. The mandatory nonnegative obligation can be discharged
+intrinsically for a checked Nat observation; other inputs require established
+facts. Nested constructors cannot hide this obligation. Source applications
+expand and reverify; independent structural/BigInt models check the kernel laws
+and reject altered formulas, missing guards, and malformed Nat schemas.

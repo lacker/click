@@ -5,6 +5,32 @@ spec enum Nat {
     Succ(Nat),
 }
 
+theorem nat_integer_zero() {
+    ensures to_integer(Nat::Zero) == 0;
+}
+
+theorem nat_integer_succ(n: Nat) {
+    ensures to_integer(Nat::Succ(n)) == to_integer(n) + 1;
+}
+
+theorem nat_integer_nonnegative(n: Nat) {
+    ensures to_integer(n) >= 0;
+}
+
+theorem nat_integer_round_trip(n: Nat) {
+    ensures to_nat(to_integer(n)) == n;
+}
+
+theorem integer_nat_round_trip(z: Integer) {
+    requires z >= 0;
+    ensures to_integer(to_nat(z)) == z;
+}
+
+theorem integer_to_nat_zero() {
+    ensures to_nat(0) == Nat::Zero;
+}
+
+
 function nat_add(left: Nat, right: Nat) -> Nat
     decreases left
 {

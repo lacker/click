@@ -406,6 +406,47 @@ fn validate_comparison_expression_types(
     }
 }
 
+pub(super) fn validate_to_nat_argument_type(
+    argument: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    // C variables are present in this environment; Integer bindings are
+    // resolved by the Integer lowerer. Contextual numerals inherit the
+    // conversion's expected Integer type instead of selecting C arithmetic.
+    let valid = match argument {
+        ContractExpression::IntegerLiteral(_) => true,
+        ContractExpression::Binding(name) => !variables.contains_key(name),
+        ContractExpression::Negate(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => {
+            validate_to_nat_argument_type(inner, variables, click_functions, context)?;
+            true
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            validate_to_nat_argument_type(left, variables, click_functions, context)?;
+            validate_to_nat_argument_type(right, variables, click_functions, context)?;
+            true
+        }
+        _ => matches!(
+            infer_spec_value_type(argument, variables, click_functions, context)?,
+            SpecValueType::Integer
+        ),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ClickError::new(format!(
+            "to_nat expects an Integer in {context}"
+        )))
+    }
+}
+
 fn infer_spec_value_type(
     expression: &ContractExpression,
     variables: &BTreeMap<String, C0Type>,
@@ -559,10 +600,7 @@ fn infer_spec_value_type(
         }
         ContractExpression::Call { name, arguments } if name == "to_nat" => {
             let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
-            let actual = infer_spec_value_type(argument, variables, click_functions, context)?;
-            if !matches!(actual, SpecValueType::Integer | SpecValueType::Scalar(None)) {
-                return Err(ClickError::new("to_nat expects an Integer"));
-            }
+            validate_to_nat_argument_type(argument, variables, click_functions, context)?;
             Ok(SpecValueType::Algebraic(
                 AlgebraicTypeApplication::concrete("Nat"),
             ))
@@ -1261,6 +1299,17 @@ pub(super) fn infer_contract_expression_type(
         ContractExpression::Call { name, arguments } if is_integer_conversion(name) => {
             let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
             if name == "to_integer" {
+                if let SpecValueType::Algebraic(application) =
+                    infer_spec_value_type(argument, variables, click_functions, context)?
+                {
+                    return if application.name() == "Nat" && application.arguments().is_empty() {
+                        Ok(None)
+                    } else {
+                        Err(ClickError::new(
+                            "to_integer expects a machine integer or Nat",
+                        ))
+                    };
+                }
                 if let Some(actual) =
                     infer_contract_expression_type(argument, variables, click_functions, context)?
                     && !machine_integer_source_type(actual)

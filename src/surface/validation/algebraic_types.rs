@@ -1630,6 +1630,16 @@ fn validate_algebraic_expression(
                 context,
             )
         }
+        ContractExpression::Call { name, arguments } if name == "to_nat" => {
+            let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
+            super::type_validation::validate_to_nat_argument_type(
+                argument,
+                variables,
+                click_functions,
+                context,
+            )?;
+            Ok(Some(AlgebraicTypeApplication::concrete("Nat")))
+        }
         ContractExpression::Call { name, arguments } => {
             let function = click_functions.get(name);
             let actual_types = arguments

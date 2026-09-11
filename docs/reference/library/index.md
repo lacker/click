@@ -48,6 +48,60 @@ spec enum Nat {
 
 **Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
 
+`to_integer(n)` observes a `Nat` as an exact Integer. `to_nat(z)` requires
+`z >= 0` and remains symbolic even for large values. These conversions have
+checked builtin meanings; the ordinary recursive `nat_to_integer` function
+is independent. The laws below relate the two domains without coercions.
+
+### `nat_integer_zero`
+
+```click
+theorem nat_integer_zero() {
+    ensures to_integer(Nat::Zero) == 0;
+}
+```
+
+### `nat_integer_succ`
+
+```click
+theorem nat_integer_succ(n: Nat) {
+    ensures to_integer(Nat::Succ(n)) == to_integer(n) + 1;
+}
+```
+
+### `nat_integer_nonnegative`
+
+```click
+theorem nat_integer_nonnegative(n: Nat) {
+    ensures to_integer(n) >= 0;
+}
+```
+
+### `nat_integer_round_trip`
+
+```click
+theorem nat_integer_round_trip(n: Nat) {
+    ensures to_nat(to_integer(n)) == n;
+}
+```
+
+### `integer_nat_round_trip`
+
+```click
+theorem integer_nat_round_trip(z: Integer) {
+    requires z >= 0;
+    ensures to_integer(to_nat(z)) == z;
+}
+```
+
+### `integer_to_nat_zero`
+
+```click
+theorem integer_to_nat_zero() {
+    ensures to_nat(0) == Nat::Zero;
+}
+```
+
 ### `nat_to_integer`
 
 ```click

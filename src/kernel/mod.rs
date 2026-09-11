@@ -14,6 +14,8 @@ pub(crate) use functions::rewrite_resource_instance;
 pub(crate) use functions::rewrite_resource_instance_selecting_children;
 mod loops;
 mod memory_provenance;
+mod nat_integer;
+pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
 pub(crate) mod proof;
 mod reasoning;

@@ -36,6 +36,19 @@ theorem integer_subtract_bridge(left: int32, right: int32) {
     }
 }
 
+theorem builtin_nat_integer_laws(n: Nat) {
+    ensures to_integer(Nat::Zero) == 0 by { apply(nat_integer_zero()); }
+    ensures to_integer(Nat::Succ(n)) == to_integer(n) + 1 by { apply(nat_integer_succ(n)); }
+    ensures to_integer(n) >= 0 by { apply(nat_integer_nonnegative(n)); }
+    ensures to_nat(to_integer(n)) == n by { apply(nat_integer_round_trip(n)); }
+    ensures to_nat(0) == Nat::Zero by { apply(integer_to_nat_zero()); }
+}
+
+theorem builtin_integer_nat_laws(z: Integer) {
+    requires z >= 0;
+    ensures to_integer(to_nat(z)) == z by { apply(integer_nat_round_trip(z)); }
+}
+
 theorem nat_laws(a: Nat, b: Nat, c: Nat) {
     ensures nat_add(Nat::Zero, a) == a by { apply(nat_add_left_identity(a)); }
     ensures nat_add(a, Nat::Zero) == a by { apply(nat_add_right_identity(a)); }
