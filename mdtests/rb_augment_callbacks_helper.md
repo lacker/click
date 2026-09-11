@@ -23,14 +23,14 @@ reloading the next field after a call yields a function pointer that carries no
 contract.
 
 The three contracts state `views` footprints, which is what the no-op bodies
-do. An `owns` footprint does not work here, and that is a verifier limitation
-rather than a modelling decision: with the callbacks owning the links, the
-second indirect call through a suite opened with `open` fails with ``cannot
-verify call through function pointer `__click_call_result3`: no matching named
-contract is available for this value``, even with the separation hypothesis
-above. One such call per function is fine — that is the shape
-`mdtests/c_named_function_contract_pipeline.md` uses — and two calls of any
-pair of these fields reproduce it.
+do. `mdtests/rb_augment_callbacks_helper_owns.md` is this same helper with
+`owns` footprints, which is what a real augmentation callback needs: each call
+then havocs the link cells it owns, and the separation hypothesis above is what
+keeps the table's remaining fields — and the contracts they carry — alive
+across the call. `mdtests/rb_augment_callbacks_helper_owns_cell_separate.md`
+states that separation cell by cell instead, and
+`mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md` drops it and
+fails at the second call.
 
 Inside `lib/rbtree.c` itself only the exported, non-inline entry points need a
 contract like this. The always-inline `__rb_insert` takes its `augment_rotate`

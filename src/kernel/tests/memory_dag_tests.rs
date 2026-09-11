@@ -1711,3 +1711,79 @@ fn canonical_form_resolves_loads_at_any_depth() {
         "eight times the term depth must take near-linear work: {samples:?}",
     );
 }
+
+/// A call havoc that provably missed a materialized cell must not rename the
+/// cell's load.
+///
+/// The naming walk behind a load variable is assumption-free, so it stops at
+/// a call-havoc edge whose write set is separated from the cell only by an
+/// explicit `separate` premise. The retained cell is what carries the answer
+/// across: the havoc kept it precisely because the premise proved the write
+/// set disjoint, so the load resolves through the cell to the variable that
+/// already names this value. Without that, a function pointer read out of a
+/// table after one call through it loses the contract established for it
+/// (`mdtests/rb_augment_callbacks_helper_owns.md`).
+#[test]
+fn a_retained_cell_keeps_its_load_variable_across_a_call_havoc() {
+    let cell = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88_002)), 4),
+    };
+    let written = memory_range(
+        Pointer {
+            block: "arg-memory".into(),
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88_001)), 4),
+        },
+        0,
+        2,
+    );
+    let separated = PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(written.clone()),
+        right: CResource::Memory(memory_range(cell.clone(), 0, 2)),
+    });
+
+    let load_in = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(cell.clone()),
+        )
+    };
+    let base = CMemory::new().with_block("arg-memory", 64);
+    let (name, _) = load_variable_for_term(&load_in(&base)).expect("a load term has a name");
+    // Materializing a viewed cell records its own load variable in the cell,
+    // which is the state the callback fixtures reach before their first call.
+    let materialized = base.store(cell.clone(), CValue::Int32(Bitvector32Term::Variable(name)));
+
+    let retained = materialized.clone().with_call_memory_havoc(
+        Variable(88_100),
+        std::slice::from_ref(&written),
+        &separated,
+    );
+    assert!(
+        retained.cells.contains_key(&cell),
+        "the separation premise is what keeps this cell across the havoc"
+    );
+    assert_eq!(
+        load_variable_for_term(&load_in(&retained))
+            .expect("a load term has a name")
+            .0,
+        name,
+        "a retained cell names the same load after the call as before it"
+    );
+
+    // The premise is load-bearing: with nothing separating the write set from
+    // the cell, the havoc forgets it and the reload is a different value.
+    let forgotten = materialized.with_call_memory_havoc(
+        Variable(88_101),
+        std::slice::from_ref(&written),
+        &PureFactContext::new(),
+    );
+    assert!(!forgotten.cells.contains_key(&cell));
+    assert_ne!(
+        load_variable_for_term(&load_in(&forgotten))
+            .expect("a load term has a name")
+            .0,
+        name,
+        "a forgotten cell must not keep the name of the value it held"
+    );
+}

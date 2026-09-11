@@ -217,12 +217,27 @@ endpoint matching (`memories_directly_match_for_pointer_load`) accepts
 that identity, so a fact carried unchanged through several steps still
 meets a later effect summary.
 
+Before the epoch walk runs, the load resolves against the snapshot's own
+materialized cells, and a cell holding a load variable answers the naming
+query outright: that variable already names this value, so the load takes
+it. This is what carries a materialized cell across an effect the walk
+itself cannot cross. A call havoc keeps a cached cell only when the
+assumptions at the call prove the callee's write set disjoint from it
+(`ranges_proven_disjoint_from_pointer`), and certification re-checks that
+retention, so the surviving cell is checked evidence rather than a second
+alias approximation. A callback table read between two calls through it
+stays one value this way (`mdtests/rb_augment_callbacks_helper_owns.md`);
+drop the `separate` requirement and the havoc forgets the cell, the reload
+is a new variable, and the contract established for the old one no longer
+applies.
+
 Two consequences are worth knowing when reading proofs. Where crossing a
-write needs evidence (a havoc of `object(other)` against a pointer that is
-only separate by a `requires`), the read before the call and the read after
-it are different variables unless a step's frame check or an explicit
-`transport` carries the fact across; facts never match across such an
-effect structurally, and a step keeps the pre-step form of a carried fact
-beside the carried one, since both stay true. And `old(x)` denotes the
-entry value: it is the entry-epoch load variable, equal to the current
-value only where that frame fact is established.
+write needs evidence and no cell was materialized before it (a havoc of
+`object(other)` against a pointer that is only separate by a `requires`),
+the read before the call and the read after it are different variables
+unless a step's frame check or an explicit `transport` carries the fact
+across; facts never match across such an effect structurally, and a step
+keeps the pre-step form of a carried fact beside the carried one, since
+both stay true. And `old(x)` denotes the entry value: it is the
+entry-epoch load variable, equal to the current value only where that
+frame fact is established.

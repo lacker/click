@@ -2338,6 +2338,21 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
             canonical.clone(),
         ));
     }
+    // The canonical form resolved this load through the snapshot's own
+    // materialized cell, and the cell holds a load variable: that variable
+    // already names this value, so it is this load's name too. Falling
+    // through would mint a second identity for one value whenever the cell's
+    // snapshot cannot be reached by the assumption-free epoch walk — a cell
+    // retained across a call havoc by a `separate` premise, for instance,
+    // whose reload would otherwise lose every fact stated about it. The
+    // resolution is structural and assumption-free, and the havoc's retention
+    // decision is re-checked during certification, so this adds no alias
+    // approximation of its own.
+    if let Bitvector32Term::Variable(variable) = &canonical
+        && registered_load_for_variable(variable).is_some()
+    {
+        return Some((*variable, bits.clone()));
+    }
     let Bitvector32Term::MemoryLoad(memory, pointer) = bits else {
         unreachable!("the pattern above matched a memory load");
     };
