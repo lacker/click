@@ -74,31 +74,24 @@ struct IntegerApplicationInterner {
     next_id: u64,
 }
 
-impl SharedIntegerApplication {
-    #[allow(dead_code)]
-    pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
-        static INTERNER: OnceLock<Mutex<IntegerApplicationInterner>> = OnceLock::new();
+impl IntegerApplicationInterner {
+    fn intern(
+        &mut self,
+        name: String,
+        arguments: Vec<PureFunctionArgument>,
+    ) -> SharedIntegerApplication {
+        crate::instrumentation::record_deterministic_work(arguments.len().saturating_add(1));
         let mut hasher = DefaultHasher::new();
         name.hash(&mut hasher);
         arguments.hash(&mut hasher);
         let key = hasher.finish();
-        let interner = INTERNER.get_or_init(|| {
-            Mutex::new(IntegerApplicationInterner {
-                buckets: HashMap::new(),
-                cleanup: VecDeque::new(),
-                next_id: 0,
-            })
-        });
-        let mut interner = interner
-            .lock()
-            .expect("Integer application interner lock poisoned");
-        let cleanup_limit = interner.cleanup.len().min(8);
+        let cleanup_limit = self.cleanup.len().min(8);
         for _ in 0..cleanup_limit {
-            let Some((fingerprint, pointer)) = interner.cleanup.pop_front() else {
+            let Some((fingerprint, pointer)) = self.cleanup.pop_front() else {
                 break;
             };
             let mut requeue = false;
-            if let Some(bucket) = interner.buckets.get_mut(&fingerprint) {
+            if let Some(bucket) = self.buckets.get_mut(&fingerprint) {
                 let live = bucket.iter().any(|(_, _, node)| {
                     node.as_ptr() as usize == pointer && node.strong_count() != 0
                 });
@@ -109,25 +102,25 @@ impl SharedIntegerApplication {
                     node.as_ptr() as usize != pointer || node.strong_count() != 0
                 });
                 if bucket.is_empty() {
-                    interner.buckets.remove(&fingerprint);
+                    self.buckets.remove(&fingerprint);
                 }
             }
             if requeue {
-                interner.cleanup.push_back((fingerprint, pointer));
+                self.cleanup.push_back((fingerprint, pointer));
             }
         }
-        if let Some(bucket) = interner.buckets.get(&key) {
+        if let Some(bucket) = self.buckets.get(&key) {
             for (old_name, old_arguments, node) in bucket {
                 if old_name == &name
                     && old_arguments == &arguments
                     && let Some(node) = node.upgrade()
                 {
-                    return Self(node);
+                    return SharedIntegerApplication(node);
                 }
             }
         }
-        let id = interner.next_id;
-        interner.next_id = interner
+        let id = self.next_id;
+        self.next_id = self
             .next_id
             .checked_add(1)
             .expect("Integer application interner ID exhausted");
@@ -136,15 +129,29 @@ impl SharedIntegerApplication {
             name: name.clone(),
             arguments: arguments.clone(),
         });
-        interner
-            .buckets
+        self.buckets
             .entry(key)
             .or_default()
             .push((name, arguments, Arc::downgrade(&node)));
-        interner
-            .cleanup
-            .push_back((key, Arc::as_ptr(&node) as usize));
-        Self(node)
+        self.cleanup.push_back((key, Arc::as_ptr(&node) as usize));
+        SharedIntegerApplication(node)
+    }
+}
+
+impl SharedIntegerApplication {
+    pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
+        static INTERNER: OnceLock<Mutex<IntegerApplicationInterner>> = OnceLock::new();
+        INTERNER
+            .get_or_init(|| {
+                Mutex::new(IntegerApplicationInterner {
+                    buckets: HashMap::new(),
+                    cleanup: VecDeque::new(),
+                    next_id: 0,
+                })
+            })
+            .lock()
+            .expect("Integer application interner lock poisoned")
+            .intern(name, arguments)
     }
     pub(crate) fn id(&self) -> u64 {
         self.0.id
@@ -879,6 +886,38 @@ mod tests {
             }
             assert!(shared_node_count(&value.into()) <= depth + 1);
         }
+    }
+
+    #[test]
+    fn application_cleanup_revisits_live_entries_and_releases_dead_arguments() {
+        let mut interner = IntegerApplicationInterner {
+            buckets: HashMap::new(),
+            cleanup: VecDeque::new(),
+            next_id: 0,
+        };
+        let child: SharedIntegerTerm = IntegerTerm::var(Variable(790_100)).into();
+        let weak_child = Arc::downgrade(&child.0);
+        let parent = interner.intern("parent".into(), vec![PureFunctionArgument::Integer(child)]);
+        let parent_id = parent.id();
+        for _ in 0..16 {
+            interner.intern("noise".into(), vec![]);
+        }
+        assert_eq!(
+            interner
+                .intern("parent".into(), parent.arguments().to_vec())
+                .id(),
+            parent_id
+        );
+        assert!(weak_child.upgrade().is_some());
+        drop(parent);
+        for _ in 0..16 {
+            interner.intern("noise".into(), vec![]);
+        }
+        assert!(
+            weak_child.upgrade().is_none(),
+            "dead application key retained its argument DAG"
+        );
+        assert!(interner.intern("later".into(), vec![]).id() > parent_id);
     }
 
     #[test]

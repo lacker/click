@@ -1465,6 +1465,7 @@ fn substitute_bitvector_variable_in_shared_integer(
     if let Some(result) = memo.get(&term.id()) {
         return result.clone();
     }
+    crate::instrumentation::record_deterministic_work(1);
     let result = match term.as_ref() {
         IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => term.clone(),
         IntegerTerm::PureFunctionApplication(application) => {
@@ -1477,7 +1478,9 @@ fn substitute_bitvector_variable_in_shared_integer(
                             substitute_bitvector_variable_in_shared_integer(value, from, to, memo),
                         )
                     }
-                    other => other.clone(),
+                    other => {
+                        substitute_bitvector_variable_in_pure_function_argument(other, from, to)
+                    }
                 })
                 .collect();
             crate::kernel::IntegerTerm::PureFunctionApplication(
@@ -6927,5 +6930,87 @@ mod machine_integer_pointer_substitution_tests {
                 expected
             ))))
         );
+    }
+}
+
+#[cfg(test)]
+mod integer_function_traversal_tests {
+    use super::*;
+
+    #[test]
+    fn integer_applications_rewrite_c_and_nested_integer_arguments() {
+        let from = Variable(817);
+        let machine = Bitvector32Term::Variable(from);
+        let make = |machine: Bitvector32Term| {
+            IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                "observed".into(),
+                vec![
+                    PureFunctionArgument::Value(CValue::Int32(machine.clone())),
+                    PureFunctionArgument::Integer(
+                        IntegerTerm::from_machine(MachineIntegerType::Int32, machine)
+                            .unwrap()
+                            .into(),
+                    ),
+                ],
+            ))
+        };
+        let original = make(machine);
+        let expected = make(Bitvector32Term::Variable(Variable(818)));
+        assert_eq!(
+            substitute_bitvector_variable_in_integer(
+                &original,
+                from,
+                &Bitvector32Term::Variable(Variable(818))
+            ),
+            expected
+        );
+        assert_eq!(
+            crate::kernel::proof::term_rewrite::TermRewrite::for_bits(
+                &Bitvector32Term::Variable(from),
+                &Bitvector32Term::Variable(Variable(818))
+            )
+            .term(&Term::Integer(original)),
+            Term::Integer(expected)
+        );
+    }
+
+    #[test]
+    fn shared_integer_application_substitution_scales_with_dag_size() {
+        let from = Variable(831);
+        let mut samples = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let mut term: SharedIntegerTerm = IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(from),
+            )
+            .unwrap()
+            .into();
+            for _ in 0..depth {
+                term = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                    "pair".into(),
+                    vec![
+                        PureFunctionArgument::Integer(term.clone()),
+                        PureFunctionArgument::Integer(term),
+                    ],
+                ))
+                .into();
+            }
+            let (changed, work) = crate::instrumentation::measure_deterministic_work(|| {
+                substitute_bitvector_variable_in_integer(
+                    &term,
+                    from,
+                    &Bitvector32Term::Variable(Variable(832)),
+                )
+            });
+            assert_ne!(&changed, term.as_ref());
+            assert!(work > 0);
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3,
+                "application substitution expanded the DAG: {samples:?}"
+            );
+        }
     }
 }

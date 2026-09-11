@@ -356,6 +356,20 @@ either missing mathematical bound; accepted applications expand and reverify.
 The unchanged C summation loop, general folds, and other machine-width operation
 bridges remain to be completed.
 
+## Pure Integer function checkpoint (2026-09-10)
+
+Integer-to-Integer pure functions retain opaque canonical application nodes until
+an explicit unfold. Linear arithmetic treats a result as an opaque Integer atom;
+it does not assume the function's defining equation. Positive and negative source
+regressions distinguish those behaviors and expanded proofs independently recheck.
+
+Application argument storage is shared, node identities never repeat, and bounded
+cleanup revisits live entries so their arguments can be released after they die.
+Direct tests cover C and nested Integer argument substitution, cleanup lifetime,
+and deterministic DAG rewriting at depths 8/16/32/64. General parameter types and
+deferred arguments remain a separate call-lowering stage, needed for Nat and array
+functions; this checkpoint does not claim those complete.
+
 ## Implementation and integration sequence
 
 1. Land this design record, then agree on the minimal shared kernel/surface
