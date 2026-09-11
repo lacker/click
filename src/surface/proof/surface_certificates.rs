@@ -31,6 +31,82 @@ pub(super) fn surface_logical_children(
     }
 }
 
+/// How one written universal's body continues under the binder.
+///
+/// The kernel form of a range quantifier is the binder followed by the range
+/// membership guard; the guard's consequent is the written body. A written
+/// implication instead has both parts written.
+pub(super) enum WrittenAntecedent {
+    Implication {
+        antecedent: ClickProposition,
+        consequent: ClickProposition,
+    },
+    RangeGuard {
+        body: ClickProposition,
+    },
+}
+
+/// Refines the written goal a recorded written implication introduces.
+///
+/// Only the recorded head chain decides that this kernel node is a written
+/// connective; this function then reads which written form carries it.
+pub(super) fn written_implication_consequent(goal: &ClickProposition) -> Option<WrittenAntecedent> {
+    match goal {
+        ClickProposition::Implies(antecedent, consequent) => Some(WrittenAntecedent::Implication {
+            antecedent: antecedent.as_ref().clone(),
+            consequent: consequent.as_ref().clone(),
+        }),
+        ClickProposition::RangeAll { body, .. } => Some(WrittenAntecedent::RangeGuard {
+            body: body.as_ref().clone(),
+        }),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => match written_implication_consequent(proposition)? {
+            WrittenAntecedent::Implication {
+                antecedent,
+                consequent,
+            } => Some(WrittenAntecedent::Implication {
+                antecedent: ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(antecedent),
+                },
+                consequent: ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(consequent),
+                },
+            }),
+            WrittenAntecedent::RangeGuard { body } => Some(WrittenAntecedent::RangeGuard {
+                body: ClickProposition::At {
+                    selector: selector.clone(),
+                    proposition: Box::new(body),
+                },
+            }),
+        },
+        _ => None,
+    }
+}
+
+/// Refines the written goal a recorded written universal introduces.
+///
+/// A `forall` writes its body directly. A range quantifier keeps its written
+/// form focused: its range guard is the next introduction, and that guard
+/// exposes the written body.
+pub(super) fn written_universal_body(goal: &ClickProposition) -> Option<ClickProposition> {
+    match goal {
+        ClickProposition::ForAll { body, .. } => Some(body.as_ref().clone()),
+        ClickProposition::RangeAll { .. } => Some(goal.clone()),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Some(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(written_universal_body(proposition)?),
+        }),
+        _ => None,
+    }
+}
+
 pub(super) fn surface_implication_parts(
     goal: &ClickProposition,
 ) -> Option<(ClickProposition, ClickProposition)> {

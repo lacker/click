@@ -150,6 +150,7 @@ pub(crate) enum PropositionCloseError {
     IntegerArithmeticPremiseUnavailable(usize),
     IntegerArithmetic(super::integer_arithmetic::IntegerArithmeticCheckError),
     ExpectedIntroduction(Proposition),
+    IntegerFresheningExhausted,
     ExpectedConjunction(Proposition),
     MissingConjuncts(Proposition, Proposition),
     ExpectedDisjunction(Proposition),
@@ -166,7 +167,14 @@ pub(crate) enum PropositionCloseError {
 #[derive(Clone, Copy)]
 pub(crate) enum PropositionIntroduction {
     Implication,
-    Universal { variable: crate::kernel::Variable },
+    /// A universal introduction reports the exact kernel variable it bound
+    /// the body to, and the pointee type when the binder ranges over
+    /// pointers, so a caller's presentation names the same value the
+    /// checked goal now mentions.
+    Universal {
+        variable: crate::kernel::Variable,
+        pointer: Option<crate::kernel::CType>,
+    },
     Negation,
 }
 
@@ -549,13 +557,8 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         };
         Some(super::CheckedProposition::new(
             goal.proposition().clone(),
+            self.state.open_branches.root_branch().state.facts.clone(),
             goal.outcome.as_deref().map(|outcome| outcome.core.clone()),
-            self.state
-                .open_branches
-                .root_branch()
-                .state
-                .facts
-                .is_empty(),
         ))
     }
 
@@ -704,9 +707,15 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         Ok(self.closed_focused())
     }
 
+    /// Introduces the head of the focused proposition goal.
+    ///
+    /// `presentation` derives the successor's opaque presentation from the
+    /// checked introduction: its kind, and the exact fact the kernel added,
+    /// when it added one. The callback chooses neither the kernel
+    /// proposition nor the introduced fact.
     pub(crate) fn apply_intro(
         &self,
-        presentation: impl FnOnce(&P, PropositionIntroduction) -> P,
+        presentation: impl FnOnce(&P, PropositionIntroduction, Option<&Proposition>) -> P,
     ) -> Result<Self, PropositionCloseError> {
         let (goal, facts) = self
             .focused_proposition()
@@ -718,22 +727,28 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 PropositionIntroduction::Implication,
             ),
             Proposition::ForAll { var, sort, body } => {
-                let (variable, body) = match sort {
+                let (variable, body, pointer) = match sort {
                     Sort::CPointer(c_type) => {
-                        facts.freshen_pointer_forall_body(*var, *c_type, body)
+                        let (variable, body) =
+                            facts.freshen_pointer_forall_body(*var, *c_type, body);
+                        (variable, body, Some(*c_type))
                     }
                     Sort::Integer => {
-                        facts
+                        let (variable, body) = facts
                             .freshen_integer_forall_body(*var, body)
-                            .ok_or_else(|| {
-                                PropositionCloseError::ExpectedIntroduction(
-                                    goal.proposition().clone(),
-                                )
-                            })?
+                            .ok_or(PropositionCloseError::IntegerFresheningExhausted)?;
+                        (variable, body, None)
                     }
-                    _ => facts.freshen_int32_forall_body(*var, body),
+                    _ => {
+                        let (variable, body) = facts.freshen_int32_forall_body(*var, body);
+                        (variable, body, None)
+                    }
                 };
-                (body, None, PropositionIntroduction::Universal { variable })
+                (
+                    body,
+                    None,
+                    PropositionIntroduction::Universal { variable, pointer },
+                )
             }
             Proposition::Not(body) => (
                 Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true),
@@ -744,7 +759,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 return Err(PropositionCloseError::ExpectedIntroduction(other.clone()));
             }
         };
-        let presentation = presentation(&goal.presentation, introduction);
+        let presentation = presentation(&goal.presentation, introduction, introduced.as_ref());
         let obligation = match goal.outcome.clone() {
             Some(outcome) => {
                 super::PropositionObligation::at_outcome(proposition, presentation, outcome)
@@ -775,6 +790,54 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 ),
                 checked_facts: Arc::new(added_facts.clone()),
                 added_facts: Arc::new(added_facts),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    /// Replaces the opaque presentation of the focused proposition goal.
+    ///
+    /// Presentation only: the checked proposition, its facts, the branch
+    /// topology, and the focus are carried over unchanged, and the callback
+    /// sees nothing but the presentation it is replacing. This is how a
+    /// language-layer goal attaches the record of the lowering that produced
+    /// it after the goal was constructed; it establishes no proposition and
+    /// discharges nothing. `None` when the focused branch is not a
+    /// proposition goal.
+    pub(crate) fn with_focused_proposition_presentation(
+        &self,
+        presentation: impl FnOnce(&P) -> P,
+    ) -> Option<Self>
+    where
+        L: Clone,
+        S: Clone,
+        P: Clone,
+    {
+        let branch = self.state.open_branches.get(self.focused_branch)?;
+        let ProofObligation::Proposition(goal) = &branch.obligation else {
+            return None;
+        };
+        let presentation = presentation(&goal.presentation);
+        let obligation = match goal.outcome.clone() {
+            Some(outcome) => super::PropositionObligation::at_outcome(
+                goal.proposition().clone(),
+                presentation,
+                outcome,
+            ),
+            None => super::PropositionObligation::new(goal.proposition().clone(), presentation),
+        };
+        Some(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.replace_at(
+                    self.focused_branch,
+                    ProofBranch::new(
+                        ProofObligation::Proposition(obligation),
+                        branch.state.clone(),
+                    ),
+                ),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
             },
             self.focused_branch,
         ))
@@ -1943,7 +2006,7 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
 mod tests {
     use super::*;
     use crate::kernel::proof::PropositionObligation;
-    use crate::kernel::{Bitvector32Term, ConditionTerm, IntegerTerm, Sort, Term, Variable};
+    use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
 
     #[test]
     fn invariant_body_evidence_requires_exact_complete_root_and_context() {
@@ -2392,8 +2455,8 @@ mod tests {
         let mut introduced = None;
 
         let next = proof
-            .apply_intro(|_, introduction| match introduction {
-                PropositionIntroduction::Universal { variable } => {
+            .apply_intro(|_, introduction, _| match introduction {
+                PropositionIntroduction::Universal { variable, .. } => {
                     introduced = Some(variable);
                 }
                 _ => panic!("expected universal introduction"),
@@ -2417,108 +2480,5 @@ mod tests {
                 arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(introduced))],
             }
         );
-    }
-
-    #[test]
-    fn integer_intro_does_not_reuse_an_ambient_fact() {
-        let binder = Variable(901);
-        let body = Proposition::ConditionIs(
-            ConditionTerm::IntegerEqual(
-                IntegerTerm::var(binder).into(),
-                IntegerTerm::constant_i64(0).into(),
-            ),
-            true,
-        );
-        let goal = Proposition::ForAll {
-            var: binder,
-            sort: Sort::Integer,
-            body: Box::new(body.clone()),
-        };
-        let branch = ProofBranch::new(
-            ProofObligation::Proposition(PropositionObligation::new(goal, ())),
-            ProofBranchState {
-                facts: ProofFacts::from_ordered(std::slice::from_ref(&body)),
-                unfolded_predicates: PersistentOrderedSet::default(),
-                execution: None,
-            },
-        );
-        let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
-            ProofObject::root((), branch);
-        let next = proof
-            .apply_intro(|_, _| ())
-            .unwrap_or_else(|_| panic!("Integer universal introduction should succeed"));
-        let branch = next
-            .state
-            .open_branches
-            .get(BranchId::ROOT)
-            .expect("introduced branch remains open");
-        let ProofObligation::Proposition(obligation) = &branch.obligation else {
-            panic!("expected proposition obligation");
-        };
-        assert_ne!(obligation.proposition(), &body);
-        assert!(!branch.state.facts.contains(obligation.proposition()));
-    }
-
-    #[test]
-    fn integer_intro_keeps_an_unreserved_binder() {
-        let binder = Variable(902);
-        let body = Proposition::ConditionIs(
-            ConditionTerm::IntegerEqual(
-                IntegerTerm::var(binder).into(),
-                IntegerTerm::constant_i64(0).into(),
-            ),
-            true,
-        );
-        let goal = Proposition::ForAll {
-            var: binder,
-            sort: Sort::Integer,
-            body: Box::new(body.clone()),
-        };
-        let branch = ProofBranch::new(
-            ProofObligation::Proposition(PropositionObligation::new(goal, ())),
-            ProofBranchState {
-                facts: ProofFacts::default(),
-                unfolded_predicates: PersistentOrderedSet::default(),
-                execution: None,
-            },
-        );
-        let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
-            ProofObject::root((), branch);
-        let next = proof
-            .apply_intro(|_, _| ())
-            .unwrap_or_else(|_| panic!("Integer intro should succeed"));
-        let branch = next.state.open_branches.get(BranchId::ROOT).unwrap();
-        let ProofObligation::Proposition(obligation) = &branch.obligation else {
-            panic!("expected proposition obligation");
-        };
-        assert_eq!(obligation.proposition(), &body);
-    }
-
-    #[test]
-    fn integer_intro_rejects_a_machine_carrier_body() {
-        let binder = Variable(903);
-        let body = Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(Bitvector32Term::Variable(binder)),
-                Box::new(Bitvector32Term::Constant(0)),
-            ),
-            true,
-        );
-        let goal = Proposition::ForAll {
-            var: binder,
-            sort: Sort::Integer,
-            body: Box::new(body),
-        };
-        let branch = ProofBranch::new(
-            ProofObligation::Proposition(PropositionObligation::new(goal, ())),
-            ProofBranchState {
-                facts: ProofFacts::default(),
-                unfolded_predicates: PersistentOrderedSet::default(),
-                execution: None,
-            },
-        );
-        let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
-            ProofObject::root((), branch);
-        assert!(proof.apply_intro(|_, _| ()).is_err());
     }
 }

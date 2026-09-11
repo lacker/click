@@ -67,11 +67,7 @@ pub(in crate::surface) fn check_resource_field_schemas(
                             "unresolved resource field type `{name}`"
                         )));
                     }
-                    ClickType::Integer => {
-                        return Err(ClickError::new(
-                            "Integer resource fields are not available in this slice",
-                        ));
-                    }
+                    ClickType::Integer => crate::kernel::ResourceFieldType::Integer,
                 };
                 Ok((field.name().to_string(), ty))
             })
@@ -154,6 +150,9 @@ pub(in crate::surface) fn check_resource_field_schemas(
                     let variable = Variable(next_field_variable);
                     next_field_variable += 1;
                     match ty {
+                        crate::kernel::ResourceFieldType::Integer => {
+                            AlgebraicValue::Integer(crate::kernel::IntegerTerm::Variable(variable))
+                        }
                         crate::kernel::ResourceFieldType::C(ty) => {
                             AlgebraicValue::C(crate::kernel::symbolic_call_result(*ty, variable))
                         }
@@ -785,6 +784,38 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
         opaque_click_functions,
     );
     lowerer.lower_contract_algebraic_to_spec(expression, &context)
+}
+
+/// Elaborates an Integer expression at a fixed proof state without
+/// evaluating or expanding it. This is the symbolic value captured for an
+/// Integer theorem argument.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn elaborate_fixed_state_integer_expression(
+    expression: &ContractExpression,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+) -> Result<crate::kernel::SpecIntegerExpression, String> {
+    let (mut lowerer, context) = fixed_state_elaboration(
+        array_element_types,
+        entry_state,
+        entry_values,
+        current_values,
+        result,
+        snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    );
+    lowerer.lower_contract_integer_to_spec(expression, &context)
 }
 
 /// Elaborates an expression stated in a fixed-state proof into the kernel's
@@ -2297,11 +2328,16 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> bool {
         match expression {
+            ContractExpression::ResourceField(access) => {
+                matches!(access.click_type, Some(ClickType::Integer))
+            }
             ContractExpression::IntegerLiteral(_) => false,
             ContractExpression::Binding(name) => environment.integer_values.contains_key(name),
-            ContractExpression::Negate(inner) => {
-                self.contract_expression_is_integer(inner, environment)
-            }
+            ContractExpression::Negate(inner)
+            | ContractExpression::Old(inner)
+            | ContractExpression::At {
+                expression: inner, ..
+            } => self.contract_expression_is_integer(inner, environment),
             ContractExpression::Add(left, right)
             | ContractExpression::Subtract(left, right)
             | ContractExpression::Multiply(left, right) => {
@@ -2328,6 +2364,42 @@ impl AnnotationLowerer<'_> {
     ) -> Result<crate::kernel::SpecIntegerExpression, String> {
         use crate::kernel::SpecIntegerExpression;
         check_integer_lowering_work(1)?;
+        match expression {
+            ContractExpression::Old(inner) => {
+                let old_environment =
+                    environment.old_state(&self.entry_values, self.entry_state.memory())?;
+                return self.lower_contract_integer_to_spec(inner, &old_environment);
+            }
+            ContractExpression::At {
+                selector,
+                expression,
+            } => {
+                let snapshot = self
+                    .snapshot_environment(selector, environment)
+                    .ok_or_else(|| "Integer values require a recorded program point".to_string())?;
+                return self.lower_contract_integer_to_spec(expression, &snapshot);
+            }
+            _ => {}
+        }
+        if let ContractExpression::ResourceField(access) = expression {
+            if access.click_type != Some(ClickType::Integer) {
+                return Err("expected an Integer resource field".into());
+            }
+            if let Some(value) = self.fixed_resource_field(access, environment)? {
+                let AlgebraicValue::Integer(value) = value else {
+                    return Err("resource field type mismatch".into());
+                };
+                return Ok(crate::kernel::SpecIntegerExpression::Term(value));
+            }
+            return Ok(crate::kernel::SpecIntegerExpression::ResourceField(
+                crate::kernel::ResourceFieldProjection {
+                    identity: access.identity,
+                    children: access.children.clone(),
+                    field_index: access.field_index,
+                    at_entry: environment.at_function_entry,
+                },
+            ));
+        }
         if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
             let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
             if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =

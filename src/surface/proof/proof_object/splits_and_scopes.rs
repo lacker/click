@@ -532,8 +532,8 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(parent.clone()),
                 step: Some(Arc::new(step(
-                    ProofCertificate::from_steps(left_steps),
-                    ProofCertificate::from_steps(right_steps),
+                    ProofCertificate::from_steps(left_steps)?,
+                    ProofCertificate::from_steps(right_steps)?,
                 ))),
                 focused_branch: marker.node.focused_branch,
                 depth: parent.depth + 1,
@@ -569,31 +569,8 @@ impl<'a> Proof<'a> {
                 );
             }
         }
-        // Preserve the focused mathematical binding in the retained Surface
-        // form too.  Source variables are parsed as C fragments, so leaving
-        // this spelling unchanged lets later state-side certificate checks
-        // reinterpret a shadowing Integer binder as a C variable.
-        let proposition = if let Some(goal) = self.proposition_obligation()
-            && goal.integer_values_initialized
-        {
-            crate::surface::proof::surface_lowering::promote_integer_comparison(
-                &proposition,
-                &goal.integer_values,
-                &goal.surface_bindings,
-            )
-        } else if let ProofContext::Pure(context) = self.context.as_ref() {
-            crate::surface::proof::surface_lowering::promote_integer_comparison(
-                &proposition,
-                &context.theorem_context.integer_values,
-                &self
-                    .proposition_obligation()
-                    .map(|goal| goal.surface_bindings.clone())
-                    .unwrap_or_default(),
-            )
-        } else {
-            proposition
-        };
-        let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
+        let (kernel, kernel_introductions) =
+            self.lower_surface_goal_recording_introductions(&proposition, "`have` proposition")?;
         // A post-execution unfold lets a predicate-call `have` prove the
         // predicate through its structural body. Pair that body kernel with
         // the same unfolded Surface view so `intro` retains binder names and
@@ -621,10 +598,10 @@ impl<'a> Proof<'a> {
         } else {
             proposition.clone()
         };
-        let body_kernel = if structural_proposition == proposition {
-            kernel.clone()
+        let (body_kernel, body_introductions) = if structural_proposition == proposition {
+            (kernel.clone(), kernel_introductions)
         } else {
-            self.lower_surface_goal(&structural_proposition, "`have` body")?
+            self.lower_surface_goal_recording_introductions(&structural_proposition, "`have` body")?
         };
         // A `have` stated at an execution frontier proves its goal from the
         // frontier's facts alone. After an explicit checked resource unfold,
@@ -756,12 +733,14 @@ impl<'a> Proof<'a> {
                 structural_proposition,
             ),
         };
-        if let (Some(Obligation::Proposition(parent)), Obligation::Proposition(body)) =
-            (self.focused_obligation(), &mut body_goal.obligation)
-        {
-            body.surface_bindings = parent.surface_bindings.clone();
-            body.integer_values = parent.integer_values.clone();
-            body.integer_values_initialized = parent.integer_values_initialized;
+        if let Obligation::Proposition(body) = &mut body_goal.obligation {
+            // The nested goal was lowered here, so it owns the head chain
+            // that lowering recorded for it.
+            body.introductions = GoalIntroductions::from_lowering(body_introductions);
+            if let Some(Obligation::Proposition(parent)) = self.focused_obligation() {
+                body.surface_bindings = parent.surface_bindings.clone();
+                body.introduced_antecedents = parent.introduced_antecedents.clone();
+            }
         }
         let body = Proof {
             site: self.site.nested(ProofStepBlock::Have),

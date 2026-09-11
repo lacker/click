@@ -986,6 +986,54 @@ fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
     );
 }
 
+/// `close_invariants()` plans the back-edge bundle body, so it is smart and
+/// no certificate can hold it. The retained step is `close_invariants by`,
+/// which carries that planned body explicitly.
+#[test]
+fn tactic_certificate_rejects_a_bare_invariant_closure() {
+    let error = ProofCertificate::from_proof_tactics(&[ProofTactic::CloseInvariants])
+        .expect_err("a bare invariant closure cannot be a certificate leaf");
+
+    assert_eq!(
+        error.tactic_class(),
+        TacticClass::Smart(SmartTacticKind::CloseInvariants)
+    );
+    assert_eq!(error.path(), &[CertificatePathSegment::Tactic(0)]);
+}
+
+/// Serialized provenance is admitted by the same rule as source text: a
+/// structural `loop` step whose phase was never planned is a smart proof, and
+/// `from_steps` refuses it exactly as `from_proof_tactics` refuses an omitted
+/// `preserve by`.
+#[test]
+fn step_certificate_rejects_a_loop_step_with_an_unplanned_phase() {
+    let complete = CertificateStructuralClause {
+        region: CodeRegion::Loop(0),
+        label: None,
+        decreases: None,
+        items: Vec::new(),
+        resources: Vec::new(),
+        initialize_proof: Some(Box::new(
+            ProofCertificate::from_steps(vec![ProofStep::Normalize])
+                .expect("a simple step is a certificate"),
+        )),
+        preserve_proof: Some(Box::new(
+            ProofCertificate::from_steps(vec![ProofStep::Assumption])
+                .expect("a simple step is a certificate"),
+        )),
+    };
+    ProofCertificate::from_steps(vec![ProofStep::Loop(complete.clone())])
+        .expect("a loop step with both phases planned is a certificate");
+
+    let mut unplanned = complete;
+    unplanned.preserve_proof = None;
+    let error = ProofCertificate::from_steps(vec![ProofStep::Loop(unplanned)])
+        .expect_err("an unplanned preservation phase is not a certificate");
+    let message = error.message().to_string();
+    assert!(message.contains("LoopPreserve"), "{message}");
+    assert!(message.contains("Smart(Auto)"), "{message}");
+}
+
 const ORDERED_PAIR_C: &str = r#"
     struct pair {
         int32 low;

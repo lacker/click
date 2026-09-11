@@ -62,9 +62,20 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
             application: application.clone(),
             premises: premises.clone(),
         }),
-        ProofTactic::CloseInvariants => Some(ProofStep::CloseInvariants),
         _ => None,
     }
+}
+
+/// `close_invariants()` is smart: it plans the back-edge bundle body. It has
+/// no certificate step of its own, so the drivers that support it route it
+/// through `apply_close_invariants_body`, which retains the checked body as a
+/// `close_invariants by` step. It stays outside `linear_execution_proof_step`
+/// so no driver can record a bare closure request as certificate provenance.
+fn closes_loop_invariants(tactic: &ProofTactic) -> bool {
+    matches!(
+        tactic,
+        ProofTactic::CloseInvariants | ProofTactic::CloseInvariantsBy(_)
+    )
 }
 
 fn expanded_execution_arm_supported(steps: &[ProofStep]) -> bool {
@@ -143,12 +154,10 @@ fn checked_execution_arm_tactics_end(
             continue;
         }
         if linear_execution_proof_step(&indexed.tactic).is_none()
+            && !closes_loop_invariants(&indexed.tactic)
             && !matches!(
                 indexed.tactic,
-                ProofTactic::ApplyTheorem(_)
-                    | ProofTactic::Transport { .. }
-                    | ProofTactic::Have(_)
-                    | ProofTactic::CloseInvariantsBy(_)
+                ProofTactic::ApplyTheorem(_) | ProofTactic::Transport { .. } | ProofTactic::Have(_)
             )
         {
             if may_exit && flat_post_execution_tactic(&indexed.tactic).is_some() {
@@ -370,6 +379,7 @@ fn checked_execution_region_contains_source_at(
 
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_proof_step(tactic).is_some()
+        || closes_loop_invariants(tactic)
         || matches!(tactic, ProofTactic::Choose(_))
         || matches!(
             tactic,
@@ -377,7 +387,6 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
                 | ProofTactic::ApplyTheorem(_)
                 | ProofTactic::Transport { .. }
                 | ProofTactic::Have(_)
-                | ProofTactic::CloseInvariantsBy(_)
                 | ProofTactic::ExecuteUntil(_)
                 | ProofTactic::SmartExecute
                 | ProofTactic::SmartExecuteAllPaths
@@ -1724,12 +1733,11 @@ fn record_source_successor_smart_expansions(
             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
                 == Some(*source_index)
         {
-            let certificate = ProofCertificate::from_steps(vec![ProofStep::Step]);
             record_proof_site_tactic_expansion(
                 expansion_capture.as_deref_mut(),
                 site,
                 *source_index,
-                &certificate.to_proof_tactics(),
+                &[ProofTactic::Step],
             );
         }
     }
@@ -2420,6 +2428,12 @@ fn advance_linear_open_scope<'a>(
     owning_source_index: usize,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     for indexed in tactics {
+        // A back-edge closure plans and retains an invariant-body proof, which
+        // this linear resource scope has no way to open. Decline rather than
+        // record a bare closure request the certificate cannot spell.
+        if closes_loop_invariants(&indexed.tactic) {
+            return decline();
+        }
         if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             scope = scope.apply_step(step)?;
             continue;

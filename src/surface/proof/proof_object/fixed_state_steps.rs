@@ -591,13 +591,16 @@ impl<'a> Proof<'a> {
                 witness.name
             )));
         }
-        let integer_values = self
-            .proposition_obligation()
-            .map(|goal| &goal.integer_values)
-            .ok_or_else(|| self.step_error("pure `witness` lost its Integer environment"))?;
+        let mut integer_values = match self.context.as_ref() {
+            ProofContext::Pure(context) => context.theorem_context.integer_values.clone(),
+            _ => crate::persistent::PersistentMap::default(),
+        };
+        for (name, value) in self.state().locals().integer_values.iter() {
+            integer_values = integer_values.with_inserted(name.clone(), value.clone());
+        }
         let value = crate::surface::lowering::lower_contract_integer_to_spec(
             &witness.value,
-            integer_values,
+            &integer_values,
         )
         .map_err(|message| {
             self.step_error(format!("could not lower Integer witness: {message}"))
@@ -900,7 +903,7 @@ impl<'a> Proof<'a> {
         &self,
         surface: &ClickProposition,
     ) -> Result<KernelProofHandle, ClickError> {
-        let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
+        let proposition = self.lower_cited_surface_proposition(surface, "`extract` proposition")?;
         self.state.apply_extract(proposition).map_err(|error| match error {
             PropositionCloseError::ExtractUnavailable(proposition) => self.step_error(format!(
                 "`extract` proposition is not a proper conjunct, a discharged implication consequent, or a field equality of an exact same-constructor equality: {}",

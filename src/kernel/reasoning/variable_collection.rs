@@ -301,7 +301,7 @@ fn collect_algebraic_value_bitvector_variables(
 ) {
     match value {
         AlgebraicValue::C(value) => collect_c_value_bitvector_variables(value, variables),
-        AlgebraicValue::Integer(_) => {}
+        AlgebraicValue::Integer(value) => collect_integer_variables(value, variables),
         AlgebraicValue::Algebraic(value) => {
             collect_algebraic_term_bitvector_variables(value, variables)
         }
@@ -674,10 +674,23 @@ fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    let SpecIntegerExpression::Term(term) = expression else {
-        return;
-    };
-    collect_integer_variables(term, variables);
+    let mut pending = vec![expression];
+    while let Some(expression) = pending.pop() {
+        match expression {
+            SpecIntegerExpression::ResourceField(_) => {}
+            SpecIntegerExpression::Term(term) => collect_integer_variables(term, variables),
+            SpecIntegerExpression::FromMachine(value) => {
+                collect_spec_expression_bitvector_variables(value, variables)
+            }
+            SpecIntegerExpression::Negate(inner) => pending.push(inner),
+            SpecIntegerExpression::Add(left, right)
+            | SpecIntegerExpression::Subtract(left, right)
+            | SpecIntegerExpression::Multiply(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+        }
+    }
 }
 
 fn collect_spec_algebraic_expression_bitvector_variables(
@@ -693,7 +706,9 @@ fn collect_spec_algebraic_expression_bitvector_variables(
                     SpecAlgebraicValue::C(field) => {
                         collect_spec_expression_bitvector_variables(field, variables)
                     }
-                    SpecAlgebraicValue::Integer(_) => {}
+                    SpecAlgebraicValue::Integer(value) => {
+                        collect_spec_integer_variables(value, variables)
+                    }
                     SpecAlgebraicValue::Algebraic(field) => {
                         collect_spec_algebraic_expression_bitvector_variables(field, variables)
                     }
@@ -1383,5 +1398,34 @@ pub(in crate::kernel) fn collect_c_value_bitvector_variables(
         | CValue::Float32(bits)
         | CValue::Float64(bits) => collect_bitvector_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
+    }
+}
+
+#[cfg(test)]
+mod integer_expression_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_integer_arithmetic_collects_machine_variables() {
+        let variable = Variable(781);
+        let expression = SpecIntegerExpression::Negate(Box::new(SpecIntegerExpression::Add(
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::Constant(1.into()))),
+            Box::new(SpecIntegerExpression::FromMachine(Box::new(
+                SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable))),
+            ))),
+        )));
+        let mut variables = BTreeSet::new();
+        collect_spec_integer_variables(&expression, &mut variables);
+        assert_eq!(variables, BTreeSet::from([variable]));
+        variables.clear();
+        let field = AlgebraicValue::Integer(
+            IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(variable),
+            )
+            .unwrap(),
+        );
+        collect_algebraic_value_bitvector_variables(&field, &mut variables);
+        assert_eq!(variables, BTreeSet::from([variable]));
     }
 }

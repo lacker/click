@@ -69,11 +69,63 @@ pub(in crate::kernel) fn wrap_proof_facts(
         })
 }
 
+/// Why one node at the head of a lowered proposition exists.
+///
+/// Lowering is not an isomorphism from written Surface syntax to kernel
+/// propositions: it inserts `Implies` nodes that no Surface connective
+/// wrote, guarding a body with a path fact the lowering established or with
+/// a load obligation the state did not discharge. A proof step that
+/// introduces the head of a lowered goal must know which kind of node it is
+/// reaching, because only a written connective consumes a written Surface
+/// connective, and a written universal binds a written Surface name to the
+/// exact kernel variable the lowering chose.
+///
+/// One value describes one node. The head chain of a lowered proposition,
+/// outermost first, is a [`LoweringIntroductions`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LoweringIntroduction {
+    /// An `Implies` inserted by lowering to guard the body with a path fact
+    /// the lowering established. No Surface connective corresponds to it.
+    PathFactGuard,
+    /// An `Implies` inserted by lowering to guard the body with a path
+    /// obligation. No Surface connective corresponds to it.
+    ObligationGuard,
+    /// An `Implies` written as a spec, and therefore Surface, implication.
+    WrittenImplication,
+    /// A `Not` written as a spec, and therefore Surface, negation.
+    WrittenNegation,
+    /// A `ForAll` written as a spec, and therefore Surface, universal.
+    /// `name` is the written binder spelling and `variable` is the exact
+    /// kernel variable the lowering bound it to.
+    WrittenUniversal {
+        name: String,
+        variable: Variable,
+        pointer: bool,
+        integer: bool,
+    },
+}
+
+/// The head chain of a lowered proposition, outermost first: one entry per
+/// node a proposition introduction can reach before any other step.
+pub type LoweringIntroductions = Vec<LoweringIntroduction>;
+
 pub(in crate::kernel) fn wrap_path_context(
     proposition: Proposition,
     facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
 ) -> Proposition {
+    wrap_path_context_with_introductions(proposition, facts, obligations).0
+}
+
+/// [`wrap_path_context`], also reporting the guard nodes it inserted, in the
+/// order they appear from the outside in. Both results come from one
+/// traversal under one filter, so the record cannot drift from the
+/// proposition it describes.
+pub(in crate::kernel) fn wrap_path_context_with_introductions(
+    proposition: Proposition,
+    facts: &[ExecutionPureFact],
+    obligations: &[ProofObligation],
+) -> (Proposition, LoweringIntroductions) {
     let proposition = obligations
         .iter()
         .rev()
@@ -81,18 +133,29 @@ pub(in crate::kernel) fn wrap_path_context(
             Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
         });
 
-    facts
-        .iter()
-        .filter(|fact| {
-            // A load-variable defining equation is true by construction;
-            // wrapping it as a premise only buries the consequent behind an
-            // antecedent every prover then has to discharge.
-            !crate::kernel::eval::is_load_variable_defining_fact(fact.proposition())
-        })
-        .rev()
-        .fold(proposition, |body, fact| {
-            Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
-        })
+    // A load-variable defining equation is true by construction;
+    // wrapping it as a premise only buries the consequent behind an
+    // antecedent every prover then has to discharge.
+    let retained = || {
+        facts
+            .iter()
+            .filter(|fact| !crate::kernel::eval::is_load_variable_defining_fact(fact.proposition()))
+    };
+
+    let introductions = retained()
+        .map(|_| LoweringIntroduction::PathFactGuard)
+        .chain(
+            obligations
+                .iter()
+                .map(|_| LoweringIntroduction::ObligationGuard),
+        )
+        .collect();
+
+    let proposition = retained().rev().fold(proposition, |body, fact| {
+        Proposition::Implies(Box::new(fact.proposition().clone()), Box::new(body))
+    });
+
+    (proposition, introductions)
 }
 
 pub(in crate::kernel) fn public_execution_pure_facts(

@@ -1096,7 +1096,7 @@ fn close_claim_directly_from_outcome<'a>(
 fn outcome_existence_surface_certificate(
     surface_goal: ClickProposition,
     completed: &Proof<'_>,
-) -> ProofCertificate {
+) -> Result<ProofCertificate, ClickError> {
     ProofCertificate::from_steps(vec![
         ProofStep::Have {
             proposition: surface_goal,
@@ -3311,7 +3311,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     let certificate = outcome_existence_surface_certificate(
                                         surface_goal,
                                         &completed,
-                                    );
+                                    )?;
                                     closures[claim_index] = match completed.completed_proposition()
                                     {
                                         Ok(checked) => ClaimClosure::by_checked_proposition(
@@ -4215,9 +4215,13 @@ pub(super) fn finish_ordered_proof<'a>(
                             claim: claim.verified_claim(),
                             proof_kind: ProofKind::TacticScript,
                             proof_tactics: Some(certificate_tactics.to_vec()),
-                            expanded_proof: retained_surface.blocker.is_none().then(|| {
-                                ProofCertificate::from_steps(retained_surface.steps.clone())
-                            }),
+                            expanded_proof: retained_surface
+                                .blocker
+                                .is_none()
+                                .then(|| {
+                                    ProofCertificate::from_steps(retained_surface.steps.clone())
+                                })
+                                .transpose()?,
                             expansion_blocker: retained_surface.blocker.clone(),
                             specification: specification.clone(),
                             theorem: theorem.clone(),
@@ -4348,7 +4352,8 @@ pub(super) fn finish_ordered_proof<'a>(
                 theorem.expanded_proof = expanded
                     .blocker
                     .is_none()
-                    .then(|| ProofCertificate::from_steps(expanded.steps.clone()));
+                    .then(|| ProofCertificate::from_steps(expanded.steps.clone()))
+                    .transpose()?;
                 theorem.expansion_blocker = expanded.blocker.clone();
             }
             // Surface synthesis follows proof contexts, not the number of
@@ -4388,7 +4393,8 @@ pub(super) fn finish_ordered_proof<'a>(
                         theorem.expanded_proof = expanded
                             .blocker
                             .is_none()
-                            .then(|| ProofCertificate::from_steps(expanded.steps.clone()));
+                            .then(|| ProofCertificate::from_steps(expanded.steps.clone()))
+                            .transpose()?;
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }

@@ -1,6 +1,7 @@
 //! Simple-step dispatch (`apply_step`) and checked frame application.
 
 use super::*;
+use crate::kernel::LoweringIntroduction;
 
 impl<'a> Proof<'a> {
     /// Checks one explicit proof step and atomically returns the checked
@@ -71,7 +72,6 @@ impl<'a> Proof<'a> {
                 premises,
             } => Some(self.apply_fixed_state_instantiate_using(quantified, argument, premises)),
             ProofStep::Mark(name) => Some(self.apply_execution_mark(name)),
-            ProofStep::CloseInvariants => Some(self.apply_close_invariants()),
             _ => None,
         };
         if let Some(successor) = checked_proposition_successor {
@@ -225,7 +225,9 @@ impl<'a> Proof<'a> {
         use crate::kernel::proof::fact_reasoning::ConditionalNormalizationError;
         let premises = surface_premises
             .iter()
-            .map(|premise| self.lower_surface_proposition(premise, "`normalize using` premise"))
+            .map(|premise| {
+                self.lower_cited_surface_proposition(premise, "`normalize using` premise")
+            })
             .collect::<Result<Vec<_>, _>>()?;
         self.state
             .apply_normalize_using(&premises)
@@ -259,7 +261,9 @@ impl<'a> Proof<'a> {
     ) -> Result<KernelProofHandle, ClickError> {
         let premises = surface_premises
             .iter()
-            .map(|premise| self.lower_surface_proposition(premise, "`arithmetic using` premise"))
+            .map(|premise| {
+                self.lower_cited_surface_proposition(premise, "`arithmetic using` premise")
+            })
             .collect::<Result<Vec<_>, _>>()?;
         self.state
             .apply_arithmetic(&premises)
@@ -442,26 +446,29 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(context) => {
-                let integer_values = self
-                    .proposition_obligation()
-                    .map(|goal| &goal.integer_values)
-                    .unwrap_or(&context.theorem_context.integer_values);
+            ProofContext::Pure(_context) => {
+                let mut integer_values = match self.context.as_ref() {
+                    ProofContext::Pure(context) => context.theorem_context.integer_values.clone(),
+                    _ => crate::persistent::PersistentMap::default(),
+                };
+                for (name, value) in self.state().locals().integer_values.iter() {
+                    integer_values = integer_values.with_inserted(name.clone(), value.clone());
+                }
                 let promoted = self.proposition_obligation().map_or_else(
                     || surface.clone(),
                     |goal| {
                         crate::surface::proof::surface_lowering::promote_integer_comparison(
                             surface,
-                            integer_values,
+                            &integer_values,
                             &goal.surface_bindings,
                         )
                     },
                 );
-                crate::surface::lower_integer_certificate_proposition(&promoted, integer_values)
-                    .map_err(|message| {
-                        self.step_error(format!("could not lower {description}: {message}"))
-                    })
+                crate::surface::lower_integer_certificate_proposition(&promoted, &integer_values)
             }
+            .map_err(|message| {
+                self.step_error(format!("could not lower {description}: {message}"))
+            }),
             _ => self.lower_surface_proposition_direct(surface, description),
         }
     }
@@ -470,46 +477,108 @@ impl<'a> Proof<'a> {
     // owns several by-value proposition variants.
     #[inline(never)]
     pub(super) fn apply_intro(&self) -> Result<KernelProofHandle, ClickError> {
-        self.state
-            .apply_intro(|current, introduction| {
+        let mut integer_binding = None;
+        let state = self
+            .state
+            .apply_intro(|current, introduction, introduced| {
                 let mut surface_bindings = current.surface_bindings.clone();
-                let mut integer_values = current.integer_values.clone();
-                let integer_values_initialized = current.integer_values_initialized;
-                let surface = match (introduction, current.surface.as_deref()) {
-                    (PropositionIntroduction::Implication, Some(surface)) => {
+                let mut introduced_antecedents = current.introduced_antecedents.clone();
+                let recorded = current.introductions.head();
+                let surface = match (recorded, introduction, current.surface.as_deref()) {
+                    // Lowering inserts implications that guard a body with a
+                    // path fact it established or with a load obligation the
+                    // state did not discharge. Neither has a Surface
+                    // connective, so the written goal stays focused while
+                    // `intro` exposes one such kernel implication.
+                    (
+                        Some(
+                            LoweringIntroduction::PathFactGuard
+                            | LoweringIntroduction::ObligationGuard,
+                        ),
+                        PropositionIntroduction::Implication,
+                        Some(surface),
+                    ) => Some(Arc::new(surface.clone())),
+                    // A written implication consumes the written connective.
+                    // The pair `intro` just checked is retained here, with
+                    // its structural conjuncts, so a later citation does not
+                    // re-lower the antecedent under the fact context this
+                    // step changed.
+                    (
+                        Some(LoweringIntroduction::WrittenImplication),
+                        PropositionIntroduction::Implication,
+                        Some(surface),
+                    ) => match written_implication_consequent(surface) {
+                        Some(WrittenAntecedent::Implication {
+                            antecedent,
+                            consequent,
+                        }) => {
+                            if let Some(kernel) = introduced {
+                                introduced_antecedents = retain_introduced_antecedent(
+                                    &introduced_antecedents,
+                                    &antecedent,
+                                    kernel,
+                                );
+                            }
+                            Some(Arc::new(consequent))
+                        }
+                        // A range quantifier writes no implication of its
+                        // own: its kernel form is the binder followed by the
+                        // range guard, whose consequent is the written body.
+                        Some(WrittenAntecedent::RangeGuard { body }) => Some(Arc::new(body)),
+                        None => Some(Arc::new(surface.clone())),
+                    },
+                    (
+                        Some(LoweringIntroduction::WrittenUniversal {
+                            name,
+                            pointer,
+                            integer,
+                            ..
+                        }),
+                        PropositionIntroduction::Universal {
+                            variable,
+                            pointer: introduced_pointer,
+                        },
+                        surface,
+                    ) => {
+                        if *integer {
+                            integer_binding = Some((name.clone(), variable));
+                        }
+                        // The binding names the exact variable the kernel
+                        // bound the body to, not the one lowering first
+                        // chose: `intro` freshens the binder away from
+                        // ambient facts.
+                        let value = match (pointer, introduced_pointer) {
+                            (true, Some(c_type)) => {
+                                CValue::typed_pointer(Pointer::symbolic(variable), c_type)
+                            }
+                            _ => CValue::Int32(Bitvector32Term::Variable(variable)),
+                        };
+                        if !*integer {
+                            surface_bindings = surface_bindings.with_inserted(
+                                name.clone(),
+                                ContractExpression::CFragment(CExpression::Value(value)),
+                            );
+                        }
+                        surface.and_then(written_universal_body).map(Arc::new)
+                    }
+                    // No lowering provenance was recorded for this goal, so
+                    // refine the written form structurally, as before.
+                    (None, PropositionIntroduction::Implication, Some(surface)) => {
                         surface_implication_parts(surface)
                             .map(|(_, consequent)| Arc::new(consequent))
-                            // Definedness premises introduced by lowering are
-                            // intentionally absent from Surface syntax. Keep
-                            // the written goal focused while `intro` exposes
-                            // one such kernel implication at a time.
                             .or_else(|| Some(Arc::new(surface.clone())))
                     }
                     (
-                        PropositionIntroduction::Universal { variable },
-                        Some(ClickProposition::ForAll {
-                            click_type,
-                            name,
-                            body,
-                        }),
+                        None,
+                        PropositionIntroduction::Universal { variable, .. },
+                        Some(ClickProposition::ForAll { name, body, .. }),
                     ) => {
-                        if *click_type == ClickType::Integer {
-                            surface_bindings = surface_bindings.without_key(name);
-                            integer_values = integer_values.with_inserted(
-                                name.clone(),
-                                crate::kernel::SpecIntegerExpression::Term(
-                                    crate::kernel::IntegerTerm::var(variable),
-                                ),
-                            );
-                        } else {
-                            integer_values = integer_values.without_key(name);
-                            surface_bindings = surface_bindings.with_inserted(
-                                name.clone(),
-                                ContractExpression::CFragment(CExpression::Value(CValue::Int32(
-                                    Bitvector32Term::Variable(variable),
-                                ))),
-                            );
-                        }
+                        surface_bindings = surface_bindings.with_inserted(
+                            name.clone(),
+                            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                                Bitvector32Term::Variable(variable),
+                            ))),
+                        );
                         Some(Arc::new(body.as_ref().clone()))
                     }
                     _ => None,
@@ -517,8 +586,8 @@ impl<'a> Proof<'a> {
                 PropositionPresentation {
                     surface,
                     surface_bindings,
-                    integer_values,
-                    integer_values_initialized,
+                    introductions: current.introductions.advanced(),
+                    introduced_antecedents,
                 }
             })
             .map_err(|error| match error {
@@ -528,8 +597,23 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::ExpectedIntroduction(goal) => self.step_error(format!(
                     "`intro` requires an implication, negation, or universal goal, got {goal:?}"
                 )),
+                PropositionCloseError::IntegerFresheningExhausted => {
+                    self.step_error("`intro` requires a fresh Integer binder variable")
+                }
                 _ => unreachable!("kernel returned an unrelated intro error"),
-            })
+            })?;
+        if let Some((name, variable)) = integer_binding {
+            let mut locals = state.locals().clone();
+            locals.integer_values = locals.integer_values.with_inserted(
+                name,
+                crate::kernel::SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(
+                    variable,
+                )),
+            );
+            Ok(state.with_locals(locals))
+        } else {
+            Ok(state)
+        }
     }
 
     #[inline(never)]

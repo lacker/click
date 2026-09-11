@@ -326,13 +326,29 @@ partition, compared with roughly 22–32 seconds for the original test. The exis
 
 ## Pure quantifier checkpoint (2026-09-10)
 
-Pure theorem proofs now support bounded source-side `Integer` universal
-introduction and existential witnesses, including capture-avoiding shadowing,
-nested `have`, and smart arithmetic proofs that expand and independently
-reverify. Mixed machine/`Integer` carrier expressions remain rejected unless an
-explicit conversion supplies the boundary. General existential elimination and
-deeper mixed-carrier quantified reasoning remain later work; this checkpoint
-does not claim those paths are implemented.
+Pure theorem proofs support source-side `Integer` universal introduction and
+existential witnesses, including capture-avoiding shadowing, nested `have`, and
+smart arithmetic proofs that expand and independently reverify. Mixed
+machine/`Integer` carrier expressions remain rejected unless an explicit
+conversion supplies the boundary. General existential elimination and deeper
+mixed-carrier quantified reasoning remain later work; this checkpoint does not
+claim those paths are implemented.
+
+## Datatype and resource field checkpoint (2026-09-10)
+
+Integer fields and generic arguments such as `Box<Integer>` are integrated in
+`f7570a38`. Known-constructor matches extract correctly typed fields and shadow
+outer bindings. Symbolic Integer-valued datatype matches still reject explicitly;
+they require a checked representation of each arm and are not complete.
+
+Resource schemas now accept Integer fields, which carry exact mathematical values
+without adding C storage. Named instances preserve current and entry snapshots;
+unfolding and folding check declared resource facts. Regressions cover large
+values, updates distinct from `old(...)`, invalid machine-typed initializers,
+negative initializers violating a nonnegative fact, and expansion/rechecking.
+An unchanged C memory read verifies against a field related to memory by
+`to_integer(p[0]) == value`. Variable collection traverses observed machine
+expressions inside deferred Integer arithmetic and algebraic field values.
 
 ## Implementation and integration sequence
 
