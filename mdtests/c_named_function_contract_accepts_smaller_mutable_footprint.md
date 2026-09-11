@@ -4,6 +4,10 @@ The named contract owns both cells, while the concrete callback views the pair
 and owns only the first. Resource transfer remains exact: both interfaces
 return the entire two-cell state.
 
+Behavioral refinement of a named contract is an explicit theorem: the kernel
+checks that the two interfaces have compatible shape, and the clause-level
+implication is proved by ordinary tactics.
+
 ```c filename=smaller_callback_footprint.c
 void increment_first(int32* state) {
     state[0] += 1;
@@ -37,6 +41,13 @@ void increment_first(int32* state) {
     simp();
 }
 
+theorem increment_first_is_progress() {
+    ensures Progress(&increment_first) by {
+        unfold(Progress);
+        simp();
+    }
+}
+
 void apply_step(void (*step)(int32*), int32* cells) {
     requires Progress(step);
     requires cells[0] < 100;
@@ -52,6 +63,7 @@ void smaller_footprint_caller(int32* cells) {
     owns cells[0..2];
     ensures old(cells[0]) < cells[0];
 } by {
+    apply(increment_first_is_progress());
     execute();
     simp();
 }

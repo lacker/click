@@ -2190,7 +2190,6 @@ fn function_refines_named_contract_in_case(
         function.contract_requires(),
         &mut preconditions,
         budget,
-        supported_stateful_memory,
     )? {
         return Ok(false);
     }
@@ -2265,7 +2264,6 @@ fn function_refines_named_contract_in_case(
         contract.template().contract_ensures(),
         &mut postconditions,
         budget,
-        supported_stateful_memory,
     )
 }
 
@@ -3177,7 +3175,6 @@ fn prove_contract_propositions(
     propositions: &[SpecProposition],
     assumptions: &mut PureFactContext,
     budget: &mut ExecutionBudget,
-    allow_stateful_memory: bool,
 ) -> ExecutionResult<bool> {
     for proposition in propositions {
         let paths = lower_spec_proposition_at_state_with_loop_entry(
@@ -3197,7 +3194,7 @@ fn prove_contract_propositions(
         }
         if path.obligations.iter().any(|obligation| {
             !required_obligation_is_exactly_discharged(assumptions, obligation.proposition())
-        }) || !contract_refinement_proves(assumptions, &path.proposition, allow_stateful_memory)
+        }) || !contract_refinement_proves(assumptions, &path.proposition)
         {
             return Ok(false);
         }
@@ -3239,107 +3236,20 @@ fn refinement_route_proves(assumptions: &PureFactContext, proposition: &Proposit
 
 /// Checks one lowered contract clause against the refinement assumptions.
 ///
-/// This walks the two named contracts' own structure — sequence elements,
-/// `and`, `or`, and `implies` — and decides each leaf with
-/// [`refinement_route_proves`]. The walk is bounded by the clause it was
-/// given; it does not assume an antecedent into a cloned context, and it does
-/// not fall back to general proof search.
-fn contract_refinement_proves(
-    assumptions: &PureFactContext,
-    proposition: &Proposition,
-    allow_stateful_memory: bool,
-) -> bool {
-    if refinement_route_proves(assumptions, proposition) {
-        return true;
-    }
-    if !allow_stateful_memory {
-        return false;
-    }
-    match proposition {
-        Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {
-            let mut left = super::spec::sequence_elements(left);
-            let mut right = super::spec::sequence_elements(right);
-            loop {
-                match (left.next(), right.next()) {
-                    (Some(left), Some(right)) => {
-                        let Some(equality) =
-                            super::spec::integer_sequence_element_equality(left, right)
-                        else {
-                            return false;
-                        };
-                        if !contract_refinement_proves(assumptions, &equality, true) {
-                            return false;
-                        }
-                    }
-                    (None, None) => return true,
-                    _ => return false,
-                }
-            }
-        }
-        Proposition::Or(left, right) => {
-            return contract_refinement_proves(assumptions, left, true)
-                || contract_refinement_proves(assumptions, right, true);
-        }
-        Proposition::And(left, right) => {
-            return contract_refinement_proves(assumptions, left, true)
-                && contract_refinement_proves(assumptions, right, true);
-        }
-        Proposition::Implies(left, right) => {
-            // An implication clause holds when its antecedent is exactly
-            // refuted here, or when its consequent holds on its own. Assuming
-            // the antecedent into a cloned context and re-proving the
-            // consequent would be proof construction, not checking.
-            if refinement_route_proves(assumptions, &Proposition::Not(left.clone())) {
-                return true;
-            }
-            return contract_refinement_proves(assumptions, right, true);
-        }
-        _ => {}
-    }
-    let Proposition::ConditionIs(condition, value) = proposition else {
-        return false;
-    };
-    let (left, right, rebuild): (
-        &Bitvector32Term,
-        &Bitvector32Term,
-        fn(Bitvector32Term, Bitvector32Term) -> ConditionTerm,
-    ) = match condition {
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
-            (left, right, ConditionTerm::signed_less_than)
-        }
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
-            (left, right, ConditionTerm::signed_less_equal)
-        }
-        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
-            (left, right, ConditionTerm::signed_greater_than)
-        }
-        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
-            (left, right, ConditionTerm::signed_greater_equal)
-        }
-        ConditionTerm::Bitvector32Equal(left, right) => (left, right, ConditionTerm::equal),
-        _ => return false,
-    };
-    // Each side's recorded-equality class is one indexed walk bounded by that
-    // class. Every rewritten comparison is a bare condition, so it is decided
-    // by the exact routes only.
-    assumptions
-        .recorded_equality_class(left)
-        .into_iter()
-        .any(|equal| {
-            refinement_route_proves(
-                assumptions,
-                &Proposition::ConditionIs(rebuild(equal, right.clone()), *value),
-            )
-        })
-        || assumptions
-            .recorded_equality_class(right)
-            .into_iter()
-            .any(|equal| {
-                refinement_route_proves(
-                    assumptions,
-                    &Proposition::ConditionIs(rebuild(left.clone(), equal), *value),
-                )
-            })
+/// This is the exact leaf route and nothing else. The logical descent this
+/// used to perform — sequence-element alignment, `and` split, `or` arm
+/// choice, `implies` with a refuted antecedent, and a search over recorded
+/// equality-class rewrites of a comparison's operands — was kernel proof
+/// planning: it chose an index alignment, an arm, and a rewrite
+/// representative, and issued refinement authority from that choice with no
+/// record of it. Those choices now belong to the refinement theorem's proof,
+/// where `both`, `left`/`right`, `intro`, `extract`, and `rewrite` spell them
+/// and `click expand` prints them. See `prepare_contract_refinement_obligations`,
+/// which emits the refinement implication, and
+/// `api.rs::prove_c_function_contract_refinement`, which issues authority only
+/// from a closed proof of exactly that implication.
+fn contract_refinement_proves(assumptions: &PureFactContext, proposition: &Proposition) -> bool {
+    refinement_route_proves(assumptions, proposition)
 }
 
 fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {

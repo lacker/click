@@ -1,12 +1,10 @@
-# Refinement rewrites the left operand of a clause by a recorded equality
+# A refinement certificate that drops its rewrite is rejected
 
-`Decrease` promises `cell[0] < old(cell[0])`, so the clause's left operand is
-the new value, and `decrement` guarantees an equality for exactly that value.
-The refinement holds only under that rewrite, and the rewrite is the proof's
-step, not a kernel search: the refinement theorem cites the equality with
-`rewrite`, and `click expand` prints it. Deleting it from the certificate is
-rejected in
-`c_named_function_contract_refinement_rejects_missing_rewrite`.
+This is the expansion of `c_named_function_contract_refines_rewritten_decrease_guarantee`
+with one step deleted: the `rewrite` that turns `Decrease`'s clause about the
+new cell value into a comparison about the old one. The kernel no longer
+searches recorded equality classes for a rewrite that would decide the clause,
+so the proof fails at exactly the step the certificate is missing.
 
 ```c filename=rewritten_decrease_step.c
 void decrement(int32* state) {
@@ -44,7 +42,25 @@ void decrement(int32* state) {
 theorem decrement_is_decrease() {
     ensures Decrease(&decrement) by {
         unfold(Decrease);
-        simp();
+        intro();
+        extract(at(function.entry, loadable(cell[0..1])));
+        extract(0 < old(*cell));
+        extract(at(function.entry, loadable(cell[0..1])));
+        extract(old(*cell) < 100);
+        both {
+            split();
+        } and {
+            intro();
+            extract(loadable(cell[0..1]));
+            extract(*cell == (old(*cell) - 1));
+            both {
+                assumption();
+            } and {
+                apply(int32_positive_predecessor_strictly_decreases(old(*cell))) using {
+                    0 < old(*cell);
+                }
+            }
+        }
     }
 }
 
@@ -72,5 +88,5 @@ void rewritten_decrease_caller(int32* cell) {
 ```
 
 ```expect
-pass
+fail: `decrement_is_decrease.ensures_0`: contract-refinement proof does not establish `Decrease(&decrement)`
 ```

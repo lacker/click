@@ -15,7 +15,7 @@ a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
 Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 10
-(all five slices), 11 (first slice), 12, 13, 14, 16, and 17, plus the package 0 census whose results are recorded below. Their sections remain as the record
+(all five slices), 11 (both slices), 12, 13, 14, 16, and 17, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -1068,6 +1068,42 @@ proofs.
 proof must cite it; expansion prints it; the certificate without it is
 rejected.
 
+**Second slice landed** 2026-09-10 ("Prove contract refinement clauses at
+the refinement theorem, not in contract formation"). `contract_refinement_proves`
+is now exactly `refinement_route_proves` and nothing else: the sequence
+alignment, `and` split, `or` arm choice, `implies` with a refuted antecedent,
+and both recorded-equality-class rewrite loops are deleted. Nothing was lifted
+into a surface planner — the surface's existing connective planner behind
+`simp`/`auto` already spells those choices, and it spells them better, citing
+the premise and printing the rewrite. The refinement obligation is not new:
+`functions.rs::prepare_contract_refinement_obligations` already builds the
+implication `target_requires -> (source_requires and (source_ensures ->
+target_ensures))` per clause, and `api.rs::prove_c_function_contract_refinement`
+already issues authority only from a closed proof of exactly it, through the
+existing refinement-theorem proof site. This slice made that site the only
+route for a clause needing a logical step. A denial probe over the whole
+corpus put the descent's load-bearing reach at exactly seven mdtests, all on
+the automatic call-site route and none in `examples`; each gained a refinement
+theorem and an `apply` at the caller. Findings and limits:
+
+- The obligation stays one conjunction rather than one obligation per clause.
+  Splitting it would change the goal shape every existing refinement theorem's
+  proof is written against, for no boundary gain: the clauses are already
+  separate conjuncts that `both` descends.
+- No package 17 chain was attached to the refinement obligation. `intro` on
+  it resolves correctly through `synthesize_surface_proposition_at_entry_and_post`
+  and `SurfacePropositionMap`, so the record would have had no consumer.
+- `contradiction(P)` needs `P` and the same condition term at the opposite
+  polarity. `0 <= x` and `x < 0` are different condition terms, so a vacuous
+  guard needs `have not (x < 0) by { arithmetic() using { 0 <= x; } }` before
+  `intro(); contradiction(not (x < 0));`. The smart planner does not find
+  that shape, which is why one of the seven fixtures carries an explicit
+  proof.
+- A certificate missing the rewrite fails with the generic
+  "contract-refinement proof does not establish" rather than naming the
+  rewrite: the following `apply ... using` still succeeds and only the goal
+  is left open.
+
 **Census.** Restricting the head site to exact routes loses no fixture, and
 the equality-class rewrite site's ten successes are all exact-covered; two
 arms are never reached. So the first slice is a route restriction plus a
@@ -1267,10 +1303,10 @@ planning, validation, and the entry check.
 
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 first slice, 12, 13, 14, 16.
-Open: 10(c2) (blocked on the three spelling prerequisites above), 11
-second slice, then 15 last. Package 15 may delete kernel authority while
-10(c2) is open, provided the surface's retained checked-derivation leg in
+Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 (both slices), 12, 13, 14, 16.
+Open: 10(c2) (blocked on the three spelling prerequisites above), then 15
+last. Package 15 may delete kernel authority while 10(c2) is open, provided
+the surface's retained checked-derivation leg in
 `transition_certification.rs` moves out of the kernel with the prover.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.

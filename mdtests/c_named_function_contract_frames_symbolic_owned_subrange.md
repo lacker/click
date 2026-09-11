@@ -4,6 +4,10 @@ Bounds on `index` prove that the concrete callback's one-cell ownership lies
 inside the slice transferred by the named contract.  The rest of the slice is
 preserved through the concrete transition.
 
+Behavioral refinement of a named contract is an explicit theorem: the kernel
+checks that the two interfaces have compatible shape, and the clause-level
+implication is proved by ordinary tactics.
+
 ```c filename=symbolic_framed_callback_resource.c
 void increment_at(int32* state, int32 position, int32 count) {
     state[position] += 1;
@@ -49,6 +53,13 @@ void increment_at(int32* state, int32 position, int32 count) {
     simp();
 }
 
+theorem increment_at_is_slice_step() {
+    ensures SliceStep(&increment_at) by {
+        unfold(SliceStep);
+        simp();
+    }
+}
+
 void apply_step(
     void (*step)(int32*, int32, int32),
     int32* cells,
@@ -77,6 +88,7 @@ void symbolic_framed_resource_caller(
     owns cells[0..length];
     ensures old(cells[index]) < cells[index];
 } by {
+    apply(increment_at_is_slice_step());
     execute();
     simp();
 }

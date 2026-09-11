@@ -2,10 +2,10 @@
 
 The same `Decrease` clause as
 `c_named_function_contract_refines_rewritten_decrease_guarantee`, with a
-callback that adds one instead of subtracting it. Rewriting the clause's left
-operand by the callback's recorded equality decides the comparison false, so
-the rewrite must reject the refinement rather than accept any rewrite it can
-find.
+callback that adds one instead of subtracting it. The callback's guarantee
+decides the clause false under the only rewrite available to it, and no other
+route establishes it, so contract formation refuses the callback. Nothing in
+the kernel searches for a rewrite that would make the clause hold.
 
 ```c filename=rewritten_increase_step.c
 void increment(int32* state) {

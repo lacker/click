@@ -4,7 +4,7 @@ The same `increment` and the same guarded clause as
 `c_named_function_contract_refines_vacuous_guarded_clause`, except that
 `GuardedProgress` no longer requires a non-negative cell. Its guard is now
 possible, and a cell that starts negative is incremented rather than left
-alone, so the clause is not refined. Refinement must reject the callback
+alone, so the clause is not refined. Contract formation refuses the callback
 instead of assuming the guard and proving the consequent under it.
 
 ```c filename=unrefuted_guarded_step.c

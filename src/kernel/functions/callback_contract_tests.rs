@@ -356,37 +356,36 @@ fn check_unrelated_functions(select: bool) {
     );
 }
 
-/// Contract refinement checks one named clause against the refinement
-/// assumptions through exact routes and a walk of that clause. Neither the
-/// structural descent nor a rejected clause may scan the ambient facts, so
-/// growing the unrelated context must not change the work.
+/// Contract refinement decides one named clause by the exact routes only:
+/// indexed exact membership and the frozen condition checker on a bare
+/// condition. Neither a decided clause nor a rejected one may scan the
+/// ambient facts, so growing the unrelated context must not change the work.
 #[test]
 fn contract_refinement_work_is_flat_in_unrelated_facts() {
     let variable = |index| Bitvector32Term::Variable(Variable(index));
     let bound = ConditionTerm::signed_less_than(variable(70_001), Bitvector32Term::Constant(10));
     let equality = ConditionTerm::equal(variable(70_002), variable(70_003));
-    let unreached = ConditionTerm::signed_less_than(variable(70_004), Bitvector32Term::Constant(3));
     let refuted = ConditionTerm::signed_less_than(variable(70_005), Bitvector32Term::Constant(0));
     let unproved = Proposition::Predicate {
         name: "unproved_refinement_clause".to_string(),
         arguments: vec![],
     };
-    // Descent through `and` and `or` into exactly available leaves.
+    // An exactly available bare condition.
+    let exact = Proposition::ConditionIs(equality.clone(), true);
+    // A bare condition the frozen checker decides against, read through `not`.
+    let negated = Proposition::Not(Box::new(Proposition::ConditionIs(refuted.clone(), true)));
+    // Compound clauses no exact route establishes. The logical descent that
+    // used to split these now belongs to the refinement theorem's proof, so
+    // the kernel answers no — and must do so without an ambient scan.
     let structural = Proposition::And(
         Box::new(Proposition::ConditionIs(bound.clone(), true)),
         Box::new(Proposition::Or(
             Box::new(Proposition::ConditionIs(equality.clone(), true)),
-            Box::new(Proposition::ConditionIs(unreached, true)),
+            Box::new(unproved.clone()),
         )),
     );
-    // A guarded clause whose guard is exactly refuted here.
     let guarded = Proposition::Implies(
         Box::new(Proposition::ConditionIs(refuted.clone(), true)),
-        Box::new(unproved.clone()),
-    );
-    // A clause no exact route establishes: rejection must also stay flat.
-    let rejected = Proposition::And(
-        Box::new(Proposition::ConditionIs(bound.clone(), true)),
         Box::new(unproved),
     );
 
@@ -408,7 +407,7 @@ fn contract_refinement_work_is_flat_in_unrelated_facts() {
             }
             let measure = |goal: &Proposition, expected: bool| {
                 let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
-                    contract_refinement_proves(&assumptions, goal, true)
+                    contract_refinement_proves(&assumptions, goal)
                 });
                 assert_eq!(
                     proved, expected,
@@ -418,16 +417,20 @@ fn contract_refinement_work_is_flat_in_unrelated_facts() {
             };
             (
                 size,
-                measure(&structural, true),
-                measure(&guarded, true),
-                measure(&rejected, false),
+                measure(&exact, true),
+                measure(&negated, true),
+                measure(&structural, false),
+                measure(&guarded, false),
             )
         })
         .collect::<Vec<_>>();
 
     assert!(
         samples.windows(2).all(|pair| {
-            pair[0].1 == pair[1].1 && pair[0].2 == pair[1].2 && pair[0].3 == pair[1].3
+            pair[0].1 == pair[1].1
+                && pair[0].2 == pair[1].2
+                && pair[0].3 == pair[1].3
+                && pair[0].4 == pair[1].4
         }),
         "refinement checking must not scan unrelated ambient facts: {samples:?}"
     );
