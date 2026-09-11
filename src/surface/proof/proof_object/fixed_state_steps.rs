@@ -602,7 +602,11 @@ impl<'a> Proof<'a> {
         .map_err(|message| {
             self.step_error(format!("could not lower Integer witness: {message}"))
         })?;
-        let crate::kernel::SpecIntegerExpression::Term(value) = value;
+        let crate::kernel::SpecIntegerExpression::Term(value) = value else {
+            return Err(
+                self.step_error("pure `witness` currently supports only lowered Integer terms")
+            );
+        };
         let proposition =
             crate::kernel::substitute_integer_variable_in_pure_proposition(&body, var, &value)
                 .map_err(|error| {

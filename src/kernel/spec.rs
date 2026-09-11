@@ -428,6 +428,39 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             }
             Ok(paths)
         }
+        SpecProposition::ForAllInteger {
+            name: _,
+            variable,
+            body,
+        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
+            state,
+            body,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| SpecPropositionPath {
+            proposition: Proposition::ForAll {
+                var: *variable,
+                sort: Sort::Integer,
+                body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
+            },
+            facts: Vec::new(),
+            obligations: path
+                .obligations
+                .into_iter()
+                .map(|obligation| {
+                    obligation.map_proposition(|proposition| Proposition::ForAll {
+                        var: *variable,
+                        sort: Sort::Integer,
+                        body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                    })
+                })
+                .collect(),
+        })
+        .collect()),
         SpecProposition::ForAllInt32 {
             name,
             variable,
@@ -513,6 +546,35 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             })
             .collect())
         }
+        SpecProposition::ExistsInteger {
+            name,
+            variable,
+            body,
+        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
+            state,
+            body,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| {
+            if !path.facts.is_empty() || !path.obligations.is_empty() {
+                return Err(ExecutionLimit::UnsupportedIntegerExistentialBody);
+            }
+            Ok(SpecPropositionPath {
+                proposition: Proposition::Exists {
+                    name: name.clone(),
+                    var: *variable,
+                    sort: Sort::Integer,
+                    body: Box::new(path.proposition),
+                },
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?),
         SpecProposition::ExistsInt32 {
             name,
             variable,
