@@ -16,7 +16,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Installs the toolchain pinned in `rust-toolchain.toml`, the same one
+      # local runs use.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # The documentation tooling is installed once into the shared tool

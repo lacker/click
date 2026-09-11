@@ -1,0 +1,8 @@
+# The one Rust toolchain for local runs and CI. A floating `stable` let a
+# new rustc release turn a green tree red with no code change, and made local
+# `scripts/check.sh` runs disagree with CI. Upgrade deliberately: bump this
+# version and fix whatever new lints the gate reports in the same commit.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

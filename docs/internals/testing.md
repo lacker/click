@@ -591,7 +591,7 @@ Checked verification advances a persistent `Proof`; its execution snapshot
 `selected_pure_case_split_simp_expands_by_removal` runs on an explicit 1.75
 MiB thread stack, below libtest's 2 MiB default, and pins that representation
 budget. The run needed between 1216 and 1280 KiB on rustc 1.92 / macOS and
-overflowed a 1.25 MiB budget on CI's Linux stable toolchain, so the budget
+overflowed a 1.25 MiB budget on CI's Linux toolchain, so the budget
 carries about 40% headroom over the measured need; recalibrate on the CI
 platform before tightening it. The outlined proof-rule and driver adapters
 keep rule-local enum and proposition payloads out of their dispatchers'
