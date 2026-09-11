@@ -2939,14 +2939,17 @@ fn evaluate_spec_integer_pure_function_application_paths(
         let mut next = Vec::new();
         for (values, facts, obligations) in paths {
             let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-            for argument_path in evaluate_spec_pure_function_argument_paths(
+            let argument_paths = evaluate_spec_pure_function_argument_paths(
                 state,
                 argument,
                 loop_entry_state,
                 &path_assumptions,
                 algebraic_bindings,
                 budget,
-            )? {
+            )?;
+            let single_path = argument_paths.len() == 1;
+            let mut prefix = Some(values);
+            for (index, argument_path) in argument_paths.into_iter().enumerate() {
                 if let Some((merged_facts, merged_obligations)) =
                     merge_execution_pure_facts_and_obligations(
                         &facts,
@@ -2956,7 +2959,14 @@ fn evaluate_spec_integer_pure_function_application_paths(
                         assumptions,
                     )
                 {
-                    let mut merged_values = values.clone();
+                    let mut merged_values = if single_path && index == 0 {
+                        prefix.take().expect("single argument path owns its prefix")
+                    } else {
+                        prefix
+                            .as_ref()
+                            .expect("branched argument paths retain prefix")
+                            .clone()
+                    };
                     merged_values.push(argument_path.value);
                     next.push((merged_values, merged_facts, merged_obligations));
                 }
