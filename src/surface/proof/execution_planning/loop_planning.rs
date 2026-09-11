@@ -705,6 +705,14 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
+    let invariant_surfaces = environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .flat_map(StructuralClause::items)
+        .map(|item| item.proposition().clone())
+        .collect::<Vec<_>>();
     let frontier = ExecutionFrontier {
         position: FrontierPosition::StatementEntry {
             remaining: body.clone().into(),
@@ -726,6 +734,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })),
             checks: invariant_checks.to_vec(),
             ranking_measures: ranking_measures.to_vec(),
+            declared_invariant_surfaces: invariant_surfaces.clone(),
             loop_head_premises: Vec::new(),
         })),
         source_layout,
@@ -751,14 +760,6 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     // pre-tested loop also has its condition there; a do-while does not, so
     // it must not be recorded as an available premise for the first body.
     let loop_condition = surface_c_condition(condition);
-    let invariant_surfaces = environment
-        .function_block
-        .structural_clauses()
-        .iter()
-        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .flat_map(StructuralClause::items)
-        .map(StructuralItem::proposition)
-        .collect::<Vec<_>>();
     // The loop head's own clauses, in declaration order, are what a smart
     // bundle closure may cite for a ranking member. Each declared invariant
     // is named twice, once as written and once re-read at iteration entry:
@@ -773,11 +774,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .collect::<Vec<_>>();
     {
         let surfaces = if do_while {
-            invariant_surfaces.clone()
+            invariant_surfaces.iter().collect::<Vec<_>>()
         } else {
             invariant_surfaces
                 .iter()
-                .copied()
                 .chain(std::iter::once(&loop_condition))
                 .collect::<Vec<_>>()
         };

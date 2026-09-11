@@ -1229,7 +1229,10 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         iteration_entry: &crate::kernel::CState,
         checks: &[crate::kernel::CLoopInvariantCheck],
         ranking_measures: &[crate::kernel::CExpression],
-        presentation: impl FnOnce(&Proposition) -> P,
+        presentation: impl FnOnce(
+            &Proposition,
+            &[Option<Arc<crate::kernel::LoweringIntroductions>>],
+        ) -> P,
     ) -> Result<
         (
             Self,
@@ -1284,7 +1287,11 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
                 crate::kernel::ConditionTerm::Constant(true),
                 true,
             ));
-        let display = presentation(&goal);
+        let introductions = obligations
+            .iter()
+            .map(|obligation| obligation.shared_introductions().cloned())
+            .collect::<Vec<_>>();
+        let display = presentation(&goal, &introductions);
         let root = Self::root(
             self.state.locals.clone(),
             ProofBranch::new(
@@ -2364,7 +2371,7 @@ mod tests {
             let ((body, scope), opening_work) =
                 crate::instrumentation::measure_deterministic_work(|| {
                     frontier
-                        .open_invariant_body(&entry, &entry, &checks, &[], |_| ())
+                        .open_invariant_body(&entry, &entry, &checks, &[], |_, _| ())
                         .unwrap()
                 });
             assert!(
@@ -2511,7 +2518,7 @@ mod tests {
             ),
         );
         let (body, scope) = frontier
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| ())
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_, _| ())
             .unwrap();
         assert!(body.apply_normalize().is_err());
         assert!(
@@ -2620,7 +2627,7 @@ mod tests {
                     .is_err()
             );
             let (body, scope) = unprepared
-                .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| ())
+                .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_, _| ())
                 .unwrap();
             let completed = body.apply_normalize().ok().unwrap();
             let prepared = unprepared.retain_invariant_body(scope, &completed).unwrap();

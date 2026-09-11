@@ -675,6 +675,7 @@ impl<'a> Proof<'a> {
                     surface_bindings,
                     introductions: current.introductions.advanced(),
                     introduced_antecedents,
+                    both_children: None,
                     witness_refinement_kernel: current.witness_refinement_kernel.clone(),
                 }
             })

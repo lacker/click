@@ -896,9 +896,21 @@ pub(in crate::surface::proof) struct PropositionPresentation {
     /// proposition instead of re-lowering the written antecedent under the
     /// fact context the introduction changed.
     pub(in crate::surface::proof) introduced_antecedents: IntroducedAntecedents,
+    /// Checked per-child lowering records for a kernel conjunction assembled
+    /// by the loop invariant body. The records retain the exact head chain
+    /// that may wrap each child; they are consumed only by `both` when the
+    /// generated Surface spelling needs that chain's written body.
+    pub(in crate::surface::proof) both_children: Option<Arc<[BothChildPresentation; 2]>>,
     /// Exact kernel parent retained by a checked witness refinement when its
     /// substituted Surface body cannot be lowered independently.
     pub(in crate::surface::proof) witness_refinement_kernel: Option<Proposition>,
+}
+
+#[derive(Clone)]
+pub(in crate::surface::proof) struct BothChildPresentation {
+    pub(in crate::surface::proof) kernel: Proposition,
+    pub(in crate::surface::proof) surface: Option<ClickProposition>,
+    pub(in crate::surface::proof) introductions: Arc<crate::kernel::LoweringIntroductions>,
 }
 
 /// The head chain the kernel lowering recorded for one goal, and how much of
@@ -1312,6 +1324,7 @@ impl<'a> Proof<'a> {
                 surface_bindings: goal.surface_bindings.clone(),
                 introductions: GoalIntroductions::default(),
                 introduced_antecedents: goal.introduced_antecedents.clone(),
+                both_children: None,
                 witness_refinement_kernel: witness_refinement.then(|| kernel.clone()),
             },
             _ => PropositionPresentation {

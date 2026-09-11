@@ -1404,7 +1404,22 @@ impl<'a> Proof<'a> {
             // In particular, a lowered existential body may be a conjunction
             // whose written Surface spelling is only the body; do not gate
             // this on a shape heuristic.
-            self.checked_both_surface_children()?;
+            // A smart closure candidate may encounter a kernel conjunction
+            // whose written presentation is not recoverable.  Decline this
+            // candidate so the caller can report its ordinary bounded proof
+            // failure; the explicit `both` operation still rejects the same
+            // mismatch transactionally through the checked split.
+            match self.checked_both_surface_children() {
+                Ok(_) => {}
+                Err(_) => {
+                    // Preserve the bounded-operation contract: a
+                    // presentation mismatch declines this candidate, but a
+                    // deadline raised while checking its lowering must still
+                    // escape.
+                    check_verification_deadline()?;
+                    return Ok(None);
+                }
+            }
             return self.try_structural_and_simp_closure(introduced_surfaces);
         }
         if matches!(goal, Proposition::Or(_, _))

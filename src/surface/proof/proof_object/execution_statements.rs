@@ -454,22 +454,51 @@ impl<'a> Proof<'a> {
                 &bundle.iteration_entry_state,
                 &bundle.checks,
                 &bundle.ranking_measures,
-                |goal| PropositionPresentation {
-                surface: crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
-                    goal,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    context.old_reference_state(&execution.core.frontier, &execution.core.state),
-                    &execution.core.state,
-                    bundle
-                        .iteration_entry_selector
-                        .as_ref()
-                        .map(|selector| (&bundle.iteration_entry_state, selector)),
-                )
-                .map(Arc::new),
-                surface_bindings: PersistentMap::default(),
+                |goal, introductions| {
+                    let both_children = if introductions.len() == 2
+                        && bundle.checks.len() == 2
+                        && bundle.declared_invariant_surfaces.len() == 2
+                    {
+                        match goal {
+                            Proposition::And(left, right) => Some(std::sync::Arc::new([
+                                BothChildPresentation {
+                                    kernel: left.as_ref().clone(),
+                                    surface: bundle.declared_invariant_surfaces.first().cloned(),
+                                    introductions: introductions[0]
+                                        .clone()
+                                        .unwrap_or_else(|| std::sync::Arc::new(Vec::new())),
+                                },
+                                BothChildPresentation {
+                                    kernel: right.as_ref().clone(),
+                                    surface: bundle.declared_invariant_surfaces.get(1).cloned(),
+                                    introductions: introductions[1]
+                                        .clone()
+                                        .unwrap_or_else(|| std::sync::Arc::new(Vec::new())),
+                                },
+                            ])),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    PropositionPresentation {
+                        surface: crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                            goal,
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                            context.old_reference_state(&execution.core.frontier, &execution.core.state),
+                            &execution.core.state,
+                            bundle
+                                .iteration_entry_selector
+                                .as_ref()
+                                .map(|selector| (&bundle.iteration_entry_state, selector)),
+                        )
+                        .map(Arc::new),
+                        surface_bindings: PersistentMap::default(),
+                        both_children,
                     ..PropositionPresentation::default()
-            },
+                    }
+                },
             )
             .map_err(|message| self.step_error(message))?;
         let root = Self {

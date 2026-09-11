@@ -3,6 +3,11 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+pub(in crate::surface::proof) struct CheckedBothSurfaceChild {
+    surface: Option<ClickProposition>,
+    introductions: Option<crate::kernel::LoweringIntroductions>,
+}
+
 impl<'a> Proof<'a> {
     fn recorded_surface_matches(&self, surface: &ClickProposition, target: &Proposition) -> bool {
         let matches = |map: &SurfacePropositionMap| {
@@ -20,6 +25,75 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Recovers a written body when the kernel obligation has a checked
+    /// lowering guard in front of it. The generated display can re-lower a
+    /// snapshot expression at the current state, so its wrapper's consequent
+    /// is not itself evidence. The obligation's recorded head chain proves
+    /// the wrapper, while invariant-body assembly supplies the one declared
+    /// Surface body whose lowering is exactly the guarded consequent.
+    fn recorded_guard_surface_child(
+        &self,
+        surface: &ClickProposition,
+        target: &Proposition,
+        recorded: &BothChildPresentation,
+    ) -> Option<CheckedBothSurfaceChild> {
+        if !crate::kernel::proof::propositions_are_alpha_equal(&recorded.kernel, target) {
+            return None;
+        }
+        let mut cursor = target;
+        let mut antecedent = None;
+        for introduction in recorded.introductions.iter() {
+            match introduction {
+                crate::kernel::LoweringIntroduction::PathFactGuard
+                | crate::kernel::LoweringIntroduction::ObligationGuard => {
+                    let Proposition::Implies(left, body) = cursor else {
+                        return None;
+                    };
+                    antecedent.get_or_insert(left.as_ref());
+                    cursor = body;
+                }
+                // This adapter is specifically for a lowering-inserted
+                // wrapper. A written connective must be handled by the
+                // ordinary Surface structural presentation instead.
+                crate::kernel::LoweringIntroduction::WrittenImplication
+                | crate::kernel::LoweringIntroduction::WrittenNegation
+                | crate::kernel::LoweringIntroduction::WrittenUniversal { .. } => return None,
+            }
+        }
+        let antecedent = antecedent?;
+
+        match surface {
+            ClickProposition::Implies(surface_antecedent, _) => {
+                let lowered = self
+                    .lower_surface_proposition(surface_antecedent, "`both` guard antecedent")
+                    .ok()?;
+                if !crate::kernel::proof::propositions_are_alpha_equal(&lowered, antecedent) {
+                    return None;
+                }
+            }
+            _ => {
+                let lowered = self
+                    .lower_surface_proposition(surface, "`both` guarded body")
+                    .ok()?;
+                if !crate::kernel::proof::propositions_are_alpha_equal(&lowered, cursor) {
+                    return None;
+                }
+            }
+        }
+
+        let candidate = recorded.surface.as_ref()?.clone();
+        let lowered = self
+            .lower_surface_proposition(&candidate, "`both` recorded guarded body")
+            .ok()?;
+        if !crate::kernel::proof::propositions_are_alpha_equal(&lowered, cursor) {
+            return None;
+        }
+        Some(CheckedBothSurfaceChild {
+            surface: Some(candidate),
+            introductions: Some(recorded.introductions.iter().cloned().collect()),
+        })
+    }
+
     /// Computes the Surface spellings that may travel across a checked
     /// `both` split.  Lowering can insert a conjunct (notably an existential
     /// witness guard), so the written proposition is not necessarily shaped
@@ -31,9 +105,18 @@ impl<'a> Proof<'a> {
     /// conjunct as a guard merely because it looks like one.
     pub(in crate::surface::proof) fn checked_both_surface_children(
         &self,
-    ) -> Result<[Option<ClickProposition>; 2], ClickError> {
+    ) -> Result<[CheckedBothSurfaceChild; 2], ClickError> {
         let Some(surface) = self.surface_goal() else {
-            return Ok([None, None]);
+            return Ok([
+                CheckedBothSurfaceChild {
+                    surface: None,
+                    introductions: None,
+                },
+                CheckedBothSurfaceChild {
+                    surface: None,
+                    introductions: None,
+                },
+            ]);
         };
         let Some(Proposition::And(left, right)) = self.goal() else {
             return Err(
@@ -50,9 +133,9 @@ impl<'a> Proof<'a> {
             // a reversal), rather than treating it as an unordered match.
             let mut children = [None, None];
             let mut lowered_children = [None, None];
-            for (index, candidate) in [surface_left, surface_right].into_iter().enumerate() {
+            for (index, candidate) in [&surface_left, &surface_right].into_iter().enumerate() {
                 let Ok(lowered) =
-                    self.lower_surface_proposition(&candidate, "`both` presentation child")
+                    self.lower_surface_proposition(candidate, "`both` presentation child")
                 else {
                     continue;
                 };
@@ -63,10 +146,13 @@ impl<'a> Proof<'a> {
                 ) {
                     continue;
                 }
-                children[index] = Some(candidate);
+                children[index] = Some(candidate.clone());
             }
             if children.iter().all(Option::is_some) {
-                return Ok(children);
+                return Ok(children.map(|surface| CheckedBothSurfaceChild {
+                    surface,
+                    introductions: None,
+                }));
             }
             // A fully lowerable reversal is a definite correspondence error;
             // do not let a set-like fallback silently swap written children.
@@ -84,8 +170,43 @@ impl<'a> Proof<'a> {
                     "`both` cannot preserve its written conjunction: child order does not match",
                 ));
             }
+            if let Some(records) = self
+                .proposition_obligation()
+                .and_then(|goal| goal.presentation.both_children.as_deref())
+            {
+                let mut checked = [
+                    children[0].clone().map(|surface| CheckedBothSurfaceChild {
+                        surface: Some(surface),
+                        introductions: None,
+                    }),
+                    children[1].clone().map(|surface| CheckedBothSurfaceChild {
+                        surface: Some(surface),
+                        introductions: None,
+                    }),
+                ];
+                for index in 0..2 {
+                    if checked[index].is_none() {
+                        let surface_child = if index == 0 {
+                            &surface_left
+                        } else {
+                            &surface_right
+                        };
+                        checked[index] = self.recorded_guard_surface_child(
+                            surface_child,
+                            kernel_children[index],
+                            &records[index],
+                        );
+                    }
+                }
+                if checked.iter().all(|child| child.is_some()) {
+                    return Ok(checked.map(Option::unwrap));
+                }
+            }
             if let Ok(children) = self.checked_whole_surface_child(surface, kernel_children) {
-                return Ok(children);
+                return Ok(children.map(|surface| CheckedBothSurfaceChild {
+                    surface,
+                    introductions: None,
+                }));
             }
             if witness_refinement_kernel.is_some_and(|recorded| {
                 crate::kernel::proof::propositions_are_alpha_equal(
@@ -96,7 +217,16 @@ impl<'a> Proof<'a> {
                     ),
                 )
             }) {
-                return Ok([None, None]);
+                return Ok([
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                ]);
             }
             return Err(self.step_error(
                 "`both` cannot preserve its written conjunction: no checked child correspondence",
@@ -113,7 +243,16 @@ impl<'a> Proof<'a> {
                 Box::new(kernel_children[1].clone()),
             );
             if self.recorded_surface_matches(surface, &parent) {
-                return Ok([None, None]);
+                return Ok([
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                ]);
             }
             if witness_refinement_kernel.is_some_and(|recorded| {
                 crate::kernel::proof::propositions_are_alpha_equal(
@@ -124,7 +263,16 @@ impl<'a> Proof<'a> {
                     ),
                 )
             }) {
-                return Ok([None, None]);
+                return Ok([
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                ]);
             }
             return Err(self.step_error(
                 "`both` cannot preserve its written goal: the candidate did not lower",
@@ -150,14 +298,32 @@ impl<'a> Proof<'a> {
                 // conjunction, not either child.  The checked split still
                 // proves both kernel obligations; no child spelling can be
                 // installed without changing the written claim.
-                return Ok([None, None]);
+                return Ok([
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                ]);
             }
             return Err(self.step_error(
                 "`both` cannot preserve its written goal: the kernel child correspondence is ambiguous",
             ));
         }
-        let mut children = [None, None];
-        children[matches[0]] = Some(surface.clone());
+        let mut children = [
+            CheckedBothSurfaceChild {
+                surface: None,
+                introductions: None,
+            },
+            CheckedBothSurfaceChild {
+                surface: None,
+                introductions: None,
+            },
+        ];
+        children[matches[0]].surface = Some(surface.clone());
         Ok(children)
     }
 
@@ -217,7 +383,13 @@ impl<'a> Proof<'a> {
             .state
             .split_proposition_both(|parent, left| {
                 let mut child = parent.clone();
-                child.surface = surface_children[usize::from(!left)].clone().map(Arc::new);
+                let selected = &surface_children[usize::from(!left)];
+                child.surface = selected.surface.clone().map(Arc::new);
+                child.introductions = selected
+                    .introductions
+                    .clone()
+                    .map_or_else(GoalIntroductions::default, GoalIntroductions::recorded);
+                child.both_children = None;
                 child
             })
             .map_err(|message| self.step_error(message))?

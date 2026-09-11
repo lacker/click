@@ -63,6 +63,11 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     pub(in crate::surface::proof) iteration_entry_selector: Option<SnapshotSelector>,
     pub(in crate::surface::proof) checks: Vec<CLoopInvariantCheck>,
     pub(in crate::surface::proof) ranking_measures: Vec<CExpression>,
+    /// The declared invariant spellings in the same order as the checked
+    /// invariant list. This is the only source list used to attach a
+    /// presentation to a two-obligation body; broader loop-head premises are
+    /// intentionally excluded from that correspondence.
+    pub(in crate::surface::proof) declared_invariant_surfaces: Vec<ClickProposition>,
     /// The loop head's own premises: the declared invariants as written,
     /// then those invariants and, for a pre-tested loop, the guard, re-read
     /// at iteration entry. A smart bundle closure may cite these and the
