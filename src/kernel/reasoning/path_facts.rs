@@ -848,24 +848,37 @@ pub(in crate::kernel) fn add_proof_obligation_with_context(
     Some(())
 }
 
+/// Whether `proposition` is one bare condition that the frozen condition
+/// checker already decides with the value it asserts.
+///
+/// This is the migration's sanctioned replacement for a general prover call
+/// on a bare `ConditionIs`: it adds no theory, traverses no logical
+/// structure, and answers nothing about a proposition of any other shape.
+fn bare_condition_is_decided(assumptions: &PureFactContext, proposition: &Proposition) -> bool {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return false;
+    };
+    if PureFactContext::decide_intrinsically(condition) == Some(*value) {
+        return true;
+    }
+    !assumptions.should_defer_non_exact_condition_reasoning()
+        && assumptions.decide(condition) == Some(*value)
+}
+
 pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
 ) {
-    // The exact and frozen-atomic routes come first so the general prover
-    // answers only what they cannot. The remaining `proves` leg is the one
-    // site of `issues/simplify-kernel.md` package 4 that could not be
-    // restricted yet: it decides the loop-entry invariant goals in
-    // `c_loop_invariants_hold_at_entry`, whose planner
-    // (`c_loop_invariant_obligations_at_entry`) lowers the same invariant
-    // under a different reasoning policy and a different quantifier binder,
-    // so an exact route asks for a proposition the retained initialization
-    // certificate never proved. Packages 6 and 7 own that goal identity.
+    // Suppression is the exact index, the frozen condition checker for a
+    // proposition that is already one bare condition, or the retained atomic
+    // memory/resource checkers. A required verification condition with
+    // logical structure is emitted for an ordinary Surface tactic to
+    // discharge.
     if assumptions.proves_exact(&proposition)
+        || bare_condition_is_decided(assumptions, &proposition)
         || assumptions.proves_atomic_memory_or_resource(&proposition)
-        || assumptions.proves(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)

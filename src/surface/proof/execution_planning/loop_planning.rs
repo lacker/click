@@ -29,6 +29,31 @@ pub(in crate::surface::proof) fn loop_entry_checked_goal(
     goal
 }
 
+/// Whether the facts an initialization proof established discharge one entry
+/// obligation.
+///
+/// The certificate proves [`loop_entry_checked_goal`], so that goal is the
+/// first thing to look for. An obligation that lowering wrapped in leading
+/// implications is also discharged by any body of that chain: `guard implies
+/// body` follows from `body` alone. Both steps are exact lookups over this
+/// obligation's own head chain, never a proof search over the fact set.
+fn loop_entry_obligation_is_discharged(
+    obligation: &Proposition,
+    available: &[Proposition],
+) -> bool {
+    let facts = crate::kernel::proof::ProofFacts::from_ordered(available);
+    let mut goal = loop_entry_checked_goal(obligation, available);
+    loop {
+        if facts.contains(&goal) {
+            return true;
+        }
+        let Proposition::Implies(_, body) = goal else {
+            return false;
+        };
+        goal = body.as_ref().clone();
+    }
+}
+
 /// The kernel form the surface invariant itself denotes inside a checked goal
 /// that still carries leading guards.
 ///
@@ -388,9 +413,24 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             Ok(certificate_available)
         },
     )?;
-    let assumptions = assumptions_from_propositions(&available);
-    c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    // The invariants hold at entry when every entry obligation the planner
+    // and the certificate checker were given is discharged by the facts the
+    // initialization proved. Re-lowering the invariants here instead would
+    // derive them from a fact set the planner never saw, and ask for a
+    // proposition the retained certificate never proved; `entry_obligations`
+    // and `loop_entry_checked_goal` are the one goal function both phases
+    // already use.
+    for obligation in entry_obligations
+        .iter()
+        .filter(|obligation| obligation.context().is_some())
+    {
+        if !loop_entry_obligation_is_discharged(obligation.proposition(), &available) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: missing invariant fact ({})",
+                obligation.context().unwrap_or_default()
+            )));
+        }
+    }
     Ok(certificate)
 }
 
