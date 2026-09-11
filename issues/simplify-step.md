@@ -52,8 +52,9 @@ An emitted requirement becomes an ordinary goal closed before the step.
 ## What exists
 
 Two attempts landed the mechanism but not the closure; the second is
-preserved on branch `claude/simplify-kernel-pkg-10c2-requirement-goals-2`
-(red, a checkpoint, never integrate as is). It has the structured
+preserved on the remote branch `origin/claude/simplify-step-checkpoint`,
+three commits rebased onto master as of 2026-09-11 (red, a checkpoint,
+never integrate as is). It has the structured
 `UnresolvedRequirement` on `ClickError`, `Proof::step_discharging_reported_requirements`
 with the planned `have` installed under `ProofScope::with_recorded_goal_introductions`
 so `intro` consumes the chain, and `propositions_are_alpha_equal` with unit
