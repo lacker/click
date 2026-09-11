@@ -32,7 +32,7 @@ documentation inventory keep the following accepted words synchronized.
 | --- | --- |
 | `verifying` | C-source declaration. |
 | `predicate`, `function`, `theorem`, `contract` | Top-level logic and behavioral-interface declarations; `function` also starts a C contract. |
-| `executes` | Gives a contract-refinement theorem an explicit one-callback execution frontier. |
+| `executes` | Gives a contract-refinement theorem an explicit one-call execution frontier, over the theorem's callback parameter or a named project function. |
 | `spec`, `enum`, `match` | Specification-only algebraic datatype declarations and exhaustive elimination. |
 | `abstract`, `resource` | Abstract and composite resource declarations. |
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
@@ -100,7 +100,8 @@ function-declaration  := "function" identifier parameters
                          ("->" type)? decreases-clause? expression-block
 resource-declaration  := "resource" identifier parameters resource-body
 theorem-declaration   := "theorem" identifier parameters executes-clause? theorem-body
-executes-clause      := "executes" identifier "(" c-parameters ")"
+executes-clause      := "executes" executed-function "(" c-parameters ")"
+executed-function    := callback-parameter-name | c-function-name
 executes-conclusion  := "ensures" proposition instance-map? proof
 instance-map         := "as" "{" (identifier ":" identifier
                          ("," identifier ":" identifier)* ","?)? "}"
@@ -111,6 +112,12 @@ c-function-contract   := "function" c-signature contract-body
 Declaration order doesn't create a textual scope: validation builds the
 declaration environment before it checks uses. Names must satisfy the
 namespace rules in [Declarations](index.md#file-shape).
+
+The `executes` name is resolved by the conclusion, not by the clause: a
+conclusion about a function address, `ensures Name(&f)`, executes the project
+function `f`, and a conclusion about a binding, `ensures Name(cb)`, executes the
+theorem's callback parameter `cb`. See
+[Callback execution theorems](index.md#callback-execution-theorems).
 
 ## Proposition precedence
 

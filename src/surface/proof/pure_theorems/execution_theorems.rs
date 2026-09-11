@@ -39,22 +39,6 @@ pub(super) fn verify_execution_theorem(
         ClickError::new(format!("theorem `{}` executes: {message}", theorem.name()))
     };
     let environment = environment.ok_or_else(|| error("requires a C contract environment"))?;
-    let [callback] = theorem.parameters() else {
-        return Err(error("requires exactly one callback theorem parameter"));
-    };
-    if !theorem.type_parameters().is_empty() || callback.name() != execution.callback {
-        return Err(error(
-            "the executed callback must be the theorem's function-pointer parameter",
-        ));
-    }
-    let mut names = BTreeSet::from([execution.callback.clone()]);
-    for parameter in &execution.parameters {
-        if !names.insert(parameter.name().to_string()) || parameter.name() == "result" {
-            return Err(error(
-                "call argument names must be distinct from each other, the callback, and result",
-            ));
-        }
-    }
     let [ensure] = theorem.ensures() else {
         return Err(error("requires exactly one target-contract conclusion"));
     };
@@ -69,50 +53,128 @@ pub(super) fn verify_execution_theorem(
             "the conclusion must be a contract for the executed callback",
         ));
     };
+    // The conclusion chooses the form. A function address executes that named
+    // project function and has no source premises; a plain binding executes
+    // the theorem's arbitrary callback parameter under its source contracts.
+    let concrete_callee = match arguments.as_slice() {
+        [argument] => contract_expression_function_address(argument),
+        _ => None,
+    };
+    if !theorem.type_parameters().is_empty() {
+        return Err(error("an execution theorem takes no type parameters"));
+    }
+    let callback = match concrete_callee {
+        Some(callee) => {
+            if callee != execution.callback {
+                return Err(error("the conclusion must describe the executed function"));
+            }
+            if !theorem.parameters().is_empty() {
+                return Err(error(
+                    "a concrete execution theorem takes no theorem parameters",
+                ));
+            }
+            if !theorem.requires().is_empty() {
+                return Err(error(
+                    "a concrete execution theorem has no source-contract premises; its source is the executed function's own contract",
+                ));
+            }
+            None
+        }
+        None => {
+            let [callback] = theorem.parameters() else {
+                return Err(error("requires exactly one callback theorem parameter"));
+            };
+            if callback.name() != execution.callback {
+                return Err(error(
+                    "the executed callback must be the theorem's function-pointer parameter",
+                ));
+            }
+            Some(callback)
+        }
+    };
+    let mut names = BTreeSet::from([execution.callback.clone()]);
+    for parameter in &execution.parameters {
+        if !names.insert(parameter.name().to_string()) || parameter.name() == "result" {
+            return Err(error(
+                "call argument names must be distinct from each other, the callback, and result",
+            ));
+        }
+    }
     let is_callback = |arguments: &[ContractExpression]| {
         matches!(arguments, [ContractExpression::Binding(name)] if name == &execution.callback)
             || matches!(arguments, [ContractExpression::CFragment(CExpression::Variable(name))] if name == &execution.callback)
     };
-    if !is_callback(arguments) {
+    if concrete_callee.is_none() && !is_callback(arguments) {
         return Err(error("the conclusion must describe the executed callback"));
     }
     let target = predicates
         .contract_definition(target_name)
         .ok_or_else(|| error("the conclusion must name a function contract"))?;
-    if callback.name() == "result"
-        && target.function_block().signature().return_type() != C0Type::Void
-    {
-        return Err(error(
-            "a return-valued callback parameter must not be named result",
-        ));
-    }
-    if theorem.requires().is_empty() {
-        return Err(error("requires at least one source-contract assumption"));
-    }
     let mut source_names = Vec::new();
-    for requirement in theorem.requires() {
-        let Some(ClickProposition::PredicateCall { name, arguments }) = requirement.proposition()
-        else {
+    if let Some(callback) = callback {
+        if callback.name() == "result"
+            && target.function_block().signature().return_type() != C0Type::Void
+        {
             return Err(error(
-                "requires a source-contract assumption for the executed callback",
-            ));
-        };
-        let source = predicates
-            .contract_definition(name)
-            .ok_or_else(|| error("the source assumption must name a function contract"))?;
-        if !is_callback(arguments) {
-            return Err(error(
-                "the source assumption must describe the executed callback",
+                "a return-valued callback parameter must not be named result",
             ));
         }
-        if callback.c_type() != source.function_pointer_type() {
-            return Err(error(
-                "executes signature does not match the source contract",
-            ));
+        if theorem.requires().is_empty() {
+            return Err(error("requires at least one source-contract assumption"));
         }
-        source_names.push(name.as_str());
+        for requirement in theorem.requires() {
+            let Some(ClickProposition::PredicateCall { name, arguments }) =
+                requirement.proposition()
+            else {
+                return Err(error(
+                    "requires a source-contract assumption for the executed callback",
+                ));
+            };
+            let source = predicates
+                .contract_definition(name)
+                .ok_or_else(|| error("the source assumption must name a function contract"))?;
+            if !is_callback(arguments) {
+                return Err(error(
+                    "the source assumption must describe the executed callback",
+                ));
+            }
+            if callback.c_type() != source.function_pointer_type() {
+                return Err(error(
+                    "executes signature does not match the source contract",
+                ));
+            }
+            source_names.push(name.as_str());
+        }
     }
-    if callback.c_type() != target.function_pointer_type()
+    // A concrete callee is called as ordinary C, so the written parameter list
+    // is checked against the signature the call rule will use as well as
+    // against the target contract's interface.
+    if let Some(callee) = concrete_callee {
+        let (parameter_types, return_type) =
+            crate::kernel::c_project_function_signature(environment, callee).ok_or_else(|| {
+                error(&format!(
+                    "`{callee}` is not a verified or external function in this project"
+                ))
+            })?;
+        if parameter_types.len() != execution.parameters.len()
+            || execution
+                .parameters
+                .iter()
+                .zip(&parameter_types)
+                .any(|(written, declared)| &written.c_type().to_kernel_type() != declared)
+            || target
+                .function_block()
+                .signature()
+                .return_type()
+                .to_kernel_type()
+                != return_type
+        {
+            return Err(error(&format!(
+                "the executes parameter list does not match the C signature of `{callee}`"
+            )));
+        }
+    }
+    if callback.is_some_and(|callback| callback.c_type() != target.function_pointer_type())
         || execution.parameters.len() != target.function_block().signature().parameters().len()
         || execution
             .parameters
@@ -182,7 +244,9 @@ pub(super) fn verify_execution_theorem(
     block.one_call_proof = true;
     block.signature.name = theorem.name().to_string();
     block.signature.parameters = execution.parameters.clone();
-    block.signature.parameters.push(callback.clone());
+    if let Some(callback) = callback {
+        block.signature.parameters.push(callback.clone());
+    }
     block.requires = block
         .requires
         .iter()
@@ -289,13 +353,22 @@ pub(super) fn verify_execution_theorem(
         functions,
     )
     .map_err(ClickError::new)?;
-    let authority = crate::kernel::prove_executed_contract_refinement(
-        environment,
-        &source_names,
-        target_name,
-        conclusion.clone(),
-        &rule,
-    )
+    let authority = match concrete_callee {
+        Some(callee) => crate::kernel::prove_executed_concrete_contract_refinement(
+            environment,
+            callee,
+            target_name,
+            conclusion.clone(),
+            &rule,
+        ),
+        None => crate::kernel::prove_executed_contract_refinement(
+            environment,
+            &source_names,
+            target_name,
+            conclusion.clone(),
+            &rule,
+        ),
+    }
     .ok_or_else(|| {
         error("the checked call does not establish the declared contract implication")
     })?;

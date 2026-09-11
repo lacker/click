@@ -5150,6 +5150,100 @@ pub(crate) fn prove_executed_contract_refinement(
     })
 }
 
+/// The declared interface of a verified or explicitly external project
+/// function: its parameter types in order, then its return type. Two exact map
+/// lookups, so a concrete `executes` clause is checked against the same C
+/// signature the call rule will use.
+pub fn c_project_function_signature(
+    environment: &CExecutionEnvironment,
+    name: &str,
+) -> Option<(Vec<CType>, CType)> {
+    let function = project_function_interface(environment, name)?;
+    Some((
+        function
+            .parameters
+            .iter()
+            .map(|parameter| parameter.c_type())
+            .collect(),
+        function.return_type(),
+    ))
+}
+
+fn project_function_interface<'a>(
+    environment: &'a CExecutionEnvironment,
+    name: &str,
+) -> Option<&'a CFunction> {
+    if let Some(rule) = environment.get_verified_function_rule(name) {
+        return Some(&rule.function);
+    }
+    Some(&environment.get_external_function_rule(name)?.function)
+}
+
+/// A checked one-call wrapper proves that a named project function satisfies a
+/// named contract. The wrapper takes the contract's own interface and no extra
+/// inputs; its body must be precisely one call to `callee_name` with every
+/// parameter in order, so what the wrapper was verified to do is what that one
+/// call does. No target-contract assumption authorizes this call, and no
+/// source contract is quantified over: the source is the callee's own verified
+/// or explicitly external contract, already used by the checked call.
+pub(crate) fn prove_executed_concrete_contract_refinement(
+    environment: &CExecutionEnvironment,
+    callee_name: &str,
+    target_name: &str,
+    conclusion: Proposition,
+    rule: &CVerifiedFunctionRule,
+) -> Option<CVerifiedPureTheorem> {
+    let target = environment.get_function_contract(target_name)?;
+    // The callee has to be a function this project has a rule for. An
+    // unverified name would make the checked call vacuous.
+    project_function_interface(environment, callee_name)?;
+    let function = rule.function.clone();
+    let arguments = function
+        .parameters
+        .iter()
+        .map(|parameter| CExpression::Variable(parameter.name().to_string()))
+        .collect();
+    let call = if function.return_type() == CType::Void {
+        CStatement::Call {
+            function_name: callee_name.to_string(),
+            arguments,
+        }
+    } else {
+        CStatement::Seq(
+            Arc::new(CStatement::CallAssign {
+                target: "result".into(),
+                function_name: callee_name.to_string(),
+                arguments,
+            }),
+            Arc::new(CStatement::Return(CExpression::Variable("result".into()))),
+        )
+    };
+    if function.body() != &call || function.source_body() != &call {
+        return None;
+    }
+    if !contract_interface_identity::same_interface(target, &function) {
+        return None;
+    }
+    let Proposition::Predicate { name, arguments } = &conclusion else {
+        return None;
+    };
+    let [Term::CState(_), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice() else {
+        return None;
+    };
+    if pointer.pointer().block != PointerBlock::Function(callee_name.to_string()) {
+        return None;
+    }
+    if name != &target.predicate_name()
+        || pointer.c_type() != target.function_pointer_type()
+        || pointer.pointer().offset != PointerOffsetTerm::Constant(0)
+    {
+        return None;
+    }
+    Some(CVerifiedPureTheorem {
+        theorem: Theorem::new(conclusion),
+    })
+}
+
 fn rewrite_int32_term_by_exact_equality(
     term: &Bitvector32Term,
     from: &Bitvector32Term,

@@ -669,6 +669,37 @@ demonstrate an exact field increment refined to progress while framing an
 unrelated caller-owned counter. Unmentioned fields of the selected counter are
 not implicitly preserved.
 
+`executes` may also name a verified or explicitly external C function instead of
+a callback parameter. The theorem then has no callback parameter and no
+source-contract premise: the source is that function's own checked contract,
+run by the single call step.
+
+<!-- verified-example: mdtests/c_contract_executes_concrete.md -->
+```click
+theorem increment_is_exact() executes increment(int32* state) {
+    ensures Exact(&increment) as { cell: c } by {
+        step(increment(state), { first: c });
+        simp();
+    }
+}
+```
+
+The conclusion chooses the form: a function address selects the concrete route,
+a plain binding the abstract one. The proof state still starts from the target
+contract's requirements and resources with the `as`-introduced instances bound,
+and the call is the ordinary C call of
+[Read and write resources](#read-and-write-resources), so the callee's own
+binder names appear only on the left of its map and the introduced name on the
+right. The written parameter list restates the C signature as well as the target
+contract's interface; the callee must be verified or explicitly external in the
+project; extra theorem parameters stay outside this slice; and every feasible
+proof case must execute exactly one call, as in the abstract form.
+`apply(increment_is_exact())` then introduces `Exact(&increment)` at a call site
+exactly like a concrete `unfold(Name)` refinement theorem. This is the explicit
+route for a target contract with proof parameters, which `unfold(Name)` refuses.
+The [modeled-instance variant](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_concrete_model.md)
+carries a tree instance through the same two maps.
+
 Passing `&f` where a named contract is required does not always need such a
 theorem. Automatic formation admits scalar propositions over current and
 function-entry memory, resource-field reads on either of those states,
