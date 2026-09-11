@@ -341,9 +341,9 @@ of the first gap below. None of these is fixed yet; none has an issue file.
   from `evaluate_function_resource_context`, is discarded by
   `.ok().and_then(Result::ok)?` in `c_function_contract_certification_
   assumptions` (`src/kernel/api/contract_certification.rs`), and four other
-  `?`s in that function drop errors the same way. This is a tooling defect
-  under the "tooling stability comes first" rule and should be fixed before
-  chunk 8: report the runtime error text, never an empty path set.
+  `?`s in that function drop errors the same way. **Fixed** as `335027f9`:
+  certification now reports the runtime error text and the failing clause
+  index (`mdtests/contract_certification_reports_resource_error.md`).
 - A named contract whose resource clause reads through a parameter cannot be
   prepared: `requires old->left != 0; views old->left->augmented;` in
   `AugmentRotate` fails with `missing pure fact: loadable(base=old, bytes=8)`
