@@ -1631,38 +1631,6 @@ impl PureFactContext {
             crate::kernel::reasoning::resolve_symbolic_pointer_alias(pointer, self)
         };
         let pointer = &resolved;
-        let proves_below_predecessor = |left: &Bitvector32Term, right: &Bitvector32Term| {
-            let predecessor_upper =
-                Bitvector32Term::subtract(right.clone(), Bitvector32Term::Constant(1));
-            self.proves(&Proposition::ConditionIs(
-                ConditionTerm::signed_less_than(left.clone(), predecessor_upper),
-                true,
-            )) && self.proves(&Proposition::ConditionIs(
-                ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), right.clone()),
-                true,
-            ))
-        };
-        let proves_successor_below_predecessor =
-            |left: &Bitvector32Term, right: &Bitvector32Term| {
-                let Some((predecessor, 1)) = left.add_const_parts() else {
-                    return false;
-                };
-                // If predecessor < upper - 1 and 0 < upper, then
-                // predecessor + 1 < upper in the defined signed-int32
-                // domain. The positivity premise also rules out underflow
-                // in the predecessor expression.
-                let predecessor_upper =
-                    Bitvector32Term::subtract(right.clone(), Bitvector32Term::Constant(1));
-                let predecessor_bounded = self.proves(&Proposition::ConditionIs(
-                    ConditionTerm::signed_less_than(predecessor, predecessor_upper),
-                    true,
-                ));
-                let upper_positive = self.proves(&Proposition::ConditionIs(
-                    ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), right.clone()),
-                    true,
-                ));
-                predecessor_bounded && upper_positive
-            };
         let proves_order = |left: &Bitvector32Term, right: &Bitvector32Term, strict: bool| {
             let condition = if strict {
                 ConditionTerm::signed_less_than(left.clone(), right.clone())
@@ -1683,8 +1651,6 @@ impl PureFactContext {
                     || self.decide(&condition) == Some(true),
                 )
                 || !strict && self.nonnegative_successor_by_exact_facts(&condition)
-                || strict && proves_below_predecessor(left, right)
-                || strict && proves_successor_below_predecessor(left, right)
         };
         // Ranges count logical elements, while accesses are measured in
         // bytes. A pointer-sized field is therefore two int32-width

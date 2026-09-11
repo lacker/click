@@ -62,6 +62,7 @@ pub(crate) use reasoning::resolve_load_variables_from_registry;
 pub(crate) use reasoning::resolve_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
 pub(crate) use reasoning::substitute_pointer_variable_in_proposition;
+pub use reasoning::{LoweringIntroduction, LoweringIntroductions};
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

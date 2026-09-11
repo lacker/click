@@ -744,3 +744,16 @@ match. The legacy surface checker is presentation-only and cannot publish
 theorem authority. The ordinary one-step pure-function elaborator then exposes
 the current defining equation; it never uses an unfolding-depth budget. This
 machinery is separate from recursive C contract and C-termination judgments.
+
+A pure theorem becomes a universally quantified fact for whole-contract
+certification only through the completion its checked proof already issued.
+The kernel constructors
+(`prove_universally_quantified_pure_implication` and its
+`_by_int32_rewrites` variant) do not prove the conclusion a second time: they
+check that the completion's goal is exactly the declared conclusion, that the
+facts its root branch assumed are exactly the declared requirements, and that
+the declared binders are exactly the free variables. The rewrite variant
+additionally cites each equality it applied, which must be exactly available
+among the requirements and must rewrite the goal in the listed order. A proof
+the kernel proof object does not check, such as a script the legacy pure
+driver accepts, publishes no such authority.

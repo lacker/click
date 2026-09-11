@@ -845,13 +845,120 @@ type OpenBranch = ProofBranch<Obligation, ExecutionProofState>;
 /// judgment originated in Surface Click, the exact syntax needed to refine
 /// structural goals. Both values belong to the same immutable Proof state;
 /// smart search must not carry a second caller-owned description of its goal.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(in crate::surface::proof) struct PropositionPresentation {
     pub(in crate::surface::proof) surface: Option<Arc<ClickProposition>>,
     /// Surface names introduced while refining this exact proposition goal.
     /// Universal binders are goal-local: sibling goals share the persistent
     /// map root at a split, then refine independently without leaking names.
     pub(in crate::surface::proof) surface_bindings: PersistentMap<String, ContractExpression>,
+    /// What the kernel lowering recorded about this goal's outermost nodes.
+    /// An introduction reads it instead of inferring the Surface-to-kernel
+    /// correspondence from a shape the written syntax happens to share.
+    pub(in crate::surface::proof) introductions: GoalIntroductions,
+    /// The antecedents this goal's own introductions added to its fact
+    /// context, each retained as the checked Surface-to-kernel pair the
+    /// introduction consumed, plus the structural conjuncts of that pair.
+    /// A later citation of one of these facts reads the retained kernel
+    /// proposition instead of re-lowering the written antecedent under the
+    /// fact context the introduction changed.
+    pub(in crate::surface::proof) introduced_antecedents: IntroducedAntecedents,
+}
+
+/// The head chain the kernel lowering recorded for one goal, and how much of
+/// it this goal's introductions have already consumed.
+///
+/// The default is the unrecorded state: a goal whose kernel proposition did
+/// not come from a lowering performed for it (a recorded correspondence, a
+/// kernel-built obligation) has no head chain, and an introduction on it
+/// falls back to refining the written Surface goal structurally.
+#[derive(Clone, Default)]
+pub(in crate::surface::proof) struct GoalIntroductions {
+    recorded: Option<Arc<crate::kernel::LoweringIntroductions>>,
+    consumed: usize,
+}
+
+impl GoalIntroductions {
+    pub(in crate::surface::proof) fn recorded(
+        introductions: crate::kernel::LoweringIntroductions,
+    ) -> Self {
+        Self {
+            recorded: Some(Arc::new(introductions)),
+            consumed: 0,
+        }
+    }
+
+    pub(in crate::surface::proof) fn from_lowering(
+        introductions: Option<crate::kernel::LoweringIntroductions>,
+    ) -> Self {
+        introductions.map_or_else(Self::default, Self::recorded)
+    }
+
+    /// The node an introduction would reach next, when this goal's lowering
+    /// recorded one. Indexed access: no scan of the chain.
+    pub(in crate::surface::proof) fn head(&self) -> Option<&crate::kernel::LoweringIntroduction> {
+        self.recorded.as_ref()?.get(self.consumed)
+    }
+
+    /// The same chain with its head consumed. The recorded vector is shared,
+    /// so advancing costs one clone of an `Arc` and an index.
+    pub(in crate::surface::proof) fn advanced(&self) -> Self {
+        Self {
+            recorded: self.recorded.clone(),
+            consumed: self.consumed.saturating_add(1),
+        }
+    }
+}
+
+/// Checked Surface-to-kernel antecedent pairs retained by introductions on
+/// one goal, bucketed by a deterministic rendering of the Surface form. The
+/// bucket keeps the written form so a citation is accepted only on exact
+/// Surface equality, never on a rendering collision.
+pub(in crate::surface::proof) type IntroducedAntecedents =
+    PersistentMap<String, Arc<Vec<(ClickProposition, Proposition)>>>;
+
+/// The retained kernel form of `surface`, when an introduction on this goal
+/// added it. Work is one indexed lookup plus exact comparison inside the
+/// selected bucket.
+pub(in crate::surface::proof) fn retained_introduced_antecedent<'a>(
+    retained: &'a IntroducedAntecedents,
+    surface: &ClickProposition,
+) -> Option<&'a Proposition> {
+    retained
+        .get(&format!("{surface:?}"))?
+        .iter()
+        .find_map(|(written, kernel)| (written == surface).then_some(kernel))
+}
+
+/// Records one checked Surface-to-kernel antecedent pair and every
+/// structural conjunct pair it refines to. Refinement descends only where
+/// the written conjunction and the kernel conjunction agree, so each
+/// recorded pair remains an exact account of the introduction.
+pub(in crate::surface::proof) fn retain_introduced_antecedent(
+    retained: &IntroducedAntecedents,
+    surface: &ClickProposition,
+    kernel: &Proposition,
+) -> IntroducedAntecedents {
+    let key = format!("{surface:?}");
+    let mut bucket = retained
+        .get(&key)
+        .map_or_else(Vec::new, |bucket| bucket.as_ref().clone());
+    let retained = if bucket
+        .iter()
+        .any(|(written, recorded)| written == surface && recorded == kernel)
+    {
+        retained.clone()
+    } else {
+        bucket.push((surface.clone(), kernel.clone()));
+        retained.with_inserted(key, Arc::new(bucket))
+    };
+    match (kernel, surface_logical_children(surface, true)) {
+        (Proposition::And(left, right), Some((surface_left, surface_right))) => {
+            let retained = retain_introduced_antecedent(&retained, &surface_left, left);
+            retain_introduced_antecedent(&retained, &surface_right, right)
+        }
+        _ => retained,
+    }
 }
 
 impl KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>> {
@@ -885,6 +992,7 @@ impl OpenBranchConstruction for OpenBranch {
                 PropositionPresentation {
                     surface: None,
                     surface_bindings: PersistentMap::default(),
+                    ..PropositionPresentation::default()
                 },
             )),
             state,
@@ -910,6 +1018,7 @@ impl OpenBranchConstruction for OpenBranch {
                 PropositionPresentation {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
+                    ..PropositionPresentation::default()
                 },
             )),
             state,
@@ -930,6 +1039,7 @@ impl OpenBranchConstruction for OpenBranch {
                 PropositionPresentation {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
+                    ..PropositionPresentation::default()
                 },
                 outcome,
             )),
@@ -1149,11 +1259,20 @@ impl<'a> Proof<'a> {
             Some(Obligation::FunctionOutcome(goal)) => Some(goal.data.clone()),
             _ => None,
         };
-        let presentation = PropositionPresentation {
-            surface: surface.map(Arc::new),
-            surface_bindings: match self.focused_obligation() {
-                Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
-                _ => PersistentMap::default(),
+        // A refinement replaces the claim, so the head chain the lowering
+        // recorded no longer describes it; the goal-local binders and the
+        // antecedents its own introductions retained still do, because the
+        // refinement changed neither the binder scope nor the fact context.
+        let presentation = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => PropositionPresentation {
+                surface: surface.map(Arc::new),
+                surface_bindings: goal.surface_bindings.clone(),
+                introductions: GoalIntroductions::default(),
+                introduced_antecedents: goal.introduced_antecedents.clone(),
+            },
+            _ => PropositionPresentation {
+                surface: surface.map(Arc::new),
+                ..PropositionPresentation::default()
             },
         };
         let obligation = match outcome {
@@ -1254,6 +1373,7 @@ impl<'a> Proof<'a> {
                 let presentation = PropositionPresentation {
                     surface: surface_goal.map(Arc::new),
                     surface_bindings: PersistentMap::default(),
+                    ..PropositionPresentation::default()
                 };
                 let obligation = match outcome.clone() {
                     Some(outcome) => PropositionObligation::at_outcome(goal, presentation, outcome),
@@ -1357,7 +1477,7 @@ impl<'a> Proof<'a> {
             checked_propositions.push(closer.completed_proposition()?);
             steps.extend_from_slice(closer.certificate().steps());
         }
-        Ok((ProofCertificate::from_steps(steps), checked_propositions))
+        Ok((ProofCertificate::from_steps(steps)?, checked_propositions))
     }
 
     pub(super) fn is_complete(&self) -> bool {
@@ -1405,7 +1525,7 @@ impl<'a> Proof<'a> {
 
     pub(super) fn certificate(&self) -> ProofCertificate {
         self.certificate_after_node(None)
-            .expect("a complete proof derivation reaches its own root")
+            .expect("checked provenance reaches its own root and records only certificate steps")
     }
 
     /// Retains an output-sensitive certificate suffix from an exact ancestor.
@@ -1438,7 +1558,7 @@ impl<'a> Proof<'a> {
         &self,
         surface: &ClickProposition,
     ) -> Result<KernelProofHandle, ClickError> {
-        let fact = self.lower_surface_proposition(surface, "`contradiction` fact")?;
+        let fact = self.lower_cited_surface_proposition(surface, "`contradiction` fact")?;
         self.state
             .apply_contradiction(&fact)
             .map_err(|error| match error {
@@ -1549,7 +1669,6 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ConstructResource(_) => "construct",
         ProofStep::ObserveResource(_) => "observe",
-        ProofStep::CloseInvariants => "close_invariants()",
         ProofStep::CloseInvariantsBy(_) => "close_invariants by",
         ProofStep::Mark(_) => "mark",
         _ => "tactic",

@@ -2773,7 +2773,6 @@ pub enum ProofStep {
     Right,
     Enumerate,
     Contradiction(ClickProposition),
-    CloseInvariants,
     Rewrite(ClickProposition),
     TransportUsing {
         source: ClickProposition,
@@ -2867,7 +2866,30 @@ impl ProofCertificate {
         &self.steps
     }
 
-    pub(crate) fn from_steps(steps: Vec<ProofStep>) -> Self {
+    /// Serializes checked proof provenance as a certificate.
+    ///
+    /// This is the same admission rule [`Self::from_proof_tactics`] applies to
+    /// source tactics: a certificate leaf must be surface-expressible and
+    /// simple, and a structured step must own complete explicit child proofs.
+    /// The two constructors share [`certificate_step_class`] and
+    /// [`CertificateError`] so provenance cannot smuggle in a leaf that source
+    /// text could not spell.
+    pub(crate) fn from_steps(steps: Vec<ProofStep>) -> Result<Self, ClickError> {
+        validate_certificate_steps(&steps, &mut Vec::new()).map_err(|error| {
+            ClickError::new(format!(
+                "proof provenance produced a {:?} certificate step at {:?}, \
+                 which no explicit proof can spell",
+                error.tactic_class(),
+                error.path(),
+            ))
+        })?;
+        Ok(Self { steps })
+    }
+
+    /// Steps that were already admitted by a certificate constructor. Nested
+    /// certificates are validated where they are built, so re-walking them at
+    /// every enclosing construction would be quadratic in the certificate.
+    fn from_validated_steps(steps: Vec<ProofStep>) -> Self {
         Self { steps }
     }
 
@@ -2896,18 +2918,18 @@ impl ProofStep {
     fn from_validated_tactic(tactic: &ProofTactic) -> Self {
         match tactic {
             ProofTactic::CloseInvariantsBy(body) => {
-                Self::CloseInvariantsBy(Box::new(ProofCertificate::from_steps(
+                Self::CloseInvariantsBy(Box::new(ProofCertificate::from_validated_steps(
                     body.iter().map(Self::from_validated_tactic).collect(),
                 )))
             }
             ProofTactic::Both(both) => Self::Both {
-                left_proof: Box::new(ProofCertificate::from_steps(
+                left_proof: Box::new(ProofCertificate::from_validated_steps(
                     both.left_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
                 )),
-                right_proof: Box::new(ProofCertificate::from_steps(
+                right_proof: Box::new(ProofCertificate::from_validated_steps(
                     both.right_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
@@ -2938,7 +2960,7 @@ impl ProofStep {
                         type_name: arm.type_name.clone(),
                         variant: arm.variant.clone(),
                         bindings: arm.bindings.clone(),
-                        proof: Box::new(ProofCertificate::from_steps(
+                        proof: Box::new(ProofCertificate::from_validated_steps(
                             arm.tactics
                                 .iter()
                                 .map(Self::from_validated_tactic)
@@ -3006,7 +3028,9 @@ impl ProofStep {
             ProofTactic::Right => Self::Right,
             ProofTactic::Enumerate => Self::Enumerate,
             ProofTactic::Contradiction(proposition) => Self::Contradiction(proposition.clone()),
-            ProofTactic::CloseInvariants => Self::CloseInvariants,
+            ProofTactic::CloseInvariants => {
+                unreachable!("bare invariant closure is smart")
+            }
             ProofTactic::Rewrite(proposition) => Self::Rewrite(proposition.clone()),
             ProofTactic::TransportUsing {
                 source,
@@ -3205,7 +3229,6 @@ impl ProofStep {
             Self::Right => ProofTactic::Right,
             Self::Enumerate => ProofTactic::Enumerate,
             Self::Contradiction(proposition) => ProofTactic::Contradiction(proposition.clone()),
-            Self::CloseInvariants => ProofTactic::CloseInvariants,
             Self::Rewrite(proposition) => ProofTactic::Rewrite(proposition.clone()),
             Self::TransportUsing {
                 source,
@@ -3293,6 +3316,110 @@ impl CertificateError {
     pub fn path(&self) -> &[CertificatePathSegment] {
         &self.path
     }
+}
+
+/// Classifies one certificate step by the tactic it prints as.
+///
+/// The match is exhaustive on purpose: a new [`ProofStep`] must be classified
+/// deliberately, and a step classified `Smart` is refused by
+/// [`ProofCertificate::from_steps`] exactly as its spelling is refused by
+/// [`ProofCertificate::from_proof_tactics`]. Classification reads no payload,
+/// so validating a certificate costs one pass over its own steps.
+fn certificate_step_class(step: &ProofStep) -> TacticClass {
+    match step {
+        ProofStep::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
+        ProofStep::Step | ProofStep::StepContract(_) => {
+            TacticClass::Simple(SimpleTactic::StatementTransition)
+        }
+        ProofStep::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
+        ProofStep::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
+        ProofStep::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
+        ProofStep::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
+        ProofStep::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
+        ProofStep::ConstructResource(_) => TacticClass::Simple(SimpleTactic::ConstructResource),
+        ProofStep::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),
+        ProofStep::ApplyInduction { .. } => TacticClass::Simple(SimpleTactic::ApplyInduction),
+        ProofStep::ApplyTheoremUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyTheorem),
+        ProofStep::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
+        ProofStep::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
+        ProofStep::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
+        ProofStep::Extract(_) => TacticClass::Simple(SimpleTactic::Extract),
+        ProofStep::Normalize | ProofStep::NormalizeUsing(_) => {
+            TacticClass::Simple(SimpleTactic::Normalize)
+        }
+        ProofStep::ArithmeticUsing(_) | ProofStep::IntegerCertificate(_) => {
+            TacticClass::Simple(SimpleTactic::Arithmetic)
+        }
+        ProofStep::Intro => TacticClass::Simple(SimpleTactic::Intro),
+        ProofStep::Split => TacticClass::Simple(SimpleTactic::Split),
+        ProofStep::Left => TacticClass::Simple(SimpleTactic::Left),
+        ProofStep::Right => TacticClass::Simple(SimpleTactic::Right),
+        ProofStep::Enumerate => TacticClass::Simple(SimpleTactic::Enumerate),
+        ProofStep::Contradiction(_) => TacticClass::Simple(SimpleTactic::Contradiction),
+        ProofStep::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
+        ProofStep::TransportUsing { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
+        ProofStep::InstantiateUsing { .. } => TacticClass::Simple(SimpleTactic::Instantiate),
+        ProofStep::CloseInvariantsBy(_) => TacticClass::Control(ControlTactic::CloseInvariants),
+        ProofStep::Both { .. } => TacticClass::Control(ControlTactic::Both),
+        ProofStep::Have { .. } => TacticClass::Control(ControlTactic::Have),
+        ProofStep::Open { .. } => TacticClass::Control(ControlTactic::Open),
+        ProofStep::If { .. } => TacticClass::Control(ControlTactic::If),
+        ProofStep::Cases { .. } => TacticClass::Control(ControlTactic::Cases),
+        ProofStep::Match { .. } => TacticClass::Control(ControlTactic::Match),
+        ProofStep::StructuralInduct { .. } => TacticClass::Control(ControlTactic::StructuralInduct),
+        ProofStep::Branch { .. } => TacticClass::Control(ControlTactic::Branch),
+        ProofStep::Loop(_) => TacticClass::Control(ControlTactic::Loop),
+    }
+}
+
+/// The step-side twin of [`validate_certificate_tactics`].
+///
+/// Nested certificates were admitted by their own constructor, so this walks
+/// only the steps it was handed: work stays linear in the certificate delta
+/// being serialized rather than quadratic in nesting depth. A structural
+/// `loop` step is the one shape whose children are not certificates, so its
+/// two phase proofs are checked here.
+fn validate_certificate_steps(
+    steps: &[ProofStep],
+    path: &mut Vec<CertificatePathSegment>,
+) -> Result<(), CertificateError> {
+    for (index, step) in steps.iter().enumerate() {
+        path.push(CertificatePathSegment::Tactic(index));
+        let result = match certificate_step_class(step) {
+            tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
+                tactic_class,
+                path: path.clone(),
+            }),
+            TacticClass::Control(ControlTactic::Loop) => {
+                let ProofStep::Loop(clause) = step else {
+                    unreachable!("step class and variant must agree")
+                };
+                let mut result = Ok(());
+                for (segment, phase) in [
+                    (
+                        CertificatePathSegment::LoopInitialize,
+                        &clause.initialize_proof,
+                    ),
+                    (CertificatePathSegment::LoopPreserve, &clause.preserve_proof),
+                ] {
+                    if phase.is_none() {
+                        path.push(segment);
+                        result = Err(CertificateError {
+                            tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
+                            path: path.clone(),
+                        });
+                        path.pop();
+                        break;
+                    }
+                }
+                result
+            }
+            TacticClass::Simple(_) | TacticClass::Control(_) => Ok(()),
+        };
+        path.pop();
+        result?;
+    }
+    Ok(())
 }
 
 fn validate_certificate_tactics(

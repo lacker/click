@@ -2207,19 +2207,38 @@ fn exact_resource_fact_entails(
     }
 }
 
+/// Decides one resource-quantity condition by exact routes only.
+///
+/// Exact indexed lookup first, then the retained atomic condition checker on
+/// the bare condition. Neither route recurses through logical structure, tries
+/// alternative rules, nor scans unrelated propositions, so the work is the
+/// condition's own size plus indexed lookups. A quantity relation that only
+/// follows logically is deliberately not decided here: it becomes an explicit
+/// obligation at the operation that consumes it.
+///
+/// The counted-population helpers in `functions.rs` share this routine.
+/// `quantity_relations_ignore_unrelated_facts` is the scaling regression.
+pub(in crate::kernel) fn quantity_condition_holds(
+    assumptions: &PureFactContext,
+    condition: ConditionTerm,
+) -> bool {
+    assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
+        || assumptions.decide(&condition) == Some(true)
+}
+
 fn resource_quantity_at_least(
     available: &Bitvector32Term,
     required: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
     available == required
-        || assumptions.proves(&Proposition::ConditionIs(
+        || quantity_condition_holds(
+            assumptions,
             ConditionTerm::Bitvector32SignedGreaterEqual(
                 Box::new(available.clone()),
                 Box::new(required.clone()),
             ),
-            true,
-        ))
+        )
 }
 
 fn resource_quantity_is_positive(
@@ -2227,13 +2246,13 @@ fn resource_quantity_is_positive(
     assumptions: &PureFactContext,
 ) -> bool {
     quantity.as_const().is_some_and(|value| value > 0)
-        || assumptions.proves(&Proposition::ConditionIs(
+        || quantity_condition_holds(
+            assumptions,
             ConditionTerm::Bitvector32SignedGreaterThan(
                 Box::new(quantity.clone()),
                 Box::new(Bitvector32Term::Constant(0)),
             ),
-            true,
-        ))
+        )
 }
 
 fn resource_quantity_is_zero(quantity: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
@@ -2280,13 +2299,14 @@ fn consume_exact_resource_fact(
             available_quantity.as_ref().clone(),
             required_quantity.as_ref().clone(),
         );
-        let residual_is_zero = assumptions.proves(&Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(residual.clone()),
-                Box::new(Bitvector32Term::Constant(0)),
-            ),
-            true,
-        ));
+        let residual_is_zero = residual.as_const() == Some(0)
+            || quantity_condition_holds(
+                assumptions,
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(residual.clone()),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+            );
         ResourceFactConsumption::Replace(if residual_is_zero {
             Vec::new()
         } else {
@@ -3208,10 +3228,15 @@ impl CResourceFact {
             element_count,
             element_width,
         ));
-        assumptions.proves(&Proposition::CResourceSeparate {
-            left: allocation_memory,
-            right: self.resource().clone(),
-        })
+        // Exact fact lookup, then the retained atomic separation checker.
+        // The general prover added nothing here but its logical fallbacks
+        // (context inconsistency, singleton substitution), which are proof
+        // search rather than resource theory.
+        let right = self.resource().clone();
+        assumptions.proves_exact(&Proposition::CResourceSeparate {
+            left: allocation_memory.clone(),
+            right: right.clone(),
+        }) || assumptions.proves_resource_separate(&allocation_memory, &right)
     }
 
     pub fn view_token(name: String, arguments: Vec<CValue>) -> Self {
@@ -3247,14 +3272,7 @@ impl CResourceFact {
         }
         match self {
             Self::Own(resource, quantity)
-                if quantity.as_const().is_some_and(|value| value > 0)
-                    || assumptions.proves(&Proposition::ConditionIs(
-                        ConditionTerm::Bitvector32SignedGreaterThan(
-                            Box::new(quantity.as_ref().clone()),
-                            Box::new(Bitvector32Term::Constant(0)),
-                        ),
-                        true,
-                    )) =>
+                if resource_quantity_is_positive(quantity.as_ref(), assumptions) =>
             {
                 Some(Self::View(resource.clone()))
             }

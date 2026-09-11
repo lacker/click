@@ -322,8 +322,8 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     // An unjoined arm's own certificate follows its lineage: the sibling's
     // interleaved step is attributed elsewhere, while the whole chain
     // still lists both.
-    assert_eq!(left_closed.path_certificate().steps().len(), 1);
-    assert_eq!(both_closed.path_certificate().steps().len(), 1);
+    assert_eq!(left_closed.path_certificate().unwrap().steps().len(), 1);
+    assert_eq!(both_closed.path_certificate().unwrap().steps().len(), 1);
     assert_eq!(both_closed.certificate().steps().len(), 2);
 
     // A foreign marker from a second split of the same root is rejected.
@@ -666,7 +666,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
         &[
             ProofStep::Have {
                 proposition: proposition.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()),
             },
             ProofStep::Assumption,
         ]
@@ -676,7 +676,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
     assert!(
         root.apply_step(ProofStep::Have {
             proposition: proposition.clone(),
-            proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Intro])),
+            proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Intro]).unwrap()),
         })
         .is_err(),
         "an invalid explicit Have body must be rejected"
@@ -689,7 +689,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
     let checked_have = root
         .apply_step(ProofStep::Have {
             proposition: proposition.clone(),
-            proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize])),
+            proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()),
         })
         .expect("an explicit Have step should use the owned checked scope");
     let complete = checked_have
@@ -700,7 +700,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
         &[
             ProofStep::Have {
                 proposition,
-                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()),
             },
             ProofStep::Assumption,
         ]
@@ -791,7 +791,9 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
             &[
                 ProofStep::Have {
                     proposition: proposition.clone(),
-                    proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
+                    proof: Box::new(
+                        ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()
+                    ),
                 },
                 ProofStep::Assumption,
             ]
@@ -801,7 +803,7 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         let complete = root
             .apply_step(ProofStep::Have {
                 proposition: proposition.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()),
             })
             .expect("the explicit Have should check through its owned scope")
             .apply_step(ProofStep::Assumption)
@@ -816,7 +818,9 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
             &[
                 ProofStep::Have {
                     proposition: proposition.clone(),
-                    proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
+                    proof: Box::new(
+                        ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()
+                    ),
                 },
                 ProofStep::Assumption,
             ]
@@ -1188,7 +1192,8 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
             &[unfold.clone(), ProofStep::Assumption]
         );
 
-        let certificate = ProofCertificate::from_steps(vec![unfold.clone(), ProofStep::Assumption]);
+        let certificate =
+            ProofCertificate::from_steps(vec![unfold.clone(), ProofStep::Assumption]).unwrap();
         let checked = root
             .try_planned_linear_script(&certificate.to_proof_tactics())
             .expect("the explicit proposition unfold script should apply through Proof")
@@ -1266,7 +1271,8 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
     let certificate = ProofCertificate::from_steps(vec![
         ProofStep::UnfoldPredicate("selected".to_string()),
         ProofStep::Assumption,
-    ]);
+    ])
+    .unwrap();
     let checked = root
         .try_planned_linear_script(&certificate.to_proof_tactics())
         .expect("fixed-state unfold should use the shared Proof script driver")
@@ -7488,13 +7494,18 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             closed.certificate().steps(),
             &[ProofStep::Open {
                 resource: resource.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![
-                    ProofStep::Have {
-                        proposition: reflexive.clone(),
-                        proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Assumption,])),
-                    },
-                    ProofStep::Step,
-                ])),
+                proof: Box::new(
+                    ProofCertificate::from_steps(vec![
+                        ProofStep::Have {
+                            proposition: reflexive.clone(),
+                            proof: Box::new(
+                                ProofCertificate::from_steps(vec![ProofStep::Assumption]).unwrap(),
+                            ),
+                        },
+                        ProofStep::Step,
+                    ])
+                    .unwrap(),
+                ),
             }]
         );
         assert!(root.state.shares_state_with(&retained_root.state));
@@ -7547,10 +7558,9 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             terminal.certificate().steps(),
             &[ProofStep::Open {
                 resource: resource.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![
-                    ProofStep::Step,
-                    ProofStep::Step,
-                ])),
+                proof: Box::new(
+                    ProofCertificate::from_steps(vec![ProofStep::Step, ProofStep::Step]).unwrap(),
+                ),
             }]
         );
     }
@@ -8234,7 +8244,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
         let explicit = root
             .apply_step(ProofStep::Have {
                 proposition: surface.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()),
             })
             .unwrap();
         assert!(explicit.facts().contains(&body_kernel));
@@ -8327,8 +8337,11 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 
         let outside_loop = make_root(false);
         assert!(
-            outside_loop.apply_step(ProofStep::CloseInvariants).is_err(),
-            "the step is restricted to loop-region proofs"
+            outside_loop
+                .state
+                .request_frontier_invariant_closure()
+                .is_err(),
+            "closure is restricted to loop-region proofs"
         );
         assert!(outside_loop.certificate().steps().is_empty());
 
@@ -8347,6 +8360,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             .open_invariant_body(&CState::new(), &checks, |_| PropositionPresentation {
                 surface: None,
                 surface_bindings: PersistentMap::default(),
+                ..PropositionPresentation::default()
             })
             .unwrap();
         let completed = body.apply_normalize().ok().unwrap();
@@ -8384,16 +8398,21 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         );
         let retained_root = root.clone();
         let before = fact_node_allocations();
-        let closed = root
-            .apply_step(ProofStep::CloseInvariants)
-            .expect("the first close should produce a checked descendant");
+        let Ok(requested) = root.state.request_frontier_invariant_closure() else {
+            panic!("the first close should produce a checked descendant")
+        };
+        let closed = root.with_kernel_state(requested);
         // The one permitted node rewrites the sole goal's execution
         // snapshot in the persistent goal collection; the bound stays
         // independent of ambient fact count.
         assert!(fact_node_allocations() - before <= 1);
         assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
-        assert_eq!(closed.certificate().steps(), &[ProofStep::CloseInvariants]);
+        // The closure request is a semantic-core update, not a certificate
+        // leaf. `close_invariants by`, carrying the checked body, is the only
+        // step that records a closure; a bare request spells nothing a proof
+        // could write, so it contributes no provenance of its own.
+        assert!(closed.certificate().steps().is_empty());
         let execution = closed
             .execution()
             .expect("the successor retains execution state");
@@ -8402,8 +8421,10 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             execution.presentation.invariant_closer_step.is_none(),
             "source timing metadata is attached only at the check adapter boundary"
         );
-        assert!(closed.apply_step(ProofStep::CloseInvariants).is_err());
-        assert_eq!(closed.certificate().steps(), &[ProofStep::CloseInvariants]);
+        assert!(
+            closed.state.request_frontier_invariant_closure().is_err(),
+            "one path closes its invariant bundle at most once"
+        );
     }
 }
 
@@ -8490,9 +8511,11 @@ fn explicit_invariant_body_scales_and_supplies_kernel_validation() {
             [ProofStep::CloseInvariantsBy(_)]
         ));
         // A bare request is not evidence; the completed kernel-owned scope is.
+        let Ok(requested) = root.state.request_frontier_invariant_closure() else {
+            panic!("an unclosed loop frontier accepts a closure request")
+        };
         assert!(
-            root.apply_step(ProofStep::CloseInvariants)
-                .unwrap()
+            root.with_kernel_state(requested)
                 .certify_loop_invariant_bundle(&checks)
                 .is_err()
         );

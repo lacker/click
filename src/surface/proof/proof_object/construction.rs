@@ -3,6 +3,39 @@
 use super::*;
 
 impl<'a> Proof<'a> {
+    /// Attaches the head chain the kernel recorded while lowering this
+    /// root goal.
+    ///
+    /// A goal constructor receives an already lowered proposition, so the
+    /// record arrives beside it. Installing it is presentation only: the
+    /// checked proposition, facts, and provenance node are unchanged, and
+    /// `None` (no lowering performed for this goal) leaves the goal in the
+    /// unrecorded state where introductions refine the written form
+    /// structurally.
+    pub(in crate::surface::proof) fn with_recorded_goal_introductions(
+        &self,
+        introductions: Option<crate::kernel::LoweringIntroductions>,
+    ) -> Self {
+        let Some(introductions) = introductions else {
+            return self.clone();
+        };
+        let Some(state) = self
+            .state
+            .with_focused_proposition_presentation(|presentation| PropositionPresentation {
+                introductions: GoalIntroductions::recorded(introductions.clone()),
+                ..presentation.clone()
+            })
+        else {
+            return self.clone();
+        };
+        Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state,
+            node: self.node.clone(),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::surface::proof) fn for_contract_refinement_goal(
         claim_label: &'a str,

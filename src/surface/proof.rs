@@ -1227,7 +1227,8 @@ mod certificate_tests {
                     None,
                 )
             },
-        );
+        )
+        .map(|(certificate, _)| certificate);
         let error =
             failed.expect_err("a perturbed smart certificate must not be reported as success");
         assert!(

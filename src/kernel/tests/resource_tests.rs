@@ -3451,3 +3451,218 @@ fn integer_resource_fields_require_mathematical_values() {
     );
     assert!(make(int32(1).into()).is_none());
 }
+
+/// Builds a fact context of `size` unrelated bounded variables, then adds the
+/// facts a quantity or separation query actually names. Package 3's exact
+/// routes must answer from the named facts alone.
+fn unrelated_order_fact_context(size: usize) -> PureFactContext {
+    let mut assumptions = PureFactContext::new();
+    for index in 0..size {
+        assumptions = assumptions
+            .assume_condition(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Variable(Variable(960_100 + index as u64)),
+                    Bitvector32Term::Constant(1_000),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(
+                    Bitvector32Term::Variable(Variable(960_100 + index as u64)),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            );
+    }
+    assumptions
+}
+
+/// Package 3 regression. The quantity relations behind counted populations and
+/// the resource algebra are decided by exact lookup and the retained atomic
+/// condition checker, so an ambient context of unrelated bounded variables must
+/// not change their work. The general prover this replaced scanned every
+/// condition fact for an inconsistency and every proposition fact for a
+/// singleton substitution, so its work grew with `size`.
+#[test]
+fn quantity_relations_ignore_unrelated_facts() {
+    let count = Bitvector32Term::Variable(Variable(960_001));
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let assumptions = unrelated_order_fact_context(size).assume_condition(
+                ConditionTerm::equal(count.clone(), Bitvector32Term::Constant(3)),
+                true,
+            );
+            let (decided, work) = crate::instrumentation::measure_deterministic_work(|| {
+                [
+                    // `population_quantity_is_positive` / `resource_quantity_is_positive`
+                    quantity_condition_holds(
+                        &assumptions,
+                        ConditionTerm::signed_greater_than(
+                            count.clone(),
+                            Bitvector32Term::Constant(0),
+                        ),
+                    ),
+                    // `resource_quantity_at_least`
+                    quantity_condition_holds(
+                        &assumptions,
+                        ConditionTerm::signed_greater_equal(
+                            count.clone(),
+                            Bitvector32Term::Constant(2),
+                        ),
+                    ),
+                    // `population_quantities_are_equal`
+                    quantity_condition_holds(
+                        &assumptions,
+                        ConditionTerm::equal(count.clone(), Bitvector32Term::Constant(3)),
+                    ),
+                    // A relation that does not follow: the miss must also be
+                    // flat, and must not be repaired by a broader search.
+                    quantity_condition_holds(
+                        &assumptions,
+                        ConditionTerm::equal(count.clone(), Bitvector32Term::Constant(4)),
+                    ),
+                ]
+            });
+            assert_eq!(
+                decided,
+                [true, true, true, false],
+                "size {size}: exact quantity routes decided the wrong relations"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    let base_work = samples[0].1;
+    assert!(
+        samples
+            .iter()
+            .all(|(_, work)| *work <= base_work.saturating_add(2)),
+        "quantity relations scanned unrelated facts: {samples:?}"
+    );
+}
+
+/// The same curve through the resource-algebra entry points that consume those
+/// relations: symbolic-quantity entailment (`resource_quantity_at_least` and
+/// the residual test in `consume_exact_resource_fact`) and access-mode coring
+/// (`resource_quantity_is_positive`).
+#[test]
+fn symbolic_quantity_consumption_ignores_unrelated_facts() {
+    let available_quantity = Bitvector32Term::Variable(Variable(960_011));
+    let required_quantity = Bitvector32Term::Variable(Variable(960_012));
+    let resource = CResource::Token {
+        name: "counted".to_string(),
+        arguments: vec![int32(7).into()].into(),
+    };
+    let available = CResourceFact::own_quantity(resource.clone(), available_quantity.clone());
+    let required = CResourceFact::own_quantity(resource.clone(), required_quantity.clone());
+    let empty_quantity = Bitvector32Term::Variable(Variable(960_014));
+    let empty_core = CResourceFact::own_quantity(resource, empty_quantity.clone());
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let assumptions = unrelated_order_fact_context(size)
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(
+                        available_quantity.clone(),
+                        required_quantity.clone(),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_greater_than(
+                        available_quantity.clone(),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::equal(empty_quantity.clone(), Bitvector32Term::Constant(0)),
+                    true,
+                );
+            let context = ResourceContext::new().unchecked_with_fact(available.clone());
+            let (outcome, work) = crate::instrumentation::measure_deterministic_work(|| {
+                (
+                    context.satisfies_fact(&required, &assumptions),
+                    available.core_with_assumptions(&assumptions).is_some(),
+                    // The miss matters too: an exactly-zero quantity has no
+                    // access-mode core, and the general prover answered that
+                    // only after scanning every ambient condition fact for an
+                    // inconsistency and every proposition fact for a singleton
+                    // substitution.
+                    empty_core.core_with_assumptions(&assumptions).is_some(),
+                )
+            });
+            assert_eq!(
+                outcome,
+                (true, true, false),
+                "size {size}: symbolic quantity entailment lost its exact premise"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    let base_work = samples[0].1;
+    assert!(
+        samples
+            .iter()
+            .all(|(_, work)| *work <= base_work.saturating_add(2)),
+        "symbolic quantity consumption scanned unrelated facts: {samples:?}"
+    );
+}
+
+/// Allocation separation now asks the retained atomic resource checker rather
+/// than the general prover, so the same flat curve applies to it.
+#[test]
+fn allocation_separation_ignores_unrelated_facts() {
+    let allocation_base = Pointer {
+        block: "package-3-allocation".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let held = own_memory_fact(
+        Pointer {
+            block: "package-3-held".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        0,
+        8,
+    );
+    let overlapping = own_memory_fact(allocation_base.clone(), 0, 8);
+    let bytes = Bitvector32Term::Constant(16);
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let assumptions = unrelated_order_fact_context(size);
+            let (outcome, work) = crate::instrumentation::measure_deterministic_work(|| {
+                (
+                    held.is_proven_separate_from_allocation_with_element_width(
+                        &allocation_base,
+                        &bytes,
+                        4,
+                        &assumptions,
+                    ),
+                    overlapping.is_proven_separate_from_allocation_with_element_width(
+                        &allocation_base,
+                        &bytes,
+                        4,
+                        &assumptions,
+                    ),
+                )
+            });
+            assert_eq!(
+                outcome,
+                (true, false),
+                "size {size}: allocation separation decided the wrong blocks"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    let base_work = samples[0].1;
+    assert!(
+        samples
+            .iter()
+            .all(|(_, work)| *work <= base_work.saturating_add(2)),
+        "allocation separation scanned unrelated facts: {samples:?}"
+    );
+}
