@@ -1881,49 +1881,64 @@ fn check_direct_pure_goal_with_proof(
 }
 
 /// Names whose declarations are checked directly against kernel arithmetic axioms.
+fn integer_round_trip_destination(name: &str) -> Option<crate::kernel::MachineIntegerType> {
+    use crate::kernel::MachineIntegerType;
+    Some(match name {
+        "integer_to_int16_round_trip" => MachineIntegerType::Int16,
+        "integer_to_int32_round_trip" => MachineIntegerType::Int32,
+        "integer_to_uint8_round_trip" => MachineIntegerType::UInt8,
+        "integer_to_uint16_round_trip" => MachineIntegerType::UInt16,
+        "integer_to_uint32_round_trip" => MachineIntegerType::UInt32,
+        "integer_to_int64_round_trip" => MachineIntegerType::Int64,
+        "integer_to_uint64_round_trip" => MachineIntegerType::UInt64,
+        _ => return None,
+    })
+}
+
 pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
-    matches!(
-        name,
-        "int32_add_defined_by_integer_bounds"
-            | "int32_add_to_integer"
-            | "int32_subtract_to_integer"
-            | "int32_increment_upper_bound"
-            | "int32_increment_strictly_increases"
-            | "int32_increment_lower_bound"
-            | "int32_increment_greater_equal_lower_bound"
-            | "int32_increment_strict_greater_lower_bound"
-            | "int32_increment_preserves_order"
-            | "int32_le_lt_transitive"
-            | "int32_le_transitive"
-            | "int32_lt_le_transitive"
-            | "int32_lt_transitive"
-            | "int32_ge_transitive"
-            | "int32_ge_implies_reversed_le"
-            | "int32_le_implies_reversed_ge"
-            | "int32_le_and_not_lt_implies_eq"
-            | "int32_le_and_neq_implies_lt"
-            | "int32_ge_and_not_gt_implies_eq"
-            | "int32_le_antisymmetric"
-            | "int32_positive_is_nonnegative"
-            | "int32_lt_implies_le"
-            | "int32_lt_implies_neq"
-            | "int32_not_lt_implies_ge"
-            | "int32_strictly_positive_is_nonnegative"
-            | "int32_increment_below_max_is_defined"
-            | "int32_one_plus_below_max_is_defined"
-            | "int32_one_plus_strictly_increases"
-            | "int32_nonnegative_add_within_max_is_defined"
-            | "int32_nonnegative_subtract_within_value_is_defined"
-            | "int32_move_one_from_right_to_left_preserves_sum"
-            | "int32_add_nonnegative_right_is_at_least_left"
-            | "int32_add_nonnegative_left_is_at_least_right"
-            | "int32_above_one_predecessor_is_at_least_one"
-            | "int32_positive_predecessor_is_nonnegative"
-            | "int32_positive_predecessor_strictly_decreases"
-            | "int32_nonnegative_predecessor_upper_bound"
-            | "int32_successor_le_implies_lt"
-            | "int32_lt_successor_implies_le"
-    )
+    integer_round_trip_destination(name).is_some()
+        || matches!(
+            name,
+            "int32_add_defined_by_integer_bounds"
+                | "int32_add_to_integer"
+                | "int32_subtract_to_integer"
+                | "int32_increment_upper_bound"
+                | "int32_increment_strictly_increases"
+                | "int32_increment_lower_bound"
+                | "int32_increment_greater_equal_lower_bound"
+                | "int32_increment_strict_greater_lower_bound"
+                | "int32_increment_preserves_order"
+                | "int32_le_lt_transitive"
+                | "int32_le_transitive"
+                | "int32_lt_le_transitive"
+                | "int32_lt_transitive"
+                | "int32_ge_transitive"
+                | "int32_ge_implies_reversed_le"
+                | "int32_le_implies_reversed_ge"
+                | "int32_le_and_not_lt_implies_eq"
+                | "int32_le_and_neq_implies_lt"
+                | "int32_ge_and_not_gt_implies_eq"
+                | "int32_le_antisymmetric"
+                | "int32_positive_is_nonnegative"
+                | "int32_lt_implies_le"
+                | "int32_lt_implies_neq"
+                | "int32_not_lt_implies_ge"
+                | "int32_strictly_positive_is_nonnegative"
+                | "int32_increment_below_max_is_defined"
+                | "int32_one_plus_below_max_is_defined"
+                | "int32_one_plus_strictly_increases"
+                | "int32_nonnegative_add_within_max_is_defined"
+                | "int32_nonnegative_subtract_within_value_is_defined"
+                | "int32_move_one_from_right_to_left_preserves_sum"
+                | "int32_add_nonnegative_right_is_at_least_left"
+                | "int32_add_nonnegative_left_is_at_least_right"
+                | "int32_above_one_predecessor_is_at_least_one"
+                | "int32_positive_predecessor_is_nonnegative"
+                | "int32_positive_predecessor_strictly_decreases"
+                | "int32_nonnegative_predecessor_upper_bound"
+                | "int32_successor_le_implies_lt"
+                | "int32_lt_successor_implies_le"
+        )
 }
 
 fn verify_kernel_standard_theorem_axiom(
@@ -1935,6 +1950,7 @@ fn verify_kernel_standard_theorem_axiom(
     goal: Proposition,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let (parameter_count, requirement_count) = match theorem.name() {
+        name if integer_round_trip_destination(name).is_some() => (1, 2),
         "int32_add_defined_by_integer_bounds" => (2, 2),
         "int32_add_to_integer" | "int32_subtract_to_integer" => (2, 1),
         "int32_increment_upper_bound" | "int32_increment_strictly_increases" => (2, 1),
@@ -1982,132 +1998,150 @@ fn verify_kernel_standard_theorem_axiom(
             "`{claim_label}` does not have the declaration shape required by its kernel axiom",
         )));
     }
-    let int32_parameter = |index: usize| {
-        let parameter = &theorem.parameters()[index];
-        match context.values.get(parameter.name()) {
-            Some(CValue::Int32(term)) => Ok(term.clone()),
-            _ => Err(ClickError::new(format!(
-                "`{claim_label}` kernel parameter `{}` must be int32",
-                parameter.name()
-            ))),
-        }
-    };
-    let value = int32_parameter(0)?;
-    let axiom = match theorem.name() {
-        "int32_add_defined_by_integer_bounds" => {
-            crate::kernel::prove_int32_add_defined_by_integer_bounds(value, int32_parameter(1)?)
-        }
-        "int32_add_to_integer" => {
-            crate::kernel::prove_int32_add_to_integer(value, int32_parameter(1)?)
-        }
-        "int32_subtract_to_integer" => {
-            crate::kernel::prove_int32_subtract_to_integer(value, int32_parameter(1)?)
-        }
-        "int32_increment_upper_bound" => {
-            prove_int32_increment_upper_bound(value, int32_parameter(1)?)
-        }
-        "int32_increment_strictly_increases" => {
-            prove_int32_increment_strictly_increases(value, int32_parameter(1)?)
-        }
-        "int32_increment_lower_bound" => {
-            prove_int32_increment_lower_bound(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_increment_greater_equal_lower_bound" => {
-            prove_int32_increment_greater_equal_lower_bound(
+    let axiom = if let Some(destination) = integer_round_trip_destination(theorem.name()) {
+        let parameter = &theorem.parameters()[0];
+        let Some(crate::kernel::SpecIntegerExpression::Term(value)) =
+            context.integer_values.get(parameter.name())
+        else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` kernel parameter must be Integer"
+            )));
+        };
+        crate::kernel::prove_integer_machine_round_trip(value.clone(), destination)
+    } else {
+        let int32_parameter = |index: usize| {
+            let parameter = &theorem.parameters()[index];
+            match context.values.get(parameter.name()) {
+                Some(CValue::Int32(term)) => Ok(term.clone()),
+                _ => Err(ClickError::new(format!(
+                    "`{claim_label}` kernel parameter `{}` must be int32",
+                    parameter.name()
+                ))),
+            }
+        };
+        let value = int32_parameter(0)?;
+        match theorem.name() {
+            "int32_add_defined_by_integer_bounds" => {
+                crate::kernel::prove_int32_add_defined_by_integer_bounds(value, int32_parameter(1)?)
+            }
+            "int32_add_to_integer" => {
+                crate::kernel::prove_int32_add_to_integer(value, int32_parameter(1)?)
+            }
+            "int32_subtract_to_integer" => {
+                crate::kernel::prove_int32_subtract_to_integer(value, int32_parameter(1)?)
+            }
+            "int32_increment_upper_bound" => {
+                prove_int32_increment_upper_bound(value, int32_parameter(1)?)
+            }
+            "int32_increment_strictly_increases" => {
+                prove_int32_increment_strictly_increases(value, int32_parameter(1)?)
+            }
+            "int32_increment_lower_bound" => {
+                prove_int32_increment_lower_bound(value, int32_parameter(1)?, int32_parameter(2)?)
+            }
+            "int32_increment_greater_equal_lower_bound" => {
+                prove_int32_increment_greater_equal_lower_bound(
+                    value,
+                    int32_parameter(1)?,
+                    int32_parameter(2)?,
+                )
+            }
+            "int32_increment_strict_greater_lower_bound" => {
+                prove_int32_increment_strict_greater_lower_bound(
+                    value,
+                    int32_parameter(1)?,
+                    int32_parameter(2)?,
+                )
+            }
+            "int32_increment_preserves_order" => prove_int32_increment_preserves_order(
                 value,
                 int32_parameter(1)?,
                 int32_parameter(2)?,
-            )
+            ),
+            "int32_successor_le_implies_lt" => {
+                prove_int32_successor_le_implies_lt(value, int32_parameter(1)?)
+            }
+            "int32_lt_successor_implies_le" => {
+                prove_int32_lt_successor_implies_le(value, int32_parameter(1)?)
+            }
+            "int32_le_antisymmetric" => prove_int32_le_antisymmetric(value, int32_parameter(1)?),
+            "int32_le_and_not_lt_implies_eq" => {
+                prove_int32_le_and_not_lt_implies_eq(value, int32_parameter(1)?)
+            }
+            "int32_le_and_neq_implies_lt" => {
+                prove_int32_le_and_neq_implies_lt(value, int32_parameter(1)?)
+            }
+            "int32_ge_and_not_gt_implies_eq" => {
+                prove_int32_ge_and_not_gt_implies_eq(value, int32_parameter(1)?)
+            }
+            "int32_positive_is_nonnegative" => prove_int32_positive_is_nonnegative(value),
+            "int32_lt_implies_le" => prove_int32_lt_implies_le(value, int32_parameter(1)?),
+            "int32_lt_implies_neq" => prove_int32_lt_implies_neq(value, int32_parameter(1)?),
+            "int32_not_lt_implies_ge" => prove_int32_not_lt_implies_ge(value, int32_parameter(1)?),
+            "int32_strictly_positive_is_nonnegative" => {
+                prove_int32_strictly_positive_is_nonnegative(value)
+            }
+            "int32_increment_below_max_is_defined" => {
+                prove_int32_increment_below_max_is_defined(value)
+            }
+            "int32_one_plus_below_max_is_defined" => {
+                prove_int32_one_plus_below_max_is_defined(value)
+            }
+            "int32_one_plus_strictly_increases" => prove_int32_one_plus_strictly_increases(value),
+            "int32_nonnegative_add_within_max_is_defined" => {
+                prove_int32_nonnegative_add_within_max_is_defined(value, int32_parameter(1)?)
+            }
+            "int32_nonnegative_subtract_within_value_is_defined" => {
+                prove_int32_nonnegative_subtract_within_value_is_defined(value, int32_parameter(1)?)
+            }
+            "int32_move_one_from_right_to_left_preserves_sum" => {
+                prove_int32_move_one_from_right_to_left_preserves_sum(
+                    value.clone(),
+                    int32_parameter(1)?,
+                    int32_parameter(2)?,
+                )
+            }
+            "int32_add_nonnegative_right_is_at_least_left" => {
+                prove_int32_add_nonnegative_right_is_at_least_left(value, int32_parameter(1)?)
+            }
+            "int32_add_nonnegative_left_is_at_least_right" => {
+                prove_int32_add_nonnegative_left_is_at_least_right(value, int32_parameter(1)?)
+            }
+            "int32_above_one_predecessor_is_at_least_one" => {
+                prove_int32_above_one_predecessor_is_at_least_one(value)
+            }
+            "int32_positive_predecessor_is_nonnegative" => {
+                prove_int32_positive_predecessor_is_nonnegative(value)
+            }
+            "int32_positive_predecessor_strictly_decreases" => {
+                prove_int32_positive_predecessor_strictly_decreases(value)
+            }
+            "int32_nonnegative_predecessor_upper_bound" => {
+                prove_int32_nonnegative_predecessor_upper_bound(value, int32_parameter(1)?)
+            }
+            "int32_le_lt_transitive" => {
+                prove_int32_le_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
+            }
+            "int32_le_transitive" => {
+                prove_int32_le_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
+            }
+            "int32_lt_le_transitive" => {
+                prove_int32_lt_le_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
+            }
+            "int32_lt_transitive" => {
+                prove_int32_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
+            }
+            "int32_ge_transitive" => {
+                prove_int32_ge_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
+            }
+            "int32_ge_implies_reversed_le" => {
+                prove_int32_ge_implies_reversed_le(value, int32_parameter(1)?)
+            }
+            "int32_le_implies_reversed_ge" => {
+                prove_int32_le_implies_reversed_ge(value, int32_parameter(1)?)
+            }
+            _ => unreachable!("checked above"),
         }
-        "int32_increment_strict_greater_lower_bound" => {
-            prove_int32_increment_strict_greater_lower_bound(
-                value,
-                int32_parameter(1)?,
-                int32_parameter(2)?,
-            )
-        }
-        "int32_increment_preserves_order" => {
-            prove_int32_increment_preserves_order(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_successor_le_implies_lt" => {
-            prove_int32_successor_le_implies_lt(value, int32_parameter(1)?)
-        }
-        "int32_lt_successor_implies_le" => {
-            prove_int32_lt_successor_implies_le(value, int32_parameter(1)?)
-        }
-        "int32_le_antisymmetric" => prove_int32_le_antisymmetric(value, int32_parameter(1)?),
-        "int32_le_and_not_lt_implies_eq" => {
-            prove_int32_le_and_not_lt_implies_eq(value, int32_parameter(1)?)
-        }
-        "int32_le_and_neq_implies_lt" => {
-            prove_int32_le_and_neq_implies_lt(value, int32_parameter(1)?)
-        }
-        "int32_ge_and_not_gt_implies_eq" => {
-            prove_int32_ge_and_not_gt_implies_eq(value, int32_parameter(1)?)
-        }
-        "int32_positive_is_nonnegative" => prove_int32_positive_is_nonnegative(value),
-        "int32_lt_implies_le" => prove_int32_lt_implies_le(value, int32_parameter(1)?),
-        "int32_lt_implies_neq" => prove_int32_lt_implies_neq(value, int32_parameter(1)?),
-        "int32_not_lt_implies_ge" => prove_int32_not_lt_implies_ge(value, int32_parameter(1)?),
-        "int32_strictly_positive_is_nonnegative" => {
-            prove_int32_strictly_positive_is_nonnegative(value)
-        }
-        "int32_increment_below_max_is_defined" => prove_int32_increment_below_max_is_defined(value),
-        "int32_one_plus_below_max_is_defined" => prove_int32_one_plus_below_max_is_defined(value),
-        "int32_one_plus_strictly_increases" => prove_int32_one_plus_strictly_increases(value),
-        "int32_nonnegative_add_within_max_is_defined" => {
-            prove_int32_nonnegative_add_within_max_is_defined(value, int32_parameter(1)?)
-        }
-        "int32_nonnegative_subtract_within_value_is_defined" => {
-            prove_int32_nonnegative_subtract_within_value_is_defined(value, int32_parameter(1)?)
-        }
-        "int32_move_one_from_right_to_left_preserves_sum" => {
-            prove_int32_move_one_from_right_to_left_preserves_sum(
-                value.clone(),
-                int32_parameter(1)?,
-                int32_parameter(2)?,
-            )
-        }
-        "int32_add_nonnegative_right_is_at_least_left" => {
-            prove_int32_add_nonnegative_right_is_at_least_left(value, int32_parameter(1)?)
-        }
-        "int32_add_nonnegative_left_is_at_least_right" => {
-            prove_int32_add_nonnegative_left_is_at_least_right(value, int32_parameter(1)?)
-        }
-        "int32_above_one_predecessor_is_at_least_one" => {
-            prove_int32_above_one_predecessor_is_at_least_one(value)
-        }
-        "int32_positive_predecessor_is_nonnegative" => {
-            prove_int32_positive_predecessor_is_nonnegative(value)
-        }
-        "int32_positive_predecessor_strictly_decreases" => {
-            prove_int32_positive_predecessor_strictly_decreases(value)
-        }
-        "int32_nonnegative_predecessor_upper_bound" => {
-            prove_int32_nonnegative_predecessor_upper_bound(value, int32_parameter(1)?)
-        }
-        "int32_le_lt_transitive" => {
-            prove_int32_le_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_le_transitive" => {
-            prove_int32_le_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_lt_le_transitive" => {
-            prove_int32_lt_le_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_lt_transitive" => {
-            prove_int32_lt_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_ge_transitive" => {
-            prove_int32_ge_transitive(value, int32_parameter(1)?, int32_parameter(2)?)
-        }
-        "int32_ge_implies_reversed_le" => {
-            prove_int32_ge_implies_reversed_le(value, int32_parameter(1)?)
-        }
-        "int32_le_implies_reversed_ge" => {
-            prove_int32_le_implies_reversed_ge(value, int32_parameter(1)?)
-        }
-        _ => unreachable!("checked above"),
     };
     let expected = context
         .requires
@@ -4176,9 +4210,10 @@ fn prove_pure_theorem_goal(
     if use_simp {
         match simp_proposition(&goal, &assumptions) {
             SimpProposition::True => return Ok(()),
-            simplified => {
+            _ => {
                 return Err(ClickError::new(format!(
-                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  {}",
+                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {}\n  {}",
+                    describe_pure_fact(&goal, &[], &[]),
                     describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
                 )));
             }

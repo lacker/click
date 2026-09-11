@@ -129,10 +129,30 @@ value.
 The numeric proof shape is deliberately small but loop measures may be
 arbitrary current int32 expressions or a nonempty lexicographic tuple of
 expressions. A loop back edge must keep every component nonnegative and make
-one component strictly smaller while keeping all earlier components equal; the
-kernel checks each component's C int32 arithmetic under the loop guard,
-function preconditions, and loop invariants. For example, `decreases n - i`
-ranks a loop that increments `i` toward `n`.
+one component strictly smaller while keeping all earlier components equal. For
+example, `decreases n - i` ranks a loop that increments `i` toward `n`.
+
+A loop's ranking obligations are members of the back-edge invariant bundle,
+not a separate kernel pass. When a loop declares `decreases`, the bundle its
+`close_invariants` closer proves gains, after the invariants in declaration
+order, one `0 <= component` obligation per declared component in declaration
+order, then one decrease obligation. For a single component that obligation is
+`post < pre`; for a tuple it is the disjunction over pivots, `post[0] < pre[0]`
+or `post[0] == pre[0] and post[1] < pre[1]`, and so on, where `pre` reads the
+component at the start of the iteration and `post` at the back edge. Choosing
+the pivot is therefore an ordinary `left` or `right` arm choice that the proof
+makes and [`click expand`](../cli/expand.md) prints, not a search the kernel
+performs. `close_invariants()` plans those members with the same bounded
+search it uses for the invariants; where it misses, spell them in a
+`close_invariants by { ... }` body, whose `both { ... } and { ... }` structure
+follows the member order above. An explicit closer body written before a
+`decreases` clause existed fails promptly, and the diagnostic names the
+ranking members the bundle now carries.
+
+Arithmetic premises for those members are the cited ones only, so a member is
+closed with `arithmetic() using { ... }` naming the guard, precondition, and
+invariant facts it needs. The iteration's entry values are available as
+`at(statement(N).entry, x)`, the same spelling loop-body premises use.
 <!-- verified-example: mdtests/c_decreases_lexicographic_loop.md -->
 ```click
 loop {
@@ -291,8 +311,15 @@ Resources may declare `field total: Integer;`: folding checks the resource's
 facts, and `old(model.total)` retains the entry value across updates.
 See [resource field examples](https://github.com/lacker/click/blob/master/mdtests/integer_resource_fields.md).
 
-Integer quantifiers, pure-function signatures, folds, and conversions to `Nat`
-are still being implemented. Division,
+Pure functions with Integer parameters and results are supported. Calls remain
+opaque until an explicit `unfold(function(args))` exposes the defining equation.
+Arithmetic may treat an opaque result as an unknown Integer without unfolding.
+A smart tactic may emit a checked unfold step; expansion makes that step visible.
+General function argument types and arguments requiring deferred evaluation are
+still being implemented.
+See [the function example](https://github.com/lacker/click/blob/master/mdtests/integer_function_successor.md).
+
+Integer quantifiers, folds, and conversions to `Nat` are still being implemented. Division,
 remainder, and bitwise operators are also unavailable. `Nat` remains the
 existing [structural natural-number datatype](../library/index.md#natural-numbers).
 

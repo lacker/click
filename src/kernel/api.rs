@@ -368,6 +368,43 @@ pub fn c_loop_invariant_obligations_at_back_edge(
     .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
 }
 
+/// Refuses a loop `decreases` component whose variables can be written
+/// through an escaped address. See the termination module for the rule.
+pub fn c_reject_address_escaped_loop_measures(
+    function_name: &str,
+    measures: &[CExpression],
+    body: &CStatement,
+) -> Result<(), String> {
+    crate::kernel::termination::c_reject_address_escaped_loop_measures(
+        function_name,
+        measures,
+        body,
+    )
+}
+
+/// The source form of one declared `decreases` component, for diagnostics.
+pub fn c_ranking_measure_source(measure: &CExpression) -> String {
+    crate::kernel::termination::c_ranking_measure_display(measure)
+}
+
+/// The source form of a whole declared `decreases` clause, for diagnostics.
+pub fn c_ranking_measures_source(measures: &[CExpression]) -> String {
+    crate::kernel::termination::c_ranking_measures_display(measures)
+}
+
+/// The ranked loop's back-edge bundle members, after its invariants.
+///
+/// `iteration_entry_state` reads each declared component at preserve entry
+/// and `state` at the back edge. The member order is fixed by
+/// `collect_loop_ranking_obligations`; see that function for the shape.
+pub fn c_loop_ranking_obligations_at_back_edge(
+    state: &CState,
+    iteration_entry_state: &CState,
+    ranking_measures: &[CExpression],
+) -> Result<Vec<ProofObligation>, String> {
+    collect_loop_ranking_obligations(state, iteration_entry_state, ranking_measures)
+}
+
 pub fn c_loop_invariant_obligations_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
@@ -1155,6 +1192,7 @@ pub fn c_while_with_invariant_and_effect_checks(
         invariant_checks,
         effect_checks,
         resource_specs: Vec::new(),
+        ranking_measures: Vec::new(),
         do_while: false,
         body: Box::new(body),
     }
@@ -1176,6 +1214,25 @@ impl CStatement {
         }
         self
     }
+
+    /// Declares the loop's `decreases` components in source order.
+    ///
+    /// An empty declaration leaves the loop unranked, which is what every
+    /// loop without a `decreases` clause is. The components travel with the
+    /// loop head so the back-edge invariant bundle and the whole-function
+    /// termination pass agree on exactly which measure was checked.
+    pub fn with_loop_ranking_measures(mut self, measures: Vec<CExpression>) -> Self {
+        if measures.is_empty() {
+            return self;
+        }
+        if let Self::While {
+            ranking_measures, ..
+        } = &mut self
+        {
+            *ranking_measures = measures;
+        }
+        self
+    }
 }
 
 pub fn c_do_while(condition: CExpression, body: CStatement) -> CStatement {
@@ -1194,6 +1251,7 @@ pub fn c_do_while_with_invariant_and_effect_checks(
         invariant_checks,
         effect_checks,
         resource_specs: Vec::new(),
+        ranking_measures: Vec::new(),
         do_while: true,
         body: Box::new(body),
     }
@@ -2242,6 +2300,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         invariant_checks,
         effect_checks,
         resource_specs,
+        ranking_measures,
         body,
         do_while,
     } = &statement
@@ -2268,6 +2327,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         invariant_checks,
         effect_checks,
         resource_specs,
+        ranking_measures,
         body,
         &assumptions,
         &environment,
@@ -5350,6 +5410,37 @@ pub fn prove_int32_add_defined_by_integer_bounds(
             Box::new(Proposition::ConditionIs(
                 ConditionTerm::signed_add_overflows(left, right),
                 false,
+            )),
+        )),
+    ))
+}
+
+/// A checked round trip through a machine carrier preserves an Integer
+/// precisely within that carrier's representable range.
+pub fn prove_integer_machine_round_trip(
+    value: IntegerTerm,
+    destination: MachineIntegerType,
+) -> Theorem {
+    let (lower, upper) = super::spec::integer_machine_bounds(destination);
+    let converted = Bitvector32Term::IntegerToMachine {
+        value: value.clone().into(),
+        destination,
+    };
+    let observed = IntegerTerm::from_machine(destination, converted)
+        .expect("machine observation has an integral carrier");
+    Theorem::new(Proposition::Implies(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerGreaterEqual(value.clone().into(), lower.into()),
+            true,
+        )),
+        Box::new(Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerLessEqual(value.clone().into(), upper.into()),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(observed.into(), value.into()),
+                true,
             )),
         )),
     ))

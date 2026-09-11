@@ -989,6 +989,10 @@ fn bitvector_equality_atom_key(term: &Bitvector32Term) -> Option<BitvectorEquali
                         1u8.hash(&mut hasher);
                         value.hash(&mut hasher);
                     }
+                    PureFunctionArgument::Integer(value) => {
+                        3u8.hash(&mut hasher);
+                        value.hash(&mut hasher);
+                    }
                     PureFunctionArgument::ArrayRef {
                         memory,
                         pointer,

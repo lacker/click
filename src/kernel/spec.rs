@@ -898,6 +898,17 @@ fn evaluate_spec_integer_expression_paths(
                 obligations: Vec::new(),
             }])
         }
+        SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
+            evaluate_spec_integer_pure_function_application_paths(
+                state,
+                name,
+                arguments,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -1102,7 +1113,9 @@ fn lower_spec_algebraic_comparison_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
-    if super::functions::spec_algebraic_expression_is_state_independent(left)
+    if super::functions::spec_algebraic_expression_is_obligation_free(left)
+        && super::functions::spec_algebraic_expression_is_obligation_free(right)
+        && super::functions::spec_algebraic_expression_is_state_independent(left)
         && super::functions::spec_algebraic_expression_is_state_independent(right)
         && (left == right
             || algebraic_match_reconstructs(left, right)
@@ -3037,6 +3050,97 @@ fn lower_spec_memory_loadable_at_state(
     .collect())
 }
 
+fn evaluate_spec_integer_pure_function_application_paths(
+    state: &CState,
+    name: &str,
+    arguments: &[SpecPureFunctionArgument],
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
+    for argument in arguments {
+        let mut next = Vec::new();
+        for (values, facts, obligations) in paths {
+            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            let argument_paths = evaluate_spec_pure_function_argument_paths(
+                state,
+                argument,
+                loop_entry_state,
+                &path_assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+            let domain = argument_paths
+                .iter()
+                .map(|path| {
+                    proposition_and_all(
+                        path.facts
+                            .iter()
+                            .map(|fact| fact.proposition().clone())
+                            .chain(
+                                path.obligations
+                                    .iter()
+                                    .map(|obligation| obligation.proposition().clone()),
+                            )
+                            .collect(),
+                    )
+                })
+                .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)));
+            let argument_paths = argument_paths
+                .into_iter()
+                .map(|mut path| {
+                    if let Some(domain) = domain.clone() {
+                        retain_required_conversion_obligation(
+                            &mut path.obligations,
+                            assumptions,
+                            domain,
+                        );
+                    }
+                    path
+                })
+                .collect::<Vec<_>>();
+            let single_path = argument_paths.len() == 1;
+            let mut prefix = Some(values);
+            for (index, argument_path) in argument_paths.into_iter().enumerate() {
+                if let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &argument_path.facts,
+                        &argument_path.obligations,
+                        assumptions,
+                    )
+                {
+                    let mut merged_values = if single_path && index == 0 {
+                        prefix.take().expect("single argument path owns its prefix")
+                    } else {
+                        prefix
+                            .as_ref()
+                            .expect("branched argument paths retain prefix")
+                            .clone()
+                    };
+                    merged_values.push(argument_path.value);
+                    next.push((merged_values, merged_facts, merged_obligations));
+                }
+            }
+        }
+        paths = next;
+    }
+    Ok(paths
+        .into_iter()
+        .map(|(arguments, facts, obligations)| SpecIntegerPath {
+            value: IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                name.to_string(),
+                arguments,
+            )),
+            facts,
+            obligations,
+        })
+        .collect())
+}
+
 /// An element index scaled to bytes, folded when the index is a constant.
 fn canonical_scaled_offset(value: Bitvector32Term, byte_width: i64) -> PointerOffsetTerm {
     match value {
@@ -4130,8 +4234,8 @@ fn evaluate_spec_pure_function_argument_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPureFunctionArgumentPath>> {
     match argument {
-        SpecPureFunctionArgument::Value(expression) => {
-            Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
+        SpecPureFunctionArgument::Integer(expression) => {
+            Ok(evaluate_spec_integer_expression_paths(
                 state,
                 expression,
                 loop_entry_state,
@@ -4141,11 +4245,29 @@ fn evaluate_spec_pure_function_argument_paths(
             )?
             .into_iter()
             .map(|path| SpecPureFunctionArgumentPath {
-                value: PureFunctionArgument::Value(path.value),
+                value: PureFunctionArgument::Integer(path.value.into()),
                 facts: path.facts,
                 obligations: path.obligations,
             })
             .collect())
+        }
+        SpecPureFunctionArgument::Value(expression) => {
+            let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
+                state,
+                expression,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+            Ok(paths
+                .into_iter()
+                .map(|path| SpecPureFunctionArgumentPath {
+                    value: PureFunctionArgument::Value(path.value),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+                .collect())
         }
         SpecPureFunctionArgument::Algebraic(expression) => {
             Ok(evaluate_spec_algebraic_at_state_with_bindings(
@@ -4253,7 +4375,9 @@ fn integer_constant_to_machine(
     }
 }
 
-fn integer_machine_bounds(destination: MachineIntegerType) -> (IntegerTerm, IntegerTerm) {
+pub(super) fn integer_machine_bounds(
+    destination: MachineIntegerType,
+) -> (IntegerTerm, IntegerTerm) {
     match destination {
         MachineIntegerType::Int16 => (
             IntegerTerm::constant_i64(i16::MIN as i64),

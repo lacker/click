@@ -734,6 +734,7 @@ fn execute_concrete_loop_head_step(
         invariant_checks,
         effect_checks,
         resource_specs,
+        ranking_measures,
         do_while,
         body,
     } = loop_statement.clone()
@@ -774,6 +775,7 @@ fn execute_concrete_loop_head_step(
         invariant_checks: invariant_checks.clone(),
         effect_checks: effect_checks.clone(),
         resource_specs: resource_specs.clone(),
+        ranking_measures: ranking_measures.clone(),
         do_while: false,
         body: body.clone(),
     };

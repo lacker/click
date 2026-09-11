@@ -857,15 +857,6 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
-        if parsed_parameters
-            .parameters
-            .iter()
-            .any(|parameter| matches!(parameter.click_type(), ClickType::Integer))
-        {
-            return Err(self.error(
-                "mathematical Integer parameters are supported only by pure theorems in this slice",
-            ));
-        }
         self.expect(Token::LBrace)?;
         let previous_struct_params = std::mem::replace(
             &mut self.current_struct_params,
@@ -904,22 +895,8 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
-        if parsed_parameters
-            .parameters
-            .iter()
-            .any(|parameter| matches!(parameter.click_type(), ClickType::Integer))
-        {
-            return Err(self.error(
-                "mathematical Integer parameters are supported only by pure theorems in this slice",
-            ));
-        }
         self.expect(Token::Arrow)?;
         let (return_type, parsed_c_return_type) = self.parse_click_type()?;
-        if matches!(return_type, ClickType::Integer) {
-            return Err(self.error(
-                "Click functions returning mathematical Integer are not available in this slice",
-            ));
-        }
         if let Some(parsed_return_type) = parsed_c_return_type {
             if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
                 return Err(self.error("only pointer-to-struct types are supported"));

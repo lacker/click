@@ -1529,6 +1529,40 @@ enum ResolvedProgramPoint {
     LoopEntry(usize),
 }
 
+fn spec_argument_to_pure_term(
+    argument: &crate::kernel::SpecPureFunctionArgument,
+) -> Option<crate::kernel::PureFunctionArgument> {
+    match argument {
+        crate::kernel::SpecPureFunctionArgument::Integer(expression) => Some(
+            crate::kernel::PureFunctionArgument::Integer(spec_integer_to_term(expression)?.into()),
+        ),
+        crate::kernel::SpecPureFunctionArgument::Value(crate::kernel::SpecExpression::Value(
+            value,
+        )) => Some(crate::kernel::PureFunctionArgument::Value(value.clone())),
+        _ => None,
+    }
+}
+
+fn spec_integer_to_term(
+    expression: &crate::kernel::SpecIntegerExpression,
+) -> Option<crate::kernel::IntegerTerm> {
+    match expression {
+        crate::kernel::SpecIntegerExpression::Term(term) => Some(term.clone()),
+        crate::kernel::SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
+            Some(crate::kernel::IntegerTerm::PureFunctionApplication(
+                crate::kernel::SharedIntegerApplication::intern(
+                    name.clone(),
+                    arguments
+                        .iter()
+                        .map(spec_argument_to_pure_term)
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            ))
+        }
+        _ => None,
+    }
+}
+
 impl AnnotationLowerer<'_> {
     fn lower_statement(
         &mut self,
@@ -1546,6 +1580,7 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
+                let ranking_measures = self.loop_ranking_measures(loop_index)?;
                 if matches!(statement, syntax::C0Statement::DoWhile { .. }) {
                     c_do_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1554,6 +1589,7 @@ impl AnnotationLowerer<'_> {
                         lowered_body,
                     )
                     .with_loop_resource_specs(resource_specs)
+                    .with_loop_ranking_measures(ranking_measures)
                 } else {
                     c_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1563,6 +1599,7 @@ impl AnnotationLowerer<'_> {
                         lowered_body,
                     )
                     .with_loop_resource_specs(resource_specs)
+                    .with_loop_ranking_measures(ranking_measures)
                 }
             }
             syntax::C0Statement::For {
@@ -1579,6 +1616,7 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
+                let ranking_measures = self.loop_ranking_measures(loop_index)?;
                 c_seq(
                     lowered_initializer,
                     c_while_with_invariant_and_effect_checks(
@@ -1588,7 +1626,8 @@ impl AnnotationLowerer<'_> {
                         effect_checks,
                         crate::kernel::c_for_body_with_step(lowered_body, lowered_step),
                     )
-                    .with_loop_resource_specs(resource_specs),
+                    .with_loop_resource_specs(resource_specs)
+                    .with_loop_ranking_measures(ranking_measures),
                 )
             }
             syntax::C0Statement::If {
@@ -1629,6 +1668,38 @@ impl AnnotationLowerer<'_> {
         let index = self.loop_index;
         self.loop_index += 1;
         index
+    }
+
+    /// The loop's declared `decreases` components, in source order.
+    ///
+    /// The measure travels on the loop head so the back-edge invariant
+    /// bundle, the verified loop rule, and the whole-function termination
+    /// pass all read the one declared clause rather than agreeing by
+    /// coincidence.
+    fn loop_ranking_measures(&self, loop_index: usize) -> Result<Vec<CExpression>, ClickError> {
+        let mut measures: Option<Vec<CExpression>> = None;
+        for clause in self
+            .structural_clauses
+            .iter()
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        {
+            let Some(measure) = clause.decreases() else {
+                continue;
+            };
+            let expressions = crate::surface::verification::termination_measure_expressions(
+                measure,
+                &format!("loop {loop_index} `decreases`"),
+            )?;
+            match &measures {
+                Some(existing) if existing != &expressions => {
+                    return Err(ClickError::new(format!(
+                        "loop {loop_index} has conflicting `decreases` measures"
+                    )));
+                }
+                _ => measures = Some(expressions),
+            }
+        }
+        Ok(measures.unwrap_or_default())
     }
 
     fn loop_invariant_checks(
@@ -2439,6 +2510,43 @@ impl AnnotationLowerer<'_> {
             return Err("symbolic Integer-valued datatype matches are not supported yet".into());
         }
         match expression {
+            ContractExpression::Call { name, arguments } if name != "to_integer" => {
+                let definition = self
+                    .click_function_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown function `{name}`"))?
+                    .clone();
+                let definition =
+                    self.instantiate_click_function_for_call(&definition, arguments, environment)?;
+                if definition.return_type() != &ClickType::Integer {
+                    return Err(format!(
+                        "function `{name}` does not return an Integer value"
+                    ));
+                }
+                let arguments = self.lower_click_function_arguments_to_spec(
+                    &definition,
+                    arguments,
+                    environment,
+                )?;
+                if let Some(arguments) = arguments
+                    .iter()
+                    .map(spec_argument_to_pure_term)
+                    .collect::<Option<Vec<_>>>()
+                {
+                    return Ok(SpecIntegerExpression::Term(
+                        crate::kernel::IntegerTerm::PureFunctionApplication(
+                            crate::kernel::SharedIntegerApplication::intern(
+                                definition.name().to_string(),
+                                arguments,
+                            ),
+                        ),
+                    ));
+                }
+                Ok(SpecIntegerExpression::PureFunctionApplication {
+                    name: definition.name().to_string(),
+                    arguments,
+                })
+            }
             ContractExpression::Binding(name) => {
                 let value = environment
                     .integer_values
@@ -3340,10 +3448,9 @@ impl AnnotationLowerer<'_> {
                     "function `{}` has unresolved type parameter `{name}`",
                     definition.name()
                 )),
-                ClickType::Integer => Err(format!(
-                    "function `{}` has an unsupported Integer parameter",
-                    definition.name()
-                )),
+                ClickType::Integer => self
+                    .lower_contract_integer_to_spec(argument, environment)
+                    .map(crate::kernel::SpecPureFunctionArgument::Integer),
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),

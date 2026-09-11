@@ -22,6 +22,7 @@ pub(crate) enum IntegerAffineRelation {
 pub(crate) enum IntegerAffineAtom {
     Variable(Variable),
     Machine(u64),
+    Application(u64),
 }
 
 /// A claimed local affine result. The checker recomputes this value at every
@@ -487,7 +488,10 @@ fn collect_integer_affine_terms(
                 stack.push((right.clone(), false));
                 stack.push((left.clone(), false));
             }
-            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {}
+            IntegerTerm::Constant(_)
+            | IntegerTerm::Variable(_)
+            | IntegerTerm::Machine(_)
+            | IntegerTerm::PureFunctionApplication(_) => {}
         }
     }
 
@@ -518,10 +522,15 @@ fn collect_integer_affine_terms(
                 }
                 *constant += &weight * value;
             }
-            IntegerTerm::Variable(_) | IntegerTerm::Machine(_) => {
+            IntegerTerm::Variable(_)
+            | IntegerTerm::Machine(_)
+            | IntegerTerm::PureFunctionApplication(_) => {
                 let atom = match node.as_ref() {
                     IntegerTerm::Variable(variable) => IntegerAffineAtom::Variable(*variable),
                     IntegerTerm::Machine(source) => IntegerAffineAtom::Machine(source.id()),
+                    IntegerTerm::PureFunctionApplication(application) => {
+                        IntegerAffineAtom::Application(application.id())
+                    }
                     _ => unreachable!(),
                 };
                 let existing = terms.get(&atom).map_or(0, |value| value.bits() as usize);

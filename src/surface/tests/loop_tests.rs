@@ -96,12 +96,128 @@ fn expanded_loop_phase_proofs_are_certificates() {
     }
 }
 
+/// Reads one mdtest fixture's Click source and its C sources.
+fn loop_fixture(filename: &str) -> (String, Vec<(String, String)>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join(format!("{filename}.md"));
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    (
+        fixture.click_source.clone().unwrap(),
+        fixture.c_sources.clone(),
+    )
+}
+
+fn borrowed_sources(sources: &[(String, String)]) -> Vec<(&str, &str)> {
+    sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect()
+}
+
+/// The lexicographic pivot is an arm choice, not a kernel search. Only the
+/// second component decreases on the `j > 0` path and only the first on the
+/// other, so the expansion must print `right()` on one path and `left()` on
+/// the other, the expansion must reverify through the ordinary entry point,
+/// and swapping either arm must be rejected.
+#[test]
+fn lexicographic_ranking_bundle_prints_and_pins_its_pivot_arm() {
+    let (click, sources) = loop_fixture("c_decreases_lexicographic_loop");
+    let sources = borrowed_sources(&sources);
+    let expanded = expand_c0_claim_source(&click, &sources, "phase_count", CProofClaim::Grouped)
+        .unwrap_or_else(|error| panic!("lexicographic expansion failed: {}", error.message()));
+    let closer = expanded
+        .find("close_invariants by {")
+        .expect("the expansion keeps an explicit bundle closer");
+    let closers = &expanded[closer..];
+    assert!(
+        closers.contains("right();"),
+        "the second-component pivot must be printed: {expanded}"
+    );
+    assert!(
+        closers.contains("left();"),
+        "the first-component pivot must be printed: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!(
+            "the expanded lexicographic proof must reverify: {}\n{expanded}",
+            error.message()
+        )
+    });
+
+    let wrong_first = expanded.replacen("right();", "left();", 1);
+    assert_ne!(wrong_first, expanded);
+    verify_c0_sources(&wrong_first, &sources)
+        .expect_err("the other pivot arm must be rejected on the `j > 0` path");
+
+    let last_left = expanded
+        .rfind("left();")
+        .expect("a printed first-component arm");
+    let mut wrong_last = expanded.clone();
+    wrong_last.replace_range(last_left..last_left + "left();".len(), "right();");
+    verify_c0_sources(&wrong_last, &sources)
+        .expect_err("the other pivot arm must be rejected on the second path");
+}
+
+/// Every bundle member is separately proved. Dropping the conjunct that
+/// closes one member, or exchanging two members' proofs, leaves the bundle
+/// open: membership and order are part of the checked judgment, not a
+/// convention the closer body may reinterpret.
+#[test]
+fn ranking_bundle_rejects_a_missing_or_exchanged_member() {
+    let (click, sources) = loop_fixture("c_decreases_loop");
+    let sources = borrowed_sources(&sources);
+    verify_c0_sources(&click, &sources).expect("the fixture verifies as written");
+
+    let complete = "close_invariants by {
+                both { arithmetic() using { 0 <= n; } }
+                and {
+                    both { arithmetic() using { 0 <= n; } }
+                    and { arithmetic() using { 0 <= n; } }
+                }
+            }";
+    assert!(click.contains(complete), "fixture closer changed: {click}");
+
+    let missing = click.replace(
+        complete,
+        "close_invariants by {
+                both { arithmetic() using { 0 <= n; } }
+                and { arithmetic() using { 0 <= n; } }
+            }",
+    );
+    let error = verify_c0_sources(&missing, &sources)
+        .expect_err("a closer that proves one member too few must be rejected");
+    assert!(
+        error.message().contains("decreases at the back edge"),
+        "{}",
+        error.message()
+    );
+
+    let exchanged = click.replace(
+        complete,
+        "close_invariants by {
+                both { arithmetic() using { 0 <= n; } }
+                and {
+                    both {
+                        both { arithmetic() using { 0 <= n; } }
+                        and { arithmetic() using { 0 <= n; } }
+                    }
+                    and { arithmetic() using { 0 <= n; } }
+                }
+            }",
+    );
+    verify_c0_sources(&exchanged, &sources)
+        .expect_err("a closer nested against the bundle's own order must be rejected");
+}
+
 #[test]
 fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
     for filename in [
         "c_decreases_rejects_bad_loop_path",
         "c_decreases_rejects_non_decreasing_lexicographic_loop",
         "nested_loop_measure_rejected",
+        "c_decreases_rejects_negative_ranking_component",
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("mdtests")
@@ -116,7 +232,7 @@ fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
         let error = verify_c0_sources(fixture.click_source.as_deref().unwrap(), &sources)
             .expect_err("invalid ranking must reject");
         assert!(
-            error.message().contains("does not decrease"),
+            error.message().contains("at the back edge"),
             "{filename}: {}",
             error.message()
         );
@@ -1159,7 +1275,13 @@ fn frontier_local_loop_checks_an_optional_decreases_measure() {
                             apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
                         }
                         step();
-                        close_invariants by { arithmetic() using { 0 <= n; } }
+                        close_invariants by {
+                            both { arithmetic() using { 0 <= n; } }
+                            and {
+                                both { arithmetic() using { 0 <= n; } }
+                                and { arithmetic() using { 0 <= n; } }
+                            }
+                        }
                     }
                 }
                 step();
@@ -1461,7 +1583,13 @@ fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate()
                             apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
                         }
                         step();
-                        close_invariants by { arithmetic() using { 0 <= n; } }
+                        close_invariants by {
+                            both { arithmetic() using { 0 <= n; } }
+                            and {
+                                both { arithmetic() using { 0 <= n; } }
+                                and { arithmetic() using { 0 <= n; } }
+                            }
+                        }
                     }
                 }
                 step();

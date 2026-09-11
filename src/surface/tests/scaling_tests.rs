@@ -1000,3 +1000,65 @@ fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
         );
     }
 }
+
+/// A ranked loop's back-edge bundle cites its arithmetic premises, so the
+/// ranking members cost the same whatever else is in scope. Growing the
+/// function's unrelated inequalities must not grow the work of checking that
+/// the measure is nonnegative and decreases.
+fn ranked_loop_with_unrelated_inequalities(fact_count: usize) -> (String, String) {
+    let c_source = "int32 ranked_drain(int32 n) {\n    while (n > 0) {\n        n = n - 1;\n    }\n    return n;\n}\n".to_string();
+    let mut click_source = String::from(
+        "verifying \"ranked_drain.c\";\n\nint32 ranked_drain(int32 n) {\n    requires n >= 0;\n",
+    );
+    for index in 0..fact_count {
+        click_source.push_str(&format!("    requires n != 0 - {};\n", index + 1));
+    }
+    click_source.push_str(
+        "    ensures result == 0;\n\
+         } by {\n\
+         \x20   loop {\n\
+         \x20       decreases n;\n\
+         \x20       invariant n >= 0;\n\
+         \x20       initialize by simp;\n\
+         \x20       preserve by {\n\
+         \x20           have 0 <= n - 1 by {\n\
+         \x20               apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }\n\
+         \x20           }\n\
+         \x20           step();\n\
+         \x20           close_invariants by {\n\
+         \x20               both { arithmetic() using { 0 <= n; } }\n\
+         \x20               and {\n\
+         \x20                   both { arithmetic() using { 0 <= n; } }\n\
+         \x20                   and { arithmetic() using { 0 <= n; } }\n\
+         \x20               }\n\
+         \x20           }\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   step();\n\
+         \x20   simp();\n\
+         }\n",
+    );
+    (c_source, click_source)
+}
+
+#[test]
+fn ranked_loop_bundle_scales_near_linearly_with_unrelated_inequalities() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = ranked_loop_with_unrelated_inequalities(size);
+            let sources = [("ranked_drain.c", c_source.as_str())];
+            let (verified, sample) =
+                scaling_sample(size, || verify_c0_sources(&click_source, &sources));
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} ranked-loop scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling("ranked loop bundle with unrelated inequalities", &samples);
+}

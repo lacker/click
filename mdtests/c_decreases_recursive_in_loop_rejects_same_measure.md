@@ -49,7 +49,23 @@ int32 stuck_loop(int32 n) {
                 simp();
             }
             step();
-            close_invariants();
+            close_invariants by {
+                both { simp(); }
+                and { both { simp(); }
+                and { both { simp(); }
+                and { both {
+                          arithmetic() using {
+                              at(statement(5).entry, i) >= 0;
+                              at(statement(5).entry, i) < 1;
+                          }
+                      }
+                and {
+                          arithmetic() using {
+                              at(statement(5).entry, i) >= 0;
+                              at(statement(5).entry, i) < 1;
+                          }
+                } } } }
+            }
         }
     }
     step();

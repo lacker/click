@@ -490,3 +490,26 @@ fn simp_uses_assumed_compound_proposition() {
         SimpProposition::True
     );
 }
+
+#[test]
+fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
+    let source = r#"
+        spec enum Maybe<T> { None, Some(T) }
+        theorem false_reconstruction(value: Maybe<int32>) {
+            ensures match value {
+                Maybe::None => Maybe<int32>::Some(0),
+                Maybe::Some(x) => Maybe<int32>::Some(x),
+            } == value by simp;
+        }
+    "#;
+    let error = verify_c0_sources(source, &[]).unwrap_err();
+    let message = error.message();
+    assert!(
+        message.contains("false_reconstruction.ensures_0"),
+        "{message}"
+    );
+    assert!(message.contains("algebraic value equality"), "{message}");
+    assert!(!message.contains("AlgebraicSchemas"), "{message}");
+    assert!(!message.contains("AlgebraicTerm"), "{message}");
+    assert!(message.len() < 1000, "{message}");
+}
