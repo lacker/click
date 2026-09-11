@@ -3666,3 +3666,97 @@ fn allocation_separation_ignores_unrelated_facts() {
         "allocation separation scanned unrelated facts: {samples:?}"
     );
 }
+
+/// Package 10(a) regression for `ResourceContext::satisfies_fact`'s miss
+/// path.
+///
+/// A resource query that misses must be paid for by the fact it names and by
+/// the resources the context indexes under that fact's block — never by the
+/// ambient condition facts that happen to be in scope. Two axes are measured,
+/// each with one fixed query.
+///
+/// The resource axis is flat. On the ambient-condition axis the residual
+/// slope is the exact order-path walk in `condition_reasoning/order_paths.rs`,
+/// a whole-context loop inside the frozen condition checker that
+/// `issues/simplify-kernel.md` tracks as a separate indexing debt. This test
+/// pins the slope that remains after the two `condition_facts` scans in
+/// `exact_less_equal_for_memory_resolution` became indexed lookups at the two
+/// endpoints the query names. Before that change the same query grew at twice
+/// this rate (93, 157, 285, 541 over these sizes), so the assertion fails on
+/// the old representation.
+#[test]
+fn satisfies_fact_miss_ignores_unrelated_facts() {
+    let base = Pointer {
+        block: "package-10a-held".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let held = own_memory_fact(base.clone(), 0, 8);
+    let adjacent = own_memory_fact(base.clone(), 8, 16);
+    let symbolic_end = Bitvector32Term::Variable(Variable(970_001));
+    // A miss whose end is symbolic: the shape that reaches the proof-aware
+    // containment layers instead of being refused by constant bounds.
+    let missing = own_memory_fact(base.clone(), 0, symbolic_end);
+    let context = ResourceContext::new()
+        .unchecked_with_fact(held.clone())
+        .unchecked_with_fact(adjacent.clone());
+
+    let sizes = [16, 32, 64, 128];
+    let ambient = sizes
+        .into_iter()
+        .map(|size| {
+            let assumptions = unrelated_order_fact_context(size);
+            let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.satisfies_fact(&missing, &assumptions)
+            });
+            assert!(
+                !satisfied,
+                "size {size}: the missing resource was satisfied"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    let base_work = ambient[0].1;
+    assert!(
+        ambient
+            .iter()
+            .all(|(size, work)| *work <= base_work + 2 * (size - sizes[0])),
+        "satisfies_fact's miss path still scans ambient condition facts: {ambient:?}"
+    );
+
+    // The other axis: unrelated resources in the same context, with the
+    // ambient fact context held empty. The block index must keep this flat.
+    let resources = sizes
+        .into_iter()
+        .map(|size| {
+            let mut wide = ResourceContext::new()
+                .unchecked_with_fact(held.clone())
+                .unchecked_with_fact(adjacent.clone());
+            for index in 0..size {
+                wide = wide.unchecked_with_fact(own_memory_fact(
+                    Pointer {
+                        block: format!("package-10a-unrelated-{index}").into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    0,
+                    4,
+                ));
+            }
+            let assumptions = PureFactContext::new();
+            let (satisfied, work) = crate::instrumentation::measure_deterministic_work(|| {
+                wide.satisfies_fact(&missing, &assumptions)
+            });
+            assert!(
+                !satisfied,
+                "size {size}: the missing resource was satisfied"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    let base_work = resources[0].1;
+    assert!(
+        resources
+            .iter()
+            .all(|(_, work)| *work <= base_work.saturating_add(2)),
+        "satisfies_fact's miss path scanned unrelated resources: {resources:?}"
+    );
+}

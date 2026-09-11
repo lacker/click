@@ -3004,57 +3004,108 @@ fn exact_less_equal_for_memory_resolution(
     {
         return true;
     }
-    if assumptions
-        .condition_facts
-        .iter()
-        .any(|(condition, value)| {
-            if !*value {
-                return false;
-            }
-            let (fact_left, fact_right) = match condition {
-                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right)
-                | ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right) => {
-                    (fact_left.as_ref(), fact_right.as_ref())
-                }
-                _ => return false,
-            };
-            bitvector_terms_proven_equal_for_memory_resolution(fact_left, left, assumptions)
-                && bitvector_terms_proven_equal_for_memory_resolution(
-                    fact_right,
+    let left_constant = signed_bitvector_constant(left);
+    recorded_less_equal_candidates(left, right, assumptions).any(|(fact_lower, fact_upper)| {
+        // The written fact states `fact_lower <= fact_upper` (or `<`, which
+        // is stronger). It proves the query when its lower endpoint is the
+        // query's lower endpoint, or — for a constant query endpoint — when
+        // it is a constant at least as large.
+        if bitvector_terms_proven_equal_for_memory_resolution(&fact_lower, left, assumptions) {
+            return true;
+        }
+        let Some(left_constant) = left_constant else {
+            return false;
+        };
+        let strict = assumptions
+            .condition_facts
+            .get(&ConditionTerm::signed_less_than(
+                fact_lower.clone(),
+                fact_upper.clone(),
+            ))
+            .copied()
+            == Some(true);
+        signed_bitvector_constant(&fact_lower)
+            .is_some_and(|bound| left_constant <= if strict { bound + 1 } else { bound })
+    })
+}
+
+/// The recorded `a <= b` and `a < b` facts whose upper endpoint is the named
+/// `right`, or whose lower endpoint is the named `left`, as `(a, b)` pairs.
+///
+/// This replaces two scans of the whole ambient condition-fact set. Every
+/// signed-order fact is already indexed at both of its endpoints — under the
+/// term the fact wrote and under that term's canonical form — by
+/// `PureFactContext::signed_order_bounds`, so the candidates a containment
+/// query could use are reachable in work proportional to the bounds recorded
+/// at the two endpoints the query itself names. Each candidate is then
+/// confirmed against `condition_facts` by exact lookup, so the index's
+/// normalization of `>`, `>=`, and negated forms cannot widen the rule: only
+/// a written true `<=` or `<` is yielded, exactly as the scans required.
+///
+/// Narrowing, deliberate and measured: a fact whose relevant endpoint is
+/// neither syntactically nor canonically the query's endpoint, and is only
+/// *provably* equal to it, is no longer found. Reaching it needed a
+/// proof-aware comparison against every ambient condition fact, which is the
+/// scan this removes. `satisfies_fact_miss_ignores_unrelated_facts` is the
+/// scaling regression.
+fn recorded_less_equal_candidates<'a>(
+    left: &'a Bitvector32Term,
+    right: &'a Bitvector32Term,
+    assumptions: &'a PureFactContext,
+) -> impl Iterator<Item = (Bitvector32Term, Bitvector32Term)> + 'a {
+    let endpoint_keys = |term: &Bitvector32Term| {
+        let canonical = crate::kernel::eval::canonical_term(term);
+        if canonical == *term {
+            vec![term.clone()]
+        } else {
+            vec![term.clone(), canonical]
+        }
+    };
+    // `signed_order_bounds` entries are `(own endpoint, other endpoint,
+    // strict, own endpoint is the lower one)`. A lookup at `right` yields
+    // the facts bounding it from below; a lookup at `left` yields the facts
+    // bounding it from above.
+    let upper_side = endpoint_keys(right).into_iter().flat_map(move |key| {
+        assumptions
+            .signed_order_bounds
+            .get(&key)
+            .into_iter()
+            .flat_map(|bounds| bounds.keys().cloned().collect::<Vec<_>>())
+            .filter(|(_, _, _, own_is_lower)| !*own_is_lower)
+            .map(|(own, other, _, _)| (other, own))
+    });
+    let lower_side = endpoint_keys(left).into_iter().flat_map(move |key| {
+        assumptions
+            .signed_order_bounds
+            .get(&key)
+            .into_iter()
+            .flat_map(|bounds| bounds.keys().cloned().collect::<Vec<_>>())
+            .filter(|(_, _, _, own_is_lower)| *own_is_lower)
+            .map(|(own, other, _, _)| (own, other))
+    });
+    upper_side
+        .chain(lower_side)
+        .filter(move |(fact_lower, fact_upper)| {
+            // Confirm the written form. The index normalizes every order
+            // shape into one direction; only a true `<=` or `<` fact may
+            // discharge this rule, as the replaced scans required.
+            let written = |condition| assumptions.condition_facts.get(&condition).copied();
+            written(ConditionTerm::signed_less_equal(
+                fact_lower.clone(),
+                fact_upper.clone(),
+            )) == Some(true)
+                || written(ConditionTerm::signed_less_than(
+                    fact_lower.clone(),
+                    fact_upper.clone(),
+                )) == Some(true)
+        })
+        .filter(move |(_, fact_upper)| {
+            fact_upper == right
+                || bitvector_terms_proven_equal_for_memory_resolution(
+                    fact_upper,
                     right,
                     assumptions,
                 )
-        })
-    {
-        return true;
-    }
-    let Some(left_constant) = signed_bitvector_constant(left) else {
-        return false;
-    };
-    assumptions
-        .condition_facts
-        .iter()
-        .any(|(condition, value)| {
-            if !*value {
-                return false;
-            }
-            let (fact_left, fact_right, strict) = match condition {
-                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right) => {
-                    (fact_left.as_ref(), fact_right.as_ref(), false)
-                }
-                ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right) => {
-                    (fact_left.as_ref(), fact_right.as_ref(), true)
-                }
-                _ => return false,
-            };
-            signed_bitvector_constant(fact_left)
-                .is_some_and(|bound| left_constant <= if strict { bound + 1 } else { bound })
-                && (fact_right == right
-                    || bitvector_terms_proven_equal_for_memory_resolution(
-                        fact_right,
-                        right,
-                        assumptions,
-                    ))
         })
 }
 

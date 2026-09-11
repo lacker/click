@@ -2391,6 +2391,12 @@ fn evaluate_contract_mutable_ranges(
 /// must already be decided by the named preconditions and the proof's written
 /// case assumptions. A false guard contributes no possible write; a true guard
 /// contributes its ordinary evaluated range.
+/// No reaching fixture exists, and none can be written today: the only
+/// caller is `function_refines_named_contract_in_case`'s `explicit_case`
+/// branch, and its one call site passes `explicit_case: false`. The guard
+/// decision below is route-restricted with the rest of package 10(b) so the
+/// branch cannot come back carrying a proof search, but its behaviour is
+/// unobserved by both fixture harnesses.
 fn evaluate_decided_contract_mutable_ranges(
     function: &CFunction,
     entry: &CState,
@@ -2406,11 +2412,14 @@ fn evaluate_decided_contract_mutable_ranges(
     let mut ranges = Vec::with_capacity(function.contract_mutable().len());
     for (segment, guard) in function.contract_mutable().iter().zip(guards) {
         if let Some(guard) = guard {
-            if guard_assumptions.proves(&Proposition::Not(Box::new(guard.clone()))) {
-                continue;
-            }
-            if !guard_assumptions.proves(&guard) {
-                return Ok(None);
+            // A refined mutable segment is included, dropped, or leaves the
+            // whole footprint undecided. The decision uses the exact routes
+            // only; an undecided guard refuses the refinement rather than
+            // being settled by a proof search over the ambient context.
+            match guard_value_by_exact_routes(&guard_assumptions, &guard) {
+                Some(false) => continue,
+                Some(true) => {}
+                None => return Ok(None),
             }
         }
         let Some(range) =
@@ -2834,6 +2843,11 @@ fn mutable_footprint_is_compatible(
 /// guard are unconditional after its obligations have been proved, so later
 /// guards and range expressions may reuse them without searching unrelated
 /// functions or proof state.
+///
+/// The obligation check below is route-restricted with the rest of package
+/// 10(b) but has no reaching fixture. A mutable-segment guard is the guard of
+/// a resource body, and a resource condition must be load-free, so the
+/// lowered guard path carries no obligation to discharge.
 fn lower_refinement_mutable_guards(
     function: &CFunction,
     entry: &CState,
@@ -2864,11 +2878,9 @@ fn lower_refinement_mutable_guards(
                 .clone()
                 .assume_proposition(fact.proposition().clone());
         }
-        if path
-            .obligations
-            .iter()
-            .any(|obligation| !assumptions.proves(obligation.proposition()))
-        {
+        if path.obligations.iter().any(|obligation| {
+            !required_obligation_is_exactly_discharged(assumptions, obligation.proposition())
+        }) {
             return Ok(None);
         }
         guards.push(Some(path.proposition.clone()));
@@ -3140,13 +3152,25 @@ fn assume_contract_proposition(assumptions: &mut PureFactContext, proposition: P
             assume_contract_proposition(assumptions, *left);
             assume_contract_proposition(assumptions, *right);
         }
-        Proposition::Implies(left, right) if assumptions.proves(&left) => {
+        // Modus ponens on an explicitly assumed contract premise, with the
+        // antecedent established by the exact routes only. An antecedent
+        // those do not decide leaves the implication assumed as written;
+        // the consequent then needs an explicit proof step.
+        Proposition::Implies(left, right)
+            if required_obligation_is_exactly_discharged(assumptions, &left) =>
+        {
             assume_contract_proposition(assumptions, *right);
         }
         _ => {}
     }
 }
 
+/// The obligation check below is route-restricted with the rest of package
+/// 10(b) but has no reaching fixture: a refined requirement's lowered path
+/// carries an obligation only when the surrounding refinement context cannot
+/// already see the access, and in that case no route — exact or otherwise —
+/// discharges it. Attempts through an owned field and through an explicit
+/// `requires loadable(...)` both produced obligation-free paths.
 fn prove_contract_propositions(
     state: &CState,
     entry_state: &CState,
@@ -3171,11 +3195,9 @@ fn prove_contract_propositions(
                 .clone()
                 .assume_proposition(fact.proposition().clone());
         }
-        if path
-            .obligations
-            .iter()
-            .any(|obligation| !assumptions.proves(obligation.proposition()))
-            || !contract_refinement_proves(assumptions, &path.proposition, allow_stateful_memory)
+        if path.obligations.iter().any(|obligation| {
+            !required_obligation_is_exactly_discharged(assumptions, obligation.proposition())
+        }) || !contract_refinement_proves(assumptions, &path.proposition, allow_stateful_memory)
         {
             return Ok(false);
         }
@@ -5010,6 +5032,9 @@ fn add_normalized_verified_ensure_facts(
     }
 }
 
+/// No fixture in either harness reaches the refutation below; the kernel
+/// test `continuity_requires_both_the_allocation_base_and_size` pins it, and
+/// fails when the route is denied.
 fn allocation_continuity(
     input_base: &Pointer,
     input_bytes: &Bitvector32Term,
@@ -5029,7 +5054,15 @@ fn allocation_continuity(
             Box::new(input_bytes.clone()),
             Box::new(output_bytes.clone()),
         );
-        if assumptions.proves(&Proposition::ConditionIs(condition.clone(), false)) {
+        // Two allocation sizes at one base are the same allocation, a
+        // refuted one, or an undecided pair. The refutation uses the exact
+        // fact index and the frozen condition checker on the bare condition;
+        // anything else stays undecided and travels on as a condition the
+        // consumer must settle.
+        if required_obligation_is_exactly_discharged(
+            assumptions,
+            &Proposition::ConditionIs(condition.clone(), false),
+        ) {
             AllocationContinuity::Inconsistent
         } else {
             AllocationContinuity::Undecided(condition)
@@ -7531,13 +7564,13 @@ fn prepare_function_resource_transfer(
             && callee_state
                 .counted_population(name, arguments)
                 .is_some_and(|count| {
-                    assumptions.proves(&Proposition::ConditionIs(
+                    quantity_condition_holds(
+                        assumptions,
                         ConditionTerm::Bitvector32Equal(
                             Box::new(count.clone()),
                             Box::new(Bitvector32Term::Constant(1)),
                         ),
-                        true,
-                    ))
+                    )
                 })
         {
             let singleton = ResourceContext::new().unchecked_with_fact(resource.clone());
@@ -8179,20 +8212,19 @@ fn apply_counted_population_transitions(
                     .get(&(name.clone(), arguments.clone()))
                     .is_some_and(|quantity| population_quantity_is_positive(quantity, assumptions))
                 || population_quantity_is_positive(&required_quantity, assumptions);
-        let zero = Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(
-                Box::new(new_count.clone()),
-                Box::new(Bitvector32Term::Constant(0)),
-            ),
-            true,
-        );
         let population_ends = consumes_entire_population
             || bitvector_terms_proven_equal_for_memory_resolution(
                 &new_count,
                 &Bitvector32Term::Constant(0),
                 assumptions,
             )
-            || assumptions.proves(&zero);
+            || quantity_condition_holds(
+                assumptions,
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(new_count.clone()),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+            );
         if population_was_initialized && population_ends {
             *post_state = post_state
                 .clone()
@@ -8297,22 +8329,30 @@ fn apply_counted_population_transitions(
                                     prior.clone(),
                                     required_quantity.clone(),
                                 )
-                                && assumptions.proves(&Proposition::ConditionIs(
+                                && quantity_condition_holds(
+                                    assumptions,
                                     ConditionTerm::Bitvector32SignedGreaterEqual(
                                         Box::new(required_quantity.clone()),
                                         Box::new(Bitvector32Term::Constant(0)),
                                     ),
-                                    true,
-                                ))
-                                && assumptions.proves(&Proposition::ConditionIs(
+                                )
+                                && quantity_condition_holds(
+                                    assumptions,
                                     ConditionTerm::Bitvector32SignedLessEqual(
                                         Box::new(required_quantity.clone()),
                                         Box::new(prior.clone()),
                                     ),
-                                    true,
-                                ))
+                                )
                         });
-                if assumptions.proves(&guaranteed) || residual_is_certified_nonnegative {
+                if residual_is_certified_nonnegative
+                    || quantity_condition_holds(
+                        assumptions,
+                        ConditionTerm::Bitvector32SignedGreaterEqual(
+                            Box::new(new_count.clone()),
+                            Box::new(ensured_quantity.clone()),
+                        ),
+                    )
+                {
                     transition_guaranteed_facts.push(guaranteed);
                 } else {
                     transition.postcondition_obligations.push(
@@ -8393,11 +8433,16 @@ fn apply_counted_population_transitions(
             ))));
         }
         transition.population_facts.push(proposition.clone());
-        if !assumptions.proves(&proposition) && !transition_guaranteed_facts.contains(&proposition)
-        {
-            transition.postcondition_obligations.push(
-                ProofObligation::verification_condition(proposition)
-                    .with_context("resource population invariant"),
+        // The transition's own algebraic guarantee, then the retained exact
+        // routes. Anything else is a genuine verification condition for a
+        // Surface tactic, not something for lowering to prove here.
+        if !transition_guaranteed_facts.contains(&proposition) {
+            add_required_proof_obligation_with_context(
+                &mut transition.postcondition_obligations,
+                assumptions,
+                proposition,
+                Some("resource population invariant"),
+                None,
             );
         }
     }
@@ -8806,15 +8851,24 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                     &mut budget,
                 )
                 .map_err(|_| "recursive child argument evaluation exceeded its budget")?;
+                // A child argument is a prerequisite of the rewrite, not a
+                // proof site: it has no obligation vector to receive an
+                // unmet condition. Restrict it to the retained exact routes
+                // and refuse the rewrite otherwise, which is the
+                // conservative equivalent of emitting the obligation.
                 if paths.len() != 1
-                    || paths[0]
-                        .facts
-                        .iter()
-                        .any(|fact| !child_assumptions.proves(fact.proposition()))
-                    || paths[0]
-                        .obligations
-                        .iter()
-                        .any(|goal| !child_assumptions.proves(goal.proposition()))
+                    || paths[0].facts.iter().any(|fact| {
+                        !required_obligation_is_exactly_discharged(
+                            &child_assumptions,
+                            fact.proposition(),
+                        )
+                    })
+                    || paths[0].obligations.iter().any(|goal| {
+                        !required_obligation_is_exactly_discharged(
+                            &child_assumptions,
+                            goal.proposition(),
+                        )
+                    })
                 {
                     return Err("recursive child argument requires a proved, readable expression");
                 }
@@ -8967,19 +9021,20 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         )
         .map_err(|_| "could not evaluate instance body fact")?;
         if paths.len() != 1
-            || paths[0]
-                .facts
-                .iter()
-                .any(|fact| !body_assumptions.proves(fact.proposition()))
-            || paths[0]
-                .obligations
-                .iter()
-                .any(|goal| !body_assumptions.proves(goal.proposition()))
+            || paths[0].facts.iter().any(|fact| {
+                !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
+            })
+            || paths[0].obligations.iter().any(|goal| {
+                !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
+            })
         {
             return Err("instance body fact needs an unsupported conditional proof");
         }
         let proposition = paths[0].proposition.clone();
-        if !unfold && !assumptions.proves(&proposition) {
+        // The fold prerequisite is a rewrite precondition with no obligation
+        // vector of its own; the exact routes decide it or the fold is
+        // refused with this diagnostic.
+        if !unfold && !required_obligation_is_exactly_discharged(assumptions, &proposition) {
             return Err("fold requires the instance body facts for the proposed fields");
         }
         facts.push(proposition);
@@ -9311,6 +9366,47 @@ fn resource_context_contains_exact_owned_fact(
     })
 }
 
+/// The proposition asserting the opposite of `proposition`, without adding a
+/// logical rule: a bare condition flips its value, a negation drops, and
+/// anything else is wrapped in one `Not`.
+fn negated_contract_proposition(proposition: &Proposition) -> Proposition {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            Proposition::ConditionIs(condition.clone(), !value)
+        }
+        Proposition::Not(body) => body.as_ref().clone(),
+        proposition => Proposition::Not(Box::new(proposition.clone())),
+    }
+}
+
+/// Decide one lowered contract guard by the retained exact routes only:
+/// `Some(true)` when the guard holds, `Some(false)` when its opposite does,
+/// and `None` when neither is decided.
+///
+/// `None` is not "false". It is the answer that leaves the choice to the
+/// consumer — which refuses the refinement, keeps both specification paths,
+/// or emits an obligation — instead of letting a general proof search inside
+/// the kernel settle a contract branch.
+fn guard_value_by_exact_routes(assumptions: &PureFactContext, guard: &Proposition) -> Option<bool> {
+    if required_obligation_is_exactly_discharged(assumptions, guard) {
+        return Some(true);
+    }
+    required_obligation_is_exactly_discharged(assumptions, &negated_contract_proposition(guard))
+        .then_some(false)
+}
+
+/// Decide one guard: `Some(true)`, `Some(false)`, or `None` for undecided.
+///
+/// Package 10(b) removed the general-prover leg, so every answer now comes
+/// from the exact fact index, the frozen condition checker on a bare
+/// condition, or the frozen atomic memory/resource checkers. An undecided
+/// guard travels to the caller, which keeps both specification paths or
+/// refuses the operation.
+///
+/// `resource_guard_conjunction` is the reaching fixture for a guard that is
+/// not a bare condition. The obligation check below has no reaching fixture:
+/// a guard is the condition of a resource body, and a resource condition must
+/// be load-free, so the lowered guard path carries no obligation.
 pub(super) fn evaluate_guarded_contract_condition(
     condition: &SpecProposition,
     state: &CState,
@@ -9328,11 +9424,9 @@ pub(super) fn evaluate_guarded_contract_condition(
     let [path] = paths.as_slice() else {
         return None;
     };
-    if !path
-        .obligations
-        .iter()
-        .all(|obligation| assumptions.proves(obligation.proposition()))
-    {
+    if !path.obligations.iter().all(|obligation| {
+        required_obligation_is_exactly_discharged(assumptions, obligation.proposition())
+    }) {
         return None;
     }
     let proves_body_condition = |proposition: &Proposition| match proposition {
@@ -9347,19 +9441,16 @@ pub(super) fn evaluate_guarded_contract_condition(
             }
             _ => false,
         },
-        _ => assumptions.proves_exact(proposition) || assumptions.proves(proposition),
+        // No general prover leg. A guard this does not decide is undecided,
+        // and the caller keeps both specification paths or refuses the
+        // operation rather than having the kernel search for a proof.
+        _ => required_obligation_is_exactly_discharged(assumptions, proposition),
     };
     if proves_body_condition(&path.proposition) {
         super::assumptions::record_reasoning_provenance(assumptions, &path.proposition);
         return Some(true);
     }
-    let false_proposition = match &path.proposition {
-        Proposition::ConditionIs(condition, value) => {
-            Proposition::ConditionIs(condition.clone(), !value)
-        }
-        Proposition::Not(body) => body.as_ref().clone(),
-        proposition => Proposition::Not(Box::new(proposition.clone())),
-    };
+    let false_proposition = negated_contract_proposition(&path.proposition);
     if proves_body_condition(&false_proposition) {
         super::assumptions::record_reasoning_provenance(assumptions, &false_proposition);
         Some(false)
@@ -9848,7 +9939,10 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     continue;
                 };
                 if !path.obligations.iter().all(|obligation| {
-                    if fact_assumptions.proves(obligation.proposition()) {
+                    if required_obligation_is_exactly_discharged(
+                        &fact_assumptions,
+                        obligation.proposition(),
+                    ) {
                         return true;
                     }
                     let Proposition::CMemoryLoadable {
@@ -10136,7 +10230,10 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
                 continue;
             };
             if !path.obligations.iter().all(|obligation| {
-                if fact_assumptions.proves(obligation.proposition()) {
+                if required_obligation_is_exactly_discharged(
+                    &fact_assumptions,
+                    obligation.proposition(),
+                ) {
                     return true;
                 }
                 let Proposition::CMemoryLoadable {
@@ -10625,16 +10722,26 @@ pub(super) fn evaluate_function_resource_spec(
                     )));
                 }
             };
-            let nonnegative = Proposition::ConditionIs(
+            // Nonnegativity of a declared quantity is decided by the exact
+            // fact index and the frozen condition checker only. This
+            // evaluator returns one resource fact and has no obligation
+            // vector to emit into — its callers include contract entry and
+            // exit lowering, population body evaluation, and refinement
+            // checking, none of which own a proof site here — so an
+            // undecided quantity is refused with a diagnostic naming the
+            // condition to state in the contract.
+            if !quantity_condition_holds(
+                assumptions,
                 ConditionTerm::Bitvector32SignedGreaterEqual(
                     Box::new(quantity.clone()),
                     Box::new(Bitvector32Term::Constant(0)),
                 ),
-                true,
-            );
-            if !assumptions.proves(&nonnegative) {
+            ) {
                 return Ok(Err(CRuntimeError::FunctionContract(
-                    "declared resource quantity is not proved nonnegative".to_string(),
+                    "declared resource quantity is not known nonnegative; state that the \
+                     quantity expression is at least 0 as a requirement, an invariant, or a \
+                     fact proved in scope"
+                        .to_string(),
                 )));
             }
             let inner = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
