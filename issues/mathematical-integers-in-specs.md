@@ -437,3 +437,21 @@ owned memory reads, exact reverse bounds, and expansion followed by verification
 The checked C arithmetic bridge still requires definedness explicitly. This
 checkpoint does not complete the remaining functions, quantified proofs, Nat
 connections, folds, or unchanged C summation-loop acceptance work.
+
+Datatype reflexivity must distinguish state independence from absence of
+evaluation obligations. An Integer field can contain a checked conversion even
+when it reads no memory. The shortcut now recursively checks that it cannot skip
+an obligation; wrapped and nested-wrapped conversions retain the same required
+argument definedness as an unwrapped expression. Guarded positive proofs expand
+and reverify, while the identical reflexive goals without definedness reject.
+
+## Machine round-trip laws checkpoint (2026-09-10)
+
+Each machine destination has an explicit `integer_to_<type>_round_trip` standard
+library theorem. Given both exact representable bounds, it proves
+`to_integer(to_<type>(z)) == z`. The kernel constructs the guarded law, and
+library loading checks its exact declaration before ordinary theorem application
+can use it. Source tests remove each bound in turn and independently reverify
+expanded applications. Boundary models check the emitted propositions against
+modular conversion and signed interpretation for all seven widths/carriers,
+including values outside their ranges and beyond 64 bits.

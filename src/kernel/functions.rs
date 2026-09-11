@@ -3479,6 +3479,86 @@ fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionA
     }
 }
 
+/// The datatype reflexivity shortcut may skip evaluation only for expressions
+/// that cannot emit a guard or obligation. State independence alone does not
+/// imply totality: a mathematical conversion may have a required domain.
+pub(super) fn spec_algebraic_expression_is_obligation_free(
+    expression: &SpecAlgebraicExpression,
+) -> bool {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => true,
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
+            fields.iter().all(|field| match field {
+                SpecAlgebraicValue::C(value) => spec_value_is_obligation_free(value),
+                SpecAlgebraicValue::Integer(value) => spec_integer_is_obligation_free(value),
+                SpecAlgebraicValue::Algebraic(value) => {
+                    spec_algebraic_expression_is_obligation_free(value)
+                }
+            })
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
+            name != "to_nat" && arguments.iter().all(spec_argument_is_obligation_free)
+        }
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            if !spec_algebraic_expression_is_obligation_free(scrutinee)
+                || arms.len() != scrutinee.algebraic_type.variants.len()
+            {
+                return false;
+            }
+            let variants = scrutinee
+                .algebraic_type
+                .variants
+                .iter()
+                .map(|variant| (variant.name.as_str(), variant.fields.len()))
+                .collect::<BTreeMap<_, _>>();
+            let mut seen = BTreeSet::new();
+            arms.iter().all(|arm| {
+                seen.insert(arm.variant.as_str())
+                    && variants.get(arm.variant.as_str()) == Some(&arm.bindings.len())
+                    && spec_algebraic_expression_is_obligation_free(&arm.body)
+            })
+        }
+        SpecAlgebraicExpressionNode::ResourceField(_) => false,
+    }
+}
+
+fn spec_argument_is_obligation_free(argument: &SpecPureFunctionArgument) -> bool {
+    match argument {
+        SpecPureFunctionArgument::Value(value) => spec_value_is_obligation_free(value),
+        SpecPureFunctionArgument::Integer(value) => spec_integer_is_obligation_free(value),
+        SpecPureFunctionArgument::Algebraic(value) => {
+            spec_algebraic_expression_is_obligation_free(value)
+        }
+        SpecPureFunctionArgument::ArrayRef { .. } => false,
+    }
+}
+
+fn spec_value_is_obligation_free(value: &SpecExpression) -> bool {
+    matches!(
+        value,
+        SpecExpression::Value(_)
+            | SpecExpression::CExpression(
+                CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_)
+            )
+    )
+}
+
+fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
+    match value {
+        SpecIntegerExpression::Term(_) => true,
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(spec_argument_is_obligation_free)
+        }
+        SpecIntegerExpression::Negate(inner) => spec_integer_is_obligation_free(inner),
+        SpecIntegerExpression::Add(left, right)
+        | SpecIntegerExpression::Subtract(left, right)
+        | SpecIntegerExpression::Multiply(left, right) => {
+            spec_integer_is_obligation_free(left) && spec_integer_is_obligation_free(right)
+        }
+        SpecIntegerExpression::FromMachine(_) | SpecIntegerExpression::ResourceField(_) => false,
+    }
+}
+
 pub(super) fn spec_algebraic_expression_is_state_independent(
     expression: &SpecAlgebraicExpression,
 ) -> bool {

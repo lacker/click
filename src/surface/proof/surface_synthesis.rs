@@ -16,6 +16,11 @@ struct SurfaceSynthesisBudget {
 thread_local! {
     static SYNTHESIS_QUALIFIED_SOURCES: std::cell::RefCell<Option<SurfacePropositionMap>> = const { std::cell::RefCell::new(None) };
     static SYNTHESIS_ENTRY_STATE: std::cell::RefCell<Option<CState>> = const { std::cell::RefCell::new(None) };
+    /// A second reference state, named by its own recorded snapshot selector
+    /// rather than by `old(...)`. A loop back edge needs this: the iteration
+    /// entry is neither the function entry nor the current state, and the
+    /// ranking members compare the two ends of one iteration.
+    static SYNTHESIS_SNAPSHOT_STATE: std::cell::RefCell<Option<(CState, SnapshotSelector)>> = const { std::cell::RefCell::new(None) };
     static SURFACE_SYNTHESIS_BUDGET: std::cell::RefCell<Option<SurfaceSynthesisBudget>> =
         const { std::cell::RefCell::new(None) };
     static LAST_SURFACE_SYNTHESIS_EXHAUSTION: std::cell::Cell<Option<&'static str>> =
@@ -57,6 +62,69 @@ pub(in crate::surface) fn synthesize_surface_proposition_at_entry_and_post(
     let _entry =
         SynthesisEntryScope(SYNTHESIS_ENTRY_STATE.with(|slot| slot.replace(Some(entry.clone()))));
     synthesize_surface_proposition(proposition, parameters, arguments, post)
+}
+
+/// As above, plus one further reference state addressed by a recorded
+/// snapshot selector. A value the current state no longer holds but the
+/// snapshot state does reads as `at(<selector>, name)`, which is the same
+/// spelling loop-body premises already use, so the synthesized form lowers
+/// back to exactly this term at the snapshot the selector names.
+pub(in crate::surface) fn synthesize_surface_proposition_at_entry_post_and_snapshot(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    entry: &CState,
+    post: &CState,
+    snapshot: Option<(&CState, &SnapshotSelector)>,
+) -> Option<ClickProposition> {
+    let _snapshot = SynthesisSnapshotScope(SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+        slot.replace(snapshot.map(|(state, selector)| (state.clone(), selector.clone())))
+    }));
+    synthesize_surface_proposition_at_entry_and_post(
+        proposition,
+        parameters,
+        arguments,
+        entry,
+        post,
+    )
+}
+
+struct SynthesisSnapshotScope(Option<(CState, SnapshotSelector)>);
+impl Drop for SynthesisSnapshotScope {
+    fn drop(&mut self) {
+        SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+            slot.replace(self.0.take());
+        });
+    }
+}
+
+/// The `at(<selector>, name)` spelling of a term the snapshot state's own
+/// scalar local holds exactly. Only a term the current state cannot name
+/// reaches this, so the snapshot spelling never shadows a current name.
+fn synthesize_snapshot_local(term: &Bitvector32Term) -> Option<ContractExpression> {
+    SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+        let slot = slot.borrow();
+        let (state, selector) = slot.as_ref()?;
+        let (name, _) = state.locals().object_values().find(|(_, value)| {
+            matches!(
+                value,
+                CValue::Int16(local)
+                    | CValue::Int32(local)
+                    | CValue::UInt8(local)
+                    | CValue::UInt16(local)
+                    | CValue::UInt32(local)
+                    | CValue::Int64(local)
+                    | CValue::UInt64(local)
+                    if local == term
+            )
+        })?;
+        Some(ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(ContractExpression::CFragment(CExpression::Variable(
+                name.to_string(),
+            ))),
+        })
+    })
 }
 
 struct SurfaceSynthesisScope(Option<SurfaceSynthesisBudget>);
@@ -1153,6 +1221,9 @@ fn synthesize_surface_bitvector(
     }
     if let Some(field) = synthesize_local_aggregate_field(term, state) {
         return Some(field);
+    }
+    if let Some(snapshot) = synthesize_snapshot_local(term) {
+        return Some(snapshot);
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((

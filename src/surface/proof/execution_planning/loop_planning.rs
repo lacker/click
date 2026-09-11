@@ -561,6 +561,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
+    ranking_measures: &[CExpression],
     condition: &CExpression,
     body: &CStatement,
     do_while: bool,
@@ -619,10 +620,16 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut recorded_snapshots = RecordedSnapshots::new();
     let constants = ExecutionProofConstants {
         proof_site: Some(preserve_site),
-        invariant_body_context: Some(Arc::new((
-            preservation.loop_entry_state().clone(),
-            invariant_checks.to_vec(),
-        ))),
+        invariant_body_context: Some(Arc::new(InvariantBodyContext {
+            loop_entry_state: preservation.loop_entry_state().clone(),
+            iteration_entry_state: preservation.state().clone(),
+            iteration_entry_selector: Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Statement(loop_body_statement_index),
+                kind: ProgramPointKind::Entry,
+            })),
+            checks: invariant_checks.to_vec(),
+            ranking_measures: ranking_measures.to_vec(),
+        })),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
         ..ExecutionProofConstants::default()
@@ -838,7 +845,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             // A completed body is bound to this exact premise store. Validate
             // it before skipping preplanning; a source close request alone
             // is not evidence. Adding further `have`s would stale the body.
-            leaf.validate_loop_invariant_bundle(invariant_checks)?;
+            leaf.validate_loop_invariant_bundle(invariant_checks, ranking_measures)?;
         } else if region_simp.is_some() {
             if invariant_surfaces.len() != invariant_checks.len() {
                 return Err(leaf.step_error(
@@ -855,7 +862,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 leaf = proved.join()?;
             }
         }
-        let checked = if invariant_checks.is_empty() {
+        let checked = if invariant_checks.is_empty() && ranking_measures.is_empty() {
             leaf.check_loop_state_join(
                 preservation.loop_entry_state(),
                 preservation.state(),
@@ -876,12 +883,15 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 preservation.state(),
                 condition,
                 invariant_checks,
+                ranking_measures,
                 &invariant_surfaces,
                 environment.function.composite_resource_definitions(),
                 do_while,
             )
             .and_then(|prepared| match prepared {
-                Some(proof) => proof.certify_loop_invariant_bundle(invariant_checks),
+                Some(proof) => {
+                    proof.certify_loop_invariant_bundle(invariant_checks, ranking_measures)
+                }
                 // A do-while exit has no continuing back edge to certify.
                 None => Ok(leaf.clone()),
             })
@@ -922,7 +932,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 final_exit_candidates.push(candidate);
             }
         }
-        let closer_tactics = if invariant_checks.is_empty() || invariants_close_requested {
+        let closer_tactics = if (invariant_checks.is_empty() && ranking_measures.is_empty())
+            || invariants_close_requested
+        {
             Vec::new()
         } else {
             checked

@@ -25,7 +25,13 @@ int32 drain(int32 n) {
                 apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
             }
             step();
-            close_invariants by { arithmetic() using { 0 <= n; } }
+            close_invariants by {
+                both { arithmetic() using { 0 <= n; } }
+                and {
+                    both { arithmetic() using { 0 <= n; } }
+                    and { arithmetic() using { 0 <= n; } }
+                }
+            }
         }
     }
     step();

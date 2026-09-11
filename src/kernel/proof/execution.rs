@@ -2798,6 +2798,10 @@ pub(crate) struct CheckedLoopInvariantLowerings {
     pub(super) body: Option<super::object::CheckedInvariantBody>,
     pub(super) snapshot: SharedValue<CState>,
     pub(super) checks: Vec<crate::kernel::CLoopInvariantCheck>,
+    /// The loop's declared `decreases` components, whose back-edge members
+    /// the retained body also closed. Validation compares them exactly, so a
+    /// body checked before a `decreases` clause existed cannot be reused.
+    pub(super) ranking_measures: Vec<crate::kernel::CExpression>,
     pub(super) facts: super::ProofFacts,
     pub(super) effects: SharedVec<ExecutionPureFact>,
 }
@@ -3239,6 +3243,7 @@ fn checked_condition_event(
             invariant_checks,
             effect_checks,
             resource_specs,
+            ranking_measures,
             body,
             ..
         } if &condition == proved_condition => {
@@ -3249,6 +3254,7 @@ fn checked_condition_event(
                     invariant_checks,
                     effect_checks,
                     resource_specs,
+                    ranking_measures,
                     do_while: false,
                     body: body.clone(),
                 };
@@ -4149,6 +4155,7 @@ impl ExecutionProofCore {
                     invariant_checks,
                     effect_checks,
                     resource_specs,
+                    ranking_measures,
                     do_while: true,
                     body,
                 } if !matches!(proved_statement, CStatement::While { .. }) => {
@@ -4167,6 +4174,7 @@ impl ExecutionProofCore {
                         invariant_checks: invariant_checks.clone(),
                         effect_checks: effect_checks.clone(),
                         resource_specs: resource_specs.clone(),
+                        ranking_measures: ranking_measures.clone(),
                         do_while: false,
                         body: body.clone(),
                     };
@@ -4274,6 +4282,7 @@ impl ExecutionProofCore {
                 invariant_checks,
                 effect_checks,
                 resource_specs,
+                ranking_measures,
                 body,
                 ..
             } => {
@@ -4284,6 +4293,7 @@ impl ExecutionProofCore {
                         invariant_checks: invariant_checks.clone(),
                         effect_checks: effect_checks.clone(),
                         resource_specs: resource_specs.clone(),
+                        ranking_measures: ranking_measures.clone(),
                         do_while: false,
                         body: body.clone(),
                     };

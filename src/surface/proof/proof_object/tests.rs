@@ -8207,7 +8207,10 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
             ),
             (0..size).map(indexed_fact).collect(),
             ExecutionProofConstants {
-                invariant_body_context: Some(Arc::new((CState::new(), checks.clone()))),
+                invariant_body_context: Some(Arc::new(InvariantBodyContext {
+                    checks: checks.clone(),
+                    ..InvariantBodyContext::default()
+                })),
                 ..ExecutionProofConstants::default()
             },
             &file.function_blocks()[0],
@@ -8248,20 +8251,23 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
             })
             .unwrap();
         assert!(explicit.facts().contains(&body_kernel));
-        assert!(joined.certify_loop_invariant_bundle(&checks).is_err());
+        assert!(joined.certify_loop_invariant_bundle(&checks, &[]).is_err());
         let prepared = joined
             .prepare_loop_invariant_bundle(
                 &CState::new(),
                 &CState::new(),
                 &CExpression::Value(int32(1)),
                 &checks,
+                &[],
                 &[surface.clone(), legacy_surface.clone()],
                 &[],
                 false,
             )
             .unwrap()
             .unwrap();
-        let certified = prepared.certify_loop_invariant_bundle(&checks).unwrap();
+        let certified = prepared
+            .certify_loop_invariant_bundle(&checks, &[])
+            .unwrap();
         let execution = certified.execution().unwrap();
         let record = execution.core.checked_invariant_lowerings.as_ref().unwrap();
         assert_eq!(record.checks(), checks);
@@ -8357,10 +8363,12 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         )];
         let (body, scope) = root
             .state
-            .open_invariant_body(&CState::new(), &checks, |_| PropositionPresentation {
-                surface: None,
-                surface_bindings: PersistentMap::default(),
-                ..PropositionPresentation::default()
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| {
+                PropositionPresentation {
+                    surface: None,
+                    surface_bindings: PersistentMap::default(),
+                    ..PropositionPresentation::default()
+                }
             })
             .unwrap();
         let completed = body.apply_normalize().ok().unwrap();
@@ -8371,7 +8379,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         assert_eq!(evidence.checks(), checks);
         retained
             .state
-            .validate_checked_invariant_lowerings(&checks)
+            .validate_checked_invariant_lowerings(&checks, &[])
             .unwrap();
         assert!(
             evidence
@@ -8466,7 +8474,10 @@ fn explicit_invariant_body_scales_and_supplies_kernel_validation() {
             ),
             (0..size).map(indexed_fact).collect(),
             ExecutionProofConstants {
-                invariant_body_context: Some(Arc::new((CState::new(), checks.clone()))),
+                invariant_body_context: Some(Arc::new(InvariantBodyContext {
+                    checks: checks.clone(),
+                    ..InvariantBodyContext::default()
+                })),
                 ..Default::default()
             },
             block,
@@ -8516,10 +8527,10 @@ fn explicit_invariant_body_scales_and_supplies_kernel_validation() {
         };
         assert!(
             root.with_kernel_state(requested)
-                .certify_loop_invariant_bundle(&checks)
+                .certify_loop_invariant_bundle(&checks, &[])
                 .is_err()
         );
-        closed.certify_loop_invariant_bundle(&checks).unwrap();
+        closed.certify_loop_invariant_bundle(&checks, &[]).unwrap();
         assert!(
             closed
                 .apply_close_invariants_body(&[ProofTactic::Normalize])

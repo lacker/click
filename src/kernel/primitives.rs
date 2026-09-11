@@ -1686,6 +1686,13 @@ pub enum CStatement {
         /// narrows that context to exactly these resources, with everything
         /// else the enclosing frame owns viewed rather than owned.
         resource_specs: Vec<CResourceSpec>,
+        /// The loop's declared `decreases` components, in source order. An
+        /// empty list means the loop is unranked. Each component is a scalar
+        /// int32 C expression evaluated at the iteration entry and again at
+        /// the back edge; the back-edge invariant bundle carries one
+        /// nonnegativity obligation per component and one lexicographic
+        /// decrease obligation over them.
+        ranking_measures: Vec<CExpression>,
         /// Whether the body runs before the first condition check, as in C's
         /// `do ... while` statement.
         do_while: bool,
