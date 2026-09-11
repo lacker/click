@@ -1154,6 +1154,7 @@ fn collect_bitvector_bound_variables(term: &Bitvector32Term, variables: &mut BTr
                     PureFunctionArgument::Algebraic(term) => {
                         collect_algebraic_bound_variables(term, variables)
                     }
+                    PureFunctionArgument::Integer(_) => {}
                     PureFunctionArgument::ArrayRef {
                         memory, pointer, ..
                     } => {
@@ -1254,6 +1255,7 @@ fn collect_algebraic_bound_variables(term: &AlgebraicTerm, variables: &mut BTree
                     PureFunctionArgument::Algebraic(term) => {
                         collect_algebraic_bound_variables(term, variables)
                     }
+                    PureFunctionArgument::Integer(_) => {}
                     PureFunctionArgument::ArrayRef {
                         memory, pointer, ..
                     } => {
@@ -1466,8 +1468,32 @@ fn substitute_bitvector_variable_in_shared_integer(
     if let Some(result) = memo.get(&term.id()) {
         return result.clone();
     }
+    crate::instrumentation::record_deterministic_work(1);
     let result = match term.as_ref() {
         IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => term.clone(),
+        IntegerTerm::PureFunctionApplication(application) => {
+            let arguments = application
+                .arguments()
+                .iter()
+                .map(|argument| match argument {
+                    crate::kernel::PureFunctionArgument::Integer(value) => {
+                        crate::kernel::PureFunctionArgument::Integer(
+                            substitute_bitvector_variable_in_shared_integer(value, from, to, memo),
+                        )
+                    }
+                    other => {
+                        substitute_bitvector_variable_in_pure_function_argument(other, from, to)
+                    }
+                })
+                .collect();
+            crate::kernel::IntegerTerm::PureFunctionApplication(
+                crate::kernel::SharedIntegerApplication::intern(
+                    application.name().to_string(),
+                    arguments,
+                ),
+            )
+            .into()
+        }
         IntegerTerm::Machine(source) => crate::kernel::SharedIntegerTerm::from(
             IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
                 source.ty(),
@@ -1510,6 +1536,15 @@ fn collect_integer_bound_variables_seen(
 ) {
     match term {
         IntegerTerm::Constant(_) | IntegerTerm::Machine(_) => {}
+        IntegerTerm::PureFunctionApplication(application) => {
+            for argument in application.arguments() {
+                if let PureFunctionArgument::Integer(value) = argument
+                    && seen.insert(value.id())
+                {
+                    collect_integer_bound_variables_seen(value, variables, seen);
+                }
+            }
+        }
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1671,7 +1706,9 @@ fn validate_integer_pure_term_seen(
     integer_work(1)?;
     match term {
         IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
-        IntegerTerm::Machine(_) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+        IntegerTerm::Machine(_) | IntegerTerm::PureFunctionApplication(_) => {
+            Err(IntegerPureSubstitutionError::UnsupportedCarrier)
+        }
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
             Ok(())
@@ -2010,6 +2047,7 @@ fn substitute_integer_pure_term_dag(
             Ok(IntegerTerm::Constant(value.clone()))
         }
         IntegerTerm::Machine(value) => Ok(IntegerTerm::Machine(value.clone())),
+        IntegerTerm::PureFunctionApplication(_) => Ok(term.clone()),
         IntegerTerm::Variable(variable) => {
             if let Some(renamed) = renamings.get(variable) {
                 Ok(IntegerTerm::Variable(*renamed))
@@ -2142,7 +2180,9 @@ fn substitute_bitvector_variable_in_algebraic_value(
         AlgebraicValue::C(value) => {
             AlgebraicValue::C(substitute_bitvector_variable_in_c_value(value, from, to))
         }
-        AlgebraicValue::Integer(value) => AlgebraicValue::Integer(value.clone()),
+        AlgebraicValue::Integer(value) => {
+            AlgebraicValue::Integer(substitute_bitvector_variable_in_integer(value, from, to))
+        }
         AlgebraicValue::Algebraic(value) => AlgebraicValue::Algebraic(
             substitute_bitvector_variable_in_algebraic_term(value, from, to),
         ),
@@ -2155,6 +2195,14 @@ fn substitute_bitvector_variable_in_pure_function_argument(
     to: &Bitvector32Term,
 ) -> PureFunctionArgument {
     match argument {
+        PureFunctionArgument::Integer(value) => {
+            PureFunctionArgument::Integer(substitute_bitvector_variable_in_shared_integer(
+                value,
+                from,
+                to,
+                &mut std::collections::HashMap::new(),
+            ))
+        }
         PureFunctionArgument::Value(value) => {
             PureFunctionArgument::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
@@ -2956,6 +3004,9 @@ fn substitute_bitvector_variable_in_spec_function_argument(
     to: &Bitvector32Term,
 ) -> SpecPureFunctionArgument {
     match argument {
+        SpecPureFunctionArgument::Integer(value) => SpecPureFunctionArgument::Integer(
+            substitute_bitvector_variable_in_spec_integer(value, from, to),
+        ),
         SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
             substitute_bitvector_variable_in_spec_expression(expression, from, to),
         ),
@@ -3138,6 +3189,17 @@ fn substitute_bitvector_variable_in_spec_integer(
 ) -> SpecIntegerExpression {
     match expression {
         SpecIntegerExpression::ResourceField(_) => expression.clone(),
+        SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
+            SpecIntegerExpression::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_bitvector_variable_in_spec_function_argument(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
         SpecIntegerExpression::Term(term) => {
             SpecIntegerExpression::Term(substitute_bitvector_variable_in_integer(term, from, to))
         }
@@ -5082,6 +5144,7 @@ fn substitute_pointer_variable_in_pure_function_argument(
     to: &Pointer,
 ) -> PureFunctionArgument {
     match argument {
+        PureFunctionArgument::Integer(value) => PureFunctionArgument::Integer(value.clone()),
         PureFunctionArgument::Value(value) => {
             PureFunctionArgument::Value(substitute_pointer_variable_in_c_value(value, from, to))
         }
@@ -6224,6 +6287,9 @@ fn substitute_pointer_variable_in_spec_function_argument(
     to: &Pointer,
 ) -> SpecPureFunctionArgument {
     match argument {
+        SpecPureFunctionArgument::Integer(value) => SpecPureFunctionArgument::Integer(
+            substitute_pointer_variable_in_spec_integer(value, from, to),
+        ),
         SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
             substitute_pointer_variable_in_spec_expression(expression, from, to),
         ),
@@ -6249,6 +6315,17 @@ fn substitute_pointer_variable_in_spec_integer(
 ) -> SpecIntegerExpression {
     match expression {
         SpecIntegerExpression::ResourceField(_) => expression.clone(),
+        SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
+            SpecIntegerExpression::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_pointer_variable_in_spec_function_argument(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
         SpecIntegerExpression::Term(term) => {
             let Term::Integer(term) =
                 crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
@@ -6923,5 +7000,87 @@ mod machine_integer_pointer_substitution_tests {
                 expected
             ))))
         );
+    }
+}
+
+#[cfg(test)]
+mod integer_function_traversal_tests {
+    use super::*;
+
+    #[test]
+    fn integer_applications_rewrite_c_and_nested_integer_arguments() {
+        let from = Variable(817);
+        let machine = Bitvector32Term::Variable(from);
+        let make = |machine: Bitvector32Term| {
+            IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                "observed".into(),
+                vec![
+                    PureFunctionArgument::Value(CValue::Int32(machine.clone())),
+                    PureFunctionArgument::Integer(
+                        IntegerTerm::from_machine(MachineIntegerType::Int32, machine)
+                            .unwrap()
+                            .into(),
+                    ),
+                ],
+            ))
+        };
+        let original = make(machine);
+        let expected = make(Bitvector32Term::Variable(Variable(818)));
+        assert_eq!(
+            substitute_bitvector_variable_in_integer(
+                &original,
+                from,
+                &Bitvector32Term::Variable(Variable(818))
+            ),
+            expected
+        );
+        assert_eq!(
+            crate::kernel::proof::term_rewrite::TermRewrite::for_bits(
+                &Bitvector32Term::Variable(from),
+                &Bitvector32Term::Variable(Variable(818))
+            )
+            .term(&Term::Integer(original)),
+            Term::Integer(expected)
+        );
+    }
+
+    #[test]
+    fn shared_integer_application_substitution_scales_with_dag_size() {
+        let from = Variable(831);
+        let mut samples = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let mut term: SharedIntegerTerm = IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(from),
+            )
+            .unwrap()
+            .into();
+            for _ in 0..depth {
+                term = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                    "pair".into(),
+                    vec![
+                        PureFunctionArgument::Integer(term.clone()),
+                        PureFunctionArgument::Integer(term),
+                    ],
+                ))
+                .into();
+            }
+            let (changed, work) = crate::instrumentation::measure_deterministic_work(|| {
+                substitute_bitvector_variable_in_integer(
+                    &term,
+                    from,
+                    &Bitvector32Term::Variable(Variable(832)),
+                )
+            });
+            assert_ne!(&changed, term.as_ref());
+            assert!(work > 0);
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3,
+                "application substitution expanded the DAG: {samples:?}"
+            );
+        }
     }
 }

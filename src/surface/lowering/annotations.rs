@@ -1513,6 +1513,40 @@ enum ResolvedProgramPoint {
     LoopEntry(usize),
 }
 
+fn spec_argument_to_pure_term(
+    argument: &crate::kernel::SpecPureFunctionArgument,
+) -> Option<crate::kernel::PureFunctionArgument> {
+    match argument {
+        crate::kernel::SpecPureFunctionArgument::Integer(expression) => Some(
+            crate::kernel::PureFunctionArgument::Integer(spec_integer_to_term(expression)?.into()),
+        ),
+        crate::kernel::SpecPureFunctionArgument::Value(crate::kernel::SpecExpression::Value(
+            value,
+        )) => Some(crate::kernel::PureFunctionArgument::Value(value.clone())),
+        _ => None,
+    }
+}
+
+fn spec_integer_to_term(
+    expression: &crate::kernel::SpecIntegerExpression,
+) -> Option<crate::kernel::IntegerTerm> {
+    match expression {
+        crate::kernel::SpecIntegerExpression::Term(term) => Some(term.clone()),
+        crate::kernel::SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
+            Some(crate::kernel::IntegerTerm::PureFunctionApplication(
+                crate::kernel::SharedIntegerApplication::intern(
+                    name.clone(),
+                    arguments
+                        .iter()
+                        .map(spec_argument_to_pure_term)
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            ))
+        }
+        _ => None,
+    }
+}
+
 impl AnnotationLowerer<'_> {
     fn lower_statement(
         &mut self,
@@ -2416,6 +2450,43 @@ impl AnnotationLowerer<'_> {
             return Err("symbolic Integer-valued datatype matches are not supported yet".into());
         }
         match expression {
+            ContractExpression::Call { name, arguments } if name != "to_integer" => {
+                let definition = self
+                    .click_function_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown function `{name}`"))?
+                    .clone();
+                let definition =
+                    self.instantiate_click_function_for_call(&definition, arguments, environment)?;
+                if definition.return_type() != &ClickType::Integer {
+                    return Err(format!(
+                        "function `{name}` does not return an Integer value"
+                    ));
+                }
+                let arguments = self.lower_click_function_arguments_to_spec(
+                    &definition,
+                    arguments,
+                    environment,
+                )?;
+                if let Some(arguments) = arguments
+                    .iter()
+                    .map(spec_argument_to_pure_term)
+                    .collect::<Option<Vec<_>>>()
+                {
+                    return Ok(SpecIntegerExpression::Term(
+                        crate::kernel::IntegerTerm::PureFunctionApplication(
+                            crate::kernel::SharedIntegerApplication::intern(
+                                definition.name().to_string(),
+                                arguments,
+                            ),
+                        ),
+                    ));
+                }
+                Ok(SpecIntegerExpression::PureFunctionApplication {
+                    name: definition.name().to_string(),
+                    arguments,
+                })
+            }
             ContractExpression::Binding(name) => {
                 let value = environment
                     .integer_values
@@ -3317,10 +3388,9 @@ impl AnnotationLowerer<'_> {
                     "function `{}` has unresolved type parameter `{name}`",
                     definition.name()
                 )),
-                ClickType::Integer => Err(format!(
-                    "function `{}` has an unsupported Integer parameter",
-                    definition.name()
-                )),
+                ClickType::Integer => self
+                    .lower_contract_integer_to_spec(argument, environment)
+                    .map(crate::kernel::SpecPureFunctionArgument::Integer),
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),

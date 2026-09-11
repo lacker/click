@@ -3360,6 +3360,7 @@ fn spec_pure_function_argument_supports_stateful_memory_refinement(
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_supports_stateful_memory_refinement(expression)
         }
+        SpecPureFunctionArgument::Integer(_) => false,
         // The refinement rule deliberately excludes algebraic values and
         // array snapshots until their stateful refinement laws are explicit.
         SpecPureFunctionArgument::Algebraic(_) | SpecPureFunctionArgument::ArrayRef { .. } => false,
@@ -3470,6 +3471,7 @@ fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionA
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_is_state_independent(expression)
         }
+        SpecPureFunctionArgument::Integer(_) => true,
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_is_state_independent(expression)
         }
@@ -3523,6 +3525,7 @@ pub(super) fn spec_algebraic_expression_is_obligation_free(
 fn spec_argument_is_obligation_free(argument: &SpecPureFunctionArgument) -> bool {
     match argument {
         SpecPureFunctionArgument::Value(value) => spec_value_is_obligation_free(value),
+        SpecPureFunctionArgument::Integer(value) => spec_integer_is_obligation_free(value),
         SpecPureFunctionArgument::Algebraic(value) => {
             spec_algebraic_expression_is_obligation_free(value)
         }
@@ -3548,6 +3551,9 @@ fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
         | SpecIntegerExpression::Subtract(left, right)
         | SpecIntegerExpression::Multiply(left, right) => {
             spec_integer_is_obligation_free(left) && spec_integer_is_obligation_free(right)
+        }
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(spec_argument_is_obligation_free)
         }
         SpecIntegerExpression::FromMachine(_) | SpecIntegerExpression::ResourceField(_) => false,
     }
@@ -3726,6 +3732,11 @@ fn spec_integer_expression_reads_current_parameter(
 ) -> bool {
     match expression {
         SpecIntegerExpression::Term(_) | SpecIntegerExpression::ResourceField(_) => false,
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().any(|argument| {
+                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
+            })
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             spec_expression_reads_current_parameter(machine, parameter_name)
         }
@@ -3890,6 +3901,7 @@ fn spec_pure_function_argument_reads_current_parameter(
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_reads_current_parameter(expression, parameter_name)
         }
+        SpecPureFunctionArgument::Integer(_) => false,
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
         }
@@ -4577,6 +4589,7 @@ fn spec_pure_function_argument_current_parameter_accesses(
                 unknown_read,
             );
         }
+        SpecPureFunctionArgument::Integer(_) => {}
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_current_parameter_accesses(
                 expression,

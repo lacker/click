@@ -311,8 +311,15 @@ Resources may declare `field total: Integer;`: folding checks the resource's
 facts, and `old(model.total)` retains the entry value across updates.
 See [resource field examples](https://github.com/lacker/click/blob/master/mdtests/integer_resource_fields.md).
 
-Integer quantifiers, pure-function signatures, folds, and conversions to `Nat`
-are still being implemented. Division,
+Pure functions with Integer parameters and results are supported. Calls remain
+opaque until an explicit `unfold(function(args))` exposes the defining equation.
+Arithmetic may treat an opaque result as an unknown Integer without unfolding.
+A smart tactic may emit a checked unfold step; expansion makes that step visible.
+General function argument types and arguments requiring deferred evaluation are
+still being implemented.
+See [the function example](https://github.com/lacker/click/blob/master/mdtests/integer_function_successor.md).
+
+Integer quantifiers, folds, and conversions to `Nat` are still being implemented. Division,
 remainder, and bitwise operators are also unavailable. `Nat` remains the
 existing [structural natural-number datatype](../library/index.md#natural-numbers).
 

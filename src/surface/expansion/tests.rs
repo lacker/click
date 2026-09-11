@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn integer_function_unfold_expands_and_reverifies() {
+    let source = r#"
+function successor(z: Integer) -> Integer {
+    z + 1
+}
+theorem successor_expansion(z: Integer) {
+    ensures successor(z) == z + 1 by {
+        unfold(successor(z));
+        simp();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("Integer successor source verifies");
+    let expanded = expand_c0_claim_source_by_label(source, &[], "successor_expansion.ensures_0")
+        .expect("Integer successor claim expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded Integer successor re-verifies");
+}
+
+#[test]
 fn successive_constructor_unfolds_retain_a_checked_goal() {
     let source = r#"
 theorem add_two(n: Nat) {
