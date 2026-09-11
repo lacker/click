@@ -512,6 +512,164 @@ fn synthesize_surface_quantified_proposition(
     }
 }
 
+/// `loadable(<base>[0..n])`: the whole named region, its byte count a
+/// multiple of the `int32` cell the segment counts in. The start index is
+/// zero, so the pointer's own offset is folded into the printed base.
+fn synthesize_zero_based_loadable_segment(
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    let element_count = if let Some(byte_count) = bytes.as_const() {
+        if !byte_count.is_multiple_of(4) {
+            return None;
+        }
+        CExpression::Value(int32(byte_count / 4))
+    } else if let Bitvector32Term::Multiply(left, right) = bytes {
+        let elements = if right.as_const() == Some(4) {
+            left.as_ref()
+        } else if left.as_const() == Some(4) {
+            right.as_ref()
+        } else {
+            return None;
+        };
+        contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+            elements,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )?)?
+    } else {
+        return None;
+    };
+    let semantic_base =
+        synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
+    let surface_base = synthesize_surface_pointer_offset(
+        &base.offset,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )
+    .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
+    Some(ClickProposition::Loadable {
+        segment: ContractSegment {
+            state: ContractSegmentState::Current,
+            base: semantic_base,
+            start: CExpression::Value(int32(0)),
+            end: element_count.clone(),
+            surface: ContractSegmentSurface::Range {
+                base: surface_base,
+                start: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                end: ContractExpression::CFragment(element_count),
+            },
+        },
+    })
+}
+
+/// `loadable(p[a..b])`: a range of one named pointer, the form a contract
+/// writes when neither end of the range is the object's own start.
+///
+/// A call requirement lowered from such a clause keeps the written ends: its
+/// byte count is `(b - a)` scaled by the element, and its base pointer is
+/// `p` displaced by `a` elements. Both survive only if the range is spelled
+/// back over the same named pointer, so this reads `a` out of the pointer
+/// offset rather than folding it into the base as the zero-based form does.
+/// A spelling whose ends differ re-lowers to a different byte count, which
+/// is exactly what the caller's round-trip check rejects.
+fn synthesize_named_range_loadable_segment(
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    // The byte count as the segment lowering builds it: the element span,
+    // scaled by the element width when that is not one byte.
+    let (span, scale) = match bytes {
+        Bitvector32Term::Multiply(left, right) => match (left.as_const(), right.as_const()) {
+            (_, Some(scale)) => (left.as_ref(), scale),
+            (Some(scale), _) => (right.as_ref(), scale),
+            _ => return None,
+        },
+        span => (span, 1),
+    };
+    let Bitvector32Term::Subtract(end, start) = span else {
+        return None;
+    };
+    // The named pointer this range starts from, and the element index the
+    // requirement's base pointer sits at within it.
+    let named =
+        named_pointer_bases(parameters, arguments, state).find_map(|(name, pointer, width)| {
+            (width == scale && base.element_index_from_base_with_width(&pointer, width)? == **start)
+                .then_some(name)
+        })?;
+    let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+        start,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )?)?;
+    let end = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+        end,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )?)?;
+    let named = CExpression::Variable(named);
+    Some(ClickProposition::Loadable {
+        segment: ContractSegment {
+            state: ContractSegmentState::Current,
+            base: named.clone(),
+            start: start.clone(),
+            end: end.clone(),
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(named),
+                start: ContractExpression::CFragment(start),
+                end: ContractExpression::CFragment(end),
+            },
+        },
+    })
+}
+
+/// Every pointer this proof context can name, with the element width its
+/// declared type steps by: the call's own parameters first, then the state's
+/// pointer locals. The walk is over those two named lists only.
+fn named_pointer_bases<'a>(
+    parameters: &'a [syntax::C0Parameter],
+    arguments: &'a [CExpression],
+    state: &'a CState,
+) -> impl Iterator<Item = (String, crate::kernel::CPointerValue, u32)> + 'a {
+    parameters
+        .iter()
+        .zip(arguments)
+        .filter_map(|(parameter, argument)| {
+            let CExpression::Value(CValue::Pointer(base)) = argument else {
+                return None;
+            };
+            let width = parameter
+                .c_type()
+                .pointee_type()?
+                .to_kernel_type()
+                .byte_width();
+            Some((parameter.name().to_string(), base.clone(), width))
+        })
+        .chain(state.locals().object_values().filter_map(|(name, value)| {
+            let CValue::Pointer(base) = value else {
+                return None;
+            };
+            let width = base.c_type().pointee_type()?.byte_width();
+            Some((name.to_string(), base.clone(), width))
+        }))
+}
+
 // Large leaf temporaries must not occupy every recursive connective frame.
 #[inline(never)]
 fn synthesize_surface_atomic_proposition(
@@ -651,52 +809,24 @@ fn synthesize_surface_atomic_proposition(
         bytes,
     } = proposition
     {
-        let element_count = if let Some(byte_count) = bytes.as_const() {
-            if !byte_count.is_multiple_of(4) {
-                return None;
-            }
-            CExpression::Value(int32(byte_count / 4))
-        } else if let Bitvector32Term::Multiply(left, right) = bytes {
-            let elements = if right.as_const() == Some(4) {
-                left.as_ref()
-            } else if left.as_const() == Some(4) {
-                right.as_ref()
-            } else {
-                return None;
-            };
-            contract_expression_to_c_fragment(&synthesize_surface_bitvector(
-                elements,
-                parameters,
-                arguments,
-                state,
-                bound_variables,
-            )?)?
-        } else {
-            return None;
-        };
-        let semantic_base =
-            synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
-        let surface_base = synthesize_surface_pointer_offset(
-            &base.offset,
+        let loadable = synthesize_zero_based_loadable_segment(
+            base,
+            bytes,
             parameters,
             arguments,
             state,
             bound_variables,
         )
-        .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
-        let loadable = ClickProposition::Loadable {
-            segment: ContractSegment {
-                state: ContractSegmentState::Current,
-                base: semantic_base,
-                start: CExpression::Value(int32(0)),
-                end: element_count.clone(),
-                surface: ContractSegmentSurface::Range {
-                    base: surface_base,
-                    start: ContractExpression::CFragment(CExpression::Value(int32(0))),
-                    end: ContractExpression::CFragment(element_count),
-                },
-            },
-        };
+        .or_else(|| {
+            synthesize_named_range_loadable_segment(
+                base,
+                bytes,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )
+        })?;
         let at_entry = SYNTHESIS_ENTRY_STATE.with(|slot| {
             slot.borrow()
                 .as_ref()

@@ -1296,9 +1296,21 @@ impl SurfacePropositionMap {
                         {
                             expression = inner;
                         }
+                        // A qualified object reaches its cells through the
+                        // accessors the language writes on it: struct fields
+                        // and one index per array dimension. Strip both, so
+                        // `alpha::values[0]` and
+                        // `static_local::f::grid[0][1]` record their own cell
+                        // the same way a bare `alpha::value` does. The whole
+                        // accessor chain is what gets recorded, so the
+                        // spelling reads back the cell the pointer names.
                         let mut base = expression;
-                        while let ContractExpression::Field { base: inner, .. } = base {
-                            base = inner;
+                        loop {
+                            base = match base {
+                                ContractExpression::Field { base: inner, .. } => inner,
+                                ContractExpression::Index(inner, _) => inner,
+                                _ => break,
+                            };
                         }
                         if matches!(base, ContractExpression::QualifiedC { .. })
                             && let Bitvector32Term::MemoryLoad(_, pointer) = term.as_ref()
