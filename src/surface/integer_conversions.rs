@@ -15,7 +15,7 @@ pub(super) fn integer_conversion_target(name: &str) -> Option<C0Type> {
 }
 
 pub(super) fn is_integer_conversion(name: &str) -> bool {
-    name == "to_integer" || integer_conversion_target(name).is_some()
+    matches!(name, "to_integer" | "to_nat") || integer_conversion_target(name).is_some()
 }
 
 pub(super) fn machine_integer_source_type(c_type: C0Type) -> bool {

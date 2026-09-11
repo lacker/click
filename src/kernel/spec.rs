@@ -1461,16 +1461,29 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
             }
             Ok(paths
                 .into_iter()
-                .map(|(arguments, facts, obligations)| SpecAlgebraicPath {
-                    value: AlgebraicTerm {
-                        algebraic_type: expression.algebraic_type.clone(),
-                        node: AlgebraicTermNode::PureFunctionApplication {
-                            name: name.clone(),
-                            arguments,
+                .map(|(arguments, facts, mut obligations)| {
+                    if name == "to_nat"
+                        && let Some(PureFunctionArgument::Integer(value)) = arguments.first()
+                    {
+                        let nonnegative = ConditionTerm::integer_greater_equal(
+                            value.as_ref().clone(),
+                            crate::kernel::IntegerTerm::Constant(0.into()),
+                        );
+                        obligations.push(ProofObligation::verification_condition(
+                            Proposition::ConditionIs(nonnegative, true),
+                        ));
+                    }
+                    SpecAlgebraicPath {
+                        value: AlgebraicTerm {
+                            algebraic_type: expression.algebraic_type.clone(),
+                            node: AlgebraicTermNode::PureFunctionApplication {
+                                name: name.clone(),
+                                arguments,
+                            },
                         },
-                    },
-                    facts,
-                    obligations,
+                        facts,
+                        obligations,
+                    }
                 })
                 .collect())
         }

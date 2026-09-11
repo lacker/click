@@ -39,6 +39,20 @@ theorem nat_to_integer_client(n: Nat) {
 }
 
 #[test]
+fn builtin_nat_integer_dispatch_and_checked_to_nat() {
+    let source = r#"
+theorem nat_dispatch(n: Nat) {
+    ensures to_integer(n) == to_integer(n) by { normalize(); }
+}
+theorem checked_to_nat(z: Integer) {
+    requires z >= 0;
+    ensures to_nat(z) == to_nat(z) by { normalize(); }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("Nat/Integer conversion dispatch verifies");
+}
+
+#[test]
 fn successive_constructor_unfolds_retain_a_checked_goal() {
     let source = r#"
 theorem add_two(n: Nat) {

@@ -537,6 +537,16 @@ fn infer_spec_value_type(
         }
         ContractExpression::Call { name, arguments } if name == "to_integer" => {
             let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
+            if let SpecValueType::Algebraic(application) =
+                infer_spec_value_type(argument, variables, click_functions, context)?
+            {
+                if application.name() == "Nat" && application.arguments().is_empty() {
+                    return Ok(SpecValueType::Integer);
+                }
+                return Err(ClickError::new(
+                    "to_integer expects a machine integer or Nat",
+                ));
+            }
             if let Some(actual) =
                 infer_contract_expression_type(argument, variables, click_functions, context)?
                 && !machine_integer_source_type(actual)
@@ -546,6 +556,16 @@ fn infer_spec_value_type(
                 ));
             }
             Ok(SpecValueType::Integer)
+        }
+        ContractExpression::Call { name, arguments } if name == "to_nat" => {
+            let argument = integer_conversion_argument(name, arguments).map_err(ClickError::new)?;
+            let actual = infer_spec_value_type(argument, variables, click_functions, context)?;
+            if !matches!(actual, SpecValueType::Integer | SpecValueType::Scalar(None)) {
+                return Err(ClickError::new("to_nat expects an Integer"));
+            }
+            Ok(SpecValueType::Algebraic(
+                AlgebraicTypeApplication::concrete("Nat"),
+            ))
         }
         ContractExpression::Call { name, arguments } => {
             let Some(function) = click_functions.get(name) else {

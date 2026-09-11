@@ -450,6 +450,14 @@ impl ClickType {
 }
 
 impl AlgebraicTypeApplication {
+    pub(crate) fn concrete(name: impl Into<String>) -> Self {
+        Self {
+            rigid: false,
+            name: name.into(),
+            arguments: Vec::new(),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

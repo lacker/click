@@ -237,6 +237,7 @@ fn contract_expression_is_algebraic(
             lexical_bindings.pop();
             result
         }
+        ContractExpression::Call { name, .. } if name == "to_nat" => true,
         ContractExpression::Call { name, .. } => functions
             .get(name)
             .is_some_and(|definition| matches!(definition.return_type(), ClickType::Algebraic(_))),
@@ -2462,6 +2463,16 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::Call { name, arguments } if name == "to_integer" => {
                 let argument = integer_conversion_argument(name, arguments)?;
+                if let Ok(nat) = self.lower_contract_algebraic_to_spec(argument, environment) {
+                    if nat.algebraic_type.name == "Nat" {
+                        return Ok(SpecIntegerExpression::PureFunctionApplication {
+                            name: "nat_to_integer".to_string(),
+                            arguments: vec![crate::kernel::SpecPureFunctionArgument::Algebraic(
+                                nat,
+                            )],
+                        });
+                    }
+                }
                 let argument = self.lower_contract_expression_to_spec(argument, environment)?;
                 if let SpecExpression::Value(value) = &argument {
                     let destination = crate::kernel::MachineIntegerType::from_c_type(
@@ -3231,6 +3242,21 @@ impl AnnotationLowerer<'_> {
                 self.lower_contract_algebraic_to_spec(body, &body_environment)
             }
             ContractExpression::Call { name, arguments } => {
+                if name == "to_nat" {
+                    let argument = integer_conversion_argument(name, arguments)?;
+                    let value = self.lower_contract_integer_to_spec(argument, environment)?;
+                    let algebraic_type = self
+                        .cached_algebraic_kernel_type(&AlgebraicTypeApplication::concrete("Nat"))?;
+                    return Ok(SpecAlgebraicExpression {
+                        algebraic_type,
+                        node: SpecAlgebraicExpressionNode::PureFunctionApplication {
+                            name: "to_nat".to_string(),
+                            arguments: vec![crate::kernel::SpecPureFunctionArgument::Integer(
+                                value,
+                            )],
+                        },
+                    });
+                }
                 self.lower_click_function_call_to_algebraic_spec(name, arguments, environment)
             }
             _ => Err("expected an algebraic value".to_string()),
