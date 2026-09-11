@@ -419,6 +419,28 @@ execution theorems" in `docs/reference/language/index.md`.
 
 ## Chunk 5: binder transport at ordinary C call sites
 
+**Status: landed** as `f9653202`. Binder names live in a parser-side registry keyed by
+callee, not on `CResourceSpec::Instance`; folding the registry into chunk 7's
+`binder` field is a cleanup for later. One `produces` binder per callee is
+supported, since one `let` introduces one name. Verifier gaps found while
+writing the fixtures, none fixed, none filed:
+
+- A resource-field `requires` on a callee is discharged only by an exact
+  match: `requires first.revision < 1000` on the callee and `requires
+  c.revision < 999` on the caller fails the step, while identical bounds
+  pass. An int32-incrementing callee cannot be called under a strictly
+  tighter caller bound.
+- Two `old()`-relative guarantees across two calls do not chain: the state
+  `i2 == i1 + 1`, `i5 == i2 + 1` does not close `i5 == i1 + 2` by `simp`,
+  `arithmetic() using` refuses `Integer` premises, and the intermediate value
+  has no surface spelling because call successors deliberately record no
+  synthesized `old(...)`. The chunk's literal `twice` example therefore is
+  not a fixture; `c_call_binder_transport.md` proves one increment.
+- A grouped `by { ... }` proof declines a `have` between execution steps and
+  a top-level `arithmetic() using`, and a per-clause proof is not a
+  workaround because `owns c: R()` desugars to a sibling `ensures` whose
+  default proof re-executes the call with no map.
+
 **Gap.** A C function whose sidecar declares instance binders cannot be
 called from C. `execute_verified_function_templates` in
 `src/kernel/functions.rs` returns the runtime error "calls with named
