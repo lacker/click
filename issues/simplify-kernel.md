@@ -1323,11 +1323,30 @@ conjunct-guard record); existential body obligations are emitted as
 separate `Exists` obligations with no shared witness, pre-existing;
 `ExistsInteger` refuses guarded bodies rather than hoisting.
 
+### Package 19: spellings for emitted call requirements
+
+**Landed** 2026-09-10 ("Spell emitted call requirements over foreign
+statics and ranges"). Gap (i): `SurfacePropositionMap::record_lowering`
+stripped only `Field` before testing for a bare qualified object, so
+every indexed qualified array cell missed `qualified_load_sources`; it now
+walks `Index` too and records the whole accessor chain, and the existing
+load synthesis arms return it. Gap (ii): a new named-range synthesizer,
+run only when the zero-based `loadable(p[0..n])` form declines, reads the
+start index out of the pointer offset and spells `loadable(p[start..end])`
+so the written ends re-lower to the same byte count. Round-trip tests
+re-lower the synthesized text through the fixed-state `have` path and
+compare to the requirement. Findings for 10(c2), not synthesis gaps: a
+quantified requirement can never be `PartialEq`-equal to a freshly lowered
+`have` because contract lowering allocates binders from 3,100,000 and
+fixed-state lowering from 2,000,000, so the prototype's exact goal check
+needs an alpha-equivalent comparison; and `Exists` carries its binder
+name in equality while synthesis names binders `__click_qN`.
+
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 (both slices), 12, 13, 14, 16.
-Open: 10(c2) (gap (iii) fixed by package 18; gaps (i) and (ii) are
-package 19, in flight), then 15 last. Package 15 may delete kernel authority while 10(c2) is open, provided
+Open: 10(c2), resuming from its prototype now that 18 and 19 landed and
+needing alpha-equivalent goal comparison; then 15 last. Package 15 may delete kernel authority while 10(c2) is open, provided
 the surface's retained checked-derivation leg in
 `transition_certification.rs` moves out of the kernel with the prover.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
