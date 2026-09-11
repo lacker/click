@@ -2061,6 +2061,45 @@ mod tests {
     use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
 
     #[test]
+    fn integer_choice_freshens_against_focused_goal_binding() {
+        let collision = Variable(3_000_000);
+        let source = Proposition::Exists {
+            name: "source".into(),
+            var: Variable(41),
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::IntegerEqual(
+                    crate::kernel::IntegerTerm::var(Variable(41)).into(),
+                    crate::kernel::IntegerTerm::var(Variable(41)).into(),
+                ),
+                true,
+            )),
+        };
+        let goal = Proposition::ForAll {
+            var: collision,
+            sort: Sort::Integer,
+            body: Box::new(source.clone()),
+        };
+        type TestProof = ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()>;
+        let proof: TestProof = ProofObject::root(
+            (),
+            ProofBranch::new(
+                ProofObligation::Proposition(PropositionObligation::new(goal, ())),
+                ProofBranchState {
+                    facts: ProofFacts::from_ordered(std::slice::from_ref(&source)),
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: None,
+                },
+            ),
+        );
+        let (_, witness) = match proof.check_integer_exists_choice(&source, collision) {
+            Ok(choice) => choice,
+            Err(_) => panic!("the kernel should freshen a choice colliding with the focused goal"),
+        };
+        assert_ne!(witness, collision);
+    }
+
+    #[test]
     fn invariant_body_evidence_requires_exact_complete_root_and_context() {
         use crate::kernel::proof::{
             ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
