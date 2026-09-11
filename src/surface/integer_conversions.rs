@@ -267,6 +267,29 @@ mod tests {
     }
 
     #[test]
+    fn deferred_integer_function_c_arguments_keep_mandatory_definedness() {
+        let unguarded = "function f(x: int32) -> Integer { to_integer(x) }\n\
+            theorem call(x: int32) { ensures f(x + 1) == f(x + 1) by simp; }";
+        assert!(verify_c0_sources(unguarded, &[]).is_err());
+
+        let guarded = unguarded.replace("{ ensures", "{ requires defined(x + 1); ensures");
+        verify_c0_sources(&guarded, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(&guarded, &[], "call.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+
+        let mixed = "function mix(left: int32, right: int32) -> Integer { to_integer(left) }\n\
+            theorem call(left: int32, right: int32) { requires defined(left + 1); requires defined(right + 1); ensures mix(left + 1, right + 1) == mix(left + 1, right + 1) by simp; }";
+        verify_c0_sources(mixed, &[]).unwrap();
+        for missing in [
+            "requires defined(left + 1); ",
+            "requires defined(right + 1); ",
+        ] {
+            let invalid = mixed.replacen(missing, "", 1);
+            assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
     fn integer_conversion_proofs_expand_and_recheck() {
         for source in [
             "theorem conversion(x: int32) { ensures to_integer(x) == to_integer(x) by simp; }",

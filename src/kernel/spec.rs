@@ -4143,21 +4143,50 @@ fn evaluate_spec_pure_function_argument_paths(
             .collect())
         }
         SpecPureFunctionArgument::Value(expression) => {
-            Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
+            let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
                 expression,
                 loop_entry_state,
                 assumptions,
                 algebraic_bindings,
                 budget,
-            )?
-            .into_iter()
-            .map(|path| SpecPureFunctionArgumentPath {
-                value: PureFunctionArgument::Value(path.value),
-                facts: path.facts,
-                obligations: path.obligations,
-            })
-            .collect())
+            )?;
+            // A deferred opaque function call still owes the complete domain
+            // of each C argument.  Its successful evaluation path may carry
+            // an overflow fact, but that fact is not an assumption supplied
+            // by the call itself.  Retain the disjunction of all normal
+            // argument paths as a mandatory verification condition, just as
+            // integer-to-machine conversion does above.
+            let domain = paths
+                .iter()
+                .filter_map(|path| {
+                    let propositions = path
+                        .facts
+                        .iter()
+                        .filter(|fact| is_definedness_path_fact(fact.proposition()))
+                        .map(|fact| fact.proposition().clone())
+                        .collect::<Vec<_>>();
+                    (!propositions.is_empty()).then(|| proposition_and_all(propositions))
+                })
+                .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)));
+            Ok(paths
+                .into_iter()
+                .map(|path| {
+                    let mut obligations = path.obligations;
+                    if let Some(domain) = domain.clone() {
+                        retain_required_conversion_obligation(
+                            &mut obligations,
+                            assumptions,
+                            domain,
+                        );
+                    }
+                    SpecPureFunctionArgumentPath {
+                        value: PureFunctionArgument::Value(path.value),
+                        facts: path.facts,
+                        obligations,
+                    }
+                })
+                .collect())
         }
         SpecPureFunctionArgument::Algebraic(expression) => {
             Ok(evaluate_spec_algebraic_at_state_with_bindings(
@@ -4212,6 +4241,25 @@ fn evaluate_spec_pure_function_argument_paths(
             .collect())
         }
     }
+}
+
+fn is_definedness_path_fact(proposition: &Proposition) -> bool {
+    matches!(
+        proposition,
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(..)
+                | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
+                | ConditionTerm::Bitvector32SignedMultiplyOverflows(..)
+                | ConditionTerm::Bitvector32SignedDivideOverflows(..)
+                | ConditionTerm::Bitvector32SignedShiftLeftOverflows(..)
+                | ConditionTerm::Bitvector64SignedAddOverflows(..)
+                | ConditionTerm::Bitvector64SignedSubtractOverflows(..)
+                | ConditionTerm::Bitvector64SignedMultiplyOverflows(..)
+                | ConditionTerm::Bitvector64SignedDivideOverflows(..)
+                | ConditionTerm::Bitvector64SignedShiftLeftOverflows(..),
+            false
+        )
+    )
 }
 
 fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
