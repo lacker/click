@@ -185,12 +185,6 @@ fails to prepare, because the clause is lowered with no facts or resources in
 scope, so a callback that recomputes from a child link cannot state that
 footprint.
 
-Two indirect calls with `owns` footprints through one opened callback-suite
-resource are not supported; the second call reports that no named contract is
-available for the reloaded function pointer. One such call per opened resource
-works, and `views` footprints work for any number of calls, which is the shape
-`mdtests/rb_augment_callbacks_helper.md` uses for three callbacks.
-
 ## Type support is still narrow
 
 The verifier supports `void` function returns and scalar `int16`, `int32`,
