@@ -474,30 +474,30 @@ impl<'a> Proof<'a> {
             .get(index)
             .cloned()
             .ok_or_else(|| self.step_error(format!("requirement {index} is out of range")))?;
-        let Proposition::Exists {
-            var,
-            sort: Sort::Integer,
-            body,
-            ..
-        } = source
-        else {
-            return Err(self.step_error(
-                "pure `choose` currently requires an Integer existential requirement",
-            ));
-        };
-        let chosen =
-            crate::kernel::IntegerTerm::var(Variable(self.state().locals().next_choice_variable));
-        let fact =
-            crate::kernel::substitute_integer_variable_in_pure_proposition(&body, var, &chosen)
-                .map_err(|error| {
-                    self.step_error(format!("could not apply Integer choice: {error:?}"))
+        let (fact, chosen_variable) =
+            self.state
+                .check_integer_exists_choice(
+                    &source,
+                    Variable(self.state().locals().next_choice_variable),
+                )
+                .map_err(|error| match error {
+                    PropositionCloseError::IntegerChoiceSourceUnavailable => self
+                        .step_error("Integer choose source is not an exact available requirement"),
+                    PropositionCloseError::IntegerChoiceWrongSort => self.step_error(
+                        "pure `choose` currently requires an Integer existential requirement",
+                    ),
+                    PropositionCloseError::IntegerChoiceFresheningExhausted => {
+                        self.step_error("pure `choose` could not allocate a fresh Integer witness")
+                    }
+                    _ => self.step_error("could not apply Integer choice"),
                 })?;
+        let chosen = crate::kernel::IntegerTerm::var(chosen_variable);
         let mut locals = self.state().locals().clone();
         locals.integer_values = locals.integer_values.with_inserted(
             choice.name.clone(),
             crate::kernel::SpecIntegerExpression::Term(chosen),
         );
-        locals.next_choice_variable += 1;
+        locals.next_choice_variable = chosen_variable.0.saturating_add(1);
         let added = (!self.facts().contains_top_level(&fact))
             .then(|| fact.clone())
             .into_iter()

@@ -9,7 +9,7 @@ use super::{
     PersistentOrderedSet, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState,
     ProofFacts, ProofObligation,
 };
-use crate::kernel::{Proposition, Sort};
+use crate::kernel::{Proposition, Sort, Variable};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -151,6 +151,9 @@ pub(crate) enum PropositionCloseError {
     IntegerArithmetic(super::integer_arithmetic::IntegerArithmeticCheckError),
     ExpectedIntroduction(Proposition),
     IntegerFresheningExhausted,
+    IntegerChoiceSourceUnavailable,
+    IntegerChoiceWrongSort,
+    IntegerChoiceFresheningExhausted,
     ExpectedConjunction(Proposition),
     MissingConjuncts(Proposition, Proposition),
     ExpectedDisjunction(Proposition),
@@ -647,6 +650,52 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         super::fact_reasoning::normalizes_context_free_leaf(goal.proposition())
             .then(|| self.closed_focused())
             .ok_or(PropositionCloseError::DoesNotNormalize)
+    }
+
+    /// Checks and instantiates an Integer existential fact for a checked proof
+    /// transition. The returned witness proposition is the only fact the
+    /// surface driver may publish; freshness is checked against the complete
+    /// kernel fact index before substitution.
+    pub(crate) fn check_integer_exists_choice(
+        &self,
+        source: &Proposition,
+        hint: Variable,
+    ) -> Result<(Proposition, Variable), PropositionCloseError> {
+        let (_, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        if !facts.contains_top_level(source) {
+            return Err(PropositionCloseError::IntegerChoiceSourceUnavailable);
+        }
+        let Proposition::Exists {
+            var,
+            sort: Sort::Integer,
+            body,
+            ..
+        } = source
+        else {
+            return Err(PropositionCloseError::IntegerChoiceWrongSort);
+        };
+        let mut variable = hint;
+        loop {
+            if !facts.reserves_variable(variable)
+                && !crate::kernel::proposition_variables(body).contains(&variable)
+            {
+                break;
+            }
+            variable = Variable(
+                variable
+                    .0
+                    .checked_add(1)
+                    .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?,
+            );
+        }
+        let witness = crate::kernel::IntegerTerm::var(variable);
+        let fact = super::super::reasoning::substitute_integer_variable_in_pure_proposition(
+            body, *var, &witness,
+        )
+        .map_err(|_| PropositionCloseError::IntegerChoiceFresheningExhausted)?;
+        Ok((fact, variable))
     }
 
     pub(crate) fn apply_normalize_using(
