@@ -971,7 +971,24 @@ free in the antecedent. (iii) is a lowering-fidelity defect, not a
 synthesis gap, and the requirement is not source-expressible in any form
 until it is fixed. Each prerequisite is its own coherent change; the
 blast radius is twelve fixtures (add
-`contract_refinement_uses_implied_requirement`). Also left: recursive-call `decreases` is a syntactic
+`contract_refinement_uses_implied_requirement`). **10(c2) second attempt** (2026-09-10, branch
+`claude/simplify-kernel-pkg-10c2-requirement-goals-2`, red, not
+integrated): with 18 and 19 landed, the planner discharges seven of the
+twelve fixtures plus the two hand-written spelling fixtures, using an
+alpha-equivalent goal comparison (`propositions_are_alpha_equal`,
+binder-identity and `Exists`-name blind, with both sides put in canonical
+load form first) that construction and discharge share. Five remain red,
+the `cstr` and `stdlib_external_contracts` family plus
+`examples/bounded-pool` and `owned-string`, on two capabilities the
+deleted checked-derivation leg used to supply: (a) after `witness`, the
+body owes `loadable(bytes[w..w + 1])` while the covering range sits at
+the caller's entry snapshot, so the planner must select a `transport`
+source and range coverage in one step, which no planner does today; (b)
+a requirement whose head conjunct is a load-defining equation
+`Var(loadvar) == load(snapshot, p)` has no Surface spelling, a fourth gap
+of package 19's kind. `auto` also reports it has no explicit simple
+certificate for an existential over `CInt32`, pre-existing. The branch
+is a working checkpoint for whoever takes those two. Also left: recursive-call `decreases` is a syntactic
 walk, not a prover site, and emitting it as a call obligation needs the
 caller's termination plan at the call site, which the whole-program
 termination pass does not provide; any such obligation must include
@@ -1345,8 +1362,9 @@ name in equality while synthesis names binders `__click_qN`.
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 (both slices), 12, 13, 14, 16.
-Open: 10(c2), resuming from its prototype now that 18 and 19 landed and
-needing alpha-equivalent goal comparison; then 15 last. Package 15 may delete kernel authority while 10(c2) is open, provided
+Open: 10(c2) (second attempt red on two planner and spelling gaps, see its
+note), then 15 last; 15 may proceed with the checked-derivation leg still
+present on the surface, relocating it with the prover. Package 15 may delete kernel authority while 10(c2) is open, provided
 the surface's retained checked-derivation leg in
 `transition_certification.rs` moves out of the kernel with the prover.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
