@@ -6053,3 +6053,117 @@ fn disjunction_cases_of_any_width_derive_a_common_consequence() {
         assert_checkable_derivation(&assumptions, &nonnegative);
     }
 }
+
+#[test]
+fn integer_machine_operation_axioms_agree_with_boundary_models() {
+    // Evaluate the emitted theorem independently, including modular machine
+    // arithmetic and the signed overflow guard. In particular, the guard must
+    // exclude the concrete assignments that falsify an unguarded equality.
+    fn bits(term: &Bitvector32Term, a: i32, b: i32) -> u32 {
+        match term {
+            Bitvector32Term::Variable(Variable(910)) => a as u32,
+            Bitvector32Term::Variable(Variable(911)) => b as u32,
+            Bitvector32Term::Constant(value) => *value,
+            Bitvector32Term::Add(left, right) => bits(left, a, b).wrapping_add(bits(right, a, b)),
+            Bitvector32Term::Subtract(left, right) => {
+                bits(left, a, b).wrapping_sub(bits(right, a, b))
+            }
+            _ => panic!("unexpected machine term: {term:?}"),
+        }
+    }
+    fn integer(term: &IntegerTerm, a: i32, b: i32) -> num_bigint::BigInt {
+        match term {
+            IntegerTerm::Constant(value) => value.clone(),
+            IntegerTerm::Machine(value) => {
+                assert_eq!(value.ty(), MachineIntegerType::Int32);
+                (bits(value.value(), a, b) as i32).into()
+            }
+            IntegerTerm::Add(left, right) => integer(left, a, b) + integer(right, a, b),
+            IntegerTerm::Subtract(left, right) => integer(left, a, b) - integer(right, a, b),
+            _ => panic!("unexpected Integer term: {term:?}"),
+        }
+    }
+
+    let safety = prove_int32_add_defined_by_integer_bounds(
+        Bitvector32Term::Variable(Variable(910)),
+        Bitvector32Term::Variable(Variable(911)),
+    );
+    let Proposition::Implies(lower, tail) = safety.proposition() else {
+        panic!("missing lower bound")
+    };
+    let Proposition::Implies(upper, result) = tail.as_ref() else {
+        panic!("missing upper bound")
+    };
+    let Proposition::ConditionIs(ConditionTerm::IntegerGreaterEqual(sum_lower, min), true) =
+        lower.as_ref()
+    else {
+        panic!("wrong lower bound")
+    };
+    let Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(sum_upper, max), true) =
+        upper.as_ref()
+    else {
+        panic!("wrong upper bound")
+    };
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(x, y), false) =
+        result.as_ref()
+    else {
+        panic!("wrong safety conclusion")
+    };
+    for a in [i32::MIN, -1, 0, 1, i32::MAX] {
+        for b in [i32::MIN, -1, 0, 1, i32::MAX] {
+            let in_range = integer(sum_lower, a, b) >= integer(min, a, b)
+                && integer(sum_upper, a, b) <= integer(max, a, b);
+            let exact = i64::from(bits(x, a, b) as i32) + i64::from(bits(y, a, b) as i32);
+            assert_eq!(in_range, i32::try_from(exact).is_ok(), "{a}, {b}");
+        }
+    }
+    for theorem in [
+        prove_int32_add_to_integer(
+            Bitvector32Term::Variable(Variable(910)),
+            Bitvector32Term::Variable(Variable(911)),
+        ),
+        prove_int32_subtract_to_integer(
+            Bitvector32Term::Variable(Variable(910)),
+            Bitvector32Term::Variable(Variable(911)),
+        ),
+    ] {
+        let Proposition::Implies(guard, conclusion) = theorem.proposition() else {
+            panic!("missing definedness guard")
+        };
+        let Proposition::ConditionIs(guard, false) = guard.as_ref() else {
+            panic!("wrong guard polarity")
+        };
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+            conclusion.as_ref()
+        else {
+            panic!("wrong conclusion")
+        };
+        let mut defined = 0;
+        let mut excluded = 0;
+        for a in [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX] {
+            for b in [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX] {
+                let exact = match guard {
+                    ConditionTerm::Bitvector32SignedAddOverflows(x, y) => {
+                        i64::from(bits(x, a, b) as i32) + i64::from(bits(y, a, b) as i32)
+                    }
+                    ConditionTerm::Bitvector32SignedSubtractOverflows(x, y) => {
+                        i64::from(bits(x, a, b) as i32) - i64::from(bits(y, a, b) as i32)
+                    }
+                    _ => panic!("wrong definedness guard"),
+                };
+                let equality = integer(left, a, b) == integer(right, a, b);
+                if i32::try_from(exact).is_ok() {
+                    defined += 1;
+                    assert!(equality, "unsound bridge at {a}, {b}");
+                } else {
+                    excluded += 1;
+                    assert!(
+                        !equality,
+                        "overflow counterexample should falsify the unguarded law"
+                    );
+                }
+            }
+        }
+        assert!(defined > 0 && excluded > 0);
+    }
+}
