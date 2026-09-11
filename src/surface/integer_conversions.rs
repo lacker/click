@@ -202,6 +202,28 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_symbolic_conversions_keep_bounds_through_proofs_and_expansion() {
+        let bounded = "theorem wrapped(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; ensures to_int32(z) + 0 == to_int32(z) by simp; }";
+        verify_c0_sources(bounded, &[]).unwrap();
+        let normalized = bounded.replace("by simp; }", "by { normalize(); } }");
+        verify_c0_sources(&normalized, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(bounded, &[], "wrapped.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+
+        for missing in ["requires z >= -2147483648;", "requires z <= 2147483647;"] {
+            let invalid = bounded.replace(missing, "");
+            assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+        }
+
+        let prior_have = "theorem prior(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let x: int32 = to_int32(z); ensures x + 0 == x by simp; }";
+        verify_c0_sources(prior_have, &[]).unwrap();
+        let aliases = "theorem aliases(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by simp; }";
+        verify_c0_sources(aliases, &[]).unwrap();
+        let no_bounds = "theorem aliases(z: Integer) { let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by simp; }";
+        assert!(verify_c0_sources(no_bounds, &[]).is_err());
+    }
+
+    #[test]
     fn integer_conversion_preserves_source_types_and_argument_definedness() {
         for (parameters, claim) in [
             ("", "to_integer(true) == 1"),
