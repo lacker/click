@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn integer_quantifier_smart_proofs_expand_and_recheck() {
+    let source = r#"
+theorem integer_forall_simp() {
+    ensures ordered: forall (z: Integer) { z + 1 > z } by { simp(); }
+}
+theorem integer_exists_simp(x: Integer) {
+    ensures witnessed: exists (z: Integer) { z == x } by {
+        witness(z = x);
+        simp();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("Integer quantifier smart proofs should verify");
+
+    for label in [
+        "integer_forall_simp.ordered",
+        "integer_exists_simp.witnessed",
+    ] {
+        let expanded = expand_c0_claim_source_by_label(source, &[], label)
+            .expect("the Integer quantifier claim should expand");
+        if label.ends_with("ordered") {
+            assert!(
+                expanded.contains("integer_certificate"),
+                "{label}: {expanded}"
+            );
+        } else {
+            assert!(expanded.contains("normalize();"), "{label}: {expanded}");
+        }
+        verify_c0_sources(&expanded, &[]).unwrap_or_else(|error| {
+            panic!("{label} expansion should recheck: {}", error.message())
+        });
+    }
+}
+
+#[test]
 fn context_free_implication_simp_expands_intro_and_rechecks() {
     let source = r#"
 theorem reflexive_implication(x: int32) {

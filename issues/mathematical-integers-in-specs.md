@@ -324,6 +324,16 @@ families and two rules into 14 tests. The full gate measured 1.3–2.2 seconds p
 partition, compared with roughly 22–32 seconds for the original test. The existing
 60-second cutoff and all verifier budgets are unchanged.
 
+## Pure quantifier checkpoint (2026-09-10)
+
+Pure theorem proofs now support bounded source-side `Integer` universal
+introduction and existential witnesses, including capture-avoiding shadowing,
+nested `have`, and smart arithmetic proofs that expand and independently
+reverify. Mixed machine/`Integer` carrier expressions remain rejected unless an
+explicit conversion supplies the boundary. General existential elimination and
+deeper mixed-carrier quantified reasoning remain later work; this checkpoint
+does not claim those paths are implemented.
+
 ## Implementation and integration sequence
 
 1. Land this design record, then agree on the minimal shared kernel/surface

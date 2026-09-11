@@ -447,7 +447,17 @@ impl<'a> Proof<'a> {
                     .proposition_obligation()
                     .map(|goal| &goal.integer_values)
                     .unwrap_or(&context.theorem_context.integer_values);
-                crate::surface::lower_integer_certificate_proposition(surface, integer_values)
+                let promoted = self.proposition_obligation().map_or_else(
+                    || surface.clone(),
+                    |goal| {
+                        crate::surface::proof::surface_lowering::promote_integer_comparison(
+                            surface,
+                            integer_values,
+                            &goal.surface_bindings,
+                        )
+                    },
+                );
+                crate::surface::lower_integer_certificate_proposition(&promoted, integer_values)
                     .map_err(|message| {
                         self.step_error(format!("could not lower {description}: {message}"))
                     })
