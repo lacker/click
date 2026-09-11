@@ -1238,3 +1238,199 @@ fn while_invariant_is_proof_obligation() {
         )
     );
 }
+
+/// A verified loop rule carries the assumptions it was verified under. When
+/// several rules certify the same `while` statement from the same symbolic
+/// entry state, those prerequisites are the only thing that tells them apart,
+/// so applying a rule has to check them against the facts available at the
+/// application site. This is the case no fixture reaches through the surface:
+/// a source loop's invariant checks carry its loop index, so two source loops
+/// are never the same `CStatement`, and one source loop is planned once per
+/// proof path.
+#[test]
+fn verified_loop_rules_are_selected_by_their_exact_prerequisites() {
+    let (statement, base_rule) = prerequisite_loop_rule_fixture();
+    let state = CState::new().with_local("i", int32(0));
+    let first_guard = loop_rule_guard(1);
+    let second_guard = loop_rule_guard(2);
+
+    let mut first = base_rule.clone();
+    first.required_assumptions = PureFactContext::new().assume_condition(first_guard.clone(), true);
+    let mut second = base_rule.clone();
+    second.required_assumptions =
+        PureFactContext::new().assume_condition(second_guard.clone(), true);
+    // The second rule's path set is distinguishable, so the applied paths name
+    // which rule the kernel selected.
+    second.paths.extend(base_rule.paths.iter().cloned());
+    let environment =
+        CExecutionEnvironment::new().with_verified_loop_rules([first.clone(), second.clone()]);
+
+    let applied_first = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        PureFactContext::new().assume_condition(first_guard.clone(), true),
+        environment.clone(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert_eq!(applied_first.paths().len(), first.paths.len());
+
+    // The first rule is rejected here because its prerequisite is not
+    // available, so the second rule is the one that applies.
+    let applied_second = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        PureFactContext::new().assume_condition(second_guard.clone(), true),
+        environment.clone(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert_eq!(applied_second.paths().len(), second.paths.len());
+    assert_ne!(first.paths.len(), second.paths.len());
+
+    // Neither prerequisite is available, so no rule applies at all.
+    let applied_none = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        PureFactContext::new().assume_condition(loop_rule_guard(3), true),
+        environment.clone(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert!(applied_none.paths().is_empty());
+
+    // A prerequisite that the ambient facts refute, rather than merely omit,
+    // is also rejected: the check is exact availability, not consistency.
+    let applied_refuted = prove_symbolic_c_statement_verification_paths_with_environment(
+        state,
+        statement,
+        PureFactContext::new()
+            .assume_condition(first_guard, false)
+            .assume_condition(second_guard, false),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert!(applied_refuted.paths().is_empty());
+}
+
+/// A rule's prerequisite that merely follows from the ambient facts is not
+/// available: selecting the rule by proving its assumptions from whatever
+/// happens to be in scope is proof planning, so the rule does not apply and
+/// its own assumption has to be established where the rule is used.
+#[test]
+fn verified_loop_rule_prerequisites_are_not_reproved_from_ambient_facts() {
+    let (statement, base_rule) = prerequisite_loop_rule_fixture();
+    let state = CState::new().with_local("i", int32(0));
+    let bound = Bitvector32Term::Variable(Variable(900_001));
+    let required = ConditionTerm::signed_greater_equal(bound.clone(), Bitvector32Term::Constant(0));
+    let stronger = ConditionTerm::signed_greater_equal(bound, Bitvector32Term::Constant(1));
+    let mut rule = base_rule;
+    rule.required_assumptions = PureFactContext::new().assume_condition(required.clone(), true);
+    let environment = CExecutionEnvironment::new().with_verified_loop_rules([rule]);
+
+    let stronger_facts = PureFactContext::new().assume_condition(stronger, true);
+    // The retained condition checker still decides the implication; the rule
+    // is rejected anyway, because deciding a prerequisite is not the same as
+    // the rule's prerequisite being available.
+    assert_eq!(stronger_facts.decide(&required), Some(true));
+    let applied = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        stronger_facts,
+        environment.clone(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert!(applied.paths().is_empty());
+
+    let exact = prove_symbolic_c_statement_verification_paths_with_environment(
+        state,
+        statement,
+        PureFactContext::new().assume_condition(required, true),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert!(!exact.paths().is_empty());
+}
+
+/// Selecting a verified loop rule reads each required assumption through an
+/// indexed lookup, so the work is charged to the rule's own prerequisites and
+/// does not grow with the unrelated ambient facts in scope at the loop.
+#[test]
+fn verified_loop_rule_selection_is_flat_in_unrelated_ambient_facts() {
+    let (statement, base_rule) = prerequisite_loop_rule_fixture();
+    let state = CState::new().with_local("i", int32(0));
+    let guard = loop_rule_guard(1);
+    let mut applicable = base_rule.clone();
+    applicable.required_assumptions = PureFactContext::new().assume_condition(guard.clone(), true);
+    let mut inapplicable = base_rule;
+    inapplicable.required_assumptions =
+        PureFactContext::new().assume_condition(loop_rule_guard(2), true);
+    // The inapplicable rule comes first, so every lookup rejects one rule's
+    // prerequisite and accepts the other's.
+    let environment =
+        CExecutionEnvironment::new().with_verified_loop_rules([inapplicable, applicable]);
+
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut assumptions = PureFactContext::new().assume_condition(guard.clone(), true);
+        for index in 0..size as u32 {
+            assumptions = assumptions.assume_condition(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(Variable(u64::from(500_000 + index))),
+                    Bitvector32Term::Constant(index),
+                ),
+                true,
+            );
+        }
+        let (selected, work) = crate::instrumentation::measure_deterministic_work(|| {
+            environment
+                .applicable_verified_loop_rule(&state, &statement, &assumptions)
+                .is_some()
+        });
+        assert!(selected, "the applicable rule should still be selected");
+        assert_eq!(assumptions.pure_facts().len(), size + 1);
+        assert!(
+            work < 64,
+            "selection work must stay bounded by the rules' own prerequisites: {work}"
+        );
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 16, "{samples:?}");
+    }
+}
+
+fn loop_rule_guard(value: u32) -> ConditionTerm {
+    ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(900_000)),
+        Bitvector32Term::Constant(value),
+    )
+}
+
+/// One verified `while` rule, built by ordinary loop verification, that the
+/// prerequisite regressions above re-issue under different required
+/// assumptions.
+fn prerequisite_loop_rule_fixture() -> (CStatement, CVerifiedLoopRule) {
+    let state = CState::new().with_local("i", int32(0));
+    let statement = c_while_with_invariant_checks(
+        c_less_than(c_variable("i"), c_int32_literal(1)),
+        Vec::new(),
+        vec![CLoopInvariantCheck::new(
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::LessEqual,
+                right: SpecExpression::CExpression(c_variable("i")),
+            },
+            Some("loop entry".to_string()),
+            Some("loop preservation".to_string()),
+        )],
+        c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
+    );
+    let (_, rule) = prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+        state,
+        statement.clone(),
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    );
+    let rule = rule.expect("loop verification should produce a rule");
+    assert!(!rule.paths.is_empty());
+    (statement, rule)
+}
