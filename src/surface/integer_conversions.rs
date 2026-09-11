@@ -49,6 +49,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn integer_conversion_domains_survive_datatype_wrappers() {
+        for value in [
+            "Box::Wrapped(to_integer(x + 1))",
+            "Outer::Wrapped(Box::Wrapped(to_integer(x + 1)))",
+        ] {
+            let source = format!(
+                "spec enum Box {{ Wrapped(Integer) }} spec enum Outer {{ Wrapped(Box) }} theorem wrapped(x: int32) {{ ensures {value} == {value} by simp; }}"
+            );
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+            verify_c0_sources(&bounded, &[])
+                .unwrap_or_else(|e| panic!("{}\n{bounded}", e.message()));
+            let expanded =
+                expand_c0_claim_source_by_label(&bounded, &[], "wrapped.ensures_0").unwrap();
+            verify_c0_sources(&expanded, &[]).unwrap();
+        }
+    }
+
+    #[test]
     fn conversion_obligations_survive_right_operand_composition() {
         for expression in [
             "1 + to_integer(x + 1)",

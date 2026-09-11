@@ -423,3 +423,10 @@ owned memory reads, exact reverse bounds, and expansion followed by verification
 The checked C arithmetic bridge still requires definedness explicitly. This
 checkpoint does not complete the remaining functions, quantified proofs, Nat
 connections, folds, or unchanged C summation-loop acceptance work.
+
+Datatype reflexivity must distinguish state independence from absence of
+evaluation obligations. An Integer field can contain a checked conversion even
+when it reads no memory. The shortcut now recursively checks that it cannot skip
+an obligation; wrapped and nested-wrapped conversions retain the same required
+argument definedness as an unwrapped expression. Guarded positive proofs expand
+and reverify, while the identical reflexive goals without definedness reject.
