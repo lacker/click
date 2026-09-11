@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 5, 6, 7, 9, 11 (first slice),
-12, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10): packages 1, 2, 3, 5, 5b, 6, 7, 9, 11 (first
+slice), 12, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -595,17 +595,23 @@ and swapped arms are rejected. Deviations and follow-ups:
   with no proof site to receive an obligation; refusing the path is the
   conservative equivalent. No reaching fixture exists; a kernel unit test
   pins the route.
-- **Follow-up, package 5b (surface, smart):** the smart `close_invariants()`
-  planner does not close ranking members that need the iteration-entry
-  guard and invariants as arithmetic premises, so `c_decreases_count_up`,
-  `c_decreases_loop`, `c_decreases_nested_loop`, the four
-  `c_decreases_*recursive_in_loop*` fixtures, and `nested_loop_measure_rejected`
-  now spell explicit `both` blocks with `arithmetic() using` premises such
-  as `at(statement(3).entry, i) >= 0`. That is a bounded smart-tactic gap,
-  not kernel work: the planner should cite exactly the loop guard,
-  invariants, and preconditions at iteration entry, which is what the
-  deleted kernel pass gathered. Until it does, the user-facing `decreases`
-  experience is worse than before this package.
+- **Package 5b, landed** 2026-09-10 ("Close loop ranking members from the
+  smart invariant-bundle closer"). When the closer body is exactly the
+  single `simp` (bare `close_invariants()`, the omitted body, or the region
+  `simp()`), a planner in `execution_statements.rs` descends the bundle's
+  own structure through checked operations: `both` over `And`, `left`/`right`
+  over the pivot `Or`, and one `arithmetic() using` per member citing a
+  named premise set: each declared invariant as written and at iteration
+  entry, the guard at iteration entry, and the function's `requires`
+  conjuncts, each kept only if exactly available and accepted by the affine
+  checker. No ambient scan; a regression drops an invariant and shows the
+  same inequality left ambient is not found. Seven fixtures are back to
+  bare closers; `c_decreases_loop` and `c_decreases_rejects_bad_loop_path`
+  keep explicit bodies as hand-written coverage. Deterministic work rose
+  30 to 55 percent on the restored fixtures, which is the planning the
+  source no longer spells, far under budget. Limit: the planner is gated
+  on the `[simp]` body; a hand-written `both { simp(); } and { simp(); }`
+  does not get the arithmetic candidate at its leaves.
 - The failure diagnostic names all of a loop's ranking members rather than
   the one left open; pinpointing would rerun the closer per member.
 - Hand-written ranking premises spell iteration entry as
@@ -1089,9 +1095,9 @@ regression and the deletion becomes an explicit obligation instead.
 
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 5, 6, 7, 9, 11 first slice, 12, 14, 16. In flight: one
-owner in sequence for 4, then 13, then 8. Open after those: 5b (smart
-closure of ranking members), 10, 11 second slice, 15.
+Landed: 0, 1, 2, 3, 5, 5b, 6, 7, 9, 11 first slice, 12, 14, 16. In flight:
+one owner in sequence for 4, then 13, then 8. Open after those: 10, 11
+second slice, 15.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
