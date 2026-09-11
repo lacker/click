@@ -3,6 +3,131 @@
 use super::pure_theorems::lower_pure_theorem_proposition_with_algebraic_and_integer_values;
 use super::*;
 
+fn promote_integer_expression(
+    expression: &ContractExpression,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    surface_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
+) -> ContractExpression {
+    match expression {
+        ContractExpression::CFragment(CExpression::Variable(name))
+            if integer_values.get(name).is_some() && surface_bindings.get(name).is_none() =>
+        {
+            ContractExpression::Binding(name.clone())
+        }
+        ContractExpression::Negate(inner) => ContractExpression::Negate(Box::new(
+            promote_integer_expression(inner, integer_values, surface_bindings),
+        )),
+        ContractExpression::Add(left, right) => ContractExpression::Add(
+            Box::new(promote_integer_expression(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_expression(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ContractExpression::Subtract(left, right) => ContractExpression::Subtract(
+            Box::new(promote_integer_expression(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_expression(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ContractExpression::Multiply(left, right) => ContractExpression::Multiply(
+            Box::new(promote_integer_expression(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_expression(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        _ => expression.clone(),
+    }
+}
+
+pub(super) fn promote_integer_comparison(
+    surface: &ClickProposition,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    surface_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
+) -> ClickProposition {
+    match surface {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => ClickProposition::Comparison {
+            left: promote_integer_expression(left, integer_values, surface_bindings),
+            operator: *operator,
+            right: promote_integer_expression(right, integer_values, surface_bindings),
+        },
+        ClickProposition::And(left, right) => ClickProposition::And(
+            Box::new(promote_integer_comparison(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_comparison(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ClickProposition::Or(left, right) => ClickProposition::Or(
+            Box::new(promote_integer_comparison(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_comparison(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ClickProposition::Implies(left, right) => ClickProposition::Implies(
+            Box::new(promote_integer_comparison(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_comparison(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ClickProposition::Not(body) => ClickProposition::Not(Box::new(promote_integer_comparison(
+            body,
+            integer_values,
+            surface_bindings,
+        ))),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(promote_integer_comparison(
+                proposition,
+                integer_values,
+                surface_bindings,
+            )),
+        },
+        _ => surface.clone(),
+    }
+}
+
 pub(super) fn proposition_uses_integer(
     proposition: &ClickProposition,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
@@ -339,11 +464,25 @@ impl<'a> Proof<'a> {
                 {
                     return Ok((recorded.clone(), None));
                 }
-                let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
+                let surface = self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
+                let mut integer_values = context.theorem_context.integer_values.clone();
+                for (name, value) in self.local_integer_values().iter() {
+                    integer_values = integer_values.with_inserted(name.clone(), value.clone());
+                }
+                let surface = self.proposition_obligation().map_or_else(
+                    || surface.clone(),
+                    |goal| {
+                        promote_integer_comparison(
+                            &surface,
+                            &integer_values,
+                            &goal.surface_bindings,
+                        )
+                    },
+                );
                 super::pure_theorems::lower_pure_theorem_proposition_recording_introductions(
                     context.claim_label,
-                    surface,
+                    &surface,
                     &PureFactContext::new(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
@@ -352,7 +491,7 @@ impl<'a> Proof<'a> {
                         .as_ref()
                         .map(|setup| &setup.algebraic_values)
                         .unwrap_or(&empty_algebraic_values),
-                    &context.theorem_context.integer_values,
+                    &integer_values,
                     &context.theorem_context.memory,
                     context.predicate_environment,
                     context.click_function_environment,
