@@ -161,7 +161,7 @@ pub(super) fn describe_pure_fact_with_environment(
     environment: &crate::kernel::CExecutionEnvironment,
 ) -> String {
     let description = describe_pure_fact(fact, parameters, arguments);
-    let Some((contract, target)) = refused_concrete_contract_formation(fact) else {
+    let Some((contract, target)) = concrete_named_contract_fact(fact) else {
         return description;
     };
     let Some(skeleton) =
@@ -173,8 +173,9 @@ pub(super) fn describe_pure_fact_with_environment(
 }
 
 /// The contract and concrete target of a named-contract fact over an exact
-/// function address, which is the shape automatic formation refuses.
-fn refused_concrete_contract_formation(fact: &Proposition) -> Option<(&str, &str)> {
+/// function address, which is the shape automatic formation refuses and the
+/// shape a missing-fact report has to explain rather than blame.
+fn concrete_named_contract_fact(fact: &Proposition) -> Option<(&str, &str)> {
     let Proposition::Predicate { name, arguments } = fact else {
         return None;
     };
@@ -322,8 +323,12 @@ pub(super) fn describe_pure_fact(
                     } => {
                         format!("function `{target}` does not satisfy named contract `{contract}`")
                     }
+                    // This arm describes a fact, and the same sentence serves
+                    // a list of available facts and a report of a missing
+                    // one. Say what the fact asserts; the surrounding
+                    // sentence says whether it is held or wanted.
                     pointer => format!(
-                        "named contract `{contract}` is not established for {}",
+                        "named contract `{contract}` holds for {}",
                         describe_pointer(pointer, parameters, arguments)
                     ),
                 },
@@ -363,6 +368,26 @@ pub(super) fn describe_available_facts(
     )
 }
 
+/// Describes a fact a proof needs and does not have.
+///
+/// A named-contract fact over a concrete function address reads as a refused
+/// refinement in [`describe_pure_fact`], which is what it means where
+/// automatic formation refused it. Here nothing was refused: the fact was
+/// never established, so name the two routes that establish it instead of
+/// blaming the implementation.
+fn describe_required_pure_fact(
+    required: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match concrete_named_contract_fact(required) {
+        Some((contract, target)) => format!(
+            "no `{contract}(&{target})` fact is available; apply a refinement theorem or pass `&{target}` where `{contract}` is required"
+        ),
+        None => describe_pure_fact(required, parameters, arguments),
+    }
+}
+
 pub(super) fn describe_missing_pure_fact(
     required: &Proposition,
     pure_facts: &[Proposition],
@@ -373,7 +398,7 @@ pub(super) fn describe_missing_pure_fact(
 ) -> String {
     format!(
         "missing pure fact: {}\n  {}",
-        describe_pure_fact(required, parameters, arguments),
+        describe_required_pure_fact(required, parameters, arguments),
         describe_available_facts(
             pure_facts,
             resource_facts,
