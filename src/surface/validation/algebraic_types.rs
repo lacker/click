@@ -1142,6 +1142,140 @@ fn expression_is_integer_binding(
     }
 }
 
+fn expression_is_untyped_integer_literal(expression: &ContractExpression) -> bool {
+    match expression {
+        ContractExpression::IntegerLiteral(_) => true,
+        ContractExpression::Negate(inner) => expression_is_untyped_integer_literal(inner),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => {
+            expression_is_untyped_integer_literal(left)
+                && expression_is_untyped_integer_literal(right)
+        }
+        _ => false,
+    }
+}
+
+/// Preserve an Integer result carrier when an algebraic match is nested inside
+/// another algebraic match.  `validate_algebraic_expression` deliberately
+/// returns only algebraic result types, so a successful Integer match would
+/// otherwise fall through to the C scalar inference path at its parent.
+///
+/// This is intentionally limited to the already validated match shape: every
+/// non-literal arm must be an Integer binding (or another Integer-valued
+/// nested match), while literal arms remain contextual and neutral.
+fn expression_is_integer_match_result(
+    expression: &ContractExpression,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<bool, ClickError> {
+    match expression {
+        ContractExpression::Negate(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => expression_is_integer_match_result(
+            inner,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        ),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right) => Ok(expression_is_integer_match_result(
+            left,
+            variables,
+            click_functions,
+            predicates,
+            definitions,
+            context,
+        )?
+            || expression_is_integer_match_result(
+                right,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?),
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            let Some(algebraic_type) = validate_algebraic_expression(
+                scrutinee,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?
+            else {
+                return Ok(false);
+            };
+            let Some(definition) = definitions.get(algebraic_type.name.as_str()) else {
+                return Ok(false);
+            };
+            let variants = definition
+                .variants()
+                .iter()
+                .map(|variant| (variant.name(), variant))
+                .collect::<BTreeMap<_, _>>();
+            crate::instrumentation::record_deterministic_work(variants.len());
+            let mut has_integer_arm = false;
+            for arm in arms {
+                crate::instrumentation::record_deterministic_work(1);
+                let Some(variant) = variants.get(arm.variant.as_str()) else {
+                    return Ok(false);
+                };
+                let mut algebraic_bindings = BTreeMap::new();
+                let mut integer_bindings = BTreeSet::new();
+                for (binding_index, (binding, field)) in
+                    arm.bindings.iter().zip(variant.fields()).enumerate()
+                {
+                    match instantiate_field_type(definition, &algebraic_type, field)? {
+                        ClickType::C(_) => {}
+                        ClickType::Algebraic(algebraic_type) => {
+                            algebraic_bindings.insert(
+                                binding.clone(),
+                                ContractExpression::AlgebraicVariable {
+                                    name: binding.clone(),
+                                    algebraic_type,
+                                    binder_index: binding_index,
+                                },
+                            );
+                        }
+                        ClickType::Integer => {
+                            integer_bindings.insert(binding.clone());
+                        }
+                        ClickType::Parameter(_) => {}
+                    }
+                }
+                let arm_body = substitute_contract_expression(&arm.body, &algebraic_bindings)
+                    .map_err(ClickError::new)?;
+                let integer_arm = expression_is_integer_binding(&arm_body, &integer_bindings)
+                    || expression_is_integer_match_result(
+                        &arm_body,
+                        variables,
+                        click_functions,
+                        predicates,
+                        definitions,
+                        context,
+                    )?;
+                if integer_arm {
+                    has_integer_arm = true;
+                } else if !expression_is_untyped_integer_literal(&arm_body) {
+                    return Ok(false);
+                }
+            }
+            Ok(has_integer_arm)
+        }
+        _ => Ok(false),
+    }
+}
+
 fn validate_algebraic_expression(
     expression: &ContractExpression,
     variables: &BTreeMap<String, C0Type>,
@@ -1374,8 +1508,23 @@ fn validate_algebraic_expression(
                 let arm_type = match algebraic_arm_type {
                     Some(application) => Some(ClickType::Algebraic(application)),
                     None => {
-                        if expression_is_integer_binding(&arm_body, &integer_bindings) {
+                        if expression_is_integer_binding(&arm_body, &integer_bindings)
+                            || expression_is_integer_match_result(
+                                &arm_body,
+                                &arm_variables,
+                                click_functions,
+                                predicates,
+                                definitions,
+                                context,
+                            )?
+                        {
                             Some(ClickType::Integer)
+                        } else if expression_is_untyped_integer_literal(&arm_body) {
+                            // Numeric syntax remains untyped until the
+                            // surrounding match supplies its result carrier.
+                            // Integer-returning functions perform that
+                            // contextual check after this algebraic pass.
+                            None
                         } else {
                             infer_contract_expression_type(
                                 &arm_body,

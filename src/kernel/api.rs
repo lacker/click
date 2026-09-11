@@ -4667,6 +4667,107 @@ pub fn prove_int32_strictly_positive_is_nonnegative(value: Bitvector32Term) -> T
     ))
 }
 
+/// The empty Integer fold law, guarded by the endpoint ordering.
+pub fn prove_integer_range_fold_empty(
+    index: IntegerRangeFoldIndex,
+    initial: IntegerTerm,
+    accumulator: Variable,
+    item: Variable,
+    body: IntegerTerm,
+) -> Theorem {
+    let guard = match &index {
+        IntegerRangeFoldIndex::Int32 { start, end } => {
+            ConditionTerm::signed_less_equal(end.value().clone(), start.value().clone())
+        }
+        IntegerRangeFoldIndex::Integer { start, end } => {
+            ConditionTerm::integer_less_equal(end.as_ref().clone(), start.as_ref().clone())
+        }
+    };
+    let fold = IntegerTerm::range_fold(index, initial.clone(), accumulator, item, body);
+    Theorem::new(Proposition::Implies(
+        Box::new(Proposition::ConditionIs(guard, true)),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(fold.into(), initial.into()),
+            true,
+        )),
+    ))
+}
+
+/// The append-one Integer fold law.  The Int32 carrier includes the checked
+/// increment premise; neither carrier is expanded over the range.
+pub fn prove_integer_range_fold_append(
+    index: IntegerRangeFoldIndex,
+    initial: IntegerTerm,
+    accumulator: Variable,
+    item: Variable,
+    body: IntegerTerm,
+) -> Option<Theorem> {
+    if matches!(&index, IntegerRangeFoldIndex::Integer { .. }) && accumulator == item {
+        return None;
+    }
+    let (extended, guard, item_value) = match &index {
+        IntegerRangeFoldIndex::Int32 { start, end } => {
+            let original_end = end.value().clone();
+            let increment =
+                Bitvector32Term::add(original_end.clone(), Bitvector32Term::Constant(1));
+            let guard =
+                ConditionTerm::signed_less_equal(start.value().clone(), end.value().clone());
+            let safe = ConditionTerm::signed_less_than(
+                end.value().clone(),
+                Bitvector32Term::Constant(i32::MAX as u32),
+            );
+            let extended = IntegerRangeFoldIndex::Int32 {
+                start: start.clone(),
+                end: SharedIntegerRangeEndpoint::intern(increment),
+            };
+            let item_value = IntegerTerm::from_machine(MachineIntegerType::Int32, original_end)?;
+            (
+                extended,
+                Proposition::And(
+                    Box::new(Proposition::ConditionIs(guard, true)),
+                    Box::new(Proposition::ConditionIs(safe, true)),
+                ),
+                item_value,
+            )
+        }
+        IntegerRangeFoldIndex::Integer { start, end } => {
+            let increment = IntegerTerm::add(end.as_ref().clone(), IntegerTerm::constant_i64(1));
+            let guard =
+                ConditionTerm::integer_less_equal(start.as_ref().clone(), end.as_ref().clone());
+            let extended = IntegerRangeFoldIndex::Integer {
+                start: start.clone(),
+                end: increment.into(),
+            };
+            (
+                extended,
+                Proposition::ConditionIs(guard, true),
+                end.as_ref().clone(),
+            )
+        }
+    };
+    let original_initial = initial.clone();
+    let c_item = matches!(&index, IntegerRangeFoldIndex::Int32 { .. });
+    let prior = IntegerTerm::range_fold(index, initial, accumulator, item, body.clone());
+    let stepped = crate::kernel::reasoning::instantiate_integer_range_fold_step(
+        &body,
+        accumulator,
+        &prior,
+        item,
+        &item_value,
+        c_item,
+    )
+    .ok()?;
+    let extended_fold =
+        IntegerTerm::range_fold(extended, original_initial, accumulator, item, body);
+    Some(Theorem::new(Proposition::Implies(
+        Box::new(guard),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(extended_fold.into(), stepped.into()),
+            true,
+        )),
+    )))
+}
+
 /// Incrementing a signed int32 value below `INT_MAX` is defined.
 pub fn prove_int32_increment_below_max_is_defined(value: Bitvector32Term) -> Theorem {
     let premise = Proposition::ConditionIs(

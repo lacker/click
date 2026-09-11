@@ -2695,11 +2695,154 @@ fn integer_datatype_match_bindings_shadow_each_source_carrier() {
 }
 
 #[test]
-fn symbolic_integer_datatype_match_rejects_unimplemented_field_binding() {
+fn integer_datatype_match_iota_survives_function_substitution_and_recheck() {
     let source = r#"
-        spec enum Box { Wrapped(Integer) }
+        spec enum Box { Empty, Wrapped(Integer) }
+        spec enum Pair { Make(int32, Integer, Box) }
+        function make(value: Integer) -> Pair {
+            Pair::Make(0, value, Box::Wrapped(value))
+        }
+        function observe(value: Integer) -> Integer {
+            value
+        }
+        theorem extraction(value: Integer) {
+            ensures match make(value) {
+                Pair::Make(c, inner, boxed) => match boxed {
+                    Box::Empty => observe(inner),
+                    Box::Wrapped(nested) => observe(nested),
+                },
+            } == observe(value) by {
+                unfold(make(value));
+                unfold(observe(value));
+                normalize();
+            }
+        }
+    "#;
+    let verified = verify_click_theorems(source).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    let rechecked = source.replace(
+        "by {\n                unfold(make(value));\n                unfold(observe(value));\n                normalize();\n            }",
+        &expanded,
+    );
+    verify_click_theorems(&rechecked).unwrap();
+}
+
+#[test]
+fn integer_datatype_match_numeral_arm_inherits_integer_result_and_rechecks() {
+    let source = r#"
+        spec enum Box { Empty, Wrapped(Integer) }
+        function project(value: Box) -> Integer {
+            match value {
+                Box::Empty => 0,
+                Box::Wrapped(inner) => inner,
+            }
+        }
+        function constants(value: Box) -> Integer {
+            match value {
+                Box::Empty => 0,
+                Box::Wrapped(inner) => 1,
+            }
+        }
+        theorem extraction(value: Integer) {
+            ensures project(Box::Wrapped(value)) == value by {
+                unfold(project(Box::Wrapped(value)));
+                normalize();
+            }
+        }
+        theorem arithmetic_match() {
+            ensures match Box::Empty {
+                Box::Empty => 0,
+                Box::Wrapped(inner) => inner + 1,
+            } == 0 by { normalize(); }
+        }
+    "#;
+    let verified = verify_click_theorems(source).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    let rechecked = source.replace(
+        "by {\n                unfold(project(Box::Wrapped(value)));\n                normalize();\n            }",
+        &expanded,
+    );
+    verify_click_theorems(&rechecked).unwrap();
+}
+
+#[test]
+fn integer_match_constructor_fields_retain_unused_conversion_definedness() {
+    let source = r#"
+        spec enum Pair { Make(Integer, Integer) }
+        function make(value: int32) -> Pair {
+            Pair::Make(to_integer(value + 1), 0)
+        }
+        theorem guarded(value: int32) {
+            requires value < 2147483647;
+            requires defined(value + 1);
+            ensures match make(value) {
+                Pair::Make(unused, kept) => kept,
+            } == 0 by {
+                unfold(make(value));
+                normalize();
+            }
+        }
+    "#;
+    let verified = verify_click_theorems(source).unwrap();
+    let expanded = verified[0].expanded_proof_source().unwrap();
+    let rechecked = source.replace(
+        "by {\n                unfold(make(value));\n                normalize();\n            }",
+        &expanded,
+    );
+    verify_click_theorems(&rechecked).unwrap();
+
+    let missing_guard = source
+        .replace("            requires value < 2147483647;\n", "")
+        .replace("            requires defined(value + 1);\n", "");
+    assert!(
+        verify_click_theorems(&missing_guard).is_err(),
+        "an unused constructor conversion field must still require definedness"
+    );
+}
+
+#[test]
+fn symbolic_integer_datatype_matches_reject_invalid_arms() {
+    let missing = r#"
+        spec enum Box { Empty, Wrapped(Integer) }
+        function project(value: Box) -> Integer {
+            match value {
+                Box::Empty => to_integer(0),
+            }
+        }
+    "#;
+    assert!(verify_click_theorems(missing).is_err());
+
+    let wrong_carrier = r#"
+        spec enum Box { Empty, Wrapped(Integer), Machine(int32) }
+        function project(value: Box) -> Integer {
+            match value {
+                Box::Empty => to_integer(0),
+                Box::Wrapped(inner) => inner,
+                Box::Machine(machine) => machine,
+            }
+        }
+    "#;
+    assert!(verify_click_theorems(wrong_carrier).is_err());
+
+    let partial_binding = r#"
+        spec enum Box { Empty, Wrapped(Integer) }
+        function project(value: Box) -> Integer {
+            match value {
+                Box::Empty => to_integer(0),
+                Box::Wrapped => to_integer(0),
+            }
+        }
+    "#;
+    assert!(verify_click_theorems(partial_binding).is_err());
+}
+
+#[test]
+fn symbolic_integer_datatype_match_does_not_capture_outer_binding() {
+    let source = r#"
+        spec enum Box { Empty, Wrapped(Integer) }
         theorem capture(boxed: Box, value: Integer) {
             ensures match boxed {
+                Box::Empty => to_integer(0),
                 Box::Wrapped(value) => value,
             } == value by { normalize(); }
         }
@@ -2707,10 +2850,10 @@ fn symbolic_integer_datatype_match_rejects_unimplemented_field_binding() {
     let error =
         verify_click_theorems(source).expect_err("symbolic fields must not capture outer names");
     assert!(
-        error
+        !error
             .message()
             .contains("symbolic Integer-valued datatype matches"),
-        "{}",
+        "symbolic match should be implemented, but the invalid capture proof must still fail: {}",
         error.message()
     );
 }

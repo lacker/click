@@ -521,3 +521,36 @@ For the remainder of this implementation, the coordinator runs only one build
 or verification job at a time, with one build job and one test worker. Unreviewed
 scaling experiments run under a hard memory and CPU limit before any full gate.
 The interrupted combined gate is not a passing result and must be rerun.
+
+## Integration checkpoint (2026-09-11)
+
+This checkpoint records experimental task work separately from landed primary
+history. The primary branch remains `72b19a3d`; the current upstream base is
+`3ef8c81a`. The earlier Integer-match checkpoint passed the full gate with
+2,284 unit and binary tests plus 14 fixtures. Subsequent bounded-work and
+contextual-numeral changes have focused coverage, but the combined gate and
+merge remain pending.
+
+The reviewed match design keeps arm bodies as shared Integer terms, performs
+capture analysis by carrier, treats memory snapshots as opaque, and stops
+actual traversal on exhaustion while measuring attempted visits independently.
+Contextual numeral typing is retained: numerals in an Integer match context
+are mathematical Integers, while machine values remain explicitly typed.
+Fold coverage includes guarded empty-range and append/next-element laws.
+Alpha matching is restricted to load-free expressions.
+
+Remaining acceptance work includes scoped obligations for array-ref bodies,
+snapshot-aware alpha matching, fold terms as opaque atoms in linear
+certificates, and acceptance of the unchanged summation loop. Quadratic work
+in deeply nested universal-quantifier introduction remains deferred; quantifier
+support itself is implemented.
+
+## Source and gate review checkpoint (2026-09-11)
+
+Typed multi-map capture now uses carrier-safe freshening, and the mixed
+match/fold source regressions expand and independently reverify. The current
+full gate reached the shared-replacement universal-quantifier regression before
+timing out: the binder collector lost its DAG memo guard, and per-atom
+replacement rescans were also observed. Those are active integration fixes.
+They are separate from the user-deferred quadratic behavior of deeply nested
+universal-quantifier introduction. The full gate and merge remain pending.

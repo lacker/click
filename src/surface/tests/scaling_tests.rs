@@ -87,6 +87,80 @@ fn explicit_constructor_unfold_has_near_linear_nested_match_work() {
 }
 
 #[test]
+fn symbolic_integer_match_lowering_has_near_linear_width_work() {
+    let mut samples = Vec::new();
+    for width in [8, 16, 32, 64] {
+        let variants = (0..width)
+            .map(|index| format!("V{index}(Integer)"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arms = (0..width)
+            .map(|index| {
+                format!(
+                    "Choice::V{index}(value_{index}) => match Box::Wrapped(value_{index}) {{ Box::Empty => 0, Box::Wrapped(inner_{index}) => inner_{index}, }}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",\n                ");
+        let source = format!(
+            "spec enum Box {{ Empty, Wrapped(Integer) }}\n\
+             spec enum Choice {{ {variants} }}\n\
+             theorem nested(value: Integer) {{\n\
+                 ensures match Choice::V0(value) {{\n\
+                     {arms}\n\
+                 }} == value by {{ normalize(); }}\n\
+             }}"
+        );
+        let (result, sample) = scaling_sample(width, || verify_click_theorems(&source));
+        result.unwrap_or_else(|error| {
+            panic!(
+                "width {width} symbolic Integer match failed: {}",
+                error.message()
+            )
+        });
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("symbolic Integer match lowering", &samples);
+}
+
+#[test]
+fn symbolic_integer_match_lowering_has_near_linear_nested_depth_work() {
+    let mut samples = Vec::new();
+    for depth in [2, 4, 8, 16, 32, 64] {
+        let mut body = "0".to_string();
+        for index in 0..depth {
+            body = format!(
+                "match Box::Empty {{ Box::Empty => {body}, Box::Wrapped(inner_{index}) => inner_{index}, }}"
+            );
+        }
+        let source = format!(
+            "spec enum Box {{ Empty, Wrapped(Integer) }}\n\
+             theorem nested() {{ ensures {body} == 0 by {{ normalize(); }} }}"
+        );
+        if depth > parser::MATCH_NESTING_LIMIT {
+            let error = verify_click_theorems(&source)
+                .expect_err("deep Integer matches must fail at the parser boundary");
+            assert!(
+                error
+                    .message()
+                    .contains("match nesting exceeds Click's supported depth of 16"),
+                "{error:?}"
+            );
+            continue;
+        }
+        let (result, sample) = scaling_sample(depth, || verify_click_theorems(&source));
+        result.unwrap_or_else(|error| {
+            panic!(
+                "depth {depth} symbolic Integer match failed: {}",
+                error.message()
+            )
+        });
+        samples.push(sample);
+    }
+    assert_near_linear_scaling("symbolic Integer nested-match lowering", &samples);
+}
+
+#[test]
 fn parametric_theorem_declarations_have_near_linear_checking_work() {
     let mut samples = Vec::new();
     for size in [16, 32, 64, 128] {

@@ -263,6 +263,12 @@ impl Names {
                     self.argument(argument);
                 }
             }
+            SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+                self.algebraic(scrutinee);
+                for arm in arms {
+                    self.integer(&mut arm.body);
+                }
+            }
             SpecIntegerExpression::FromMachine(machine) => self.expression(machine),
             SpecIntegerExpression::Negate(inner) => self.integer(inner),
             SpecIntegerExpression::Add(left, right)
@@ -270,6 +276,25 @@ impl Names {
             | SpecIntegerExpression::Multiply(left, right) => {
                 self.integer(left);
                 self.integer(right);
+            }
+            SpecIntegerExpression::RangeFold {
+                index,
+                initial,
+                body,
+                ..
+            } => {
+                match index {
+                    SpecIntegerRangeFoldIndex::Int32 { start, end } => {
+                        self.expression(start);
+                        self.expression(end);
+                    }
+                    SpecIntegerRangeFoldIndex::Integer { start, end } => {
+                        self.integer(start);
+                        self.integer(end);
+                    }
+                }
+                self.integer(initial);
+                self.integer(body);
             }
         }
     }

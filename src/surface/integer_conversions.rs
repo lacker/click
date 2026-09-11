@@ -314,6 +314,27 @@ mod tests {
     }
 
     #[test]
+    fn symbolic_integer_datatype_matches_are_exhaustive_and_checked() {
+        let source = "spec enum Box<T> { Empty, Wrapped(T), }\n            function project(value: Box<Integer>) -> Integer { match value { Box::Empty => to_integer(0), Box::Wrapped(inner) => inner, } }\n\
+            theorem symbolic(value: Box<Integer>) { ensures project(value) == project(value) by simp; }";
+        verify_c0_sources(source, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(source, &[], "symbolic.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+    }
+
+    #[test]
+    fn integer_datatype_match_reduces_known_constructor() {
+        let source = r#"
+            spec enum Box { Empty, Wrapped(Integer), }
+            function project(value: Box) -> Integer { match value { Box::Empty => to_integer(0), Box::Wrapped(inner) => inner, } }
+            theorem known() { ensures project(Box::Wrapped(to_integer(7))) == to_integer(7) by simp; }
+        "#;
+        verify_c0_sources(source, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(source, &[], "known.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+    }
+
+    #[test]
     fn deferred_integer_function_c_arguments_keep_mandatory_definedness() {
         let unguarded = "function f(x: int32) -> Integer { to_integer(x) }\n\
             theorem call(x: int32) { ensures f(x + 1) == f(x + 1) by simp; }";

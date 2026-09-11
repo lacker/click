@@ -61,6 +61,389 @@ theorem integer_exists_choose() {
 }
 
 #[test]
+fn integer_range_fold_surface_typing_and_unfolding() {
+    let source = r#"
+function sum_machine_range(n: int32) -> Integer {
+    (0..(n + 1)).fold(0, |acc, k| { acc + to_integer(k) })
+}
+
+function sum_integer_range(lo: Integer, hi: Integer) -> Integer {
+    (lo..hi).fold(0, |acc, k| { acc + k })
+}
+
+function sum_integer_range_captured(lo: Integer, hi: Integer, z: Integer) -> Integer {
+    (lo + 1..hi + 1).fold(z, |acc, k| { acc + z + k })
+}
+
+theorem machine_range_unfolds(n: int32) {
+    requires defined(n + 1);
+    ensures sum_machine_range(n) == (0..(n + 1)).fold(0, |acc, k| { acc + to_integer(k) }) by {
+        unfold(sum_machine_range(n));
+        normalize();
+    }
+}
+
+theorem integer_range_unfolds(lo: Integer, hi: Integer) {
+    ensures sum_integer_range(lo, hi) == (lo..hi).fold(0, |acc, k| { acc + k }) by {
+        unfold(sum_integer_range(lo, hi));
+        normalize();
+    }
+}
+
+theorem integer_range_captured_unfolds(lo: Integer, hi: Integer, z: Integer) {
+    ensures sum_integer_range_captured(lo, hi, z) ==
+        (lo + 1..hi + 1).fold(z, |acc, k| { acc + z + k }) by {
+        unfold(sum_integer_range_captured(lo, hi, z));
+        normalize();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("machine and Integer range folds should unfold");
+    for label in [
+        "machine_range_unfolds.ensures_0",
+        "integer_range_unfolds.ensures_0",
+        "integer_range_captured_unfolds.ensures_0",
+    ] {
+        let expanded = expand_c0_claim_source_by_label(source, &[], label)
+            .unwrap_or_else(|error| panic!("{label} should expand: {}", error.message()));
+        verify_c0_sources(&expanded, &[]).unwrap_or_else(|error| {
+            panic!("{label} expansion should recheck: {}", error.message())
+        });
+    }
+}
+
+#[test]
+fn integer_range_fold_mixed_match_typing_expands_and_rechecks() {
+    let source = r#"
+spec enum FoldInput { Empty, Wrapped(Integer), Machine(int32) }
+
+function fold_match(value: FoldInput) -> Integer {
+    (0..1).fold(0, |acc, k| {
+        acc + match value {
+            FoldInput::Empty => 0,
+            FoldInput::Wrapped(inner) => inner,
+            FoldInput::Machine(raw) => to_integer(raw),
+        }
+    })
+}
+
+function match_fold(value: FoldInput) -> Integer {
+    match value {
+        FoldInput::Empty => (0..1).fold(0, |acc, k| { acc + to_integer(k) }),
+        FoldInput::Wrapped(inner) => inner,
+        FoldInput::Machine(raw) => to_integer(raw),
+    }
+}
+
+theorem fold_match_unfolds(value: Integer) {
+    ensures fold_match(FoldInput::Wrapped(value)) ==
+        (0..1).fold(0, |acc, k| { acc + value }) by {
+        unfold(fold_match(FoldInput::Wrapped(value)));
+        normalize();
+    }
+}
+
+theorem match_fold_unfolds() {
+    ensures match_fold(FoldInput::Empty) ==
+        (0..1).fold(0, |acc, k| { acc + to_integer(k) }) by {
+        unfold(match_fold(FoldInput::Empty));
+        normalize();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("folds and algebraic matches should compose");
+    for label in [
+        "fold_match_unfolds.ensures_0",
+        "match_fold_unfolds.ensures_0",
+    ] {
+        let expanded = expand_c0_claim_source_by_label(source, &[], label)
+            .unwrap_or_else(|error| panic!("{label} should expand: {}", error.message()));
+        verify_c0_sources(&expanded, &[]).unwrap_or_else(|error| {
+            panic!("{label} expansion should recheck: {}", error.message())
+        });
+    }
+
+    let bad_source = r#"
+spec enum FoldInput { Empty, Wrapped(Integer), Machine(int32) }
+
+function bad_fold_match(value: FoldInput) -> Integer {
+    (0..1).fold(0, |acc, k| {
+        acc + match value {
+            FoldInput::Empty => 0,
+            FoldInput::Wrapped(inner) => inner,
+            FoldInput::Machine(raw) => raw,
+        }
+    })
+}
+
+theorem force_bad_fold_match() {
+    ensures bad_fold_match(FoldInput::Machine(0)) == 0 by {
+        unfold(bad_fold_match(FoldInput::Machine(0)));
+        normalize();
+    }
+}
+"#;
+    let error = verify_c0_sources(bad_source, &[])
+        .expect_err("a C match field must not enter Integer fold arithmetic");
+    assert!(
+        error
+            .message()
+            .contains("match for `FoldInput` has incompatible arm result types Integer and int32"),
+        "unexpected mixed match/fold diagnostic: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn integer_range_fold_surface_typing_rejects_mixed_bodies() {
+    for (source, expected) in [
+        (
+            r#"
+theorem bad_machine_body_direct(n: int32) {
+    ensures (0..n).fold(0, |acc, k| { acc + k }) == to_integer(0);
+}
+"#,
+            "mathematical Integer arithmetic cannot mix with C values",
+        ),
+        (
+            r#"
+function bad_machine_body(n: int32) -> Integer {
+    (0..n).fold(0, |acc, k| { acc + k })
+}
+theorem force_bad_machine_body(n: int32) {
+    ensures bad_machine_body(n) == to_integer(0) by {
+        unfold(bad_machine_body(n));
+        normalize();
+    }
+}
+"#,
+            "mathematical Integer expressions cannot be compared with C values",
+        ),
+        (
+            r#"
+theorem bad_integer_conversion_direct(lo: Integer, hi: Integer) {
+    ensures (lo..hi).fold(0, |acc, k| { acc + to_integer(k) }) == 0;
+}
+"#,
+            "to_integer expects a machine integer or Nat",
+        ),
+        (
+            r#"
+function bad_integer_conversion(lo: Integer, hi: Integer) -> Integer {
+    (lo..hi).fold(0, |acc, k| { acc + to_integer(k) })
+}
+theorem force_bad_integer_conversion(lo: Integer, hi: Integer) {
+    ensures bad_integer_conversion(lo, hi) == 0 by {
+        unfold(bad_integer_conversion(lo, hi));
+        normalize();
+    }
+}
+"#,
+            "to_integer expects a machine integer or Nat",
+        ),
+        (
+            r#"
+theorem bad_c_body_direct(x: int32, z: Integer) {
+    ensures (0..3).fold(z, |acc, k| { x }) == z;
+}
+"#,
+            "range fold body must preserve Integer accumulator",
+        ),
+        (
+            r#"
+function bad_c_body(x: int32, z: Integer) -> Integer {
+    (0..3).fold(z, |acc, k| { x })
+}
+theorem force_bad_c_body(x: int32, z: Integer) {
+    ensures bad_c_body(x, z) == z by {
+        unfold(bad_c_body(x, z));
+        normalize();
+    }
+}
+"#,
+            "expected a specification-side Integer expression",
+        ),
+    ] {
+        let error = verify_c0_sources(source, &[])
+            .expect_err("invalid fold body should be rejected by scoped typing");
+        assert!(
+            error.message().contains(expected),
+            "expected `{expected}` for invalid fold body, got: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn integer_range_fold_law_application_positive() {
+    let law_source = r#"
+theorem machine_fold_empty(start: int32, end: int32) {
+    requires end <= start;
+    ensures (start..end).fold(0, |acc, k| { acc + to_integer(k) }) == 0 by {
+        apply(integer_range_fold_empty((start..end).fold(0, |acc, k| { acc + to_integer(k) }))) using {
+            end <= start;
+        }
+    }
+}
+
+theorem machine_fold_append(end: int32) {
+    requires 0 <= end;
+    requires end < 2147483647;
+    ensures (0..(end + 1)).fold(0, |acc, k| { acc + to_integer(k) }) ==
+        (0..end).fold(0, |acc, k| { acc + to_integer(k) }) + to_integer(end) by {
+        apply(integer_range_fold_append((0..end).fold(0, |acc, k| { acc + to_integer(k) }))) using {
+            0 <= end;
+            end < 2147483647;
+        }
+    }
+}
+
+theorem integer_fold_empty(start: Integer, end: Integer) {
+    requires end <= start;
+    ensures (start..end).fold(0, |acc, k| { acc + k }) == 0 by {
+        apply(integer_range_fold_empty((start..end).fold(0, |acc, k| { acc + k }))) using {
+            end <= start;
+        }
+    }
+}
+
+theorem integer_fold_append(start: Integer, end: Integer) {
+    requires start <= end;
+    ensures (start..(end + 1)).fold(0, |acc, k| { acc + k }) ==
+        (start..end).fold(0, |acc, k| { acc + k }) + end by {
+        apply(integer_range_fold_append((start..end).fold(0, |acc, k| { acc + k }))) using {
+            start <= end;
+        }
+    }
+}
+"#;
+    verify_c0_sources(law_source, &[]).expect("checked Integer fold laws should verify");
+    for label in [
+        "machine_fold_empty.ensures_0",
+        "machine_fold_append.ensures_0",
+        "integer_fold_empty.ensures_0",
+        "integer_fold_append.ensures_0",
+    ] {
+        let expanded = expand_c0_claim_source_by_label(law_source, &[], label)
+            .unwrap_or_else(|error| panic!("{label} should expand: {}", error.message()));
+        verify_c0_sources(&expanded, &[]).unwrap_or_else(|error| {
+            panic!("{label} expansion should recheck: {}", error.message())
+        });
+    }
+}
+
+#[test]
+fn integer_range_fold_law_application_rejects_missing_guards_or_shape() {
+    for (source, expected) in [
+        (
+            r#"
+theorem machine_fold_append_missing_guard(end: int32) {
+    requires 0 <= end;
+    requires end < 2147483647;
+    ensures (0..(end + 1)).fold(0, |acc, k| { acc + to_integer(k) }) ==
+        (0..end).fold(0, |acc, k| { acc + to_integer(k) }) + to_integer(end) by {
+        apply(integer_range_fold_append((0..end).fold(0, |acc, k| { acc + to_integer(k) }))) using {
+            0 <= end;
+        }
+    }
+}
+"#,
+            "required exact fold guard is unavailable",
+        ),
+        (
+            r#"
+theorem machine_fold_append_wrong_guard(end: int32) {
+    requires end <= 0;
+    requires end < 2147483647;
+    ensures (0..(end + 1)).fold(0, |acc, k| { acc + to_integer(k) }) ==
+        (0..end).fold(0, |acc, k| { acc + to_integer(k) }) + to_integer(end) by {
+        apply(integer_range_fold_append((0..end).fold(0, |acc, k| { acc + to_integer(k) }))) using {
+            end <= 0;
+            end < 2147483647;
+        }
+    }
+}
+"#,
+            "required exact fold guard is unavailable",
+        ),
+        (
+            r#"
+theorem machine_fold_argument_missing_definedness(divisor: int32) {
+    ensures 0 == 0 by {
+        apply(integer_range_fold_append((0..1).fold(0, |acc, k| {
+            acc + to_integer(k / divisor)
+        }))) using { }
+    }
+}
+"#,
+            "Integer initializer has unproved evaluation obligations",
+        ),
+        (
+            r#"
+theorem machine_fold_law_wrong_arity(end: int32) {
+    requires end <= 0;
+    ensures (0..end).fold(0, |acc, k| { acc + to_integer(k) }) == 0 by {
+        apply(integer_range_fold_empty()) using { end <= 0; }
+    }
+}
+"#,
+            "expects exactly one Integer fold argument",
+        ),
+        (
+            r#"
+theorem machine_fold_law_non_fold() {
+    ensures 0 == 0 by {
+        apply(integer_range_fold_empty(0)) using { }
+    }
+}
+"#,
+            "requires one Integer range-fold argument",
+        ),
+    ] {
+        let error = verify_c0_sources(source, &[])
+            .expect_err("fold laws must reject omitted or mismatched checked evidence");
+        assert!(
+            error.message().contains(expected),
+            "expected `{expected}` for rejected fold law, got: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn integer_range_fold_law_applies_after_execution() {
+    let c_source = r#"
+            int32 fold_context(int32 end) {
+                return end;
+            }
+        "#;
+    let click_source = r#"
+            verifying "fold_context.c";
+
+            int32 fold_context(int32 end) {
+                requires 0 <= end;
+                requires end < 2147483647;
+                ensures result == end by {
+                    execute();
+                    have (0..(end + 1)).fold(0, |acc, k| { acc + to_integer(k) }) ==
+                        (0..end).fold(0, |acc, k| { acc + to_integer(k) }) + to_integer(end) by {
+                        apply(integer_range_fold_append((0..end).fold(0, |acc, k| {
+                            acc + to_integer(k)
+                        }))) using {
+                            0 <= end;
+                            end < 2147483647;
+                        }
+                    }
+                    simp();
+                }
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("fold_context.c", c_source)])
+        .expect("a checked fold law should apply in the retained execution context");
+}
+
+#[test]
 fn context_free_implication_simp_expands_intro_and_rechecks() {
     let source = r#"
 theorem reflexive_implication(x: int32) {

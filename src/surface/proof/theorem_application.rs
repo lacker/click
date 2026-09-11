@@ -145,6 +145,19 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
+    if is_integer_range_fold_theorem_name(&application.name) {
+        return instantiate_integer_range_fold_theorem_application(
+            application,
+            claim_label,
+            path_index,
+            tactic_index,
+            available,
+            assumptions,
+            context,
+            predicate_environment,
+            click_function_environment,
+        );
+    }
     let theorem = theorem_environment.get(&application.name).ok_or_else(|| {
         theorem_application_error(
             claim_label,
@@ -296,6 +309,140 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         conclusions.push(conclusion.clone());
     }
     Ok(conclusions)
+}
+
+fn is_integer_range_fold_theorem_name(name: &str) -> bool {
+    matches!(
+        name,
+        "integer_range_fold_empty" | "integer_range_fold_append"
+    )
+}
+
+/// Apply one of the kernel-issued symbolic Integer fold laws through the same
+/// checked source theorem boundary as ordinary theorem applications.  These
+/// laws are shape-directed: their sole argument must capture one Integer
+/// `RangeFold`, and every guard emitted by the kernel law must be present in
+/// the explicit `using` evidence set.
+#[allow(clippy::too_many_arguments)]
+fn instantiate_integer_range_fold_theorem_application(
+    application: &TheoremApplication,
+    claim_label: &str,
+    path_index: Option<usize>,
+    tactic_index: usize,
+    available: &[Proposition],
+    assumptions: &PureFactContext,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<Proposition>, ClickError> {
+    let error =
+        |message: String| theorem_application_error(claim_label, path_index, tactic_index, message);
+    if application.arguments.len() != 1 {
+        return Err(error(format!(
+            "theorem `{}` expects exactly one Integer fold argument, got {}",
+            application.name,
+            application.arguments.len()
+        )));
+    }
+    let fold = capture_fixed_state_integer_expression(
+        &application.arguments[0],
+        context.integer_values,
+        assumptions,
+        context.values,
+        context.array_refs,
+        context.pre_state,
+        context.post_state,
+        context.result,
+        context.recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        // A fold argument is a value-producing expression, so an empty or
+        // multiply-branched capture path means that its initializer/body has
+        // not supplied a single checked evaluation path. Keep that failure
+        // distinct from the later non-fold shape check; callers need the
+        // source-level definedness diagnostic rather than the kernel's generic
+        // symbolic-value wording.
+        let message = if message == "Integer initializer must denote one symbolic value" {
+            "Integer initializer has unproved evaluation obligations".to_string()
+        } else {
+            message
+        };
+        error(format!(
+            "could not capture Integer fold argument: {message}"
+        ))
+    })?;
+    let crate::kernel::IntegerTerm::RangeFold {
+        index,
+        initial,
+        accumulator,
+        item,
+        body,
+    } = fold
+    else {
+        return Err(error(format!(
+            "theorem `{}` requires one Integer range-fold argument",
+            application.name
+        )));
+    };
+
+    let theorem = match application.name.as_str() {
+        "integer_range_fold_empty" => crate::kernel::prove_integer_range_fold_empty(
+            index,
+            initial.as_ref().clone(),
+            accumulator,
+            item,
+            body.as_ref().clone(),
+        ),
+        "integer_range_fold_append" => crate::kernel::prove_integer_range_fold_append(
+            index,
+            initial.as_ref().clone(),
+            accumulator,
+            item,
+            body.as_ref().clone(),
+        )
+        .ok_or_else(|| {
+            error(
+                "the Integer fold append law could not instantiate its checked next-element step"
+                    .to_string(),
+            )
+        })?,
+        _ => unreachable!("checked by is_integer_range_fold_theorem_name"),
+    };
+    let crate::kernel::Proposition::Implies(guard, conclusion) = theorem.proposition() else {
+        return Err(error(
+            "the Integer fold kernel law did not produce a guarded theorem".to_string(),
+        ));
+    };
+    let mut required = Vec::new();
+    collect_conjunctive_guard_facts(guard, &mut required);
+    for premise in required {
+        if !available
+            .iter()
+            .any(|fact| fact == premise || condition_polarity_equivalent(fact, premise))
+            && !matches!(normalize_proposition(premise), SimpProposition::True)
+        {
+            return Err(error(format!(
+                "required exact fold guard is unavailable: {}",
+                describe_missing_pure_fact(premise, available, &[], &[], &[], &[])
+            )));
+        }
+    }
+    Ok(vec![conclusion.as_ref().clone()])
+}
+
+fn collect_conjunctive_guard_facts<'a>(
+    proposition: &'a Proposition,
+    facts: &mut Vec<&'a Proposition>,
+) {
+    match proposition {
+        Proposition::And(left, right) => {
+            collect_conjunctive_guard_facts(left, facts);
+            collect_conjunctive_guard_facts(right, facts);
+        }
+        proposition => facts.push(proposition),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

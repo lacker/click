@@ -1257,7 +1257,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             item,
             body,
         } => format!(
-            "fold({}..{}, {}, ({accumulator}, {item}) => {})",
+            "({}..{}).fold({}, |{accumulator}, {item}| {{ {} }})",
             describe_contract_expression(start),
             describe_contract_expression(end),
             describe_contract_expression(initial),

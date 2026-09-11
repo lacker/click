@@ -988,6 +988,16 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
         match condition {
             ConditionTerm::IntegerEqual(left, right) if left == right => return *value,
             ConditionTerm::IntegerNotEqual(left, right) if left == right => return !*value,
+            ConditionTerm::IntegerEqual(left, right)
+                if super::fact_keys::integer_terms_alpha_equivalent(left, right) == Some(true) =>
+            {
+                return *value;
+            }
+            ConditionTerm::IntegerNotEqual(left, right)
+                if super::fact_keys::integer_terms_alpha_equivalent(left, right) == Some(true) =>
+            {
+                return !*value;
+            }
             _ => {}
         }
     }
@@ -3189,7 +3199,10 @@ fn separations_equal_modulo_proven_snapshots(
 #[cfg(test)]
 mod integer_reflexivity_tests {
     use super::*;
-    use crate::kernel::{IntegerTerm, MachineIntegerType};
+    use crate::kernel::{
+        Bitvector32Term, IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType,
+        SharedIntegerRangeEndpoint, SharedMachineIntegerTerm, Variable,
+    };
 
     #[test]
     fn integer_reflexivity_normalization_checks_polarity_and_exact_terms() {
@@ -3223,5 +3236,161 @@ mod integer_reflexivity_tests {
                 true,
             )));
         }
+    }
+
+    fn integer_fold(
+        index: IntegerRangeFoldIndex,
+        accumulator: Variable,
+        item: Variable,
+        body: IntegerTerm,
+    ) -> IntegerTerm {
+        IntegerTerm::range_fold(index, IntegerTerm::constant_i64(0), accumulator, item, body)
+    }
+
+    fn integer_index() -> IntegerRangeFoldIndex {
+        IntegerRangeFoldIndex::Integer {
+            start: IntegerTerm::constant_i64(0).into(),
+            end: IntegerTerm::constant_i64(2).into(),
+        }
+    }
+
+    fn int32_index() -> IntegerRangeFoldIndex {
+        IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(2)),
+        }
+    }
+
+    #[test]
+    fn integer_equality_normalization_accepts_alpha_equivalent_fold_carriers() {
+        let left_accumulator = Variable(93_000);
+        let left_item = Variable(93_001);
+        let right_accumulator = Variable(94_000);
+        let right_item = Variable(94_001);
+        let left = integer_fold(
+            integer_index(),
+            left_accumulator,
+            left_item,
+            IntegerTerm::add(
+                IntegerTerm::var(left_accumulator),
+                IntegerTerm::var(left_item),
+            ),
+        );
+        let right = integer_fold(
+            integer_index(),
+            right_accumulator,
+            right_item,
+            IntegerTerm::add(
+                IntegerTerm::var(right_accumulator),
+                IntegerTerm::var(right_item),
+            ),
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(left.clone().into(), right.clone().into()),
+            true,
+        );
+        assert_eq!(
+            crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent(
+                &left.into(),
+                &right.into(),
+            ),
+            Some(true)
+        );
+        assert!(normalizes_context_free(&equality));
+
+        let left_accumulator = Variable(95_000);
+        let left_item = Variable(95_001);
+        let right_accumulator = Variable(96_000);
+        let right_item = Variable(96_001);
+        let left = integer_fold(
+            int32_index(),
+            left_accumulator,
+            left_item,
+            IntegerTerm::add(
+                IntegerTerm::var(left_accumulator),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(left_item),
+                )),
+            ),
+        );
+        let right = integer_fold(
+            int32_index(),
+            right_accumulator,
+            right_item,
+            IntegerTerm::add(
+                IntegerTerm::var(right_accumulator),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(right_item),
+                )),
+            ),
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(left.clone().into(), right.clone().into()),
+            true,
+        );
+        assert_eq!(
+            crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent(
+                &left.into(),
+                &right.into(),
+            ),
+            Some(true)
+        );
+        assert!(normalizes_context_free(&equality));
+    }
+
+    #[test]
+    fn integer_equality_normalization_rejects_free_and_cross_carrier_bindings() {
+        let bound = integer_fold(
+            integer_index(),
+            Variable(97_000),
+            Variable(97_001),
+            IntegerTerm::var(Variable(97_000)),
+        );
+        let free = integer_fold(
+            integer_index(),
+            Variable(98_000),
+            Variable(98_001),
+            IntegerTerm::var(Variable(97_000)),
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(bound.clone().into(), free.clone().into()),
+            true,
+        );
+        assert_eq!(
+            crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent(
+                &bound.into(),
+                &free.into(),
+            ),
+            Some(false)
+        );
+        assert!(!normalizes_context_free(&equality));
+
+        let integer_item = Variable(99_000);
+        let machine_item = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+            MachineIntegerType::Int32,
+            Bitvector32Term::Variable(integer_item),
+        ));
+        let integer_bound = integer_fold(
+            integer_index(),
+            Variable(99_001),
+            integer_item,
+            IntegerTerm::var(integer_item),
+        );
+        let machine_bound =
+            integer_fold(int32_index(), Variable(99_001), integer_item, machine_item);
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(integer_bound.clone().into(), machine_bound.clone().into()),
+            true,
+        );
+        assert_eq!(
+            crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent(
+                &integer_bound.into(),
+                &machine_bound.into(),
+            ),
+            Some(false)
+        );
+        assert!(!normalizes_context_free(&equality));
     }
 }

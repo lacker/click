@@ -61,6 +61,43 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions(
     .map(|(proposition, _)| proposition)
 }
 
+/// Lowers a fixed-state proposition while retaining checked mathematical
+/// Integer bindings introduced by the surrounding theorem or proof scope.
+/// The ordinary helper remains the default for C-only propositions; this path
+/// is used when a fold law's explicit guard names an Integer binding.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_integer_values(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
+        proposition,
+        assumptions,
+        &values,
+        &array_refs,
+        integer_values,
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        &BTreeSet::new(),
+    )
+}
+
 /// [`lower_fixed_state_proposition_with_assumptions`], also returning the
 /// head chain the kernel recorded for the lowered proposition.
 #[allow(clippy::too_many_arguments)]
@@ -372,6 +409,48 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
         .collect::<Vec<_>>();
     refuse_impossible_loads(&obligations)?;
     Ok(value)
+}
+
+/// Capture one proof-side Integer expression as the symbolic term it denotes
+/// at the current fixed state. Evaluation is intentionally checked here: any
+/// load, conversion, or machine operation needed to form the argument must
+/// already be justified by the supplied proof assumptions.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn capture_fixed_state_integer_expression(
+    expression: &ContractExpression,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<crate::kernel::IntegerTerm, String> {
+    let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
+    let spec =
+        crate::surface::lowering::elaborate_fixed_state_integer_expression_with_integer_values(
+            expression,
+            states.element_types,
+            &states.entry_state,
+            states.entry_values,
+            states.current_values,
+            integer_values,
+            result,
+            recorded_snapshots,
+            assumptions,
+            predicate_environment,
+            click_function_environment,
+            BTreeSet::new(),
+        )?;
+    crate::kernel::capture_spec_integer_value(
+        &states.lowering_state,
+        &spec,
+        Some(&states.entry_state),
+        assumptions,
+    )
 }
 
 /// Captures an algebraic expression as the symbolic spec term it denotes at

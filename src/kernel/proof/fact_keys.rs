@@ -15,6 +15,7 @@ use crate::kernel::{
 use num_bigint::BigInt;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 #[cfg(test)]
 thread_local! {
@@ -474,7 +475,7 @@ fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlin
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct QuantifiedEquivalenceKey(AlphaPropositionKey);
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPropositionKey {
     Condition(AlphaConditionKey, bool),
     And(Box<Self>, Box<Self>),
@@ -483,6 +484,41 @@ enum AlphaPropositionKey {
     Implies(Box<Self>, Box<Self>),
     ForAll(Sort, Box<Self>),
     Exists(Sort, Box<Self>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct IntegerEqualityAlphaKey(AlphaPropositionKey);
+
+impl IntegerEqualityAlphaKey {
+    pub(crate) fn fingerprint(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+/// Alpha key used by the checked fact index for Integer equality atoms.
+///
+/// Integer range-fold binders are canonicalized by the same typed alpha
+/// environment used by the normalization bridge.  The entry point is kept
+/// deliberately narrow: only a true `IntegerEqual` condition with a
+/// range-fold operand at its root is eligible. Scalar arithmetic equalities
+/// remain on their existing exact/certificate path, so indexing them cannot
+/// turn a sequence of growing arithmetic facts into repeated deep walks.
+pub(crate) fn integer_equality_alpha_key(
+    proposition: &Proposition,
+) -> Option<IntegerEqualityAlphaKey> {
+    let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) = proposition
+    else {
+        return None;
+    };
+    if !matches!(left.as_ref(), IntegerTerm::RangeFold { .. })
+        && !matches!(right.as_ref(), IntegerTerm::RangeFold { .. })
+    {
+        return None;
+    }
+    alpha_proposition_key::<false>(proposition, &mut BTreeMap::new(), &mut 0)
+        .map(IntegerEqualityAlphaKey)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -642,6 +678,19 @@ enum AlphaIntegerNode {
         left: usize,
         right: usize,
     },
+    RangeFold {
+        index: AlphaIntegerRangeIndex,
+        initial: usize,
+        accumulator: usize,
+        item: usize,
+        body: usize,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaIntegerRangeIndex {
+    Int32(AlphaBitvectorKey, AlphaBitvectorKey),
+    Integer(usize, usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -655,19 +704,77 @@ fn alpha_integer_key(
     term: &IntegerTerm,
     bindings: &mut BTreeMap<Variable, usize>,
 ) -> Option<AlphaIntegerKey> {
+    let mut environment = AlphaBindings {
+        integer: bindings.clone(),
+        bitvector: BTreeMap::new(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+    };
+    let mut next_binder = environment
+        .integer
+        .values()
+        .chain(environment.bitvector.values())
+        .copied()
+        .max()
+        .map_or(0, |ordinal| ordinal.saturating_add(1));
+    alpha_integer_key_with_bindings(term, &mut environment, &mut next_binder)
+}
+
+/// Compare two Integer terms modulo the binders introduced by range folds.
+///
+/// This is deliberately a checked, memory-free comparison.  Free variables
+/// retain their carrier and numeric identity, while Integer and machine item
+/// binders are kept in separate alpha environments.  A caller that needs to
+/// reason about a term outside this supported fragment receives `None` and
+/// can continue through its ordinary proof path.
+pub(crate) fn integer_terms_alpha_equivalent(
+    left: &crate::kernel::SharedIntegerTerm,
+    right: &crate::kernel::SharedIntegerTerm,
+) -> Option<bool> {
+    let left_key = alpha_integer_key(left.as_ref(), &mut BTreeMap::new())?;
+    let right_key = alpha_integer_key(right.as_ref(), &mut BTreeMap::new())?;
+    Some(left_key == right_key)
+}
+
+struct AlphaBindings {
+    integer: BTreeMap<Variable, usize>,
+    bitvector: BTreeMap<Variable, usize>,
+    integer_scope: u64,
+    bitvector_scope: u64,
+    next_scope_id: u64,
+}
+
+fn alpha_integer_key_with_bindings(
+    term: &IntegerTerm,
+    bindings: &mut AlphaBindings,
+    next_binder: &mut usize,
+) -> Option<AlphaIntegerKey> {
     let mut nodes = Vec::new();
     let mut memo = HashMap::new();
-    let root = alpha_integer_node(&term.clone().into(), bindings, &mut memo, &mut nodes)?;
+    let root = alpha_integer_node(
+        &term.clone().into(),
+        bindings,
+        &mut memo,
+        &mut nodes,
+        next_binder,
+    )?;
     Some(AlphaIntegerKey { nodes, root })
 }
 
 fn alpha_integer_node(
     shared: &crate::kernel::SharedIntegerTerm,
-    bindings: &mut BTreeMap<Variable, usize>,
-    memo: &mut HashMap<u64, usize>,
+    bindings: &mut AlphaBindings,
+    memo: &mut HashMap<(u64, u64, u64), usize>,
     nodes: &mut Vec<AlphaIntegerNode>,
+    next_binder: &mut usize,
 ) -> Option<usize> {
-    if let Some(index) = memo.get(&shared.id()) {
+    let cache_key = (
+        shared.id(),
+        bindings.integer_scope,
+        bindings.bitvector_scope,
+    );
+    if let Some(index) = memo.get(&cache_key) {
         return Some(*index);
     }
     let term = shared.as_ref();
@@ -678,35 +785,129 @@ fn alpha_integer_node(
             AlphaIntegerNode::Constant(value.clone())
         }
         IntegerTerm::Variable(variable) => {
-            AlphaIntegerNode::Variable(alpha_variable_key::<false>(*variable, bindings)?)
+            AlphaIntegerNode::Variable(alpha_variable_key::<false>(*variable, &bindings.integer)?)
         }
         IntegerTerm::Machine(value) => AlphaIntegerNode::Machine(
             value.ty(),
-            alpha_bitvector_key::<false>(value.value(), bindings, &mut 0)?,
+            alpha_bitvector_key_with_bindings::<false>(value.value(), bindings, next_binder)?,
         ),
-        IntegerTerm::Negate(value) => {
-            AlphaIntegerNode::Negate(alpha_integer_node(value, bindings, memo, nodes)?)
-        }
+        IntegerTerm::Negate(value) => AlphaIntegerNode::Negate(alpha_integer_node(
+            value,
+            bindings,
+            memo,
+            nodes,
+            next_binder,
+        )?),
         IntegerTerm::Add(left, right) => AlphaIntegerNode::Binary {
             operator: IntegerTermBinaryOp::Add,
-            left: alpha_integer_node(left, bindings, memo, nodes)?,
-            right: alpha_integer_node(right, bindings, memo, nodes)?,
+            left: alpha_integer_node(left, bindings, memo, nodes, next_binder)?,
+            right: alpha_integer_node(right, bindings, memo, nodes, next_binder)?,
         },
         IntegerTerm::Subtract(left, right) => AlphaIntegerNode::Binary {
             operator: IntegerTermBinaryOp::Subtract,
-            left: alpha_integer_node(left, bindings, memo, nodes)?,
-            right: alpha_integer_node(right, bindings, memo, nodes)?,
+            left: alpha_integer_node(left, bindings, memo, nodes, next_binder)?,
+            right: alpha_integer_node(right, bindings, memo, nodes, next_binder)?,
         },
         IntegerTerm::Multiply(left, right) => AlphaIntegerNode::Binary {
             operator: IntegerTermBinaryOp::Multiply,
-            left: alpha_integer_node(left, bindings, memo, nodes)?,
-            right: alpha_integer_node(right, bindings, memo, nodes)?,
+            left: alpha_integer_node(left, bindings, memo, nodes, next_binder)?,
+            right: alpha_integer_node(right, bindings, memo, nodes, next_binder)?,
         },
-        IntegerTerm::PureFunctionApplication { .. } => return None,
+        IntegerTerm::PureFunctionApplication(_) => return None,
+        IntegerTerm::AlgebraicMatch { .. } => return None,
+        IntegerTerm::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let alpha_index = match index {
+                crate::kernel::IntegerRangeFoldIndex::Int32 { start, end } => {
+                    AlphaIntegerRangeIndex::Int32(
+                        alpha_bitvector_key_with_bindings::<false>(
+                            start.value(),
+                            bindings,
+                            next_binder,
+                        )?,
+                        alpha_bitvector_key_with_bindings::<false>(
+                            end.value(),
+                            bindings,
+                            next_binder,
+                        )?,
+                    )
+                }
+                crate::kernel::IntegerRangeFoldIndex::Integer { start, end } => {
+                    AlphaIntegerRangeIndex::Integer(
+                        alpha_integer_node(start, bindings, memo, nodes, next_binder)?,
+                        alpha_integer_node(end, bindings, memo, nodes, next_binder)?,
+                    )
+                }
+            };
+            let initial = alpha_integer_node(initial, bindings, memo, nodes, next_binder)?;
+            let accumulator_index = *next_binder;
+            *next_binder = (*next_binder).checked_add(1)?;
+            let item_index = *next_binder;
+            *next_binder = (*next_binder).checked_add(1)?;
+            let old_accumulator = bindings.integer.insert(*accumulator, accumulator_index);
+            let item_is_integer =
+                matches!(index, crate::kernel::IntegerRangeFoldIndex::Integer { .. });
+            let old_item = if matches!(index, crate::kernel::IntegerRangeFoldIndex::Integer { .. })
+            {
+                bindings.integer.insert(*item, item_index)
+            } else {
+                bindings.bitvector.insert(*item, item_index)
+            };
+            let parent_integer_scope = bindings.integer_scope;
+            let parent_bitvector_scope = bindings.bitvector_scope;
+            let integer_scope = bindings.next_scope_id;
+            let mut next_scope_id = integer_scope.checked_add(1)?;
+            let bitvector_scope = if item_is_integer {
+                parent_bitvector_scope
+            } else {
+                let scope = next_scope_id;
+                next_scope_id = next_scope_id.checked_add(1)?;
+                scope
+            };
+            bindings.next_scope_id = next_scope_id;
+            bindings.integer_scope = integer_scope;
+            bindings.bitvector_scope = bitvector_scope;
+            let body_index = alpha_integer_node(body, bindings, memo, nodes, next_binder);
+            bindings.integer_scope = parent_integer_scope;
+            bindings.bitvector_scope = parent_bitvector_scope;
+            // Restore in reverse insertion order, including an outer binding
+            // shadowed by this body. Endpoints and initial stay in outer scope.
+            if let Some(previous) = old_item {
+                if item_is_integer {
+                    bindings.integer.insert(*item, previous);
+                } else {
+                    bindings.bitvector.insert(*item, previous);
+                }
+            } else {
+                if item_is_integer {
+                    bindings.integer.remove(item);
+                } else {
+                    bindings.bitvector.remove(item);
+                }
+            }
+            if let Some(previous) = old_accumulator {
+                bindings.integer.insert(*accumulator, previous);
+            } else {
+                bindings.integer.remove(accumulator);
+            }
+            let body_index = body_index?;
+            AlphaIntegerNode::RangeFold {
+                index: alpha_index,
+                initial,
+                accumulator: accumulator_index,
+                item: item_index,
+                body: body_index,
+            }
+        }
     };
     let index = nodes.len();
     nodes.push(node);
-    memo.insert(shared.id(), index);
+    memo.insert(cache_key, index);
     Some(index)
 }
 
@@ -726,24 +927,24 @@ fn alpha_variable_key<const ALLOW_LOADS: bool>(
     )
 }
 
-fn alpha_pointer_offset_key<const ALLOW_LOADS: bool>(
+fn alpha_pointer_offset_key_with_bindings<const ALLOW_LOADS: bool>(
     offset: &PointerOffsetTerm,
-    bindings: &mut BTreeMap<Variable, usize>,
+    bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaPointerOffsetKey> {
     crate::instrumentation::record_deterministic_work(1);
     Some(match offset {
         PointerOffsetTerm::Constant(value) => AlphaPointerOffsetKey::Constant(*value),
-        PointerOffsetTerm::Variable(variable) => {
-            AlphaPointerOffsetKey::Variable(alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?)
-        }
+        PointerOffsetTerm::Variable(variable) => AlphaPointerOffsetKey::Variable(
+            alpha_variable_key::<ALLOW_LOADS>(*variable, &bindings.bitvector)?,
+        ),
         PointerOffsetTerm::Add(left, right) => AlphaPointerOffsetKey::Add(
-            Box::new(alpha_pointer_offset_key::<ALLOW_LOADS>(
+            Box::new(alpha_pointer_offset_key_with_bindings::<ALLOW_LOADS>(
                 left,
                 bindings,
                 next_binder,
             )?),
-            Box::new(alpha_pointer_offset_key::<ALLOW_LOADS>(
+            Box::new(alpha_pointer_offset_key_with_bindings::<ALLOW_LOADS>(
                 right,
                 bindings,
                 next_binder,
@@ -751,7 +952,7 @@ fn alpha_pointer_offset_key<const ALLOW_LOADS: bool>(
         ),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             AlphaPointerOffsetKey::Int32Scaled {
-                value: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                value: Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                     value,
                     bindings,
                     next_binder,
@@ -764,7 +965,7 @@ fn alpha_pointer_offset_key<const ALLOW_LOADS: bool>(
             byte_width,
             unsigned,
         } => AlphaPointerOffsetKey::Int64Scaled {
-            value: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+            value: Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                 value,
                 bindings,
                 next_binder,
@@ -775,9 +976,9 @@ fn alpha_pointer_offset_key<const ALLOW_LOADS: bool>(
     })
 }
 
-fn alpha_pointer_key<const ALLOW_LOADS: bool>(
+fn alpha_pointer_key_with_bindings<const ALLOW_LOADS: bool>(
     pointer: &Pointer,
-    bindings: &mut BTreeMap<Variable, usize>,
+    bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaPointerKey> {
     crate::instrumentation::record_deterministic_work(1);
@@ -789,23 +990,30 @@ fn alpha_pointer_key<const ALLOW_LOADS: bool>(
         },
         PointerBlock::Function(name) => AlphaPointerBlockKey::Function(name.clone()),
         PointerBlock::FunctionSymbolic(variable) => AlphaPointerBlockKey::FunctionSymbolic(
-            alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?,
+            alpha_variable_key::<ALLOW_LOADS>(*variable, &bindings.bitvector)?,
         ),
         PointerBlock::ExternalArgument => AlphaPointerBlockKey::ExternalArgument,
         PointerBlock::Symbolic(variable) => {
-            AlphaPointerBlockKey::Symbolic(alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?)
+            AlphaPointerBlockKey::Symbolic(alpha_variable_key::<ALLOW_LOADS>(
+                *variable,
+                &bindings.bitvector,
+            )?)
         }
         PointerBlock::Heap(identity) => AlphaPointerBlockKey::Heap(*identity),
     };
     Some(AlphaPointerKey {
         block,
-        offset: alpha_pointer_offset_key::<ALLOW_LOADS>(&pointer.offset, bindings, next_binder)?,
+        offset: alpha_pointer_offset_key_with_bindings::<ALLOW_LOADS>(
+            &pointer.offset,
+            bindings,
+            next_binder,
+        )?,
     })
 }
 
-fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
+fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
     term: &Bitvector32Term,
-    bindings: &mut BTreeMap<Variable, usize>,
+    bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaBitvectorKey> {
     crate::instrumentation::record_deterministic_work(1);
@@ -821,12 +1029,12 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaBitvectorKey> {
             Some(AlphaBitvectorKey::Binary(
                 operator,
-                Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                     left,
                     bindings,
                     next_binder,
                 )?),
-                Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+                Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                     right,
                     bindings,
                     next_binder,
@@ -842,15 +1050,16 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
                 .then(|| crate::kernel::registered_load_for_variable(variable))
                 .flatten()
             {
-                Some((_, pointer)) => {
-                    AlphaBitvectorKey::Load(Box::new(alpha_pointer_key::<ALLOW_LOADS>(
+                Some((_, pointer)) => AlphaBitvectorKey::Load(Box::new(
+                    alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
                         &pointer,
                         bindings,
                         next_binder,
-                    )?))
-                }
+                    )?,
+                )),
                 None => AlphaBitvectorKey::Variable(alpha_variable_key::<ALLOW_LOADS>(
-                    *variable, bindings,
+                    *variable,
+                    &bindings.bitvector,
                 )?),
             }
         }
@@ -964,36 +1173,46 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
             right,
         } => binary(AlphaBitvectorBinaryOp::Float64(*operator), left, right)?,
         Bitvector32Term::BitwiseNot(body) => AlphaBitvectorKey::BitwiseNot(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
+            alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder)?,
         )),
-        Bitvector32Term::Int64BitwiseNot(body) => AlphaBitvectorKey::Int64BitwiseNot(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
-        )),
-        Bitvector32Term::UInt64BitwiseNot(body) => AlphaBitvectorKey::UInt64BitwiseNot(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
-        )),
-        Bitvector32Term::Float32Negate(body) => AlphaBitvectorKey::Float32Negate(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
-        )),
-        Bitvector32Term::Float64Negate(body) => AlphaBitvectorKey::Float64Negate(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder)?,
-        )),
+        Bitvector32Term::Int64BitwiseNot(body) => {
+            AlphaBitvectorKey::Int64BitwiseNot(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(body, bindings, next_binder)?))
+        }
+        Bitvector32Term::UInt64BitwiseNot(body) => {
+            AlphaBitvectorKey::UInt64BitwiseNot(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(
+                body, bindings, next_binder
+            )?))
+        }
+        Bitvector32Term::Float32Negate(body) => {
+            AlphaBitvectorKey::Float32Negate(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(body, bindings, next_binder)?))
+        }
+        Bitvector32Term::Float64Negate(body) => {
+            AlphaBitvectorKey::Float64Negate(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(body, bindings, next_binder)?))
+        }
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => AlphaBitvectorKey::If {
-            condition: Box::new(alpha_condition_key::<ALLOW_LOADS>(
+            condition: Box::new(alpha_condition_key_with_bindings::<ALLOW_LOADS>(
                 condition,
                 bindings,
                 next_binder,
             )?),
-            then_term: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+            then_term: Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                 then_term,
                 bindings,
                 next_binder,
             )?),
-            else_term: Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+            else_term: Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                 else_term,
                 bindings,
                 next_binder,
@@ -1007,17 +1226,17 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
             item,
             body,
         } => {
-            let start = Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+            let start = Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                 start,
                 bindings,
                 next_binder,
             )?);
-            let end = Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+            let end = Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                 end,
                 bindings,
                 next_binder,
             )?);
-            let initial = Box::new(alpha_bitvector_key::<ALLOW_LOADS>(
+            let initial = Box::new(alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
                 initial,
                 bindings,
                 next_binder,
@@ -1028,21 +1247,27 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
             // structural ordinals, then restore any enclosing binding so a
             // fold cannot change the meaning of a sibling term.
             let accumulator_ordinal = *next_binder;
-            *next_binder += 1;
-            let previous_accumulator = bindings.insert(*accumulator, accumulator_ordinal);
+            *next_binder = (*next_binder).checked_add(1)?;
+            let previous_accumulator = bindings.bitvector.insert(*accumulator, accumulator_ordinal);
             let item_ordinal = *next_binder;
-            *next_binder += 1;
-            let previous_item = bindings.insert(*item, item_ordinal);
-            let body = alpha_bitvector_key::<ALLOW_LOADS>(body, bindings, next_binder);
+            *next_binder = (*next_binder).checked_add(1)?;
+            let previous_item = bindings.bitvector.insert(*item, item_ordinal);
+            let previous_bitvector_scope = bindings.bitvector_scope;
+            let bitvector_scope = bindings.next_scope_id;
+            bindings.next_scope_id = bindings.next_scope_id.checked_add(1)?;
+            bindings.bitvector_scope = bitvector_scope;
+            let body =
+                alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder);
+            bindings.bitvector_scope = previous_bitvector_scope;
             if let Some(previous) = previous_item {
-                bindings.insert(*item, previous);
+                bindings.bitvector.insert(*item, previous);
             } else {
-                bindings.remove(item);
+                bindings.bitvector.remove(item);
             }
             if let Some(previous) = previous_accumulator {
-                bindings.insert(*accumulator, previous);
+                bindings.bitvector.insert(*accumulator, previous);
             } else {
-                bindings.remove(accumulator);
+                bindings.bitvector.remove(accumulator);
             }
 
             AlphaBitvectorKey::RangeFold {
@@ -1058,7 +1283,11 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
                 arguments: arguments
                     .iter()
                     .map(|argument| {
-                        alpha_bitvector_key::<ALLOW_LOADS>(argument, bindings, next_binder)
+                        alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
+                            argument,
+                            bindings,
+                            next_binder,
+                        )
                     })
                     .collect::<Option<Vec<_>>>()?,
             }
@@ -1066,41 +1295,81 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         Bitvector32Term::ClickFunctionApplication { .. }
         | Bitvector32Term::AlgebraicMatch { .. } => return None,
         Bitvector32Term::MemoryLoad(_, pointer) => AlphaBitvectorKey::Load(Box::new(
-            alpha_pointer_key::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
+            alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
         )),
         Bitvector32Term::PointerAddress(pointer) => AlphaBitvectorKey::Address(Box::new(
-            alpha_pointer_key::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
+            alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
         )),
         Bitvector32Term::IntegerToMachine { value, destination } => {
             AlphaBitvectorKey::IntegerToMachine(
                 *destination,
-                alpha_integer_key(value.as_ref(), bindings)?,
+                alpha_integer_key_with_bindings(value.as_ref(), bindings, next_binder)?,
             )
         }
-        Bitvector32Term::Int64From32(value) => AlphaBitvectorKey::Int64From32(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
-        )),
-        Bitvector32Term::UInt64From32(value) => AlphaBitvectorKey::UInt64From32(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
-        )),
-        Bitvector32Term::UInt32From64(value) => AlphaBitvectorKey::UInt32From64(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
-        )),
-        Bitvector32Term::Int64FromUInt32(value) => AlphaBitvectorKey::Int64FromUInt32(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
-        )),
-        Bitvector32Term::UInt64FromInt32(value) => AlphaBitvectorKey::UInt64FromInt32(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
-        )),
-        Bitvector32Term::UInt64FromInt64(value) => AlphaBitvectorKey::UInt64FromInt64(Box::new(
-            alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
-        )),
+        Bitvector32Term::Int64From32(value) => {
+            AlphaBitvectorKey::Int64From32(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(value, bindings, next_binder)?))
+        }
+        Bitvector32Term::UInt64From32(value) => {
+            AlphaBitvectorKey::UInt64From32(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(value, bindings, next_binder)?))
+        }
+        Bitvector32Term::UInt32From64(value) => {
+            AlphaBitvectorKey::UInt32From64(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(value, bindings, next_binder)?))
+        }
+        Bitvector32Term::Int64FromUInt32(value) => {
+            AlphaBitvectorKey::Int64FromUInt32(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(
+                value, bindings, next_binder
+            )?))
+        }
+        Bitvector32Term::UInt64FromInt32(value) => {
+            AlphaBitvectorKey::UInt64FromInt32(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(
+                value, bindings, next_binder
+            )?))
+        }
+        Bitvector32Term::UInt64FromInt64(value) => {
+            AlphaBitvectorKey::UInt64FromInt64(Box::new(alpha_bitvector_key_with_bindings::<
+                ALLOW_LOADS,
+            >(
+                value, bindings, next_binder
+            )?))
+        }
     })
 }
 
-fn alpha_condition_key<const ALLOW_LOADS: bool>(
-    condition: &ConditionTerm,
+// The typed visitor is the production API.  Keep this narrow compatibility
+// shim for the legacy unit tests that exercise the old one-map helper directly;
+// both carrier maps start from the test's bindings, while the visitor itself
+// still applies carrier-aware scope handling.
+#[cfg(test)]
+fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
+    term: &Bitvector32Term,
     bindings: &mut BTreeMap<Variable, usize>,
+    next_binder: &mut usize,
+) -> Option<AlphaBitvectorKey> {
+    let mut typed = AlphaBindings {
+        integer: bindings.clone(),
+        bitvector: bindings.clone(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+    };
+    let result = alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(term, &mut typed, next_binder);
+    *bindings = typed.bitvector;
+    result
+}
+
+fn alpha_condition_key_with_bindings<const ALLOW_LOADS: bool>(
+    condition: &ConditionTerm,
+    bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaConditionKey> {
     crate::instrumentation::record_deterministic_work(1);
@@ -1108,14 +1377,17 @@ fn alpha_condition_key<const ALLOW_LOADS: bool>(
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaConditionKey> {
             Some(AlphaConditionKey::Binary(
                 operator,
-                alpha_bitvector_key::<ALLOW_LOADS>(left, bindings, next_binder)?,
-                alpha_bitvector_key::<ALLOW_LOADS>(right, bindings, next_binder)?,
+                alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(left, bindings, next_binder)?,
+                alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(right, bindings, next_binder)?,
             ))
         };
     Some(match condition {
         ConditionTerm::Constant(value) => AlphaConditionKey::Constant(*value),
         ConditionTerm::Variable(variable) => {
-            AlphaConditionKey::Variable(alpha_variable_key::<ALLOW_LOADS>(*variable, bindings)?)
+            AlphaConditionKey::Variable(alpha_variable_key::<ALLOW_LOADS>(
+                *variable,
+                &bindings.bitvector,
+            )?)
         }
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             binary(AlphaConditionBinaryOp::SignedLessThan, left, right)?
@@ -1148,42 +1420,42 @@ fn alpha_condition_key<const ALLOW_LOADS: bool>(
             binary(AlphaConditionBinaryOp::ShiftLeftOverflows, left, right)?
         }
         ConditionTerm::PointerOffsetEqual(left, right) => AlphaConditionKey::PointerOffsetEqual(
-            alpha_pointer_offset_key::<ALLOW_LOADS>(left, bindings, next_binder)?,
-            alpha_pointer_offset_key::<ALLOW_LOADS>(right, bindings, next_binder)?,
+            alpha_pointer_offset_key_with_bindings::<ALLOW_LOADS>(left, bindings, next_binder)?,
+            alpha_pointer_offset_key_with_bindings::<ALLOW_LOADS>(right, bindings, next_binder)?,
         ),
         ConditionTerm::PointerEqual(left, right) => AlphaConditionKey::PointerEqual(
-            alpha_pointer_key::<ALLOW_LOADS>(left, bindings, next_binder)?,
-            alpha_pointer_key::<ALLOW_LOADS>(right, bindings, next_binder)?,
+            alpha_pointer_key_with_bindings::<ALLOW_LOADS>(left, bindings, next_binder)?,
+            alpha_pointer_key_with_bindings::<ALLOW_LOADS>(right, bindings, next_binder)?,
         ),
         ConditionTerm::IntegerLessThan(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::LessThan,
-            alpha_integer_key(left, bindings)?,
-            alpha_integer_key(right, bindings)?,
+            alpha_integer_key_with_bindings(left, bindings, next_binder)?,
+            alpha_integer_key_with_bindings(right, bindings, next_binder)?,
         ),
         ConditionTerm::IntegerLessEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::LessEqual,
-            alpha_integer_key(left, bindings)?,
-            alpha_integer_key(right, bindings)?,
+            alpha_integer_key_with_bindings(left, bindings, next_binder)?,
+            alpha_integer_key_with_bindings(right, bindings, next_binder)?,
         ),
         ConditionTerm::IntegerGreaterThan(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::GreaterThan,
-            alpha_integer_key(left, bindings)?,
-            alpha_integer_key(right, bindings)?,
+            alpha_integer_key_with_bindings(left, bindings, next_binder)?,
+            alpha_integer_key_with_bindings(right, bindings, next_binder)?,
         ),
         ConditionTerm::IntegerGreaterEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::GreaterEqual,
-            alpha_integer_key(left, bindings)?,
-            alpha_integer_key(right, bindings)?,
+            alpha_integer_key_with_bindings(left, bindings, next_binder)?,
+            alpha_integer_key_with_bindings(right, bindings, next_binder)?,
         ),
         ConditionTerm::IntegerEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::Equal,
-            alpha_integer_key(left, bindings)?,
-            alpha_integer_key(right, bindings)?,
+            alpha_integer_key_with_bindings(left, bindings, next_binder)?,
+            alpha_integer_key_with_bindings(right, bindings, next_binder)?,
         ),
         ConditionTerm::IntegerNotEqual(left, right) => AlphaConditionKey::IntegerComparison(
             IntegerComparisonOperator::NotEqual,
-            alpha_integer_key(left, bindings)?,
-            alpha_integer_key(right, bindings)?,
+            alpha_integer_key_with_bindings(left, bindings, next_binder)?,
+            alpha_integer_key_with_bindings(right, bindings, next_binder)?,
         ),
         _ => return None,
     })
@@ -1194,21 +1466,36 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
     bindings: &mut BTreeMap<Variable, usize>,
     next_binder: &mut usize,
 ) -> Option<AlphaPropositionKey> {
+    let mut environment = AlphaBindings {
+        integer: BTreeMap::new(),
+        bitvector: bindings.clone(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+    };
+    alpha_proposition_key_with_bindings::<ALLOW_LOADS>(proposition, &mut environment, next_binder)
+}
+
+fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
+    proposition: &Proposition,
+    bindings: &mut AlphaBindings,
+    next_binder: &mut usize,
+) -> Option<AlphaPropositionKey> {
     crate::instrumentation::record_deterministic_work(1);
     #[cfg(test)]
     ALPHA_PROPOSITION_KEY_VISITS.with(|visits| visits.set(visits.get() + 1));
 
     let binary = |left: &Proposition,
                   right: &Proposition,
-                  bindings: &mut BTreeMap<Variable, usize>,
+                  bindings: &mut AlphaBindings,
                   next_binder: &mut usize|
      -> Option<(Box<AlphaPropositionKey>, Box<AlphaPropositionKey>)> {
-        let left = Box::new(alpha_proposition_key::<ALLOW_LOADS>(
+        let left = Box::new(alpha_proposition_key_with_bindings::<ALLOW_LOADS>(
             left,
             bindings,
             next_binder,
         )?);
-        let right = Box::new(alpha_proposition_key::<ALLOW_LOADS>(
+        let right = Box::new(alpha_proposition_key_with_bindings::<ALLOW_LOADS>(
             right,
             bindings,
             next_binder,
@@ -1217,7 +1504,7 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
     };
     Some(match proposition {
         Proposition::ConditionIs(condition, value) => AlphaPropositionKey::Condition(
-            alpha_condition_key::<ALLOW_LOADS>(condition, bindings, next_binder)?,
+            alpha_condition_key_with_bindings::<ALLOW_LOADS>(condition, bindings, next_binder)?,
             *value,
         ),
         Proposition::And(left, right) => {
@@ -1232,37 +1519,81 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
             let (left, right) = binary(left, right, bindings, next_binder)?;
             AlphaPropositionKey::Implies(left, right)
         }
-        Proposition::Not(body) => {
-            AlphaPropositionKey::Not(Box::new(alpha_proposition_key::<ALLOW_LOADS>(
-                body,
-                bindings,
-                next_binder,
-            )?))
-        }
+        Proposition::Not(body) => AlphaPropositionKey::Not(Box::new(
+            alpha_proposition_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder)?,
+        )),
         Proposition::ForAll { var, sort, body } => {
             let ordinal = *next_binder;
-            *next_binder += 1;
-            let prior = bindings.insert(*var, ordinal);
-            let body = alpha_proposition_key::<ALLOW_LOADS>(body, bindings, next_binder);
-            if let Some(prior) = prior {
-                bindings.insert(*var, prior);
+            *next_binder = (*next_binder).checked_add(1)?;
+            let body = if *sort == Sort::Integer {
+                let prior = bindings.integer.insert(*var, ordinal);
+                let parent_scope = bindings.integer_scope;
+                let integer_scope = bindings.next_scope_id;
+                bindings.next_scope_id = bindings.next_scope_id.checked_add(1)?;
+                bindings.integer_scope = integer_scope;
+                let body =
+                    alpha_proposition_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder);
+                bindings.integer_scope = parent_scope;
+                if let Some(prior) = prior {
+                    bindings.integer.insert(*var, prior);
+                } else {
+                    bindings.integer.remove(var);
+                }
+                body
             } else {
-                bindings.remove(var);
-            }
+                let prior = bindings.bitvector.insert(*var, ordinal);
+                let parent_scope = bindings.bitvector_scope;
+                let bitvector_scope = bindings.next_scope_id;
+                bindings.next_scope_id = bindings.next_scope_id.checked_add(1)?;
+                bindings.bitvector_scope = bitvector_scope;
+                let body =
+                    alpha_proposition_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder);
+                bindings.bitvector_scope = parent_scope;
+                if let Some(prior) = prior {
+                    bindings.bitvector.insert(*var, prior);
+                } else {
+                    bindings.bitvector.remove(var);
+                }
+                body
+            };
             AlphaPropositionKey::ForAll(sort.clone(), Box::new(body?))
         }
         Proposition::Exists {
             var, sort, body, ..
         } => {
             let ordinal = *next_binder;
-            *next_binder += 1;
-            let prior = bindings.insert(*var, ordinal);
-            let body = alpha_proposition_key::<ALLOW_LOADS>(body, bindings, next_binder);
-            if let Some(prior) = prior {
-                bindings.insert(*var, prior);
+            *next_binder = (*next_binder).checked_add(1)?;
+            let body = if *sort == Sort::Integer {
+                let prior = bindings.integer.insert(*var, ordinal);
+                let parent_scope = bindings.integer_scope;
+                let integer_scope = bindings.next_scope_id;
+                bindings.next_scope_id = bindings.next_scope_id.checked_add(1)?;
+                bindings.integer_scope = integer_scope;
+                let body =
+                    alpha_proposition_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder);
+                bindings.integer_scope = parent_scope;
+                if let Some(prior) = prior {
+                    bindings.integer.insert(*var, prior);
+                } else {
+                    bindings.integer.remove(var);
+                }
+                body
             } else {
-                bindings.remove(var);
-            }
+                let prior = bindings.bitvector.insert(*var, ordinal);
+                let parent_scope = bindings.bitvector_scope;
+                let bitvector_scope = bindings.next_scope_id;
+                bindings.next_scope_id = bindings.next_scope_id.checked_add(1)?;
+                bindings.bitvector_scope = bitvector_scope;
+                let body =
+                    alpha_proposition_key_with_bindings::<ALLOW_LOADS>(body, bindings, next_binder);
+                bindings.bitvector_scope = parent_scope;
+                if let Some(prior) = prior {
+                    bindings.bitvector.insert(*var, prior);
+                } else {
+                    bindings.bitvector.remove(var);
+                }
+                body
+            };
             AlphaPropositionKey::Exists(sort.clone(), Box::new(body?))
         }
         _ => return None,
@@ -1301,7 +1632,7 @@ pub(crate) fn memory_free_quantified_key(
 #[cfg(test)]
 mod integer_alpha_scaling_tests {
     use super::*;
-    use crate::kernel::SharedIntegerTerm;
+    use crate::kernel::{SharedIntegerRangeEndpoint, SharedIntegerTerm, SharedMachineIntegerTerm};
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -1351,5 +1682,113 @@ mod integer_alpha_scaling_tests {
                 &mut 1,
             )
         );
+    }
+    fn integer_key_test_fold(
+        accumulator: Variable,
+        initial: IntegerTerm,
+        body: IntegerTerm,
+    ) -> IntegerTerm {
+        IntegerTerm::range_fold(
+            crate::kernel::IntegerRangeFoldIndex::Integer {
+                start: IntegerTerm::constant_i64(0).into(),
+                end: IntegerTerm::constant_i64(2).into(),
+            },
+            initial,
+            accumulator,
+            Variable(919),
+            body,
+        )
+    }
+
+    #[test]
+    fn integer_fold_alpha_key_distinguishes_free_and_bound_shared_nodes() {
+        let x = Variable(917);
+        let y = Variable(918);
+        let bound = integer_key_test_fold(x, IntegerTerm::var(x), IntegerTerm::var(x));
+        let free = integer_key_test_fold(y, IntegerTerm::var(x), IntegerTerm::var(x));
+        let renamed = integer_key_test_fold(y, IntegerTerm::var(x), IntegerTerm::var(y));
+        let key = |term| alpha_integer_key(term, &mut BTreeMap::new()).unwrap();
+        assert_ne!(
+            key(&bound),
+            key(&free),
+            "body occurrence changes meaning at binder"
+        );
+        assert_eq!(
+            key(&bound),
+            key(&renamed),
+            "renaming a binder preserves meaning"
+        );
+    }
+
+    #[test]
+    fn integer_fold_alpha_key_restores_shadowed_outer_bindings() {
+        let x = Variable(917);
+        let mut bindings = BTreeMap::from([(x, 0), (Variable(919), 1)]);
+        let original = bindings.clone();
+        let fold = integer_key_test_fold(x, IntegerTerm::var(x), IntegerTerm::var(x));
+        alpha_integer_key(&fold, &mut bindings).unwrap();
+        assert_eq!(bindings, original);
+    }
+
+    #[test]
+    fn integer_fold_alpha_key_keeps_machine_and_integer_binders_distinct() {
+        let accumulator = Variable(50_001);
+        let item = Variable(50_002);
+        let index = crate::kernel::IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(1)),
+        };
+        let body = |variable| {
+            IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                Bitvector32Term::IntegerToMachine {
+                    value: SharedIntegerTerm::from(IntegerTerm::var(variable)),
+                    destination: MachineIntegerType::Int32,
+                },
+            ))
+        };
+        let captures_accumulator = IntegerTerm::range_fold(
+            index.clone(),
+            IntegerTerm::constant_i64(0),
+            accumulator,
+            item,
+            body(accumulator),
+        );
+        let captures_free_integer = IntegerTerm::range_fold(
+            index,
+            IntegerTerm::constant_i64(0),
+            accumulator,
+            item,
+            body(item),
+        );
+        let key = |term| alpha_integer_key(term, &mut BTreeMap::new()).unwrap();
+        assert_ne!(
+            key(&captures_accumulator),
+            key(&captures_free_integer),
+            "an Int32 item binder must not bind an Integer variable with the same id"
+        );
+    }
+
+    #[test]
+    fn integer_fold_alpha_key_visits_shared_bodies_once_per_scope() {
+        let mut work = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let mut term = IntegerTerm::var(Variable(920));
+            for _ in 0..depth {
+                let child: SharedIntegerTerm = term.into();
+                term = integer_key_test_fold(
+                    Variable(921),
+                    IntegerTerm::constant_i64(0),
+                    IntegerTerm::Add(child.clone(), child),
+                );
+            }
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                alpha_integer_key(&term, &mut BTreeMap::new()).unwrap()
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(pair[1] <= pair[0] * 3, "{work:?}");
+        }
     }
 }

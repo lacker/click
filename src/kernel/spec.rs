@@ -909,6 +909,17 @@ fn evaluate_spec_integer_expression_paths(
                 budget,
             )
         }
+        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+            evaluate_spec_integer_algebraic_match_paths(
+                state,
+                scrutinee,
+                arms,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -1014,7 +1025,536 @@ fn evaluate_spec_integer_expression_paths(
             budget,
             IntegerBinaryOperation::Multiply,
         ),
+        SpecIntegerExpression::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let index_paths = evaluate_spec_integer_range_fold_indices(
+                state,
+                index,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+            let mut result = Vec::new();
+            for (index, index_facts, index_obligations) in index_paths {
+                let index_assumptions =
+                    assumptions_with_path_context(assumptions, &index_facts, &index_obligations);
+                for initial_path in evaluate_spec_integer_expression_paths(
+                    state,
+                    initial,
+                    loop_entry_state,
+                    &index_assumptions,
+                    algebraic_bindings,
+                    budget,
+                )? {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &index_facts,
+                        &index_obligations,
+                        &initial_path.facts,
+                        &initial_path.obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    let body_assumptions =
+                        assumptions_with_path_context(assumptions, &facts, &obligations);
+                    for body_path in evaluate_spec_integer_expression_paths(
+                        state,
+                        body,
+                        loop_entry_state,
+                        &body_assumptions,
+                        algebraic_bindings,
+                        budget,
+                    )? {
+                        // The fold body is under its accumulator/item binders.
+                        // Its branch facts and definedness obligations therefore
+                        // cannot be exported as ambient facts for the fold
+                        // result.  A symbolic evaluator may retain a body
+                        // only when those requirements are already established
+                        // by the outer context; otherwise the path is rejected
+                        // instead of manufacturing a vacuous certificate.
+                        if body_path
+                            .facts
+                            .iter()
+                            .any(|fact| !assumptions.proves_exact(fact.proposition()))
+                            || body_path.obligations.iter().any(|obligation| {
+                                !assumptions.proves_exact(obligation.proposition())
+                            })
+                        {
+                            continue;
+                        }
+                        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                            &facts,
+                            &obligations,
+                            &[],
+                            &[],
+                            assumptions,
+                        ) else {
+                            continue;
+                        };
+                        result.push(SpecIntegerPath {
+                            value: IntegerTerm::range_fold(
+                                index.clone(),
+                                initial_path.value.clone(),
+                                *accumulator,
+                                *item,
+                                body_path.value,
+                            ),
+                            facts,
+                            obligations,
+                        });
+                    }
+                }
+            }
+            Ok(result)
+        }
     }
+}
+
+fn evaluate_spec_integer_range_fold_indices(
+    state: &CState,
+    index: &SpecIntegerRangeFoldIndex,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<
+    Vec<(
+        IntegerRangeFoldIndex,
+        Vec<ExecutionPureFact>,
+        Vec<ProofObligation>,
+    )>,
+> {
+    match index {
+        SpecIntegerRangeFoldIndex::Int32 { start, end } => {
+            let mut result = Vec::new();
+            for start_path in evaluate_spec_expression_paths_with_algebraic_bindings(
+                state,
+                start,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )? {
+                let start_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &start_path.facts,
+                    &start_path.obligations,
+                );
+                for end_path in evaluate_spec_expression_paths_with_algebraic_bindings(
+                    state,
+                    end,
+                    loop_entry_state,
+                    &start_assumptions,
+                    algebraic_bindings,
+                    budget,
+                )? {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &start_path.facts,
+                        &start_path.obligations,
+                        &end_path.facts,
+                        &end_path.obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    let (CValue::Int32(start), CValue::Int32(end)) =
+                        (start_path.value.clone(), end_path.value)
+                    else {
+                        continue;
+                    };
+                    result.push((
+                        IntegerRangeFoldIndex::Int32 {
+                            start: SharedIntegerRangeEndpoint::intern(start),
+                            end: SharedIntegerRangeEndpoint::intern(end),
+                        },
+                        facts,
+                        obligations,
+                    ));
+                }
+            }
+            Ok(result)
+        }
+        SpecIntegerRangeFoldIndex::Integer { start, end } => {
+            let mut result = Vec::new();
+            for start_path in evaluate_spec_integer_expression_paths(
+                state,
+                start,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )? {
+                let start_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &start_path.facts,
+                    &start_path.obligations,
+                );
+                for end_path in evaluate_spec_integer_expression_paths(
+                    state,
+                    end,
+                    loop_entry_state,
+                    &start_assumptions,
+                    algebraic_bindings,
+                    budget,
+                )? {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &start_path.facts,
+                        &start_path.obligations,
+                        &end_path.facts,
+                        &end_path.obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    result.push((
+                        IntegerRangeFoldIndex::Integer {
+                            start: start_path.value.clone().into(),
+                            end: end_path.value.into(),
+                        },
+                        facts,
+                        obligations,
+                    ));
+                }
+            }
+            Ok(result)
+        }
+    }
+}
+
+fn evaluate_spec_integer_algebraic_match_paths(
+    state: &CState,
+    scrutinee: &SpecAlgebraicExpression,
+    arms: &[SpecIntegerMatchArm],
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    let scrutinee_paths = evaluate_spec_algebraic_at_state_with_bindings(
+        state,
+        scrutinee,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    let mut result = Vec::new();
+    for scrutinee_path in scrutinee_paths {
+        let mut facts = scrutinee_path.facts;
+        let mut obligations = scrutinee_path.obligations;
+        if arms.len() != scrutinee_path.value.algebraic_type.variants.len()
+            || scrutinee_path
+                .value
+                .algebraic_type
+                .variants
+                .iter()
+                .any(|schema| arms.iter().filter(|arm| arm.variant == schema.name).count() != 1)
+            || arms.iter().any(|arm| {
+                scrutinee_path
+                    .value
+                    .algebraic_type
+                    .variants
+                    .iter()
+                    .find(|schema| schema.name == arm.variant)
+                    .is_none_or(|schema| !spec_integer_match_arm_is_well_formed(schema, arm))
+            })
+        {
+            return Err(ExecutionLimit::Paths);
+        }
+        let mut lowered_arms = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let schema = scrutinee_path
+                .value
+                .algebraic_type
+                .variants
+                .iter()
+                .find(|schema| schema.name == arm.variant)
+                .ok_or(ExecutionLimit::Paths)?;
+            let bindings =
+                symbolic_algebraic_bindings(&scrutinee_path.value.algebraic_type, schema, budget)?;
+            let mut body_state = state.clone();
+            let mut body_algebraic_bindings = algebraic_bindings.clone();
+            for (binding, value) in arm.bindings.iter().zip(bindings.clone()) {
+                match value {
+                    AlgebraicValue::C(value) => body_state.locals.set(binding.clone(), value),
+                    AlgebraicValue::Algebraic(value) => {
+                        body_algebraic_bindings.insert(binding.clone(), value);
+                    }
+                    AlgebraicValue::Integer(_) => {}
+                }
+            }
+            let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            let mut body_paths = evaluate_spec_integer_expression_paths(
+                &body_state,
+                &arm.body,
+                loop_entry_state,
+                &body_assumptions,
+                &body_algebraic_bindings,
+                budget,
+            )?;
+            let Some(body_path) = body_paths.pop() else {
+                return Err(ExecutionLimit::Paths);
+            };
+            if !body_paths.is_empty()
+                || !body_path.facts.is_empty()
+                || !body_path.obligations.is_empty()
+            {
+                return Err(ExecutionLimit::Paths);
+            }
+            let mut integer_replacements = BTreeMap::new();
+            for ((surface, binding_type), symbolic) in arm
+                .binding_variables
+                .iter()
+                .zip(&arm.binding_types)
+                .zip(&bindings)
+            {
+                if binding_type != &AlgebraicValueType::Integer {
+                    continue;
+                }
+                let Some(surface) = surface else {
+                    return Err(ExecutionLimit::Paths);
+                };
+                let AlgebraicValue::Integer(IntegerTerm::Variable(symbolic)) = symbolic else {
+                    return Err(ExecutionLimit::Paths);
+                };
+                if integer_replacements
+                    .insert(*surface, IntegerTerm::var(*symbolic))
+                    .is_some()
+                {
+                    return Err(ExecutionLimit::Paths);
+                }
+            }
+            let body = rewrite_integer_match_typed_body(
+                body_path.value,
+                &BTreeMap::new(),
+                &integer_replacements,
+                &BTreeMap::new(),
+            )
+            .ok_or(ExecutionLimit::Paths)?;
+            lowered_arms.push(AlgebraicIntegerMatchArm {
+                variant: arm.variant.clone(),
+                bindings: bindings.clone(),
+                body: body.into(),
+            });
+        }
+        let value = match &scrutinee_path.value.node {
+            AlgebraicTermNode::Constructor { variant, fields } => lowered_arms
+                .iter()
+                .find(|arm| arm.variant == *variant)
+                .and_then(|arm| {
+                    if arm.bindings.len() != fields.len() {
+                        return None;
+                    }
+                    let body = rewrite_integer_match_typed_fields(
+                        arm.body.as_ref().clone(),
+                        &arm.bindings,
+                        fields,
+                    )?;
+                    Some(body)
+                })
+                .ok_or(ExecutionLimit::Paths)?,
+            _ => IntegerTerm::AlgebraicMatch {
+                scrutinee: Box::new(scrutinee_path.value),
+                arms: lowered_arms,
+            },
+        };
+        result.push(SpecIntegerPath {
+            value,
+            facts: std::mem::take(&mut facts),
+            obligations: std::mem::take(&mut obligations),
+        });
+    }
+    Ok(result)
+}
+
+fn spec_integer_match_arm_is_well_formed(
+    schema: &AlgebraicVariantType,
+    arm: &SpecIntegerMatchArm,
+) -> bool {
+    if schema.fields != arm.binding_types
+        || schema.fields.len() != arm.bindings.len()
+        || arm.binding_variables.len() != arm.bindings.len()
+    {
+        return false;
+    }
+    let mut names = BTreeSet::new();
+    let mut integer_variables = BTreeSet::new();
+    arm.bindings.iter().all(|name| names.insert(name))
+        && arm
+            .binding_variables
+            .iter()
+            .zip(&arm.binding_types)
+            .all(|(variable, binding_type)| {
+                if binding_type == &AlgebraicValueType::Integer {
+                    variable.is_some_and(|variable| integer_variables.insert(variable))
+                } else {
+                    variable.is_none()
+                }
+            })
+}
+
+#[cfg(test)]
+mod integer_match_metadata_tests {
+    use super::*;
+
+    fn schema(fields: Vec<AlgebraicValueType>) -> AlgebraicVariantType {
+        AlgebraicVariantType {
+            name: "Case".into(),
+            fields,
+        }
+    }
+
+    fn arm(
+        binding_types: Vec<AlgebraicValueType>,
+        binding_variables: Vec<Option<Variable>>,
+    ) -> SpecIntegerMatchArm {
+        SpecIntegerMatchArm {
+            variant: "Case".into(),
+            bindings: (0..binding_types.len())
+                .map(|index| format!("binding{index}"))
+                .collect(),
+            binding_types,
+            binding_variables,
+            body: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant_i64(0))),
+        }
+    }
+
+    #[test]
+    fn integer_match_metadata_rejects_missing_integer_identity() {
+        let integer = AlgebraicValueType::Integer;
+        assert!(!spec_integer_match_arm_is_well_formed(
+            &schema(vec![integer.clone()]),
+            &arm(vec![integer], vec![None]),
+        ));
+    }
+
+    #[test]
+    fn integer_match_metadata_rejects_c_identity_and_schema_mismatch() {
+        let integer = AlgebraicValueType::Integer;
+        let c = AlgebraicValueType::C(CType::Int32);
+        assert!(!spec_integer_match_arm_is_well_formed(
+            &schema(vec![c.clone()]),
+            &arm(vec![c.clone()], vec![Some(Variable(1))]),
+        ));
+        assert!(!spec_integer_match_arm_is_well_formed(
+            &schema(vec![integer.clone()]),
+            &arm(vec![c], vec![None]),
+        ));
+    }
+
+    #[test]
+    fn integer_match_metadata_rejects_duplicate_integer_identities() {
+        let integer = AlgebraicValueType::Integer;
+        assert!(!spec_integer_match_arm_is_well_formed(
+            &schema(vec![integer.clone(), integer.clone()]),
+            &arm(
+                vec![integer.clone(), integer],
+                vec![Some(Variable(7)), Some(Variable(7))],
+            ),
+        ));
+    }
+}
+
+fn rewrite_integer_match_typed_body(
+    body: IntegerTerm,
+    c_replacements: &BTreeMap<Variable, crate::kernel::proof::term_rewrite::TypedCReplacement>,
+    integer_replacements: &BTreeMap<Variable, IntegerTerm>,
+    algebraic_replacements: &BTreeMap<Variable, AlgebraicTerm>,
+) -> Option<IntegerTerm> {
+    let mut rewrite = crate::kernel::proof::term_rewrite::TermRewrite::for_typed_variables(
+        c_replacements,
+        integer_replacements,
+        algebraic_replacements,
+    );
+    let rewritten = rewrite.term(&Term::Integer(body));
+    if rewrite.integer_work_exhausted || rewrite.unsupported_integer_scope {
+        return None;
+    }
+    let Term::Integer(value) = rewritten else {
+        return None;
+    };
+    Some(value)
+}
+
+fn rewrite_integer_match_typed_fields(
+    body: IntegerTerm,
+    bindings: &[AlgebraicValue],
+    fields: &[AlgebraicValue],
+) -> Option<IntegerTerm> {
+    if bindings.len() != fields.len() {
+        return None;
+    }
+    let mut c_replacements = BTreeMap::new();
+    let mut integer_replacements = BTreeMap::new();
+    let mut algebraic_replacements = BTreeMap::new();
+    for (binding, field) in bindings.iter().zip(fields) {
+        match (binding, field) {
+            (AlgebraicValue::Integer(IntegerTerm::Variable(from)), AlgebraicValue::Integer(to)) => {
+                if integer_replacements.insert(*from, to.clone()).is_some() {
+                    return None;
+                }
+            }
+            (AlgebraicValue::C(from), AlgebraicValue::C(to)) => match (from, to) {
+                (CValue::Void, CValue::Void) => {}
+                (from, to) if c_value_bitvector_term(from).is_some() => {
+                    let from = c_value_bitvector_term(from)?;
+                    let Bitvector32Term::Variable(from) = from else {
+                        return None;
+                    };
+                    let to = c_value_bitvector_term(to)?;
+                    if c_replacements
+                        .insert(
+                            from,
+                            crate::kernel::proof::term_rewrite::TypedCReplacement::Bitvector(to),
+                        )
+                        .is_some()
+                    {
+                        return None;
+                    }
+                }
+                (CValue::Pointer(from), CValue::Pointer(to)) => {
+                    let (PointerBlock::Symbolic(from) | PointerBlock::FunctionSymbolic(from)) =
+                        &from.block
+                    else {
+                        return None;
+                    };
+                    if c_replacements
+                        .insert(
+                            *from,
+                            crate::kernel::proof::term_rewrite::TypedCReplacement::Pointer(
+                                to.pointer().clone(),
+                            ),
+                        )
+                        .is_some()
+                    {
+                        return None;
+                    }
+                }
+                _ => return None,
+            },
+            (AlgebraicValue::Algebraic(from), AlgebraicValue::Algebraic(to)) => {
+                let AlgebraicTermNode::Variable(from) = &from.node else {
+                    return None;
+                };
+                if algebraic_replacements.insert(*from, to.clone()).is_some() {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    rewrite_integer_match_typed_body(
+        body,
+        &c_replacements,
+        &integer_replacements,
+        &algebraic_replacements,
+    )
 }
 
 fn evaluate_integer_binary_paths(

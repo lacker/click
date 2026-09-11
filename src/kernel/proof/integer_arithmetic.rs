@@ -491,7 +491,9 @@ fn collect_integer_affine_terms(
             IntegerTerm::Constant(_)
             | IntegerTerm::Variable(_)
             | IntegerTerm::Machine(_)
-            | IntegerTerm::PureFunctionApplication(_) => {}
+            | IntegerTerm::PureFunctionApplication(_)
+            | IntegerTerm::AlgebraicMatch { .. } => {}
+            IntegerTerm::RangeFold { .. } => return None,
         }
     }
 
@@ -524,10 +526,12 @@ fn collect_integer_affine_terms(
             }
             IntegerTerm::Variable(_)
             | IntegerTerm::Machine(_)
-            | IntegerTerm::PureFunctionApplication(_) => {
+            | IntegerTerm::PureFunctionApplication(_)
+            | IntegerTerm::AlgebraicMatch { .. } => {
                 let atom = match node.as_ref() {
                     IntegerTerm::Variable(variable) => IntegerAffineAtom::Variable(*variable),
                     IntegerTerm::Machine(source) => IntegerAffineAtom::Machine(source.id()),
+                    IntegerTerm::AlgebraicMatch { .. } => return None,
                     IntegerTerm::PureFunctionApplication(application) => {
                         IntegerAffineAtom::Application(application.id())
                     }
@@ -544,6 +548,7 @@ fn collect_integer_affine_terms(
                     terms.insert(atom, merged);
                 }
             }
+            IntegerTerm::RangeFold { .. } => return None,
             IntegerTerm::Negate(child) => {
                 if !add_weight(&mut weights, child.id(), -weight) {
                     return None;

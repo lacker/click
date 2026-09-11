@@ -1,6 +1,7 @@
 use super::*;
 use crate::kernel::AlgebraicValueType;
 use crate::kernel::c_function_contract_refinement_obligations;
+use crate::surface::reduce_constructor_iota_in_proposition;
 
 const STRUCTURAL_INDUCTION_VARIABLE_BASE: u64 = 1 << 60;
 
@@ -3911,6 +3912,36 @@ fn lower_pure_theorem_proposition_with_opaque_calls(
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn lower_pure_theorem_proposition_with_opaque_calls_and_integer_values(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &BTreeSet<String>,
+) -> Result<Proposition, String> {
+    let state = CState::new().with_memory(memory.clone());
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values(
+        proposition,
+        &PureFactContext::new(),
+        values,
+        array_refs,
+        integer_values,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    )
+    .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
+}
+
 fn lower_pure_theorem_proposition_opaque(
     theorem_name: &str,
     proposition: &ClickProposition,
@@ -4548,10 +4579,11 @@ fn prove_pure_theorem_tactics(
                     operator: ComparisonOperator::Equal,
                     right: surface_body.clone(),
                 };
-                let equality = lower_pure_theorem_proposition_with_opaque_calls(
+                let equality = lower_pure_theorem_proposition_with_opaque_calls_and_integer_values(
                     claim_label,
                     &surface_equality,
                     &context.values,
+                    &context.integer_values,
                     &context.array_refs,
                     &context.memory,
                     predicate_environment,
@@ -4580,6 +4612,14 @@ fn prove_pure_theorem_tactics(
                     current_surface_goal,
                     &surface_equality,
                 ) {
+                    let next_surface_goal =
+                        reduce_constructor_iota_in_proposition(&next_surface_goal).map_err(
+                            |message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` tactic {tactic_index}: could not reduce constructor match after function `unfold`: {message}"
+                                ))
+                            },
+                        )?;
                     surface_goal = Some(next_surface_goal.clone());
                     let assumptions = assumptions_from_propositions(&available);
                     let values = context.values.clone();

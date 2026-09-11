@@ -3684,7 +3684,9 @@ fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
         SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
             arguments.iter().all(spec_argument_is_obligation_free)
         }
+        SpecIntegerExpression::AlgebraicMatch { .. } => false,
         SpecIntegerExpression::FromMachine(_) | SpecIntegerExpression::ResourceField(_) => false,
+        SpecIntegerExpression::RangeFold { .. } => false,
     }
 }
 
@@ -3866,6 +3868,12 @@ fn spec_integer_expression_reads_current_parameter(
                 spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
             })
         }
+        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+            spec_algebraic_expression_reads_current_parameter(scrutinee, parameter_name)
+                || arms.iter().any(|arm| {
+                    spec_integer_expression_reads_current_parameter(&arm.body, parameter_name)
+                })
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             spec_expression_reads_current_parameter(machine, parameter_name)
         }
@@ -3877,6 +3885,26 @@ fn spec_integer_expression_reads_current_parameter(
         | SpecIntegerExpression::Multiply(left, right) => {
             spec_integer_expression_reads_current_parameter(left, parameter_name)
                 || spec_integer_expression_reads_current_parameter(right, parameter_name)
+        }
+        SpecIntegerExpression::RangeFold {
+            index,
+            initial,
+            body,
+            ..
+        } => {
+            let index_reads = match index {
+                SpecIntegerRangeFoldIndex::Int32 { start, end } => {
+                    spec_expression_reads_current_parameter(start, parameter_name)
+                        || spec_expression_reads_current_parameter(end, parameter_name)
+                }
+                SpecIntegerRangeFoldIndex::Integer { start, end } => {
+                    spec_integer_expression_reads_current_parameter(start, parameter_name)
+                        || spec_integer_expression_reads_current_parameter(end, parameter_name)
+                }
+            };
+            index_reads
+                || spec_integer_expression_reads_current_parameter(initial, parameter_name)
+                || spec_integer_expression_reads_current_parameter(body, parameter_name)
         }
     }
 }

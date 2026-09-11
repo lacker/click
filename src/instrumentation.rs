@@ -261,6 +261,72 @@ thread_local! {
     /// driver phases, so scaling tests can measure a complete native verifier
     /// transaction without using wall time.
     static WORK_COUNTERS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// A checked variable collector temporarily routes its deterministic node
+    /// charges through the active tactic budget. The collector itself lives
+    /// in the kernel reasoning module, so this scope keeps ordinary
+    /// measurement-only collectors unchanged.
+    static CHECKED_COLLECTION_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static CHECKED_COLLECTION_EXHAUSTED: Cell<bool> = const { Cell::new(false) };
+    static CHECKED_COLLECTION_CHARGING: Cell<bool> = const { Cell::new(false) };
+    /// Monotonic count of checked-collector entry attempts. Unlike tactic
+    /// work, this remains observable after exhaustion so regressions can
+    /// prove that sibling traversal stopped rather than merely becoming
+    /// uncharged.
+    #[cfg(test)]
+    static CHECKED_COLLECTION_ATTEMPTS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Routes deterministic work recorded by variable collectors through the
+/// active tactic budget until the guard is dropped. Nested scopes share the
+/// outer exhaustion state and do not reset it.
+pub(crate) struct CheckedCollectionScope;
+
+impl CheckedCollectionScope {
+    pub(crate) fn new() -> Self {
+        CHECKED_COLLECTION_DEPTH.with(|depth| {
+            if depth.get() == 0 {
+                CHECKED_COLLECTION_EXHAUSTED.with(|exhausted| exhausted.set(false));
+                CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(false));
+                #[cfg(test)]
+                CHECKED_COLLECTION_ATTEMPTS.with(|attempts| attempts.set(0));
+            }
+            depth.set(depth.get().saturating_add(1));
+        });
+        Self
+    }
+}
+
+impl Drop for CheckedCollectionScope {
+    fn drop(&mut self) {
+        CHECKED_COLLECTION_DEPTH.with(|depth| {
+            let remaining = depth.get().saturating_sub(1);
+            depth.set(remaining);
+            if remaining == 0 {
+                CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(false));
+            }
+        });
+    }
+}
+
+pub(crate) fn checked_collection_exhausted() -> bool {
+    CHECKED_COLLECTION_DEPTH
+        .with(|depth| depth.get() > 0 && CHECKED_COLLECTION_EXHAUSTED.with(Cell::get))
+}
+
+#[cfg(test)]
+pub(crate) fn checked_collection_attempts() -> usize {
+    CHECKED_COLLECTION_ATTEMPTS.with(Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn record_checked_collection_attempt() {
+    CHECKED_COLLECTION_DEPTH.with(|depth| {
+        if depth.get() > 0 {
+            CHECKED_COLLECTION_ATTEMPTS.with(|attempts| {
+                attempts.set(attempts.get().saturating_add(1));
+            });
+        }
+    });
 }
 
 struct DeadlineGuard;
@@ -392,6 +458,20 @@ fn with_default_tactic_time_limit<R>(operation: impl FnOnce() -> R) -> R {
 }
 
 pub(crate) fn record_deterministic_work(units: usize) {
+    let checked_collection = CHECKED_COLLECTION_DEPTH.with(|depth| depth.get() > 0);
+    let charging = CHECKED_COLLECTION_CHARGING.with(Cell::get);
+    if checked_collection && !charging {
+        if CHECKED_COLLECTION_EXHAUSTED.with(Cell::get) {
+            return;
+        }
+        CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(true));
+        let exhausted = deadline_exceeded_with_work(units);
+        CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(false));
+        if exhausted {
+            CHECKED_COLLECTION_EXHAUSTED.with(|flag| flag.set(true));
+        }
+        return;
+    }
     WORK_COUNTERS.with(|counters| {
         for counter in counters.borrow_mut().iter_mut() {
             *counter = counter.saturating_add(units);

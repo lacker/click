@@ -6,7 +6,7 @@
 
 use super::*;
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -49,6 +49,26 @@ pub enum IntegerTerm {
     /// An opaque pure specification function application.  The body is
     /// exposed only by the checked `unfold` rule.
     PureFunctionApplication(SharedIntegerApplication),
+    /// Exhaustive elimination of an algebraic value. Unknown scrutinees stay
+    /// symbolic until a checked constructor value permits iota reduction.
+    AlgebraicMatch {
+        scrutinee: Box<AlgebraicTerm>,
+        arms: Vec<AlgebraicIntegerMatchArm>,
+    },
+    RangeFold {
+        index: IntegerRangeFoldIndex,
+        initial: SharedIntegerTerm,
+        accumulator: Variable,
+        item: Variable,
+        body: SharedIntegerTerm,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicIntegerMatchArm {
+    pub variant: String,
+    pub bindings: Vec<AlgebraicValue>,
+    pub body: SharedIntegerTerm,
 }
 
 /// Canonical shallow node for an opaque Integer function application.
@@ -164,6 +184,73 @@ impl SharedIntegerApplication {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum IntegerRangeFoldIndex {
+    Int32 {
+        start: SharedIntegerRangeEndpoint,
+        end: SharedIntegerRangeEndpoint,
+    },
+    Integer {
+        start: SharedIntegerTerm,
+        end: SharedIntegerTerm,
+    },
+}
+
+#[derive(Clone)]
+pub struct SharedIntegerRangeEndpoint {
+    node: SharedMachineIntegerTerm,
+}
+
+impl fmt::Debug for SharedIntegerRangeEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("SharedIntegerRangeEndpoint")
+            .field(&self.id())
+            .field(self.value())
+            .finish()
+    }
+}
+
+impl PartialEq for SharedIntegerRangeEndpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for SharedIntegerRangeEndpoint {}
+
+impl PartialOrd for SharedIntegerRangeEndpoint {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SharedIntegerRangeEndpoint {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id().cmp(&other.id())
+    }
+}
+
+impl Hash for SharedIntegerRangeEndpoint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+impl SharedIntegerRangeEndpoint {
+    pub fn intern(value: Bitvector32Term) -> Self {
+        Self {
+            node: SharedMachineIntegerTerm::intern(MachineIntegerType::Int32, value),
+        }
+    }
+    pub fn id(&self) -> u64 {
+        self.node.id()
+    }
+    pub fn value(&self) -> &Bitvector32Term {
+        self.node.value()
+    }
+}
+
 impl Clone for IntegerTerm {
     fn clone(&self) -> Self {
         match self {
@@ -177,6 +264,23 @@ impl Clone for IntegerTerm {
             Self::PureFunctionApplication(application) => {
                 Self::PureFunctionApplication(application.clone())
             }
+            Self::AlgebraicMatch { scrutinee, arms } => Self::AlgebraicMatch {
+                scrutinee: scrutinee.clone(),
+                arms: arms.clone(),
+            },
+            Self::RangeFold {
+                index,
+                initial,
+                accumulator,
+                item,
+                body,
+            } => Self::RangeFold {
+                index: index.clone(),
+                initial: initial.clone(),
+                accumulator: *accumulator,
+                item: *item,
+                body: body.clone(),
+            },
         }
     }
 }
@@ -457,6 +561,25 @@ impl fmt::Debug for IntegerTerm {
                 .debug_struct("PureFunctionApplication")
                 .field("id", &application.id())
                 .finish(),
+            Self::AlgebraicMatch { scrutinee, arms } => formatter
+                .debug_struct("AlgebraicMatch")
+                .field("scrutinee", scrutinee)
+                .field("arms", arms)
+                .finish(),
+            Self::RangeFold {
+                index,
+                initial,
+                accumulator,
+                item,
+                body,
+            } => formatter
+                .debug_struct("RangeFold")
+                .field("index", index)
+                .field("initial", &initial.id())
+                .field("accumulator", accumulator)
+                .field("item", item)
+                .field("body", &body.id())
+                .finish(),
         }
     }
 }
@@ -478,6 +601,11 @@ enum IntegerShallowKey {
     Subtract(u64, u64),
     Multiply(u64, u64),
     PureFunctionApplication(u64),
+    AlgebraicMatch {
+        scrutinee: Box<AlgebraicTerm>,
+        arms: Vec<AlgebraicIntegerMatchArm>,
+    },
+    RangeFold(IntegerRangeFoldIndex, u64, Variable, Variable, u64),
 }
 
 impl IntegerTerm {
@@ -499,6 +627,33 @@ impl IntegerTerm {
                     crate::kernel::reasoning::variable_collection::collect_integer_variables(
                         term, variables,
                     );
+                }
+                IntegerTerm::AlgebraicMatch { .. } => {
+                    crate::kernel::reasoning::variable_collection::collect_integer_variables(
+                        term, variables,
+                    );
+                }
+                IntegerTerm::RangeFold {
+                    index,
+                    initial,
+                    accumulator,
+                    item,
+                    body,
+                } => {
+                    variables.insert(*accumulator);
+                    variables.insert(*item);
+                    visit_shared(initial, variables, seen);
+                    visit_shared(body, variables, seen);
+                    if let IntegerRangeFoldIndex::Int32 { start, end } = index {
+                        crate::kernel::reasoning::variable_collection::collect_bitvector_variables(
+                            start.value(),
+                            variables,
+                        );
+                        crate::kernel::reasoning::variable_collection::collect_bitvector_variables(
+                            end.value(),
+                            variables,
+                        );
+                    }
                 }
                 IntegerTerm::Negate(value) => visit_shared(value, variables, seen),
                 IntegerTerm::Add(left, right)
@@ -572,6 +727,23 @@ impl IntegerTerm {
             Self::PureFunctionApplication(application) => {
                 IntegerShallowKey::PureFunctionApplication(application.id())
             }
+            Self::AlgebraicMatch { scrutinee, arms } => IntegerShallowKey::AlgebraicMatch {
+                scrutinee: scrutinee.clone(),
+                arms: arms.clone(),
+            },
+            Self::RangeFold {
+                index,
+                initial,
+                accumulator,
+                item,
+                body,
+            } => IntegerShallowKey::RangeFold(
+                index.clone(),
+                initial.id(),
+                *accumulator,
+                *item,
+                body.id(),
+            ),
         }
     }
 }
@@ -675,6 +847,73 @@ impl IntegerTerm {
 
     pub fn parse_constant(value: &str) -> Option<Self> {
         BigInt::from_str(value).ok().map(Self::constant)
+    }
+
+    pub fn range_fold(
+        index: IntegerRangeFoldIndex,
+        initial: Self,
+        accumulator: Variable,
+        item: Variable,
+        body: Self,
+    ) -> Self {
+        Self::RangeFold {
+            index,
+            initial: SharedIntegerTerm::intern(initial),
+            accumulator,
+            item,
+            body: SharedIntegerTerm::intern(body),
+        }
+    }
+
+    /// Apply the checked empty-range or one-element fold law when both
+    /// endpoints are concrete. Symbolic and reversed ranges remain opaque;
+    /// this helper never enumerates a range.
+    #[allow(dead_code)]
+    pub(crate) fn range_fold_empty_or_step(
+        index: &IntegerRangeFoldIndex,
+        initial: &Self,
+        accumulator: Variable,
+        item: Variable,
+        body: &Self,
+    ) -> Result<Option<Self>, crate::kernel::reasoning::IntegerPureSubstitutionError> {
+        if matches!(index, IntegerRangeFoldIndex::Integer { .. }) && accumulator == item {
+            return Err(crate::kernel::reasoning::IntegerPureSubstitutionError::UnsupportedCarrier);
+        }
+        let (start, end) = match index {
+            IntegerRangeFoldIndex::Int32 { start, end } => (
+                match start.value() {
+                    Bitvector32Term::Constant(value) => Some(i64::from(*value as i32)),
+                    _ => None,
+                },
+                match end.value() {
+                    Bitvector32Term::Constant(value) => Some(i64::from(*value as i32)),
+                    _ => None,
+                },
+            ),
+            IntegerRangeFoldIndex::Integer { start, end } => (
+                start.as_const().and_then(|value| value.to_i64()),
+                end.as_const().and_then(|value| value.to_i64()),
+            ),
+        };
+        let (Some(start), Some(end)) = (start, end) else {
+            return Ok(None);
+        };
+        if start >= end {
+            return Ok(Some(initial.clone()));
+        }
+        if end == start + 1 {
+            return Ok(Some(
+                crate::kernel::reasoning::instantiate_integer_range_fold_step(
+                    body,
+                    accumulator,
+                    initial,
+                    item,
+                    &Self::constant_i64(start),
+                    matches!(index, IntegerRangeFoldIndex::Int32 { .. }),
+                )?,
+            ));
+        }
+        Ok(None)
     }
 
     pub fn as_const(&self) -> Option<&BigInt> {
@@ -808,6 +1047,28 @@ fn fmt_integer_term(
             }
             write!(formatter, ")")
         }
+        IntegerTerm::AlgebraicMatch { scrutinee, arms } => {
+            write!(formatter, "match {:?} {{", scrutinee)?;
+            for arm in arms {
+                write!(formatter, " {} => ", arm.variant)?;
+                fmt_integer_shared(&arm.body, formatter, seen)?;
+                write!(formatter, ",")?;
+            }
+            write!(formatter, " }}")
+        }
+        IntegerTerm::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            write!(formatter, "fold({index:?}; ")?;
+            fmt_integer_shared(initial, formatter, seen)?;
+            write!(formatter, ", i{} / i{} => ", accumulator.0, item.0)?;
+            fmt_integer_shared(body, formatter, seen)?;
+            write!(formatter, ")")
+        }
     }
 }
 
@@ -900,13 +1161,27 @@ mod tests {
                 IntegerTerm::Constant(_)
                 | IntegerTerm::Variable(_)
                 | IntegerTerm::Machine(_)
-                | IntegerTerm::PureFunctionApplication { .. } => {}
+                | IntegerTerm::PureFunctionApplication { .. }
+                | IntegerTerm::AlgebraicMatch { .. } => {}
                 IntegerTerm::Negate(value) => pending.push(value.clone()),
                 IntegerTerm::Add(left, right)
                 | IntegerTerm::Subtract(left, right)
                 | IntegerTerm::Multiply(left, right) => {
                     pending.push(left.clone());
                     pending.push(right.clone());
+                }
+                IntegerTerm::RangeFold {
+                    index,
+                    initial,
+                    body,
+                    ..
+                } => {
+                    if let IntegerRangeFoldIndex::Integer { start, end } = index {
+                        pending.push(start.clone());
+                        pending.push(end.clone());
+                    }
+                    pending.push(initial.clone());
+                    pending.push(body.clone());
                 }
             }
         }
@@ -1000,6 +1275,345 @@ mod tests {
     }
 
     #[test]
+    fn range_fold_checked_empty_and_step_laws_do_not_unroll_ranges() {
+        let accumulator = Variable(30_000);
+        let item = Variable(30_001);
+        let body = IntegerTerm::add(IntegerTerm::var(accumulator), IntegerTerm::var(item));
+        let initial = IntegerTerm::constant_i64(4);
+        for index in [
+            IntegerRangeFoldIndex::Int32 {
+                start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(3)),
+                end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(3)),
+            },
+            IntegerRangeFoldIndex::Integer {
+                start: SharedIntegerTerm::from(IntegerTerm::constant_i64(3)),
+                end: SharedIntegerTerm::from(IntegerTerm::constant_i64(3)),
+            },
+        ] {
+            assert_eq!(
+                IntegerTerm::range_fold_empty_or_step(&index, &initial, accumulator, item, &body,)
+                    .unwrap(),
+                Some(initial.clone())
+            );
+        }
+        let next = IntegerRangeFoldIndex::Integer {
+            start: SharedIntegerTerm::from(IntegerTerm::constant_i64(3)),
+            end: SharedIntegerTerm::from(IntegerTerm::constant_i64(4)),
+        };
+        assert_eq!(
+            IntegerTerm::range_fold_empty_or_step(&next, &initial, accumulator, item, &body)
+                .unwrap(),
+            Some(IntegerTerm::Add(
+                IntegerTerm::constant_i64(4).into(),
+                IntegerTerm::constant_i64(3).into(),
+            ))
+        );
+        let reversed = IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(4)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(3)),
+        };
+        assert_eq!(
+            IntegerTerm::range_fold_empty_or_step(&reversed, &initial, accumulator, item, &body,)
+                .unwrap(),
+            Some(initial)
+        );
+    }
+
+    #[test]
+    fn range_fold_rejects_duplicate_integer_binders_for_checked_steps() {
+        let binder = Variable(30_010);
+        let index = IntegerRangeFoldIndex::Integer {
+            start: IntegerTerm::constant_i64(0).into(),
+            end: IntegerTerm::constant_i64(1).into(),
+        };
+        let initial = IntegerTerm::constant_i64(0);
+        let body = IntegerTerm::var(binder);
+        assert_eq!(
+            IntegerTerm::range_fold_empty_or_step(&index, &initial, binder, binder, &body),
+            Err(crate::kernel::reasoning::IntegerPureSubstitutionError::UnsupportedCarrier)
+        );
+        assert!(
+            crate::kernel::prove_integer_range_fold_append(index, initial, binder, binder, body,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn range_fold_theorem_laws_keep_exact_guards_and_fold_shapes() {
+        let index = IntegerRangeFoldIndex::Integer {
+            start: SharedIntegerTerm::from(IntegerTerm::constant_i64(-1)),
+            end: SharedIntegerTerm::from(IntegerTerm::constant_i64(7)),
+        };
+        let body = IntegerTerm::var(Variable(31_000));
+        let empty = crate::kernel::prove_integer_range_fold_empty(
+            index.clone(),
+            IntegerTerm::constant_i64(9),
+            Variable(31_000),
+            Variable(31_001),
+            body.clone(),
+        );
+        let Proposition::Implies(_, conclusion) = empty.proposition() else {
+            unreachable!()
+        };
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+            conclusion.as_ref()
+        else {
+            unreachable!()
+        };
+        assert!(matches!(left.as_ref(), IntegerTerm::RangeFold { .. }));
+        assert!(right.as_const().is_some_and(|value| value == &9.into()));
+        let append = crate::kernel::prove_integer_range_fold_append(
+            index,
+            IntegerTerm::constant_i64(9),
+            Variable(31_000),
+            Variable(31_001),
+            body,
+        )
+        .expect("well-formed Integer append law");
+        let Proposition::Implies(guard, conclusion) = append.proposition() else {
+            unreachable!()
+        };
+        assert!(matches!(guard.as_ref(), Proposition::ConditionIs(_, true)));
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) =
+            conclusion.as_ref()
+        else {
+            unreachable!()
+        };
+        let IntegerTerm::RangeFold { initial, .. } = left.as_ref() else {
+            unreachable!()
+        };
+        assert!(initial.as_const().is_some_and(|value| value == &9.into()));
+    }
+
+    #[test]
+    fn range_fold_append_theorem_evaluates_both_sides_for_both_carriers() {
+        fn eval_bits(term: &Bitvector32Term, bits: &BTreeMap<Variable, i64>) -> i64 {
+            match term {
+                Bitvector32Term::Constant(value) => *value as i32 as i64,
+                Bitvector32Term::Variable(variable) => bits[variable],
+                Bitvector32Term::Add(left, right) => eval_bits(left, bits) + eval_bits(right, bits),
+                _ => panic!("test evaluator only needs signed constants, variables, and add"),
+            }
+        }
+        fn eval_integer(
+            term: &IntegerTerm,
+            integers: &mut BTreeMap<Variable, BigInt>,
+            bits: &mut BTreeMap<Variable, i64>,
+        ) -> BigInt {
+            match term {
+                IntegerTerm::Constant(value) => value.clone(),
+                IntegerTerm::Variable(variable) => integers[variable].clone(),
+                IntegerTerm::Machine(machine) => BigInt::from(eval_bits(machine.value(), bits)),
+                IntegerTerm::Add(left, right) => {
+                    eval_integer(left, integers, bits) + eval_integer(right, integers, bits)
+                }
+                IntegerTerm::Subtract(left, right) => {
+                    eval_integer(left, integers, bits) - eval_integer(right, integers, bits)
+                }
+                IntegerTerm::Multiply(left, right) => {
+                    eval_integer(left, integers, bits) * eval_integer(right, integers, bits)
+                }
+                IntegerTerm::Negate(value) => -eval_integer(value, integers, bits),
+                IntegerTerm::PureFunctionApplication(_) => {
+                    unreachable!("the range-fold law test evaluator has no pure-function model")
+                }
+                IntegerTerm::AlgebraicMatch { .. } => {
+                    unreachable!("the range-fold law test evaluator has no match model")
+                }
+                IntegerTerm::RangeFold {
+                    index,
+                    initial,
+                    accumulator,
+                    item,
+                    body,
+                } => {
+                    let (start, end) = match index {
+                        IntegerRangeFoldIndex::Int32 { start, end } => (
+                            BigInt::from(eval_bits(start.value(), bits)),
+                            BigInt::from(eval_bits(end.value(), bits)),
+                        ),
+                        IntegerRangeFoldIndex::Integer { start, end } => (
+                            eval_integer(start, integers, bits),
+                            eval_integer(end, integers, bits),
+                        ),
+                    };
+                    let mut value = eval_integer(initial, integers, bits);
+                    let mut current = start;
+                    while current < end {
+                        let old_accumulator = integers.insert(*accumulator, value.clone());
+                        let old_integer_item =
+                            if matches!(index, IntegerRangeFoldIndex::Integer { .. }) {
+                                Some(integers.insert(*item, current.clone()))
+                            } else {
+                                None
+                            };
+                        let old_bit_item = if matches!(index, IntegerRangeFoldIndex::Int32 { .. }) {
+                            Some(bits.insert(*item, current.to_i64().unwrap()))
+                        } else {
+                            None
+                        };
+                        let next = eval_integer(body, integers, bits);
+                        value = next;
+                        if let Some(previous) = old_accumulator {
+                            integers.insert(*accumulator, previous);
+                        } else {
+                            integers.remove(accumulator);
+                        }
+                        if let Some(previous) = old_integer_item {
+                            if let Some(previous) = previous {
+                                integers.insert(*item, previous);
+                            } else {
+                                integers.remove(item);
+                            }
+                        }
+                        if let Some(previous) = old_bit_item.flatten() {
+                            bits.insert(*item, previous);
+                        } else if old_bit_item.is_some() {
+                            bits.remove(item);
+                        }
+                        current += 1;
+                    }
+                    value
+                }
+            }
+        }
+        let accumulator = Variable(32_000);
+        let item = Variable(32_001);
+        for start in [-2_i64, 0, 2] {
+            let end = start + 2;
+            let index = IntegerRangeFoldIndex::Int32 {
+                start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(
+                    start as i32 as u32,
+                )),
+                end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(
+                    end as i32 as u32,
+                )),
+            };
+            let body = IntegerTerm::add(
+                IntegerTerm::var(accumulator),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(item),
+                )),
+            );
+            let theorem = crate::kernel::prove_integer_range_fold_append(
+                index,
+                IntegerTerm::constant_i64(7),
+                accumulator,
+                item,
+                body,
+            )
+            .unwrap();
+            let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                unreachable!()
+            };
+            let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+                conclusion.as_ref()
+            else {
+                unreachable!()
+            };
+            assert_eq!(
+                eval_integer(left, &mut BTreeMap::new(), &mut BTreeMap::new()),
+                eval_integer(right, &mut BTreeMap::new(), &mut BTreeMap::new())
+            );
+        }
+        let huge: BigInt = BigInt::from(1_u64) << 100;
+        let index = IntegerRangeFoldIndex::Integer {
+            start: IntegerTerm::constant(huge.clone()).into(),
+            end: IntegerTerm::constant(huge + 2).into(),
+        };
+        let body = IntegerTerm::add(IntegerTerm::var(accumulator), IntegerTerm::var(item));
+        let theorem = crate::kernel::prove_integer_range_fold_append(
+            index,
+            IntegerTerm::constant_i64(7),
+            accumulator,
+            item,
+            body,
+        )
+        .unwrap();
+        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+            unreachable!()
+        };
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) =
+            conclusion.as_ref()
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            eval_integer(left, &mut BTreeMap::new(), &mut BTreeMap::new()),
+            eval_integer(right, &mut BTreeMap::new(), &mut BTreeMap::new())
+        );
+    }
+
+    #[test]
+    fn range_fold_append_keeps_outer_initial_when_item_identity_is_shared() {
+        let item = Variable(41_001);
+        let accumulator = Variable(41_002);
+        let index = IntegerRangeFoldIndex::Integer {
+            start: IntegerTerm::constant_i64(0).into(),
+            end: IntegerTerm::constant_i64(2).into(),
+        };
+        let body = IntegerTerm::add(IntegerTerm::var(accumulator), IntegerTerm::var(item));
+        let theorem = crate::kernel::prove_integer_range_fold_append(
+            index,
+            IntegerTerm::var(item),
+            accumulator,
+            item,
+            body,
+        )
+        .expect("the concrete two-step range has an append theorem");
+        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+            unreachable!()
+        };
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) =
+            conclusion.as_ref()
+        else {
+            unreachable!()
+        };
+        let IntegerTerm::RangeFold { initial, .. } = left.as_ref() else {
+            unreachable!()
+        };
+        assert_eq!(initial.as_ref(), &IntegerTerm::var(item));
+    }
+
+    #[test]
+    fn range_fold_keeps_shared_bodies_across_nested_depths() {
+        for depth in [8, 16, 32, 64] {
+            let shared_body = IntegerTerm::add(
+                IntegerTerm::var(Variable(9)),
+                IntegerTerm::var(Variable(10)),
+            );
+            let mut term = IntegerTerm::range_fold(
+                IntegerRangeFoldIndex::Integer {
+                    start: IntegerTerm::constant_i64(0).into(),
+                    end: IntegerTerm::var(Variable(8)).into(),
+                },
+                IntegerTerm::constant_i64(0),
+                Variable(9),
+                Variable(10),
+                shared_body,
+            );
+            for _ in 1..depth {
+                term = IntegerTerm::range_fold(
+                    IntegerRangeFoldIndex::Integer {
+                        start: IntegerTerm::constant_i64(0).into(),
+                        end: IntegerTerm::var(Variable(8)).into(),
+                    },
+                    term.clone(),
+                    Variable(9),
+                    Variable(10),
+                    term,
+                );
+            }
+            let shared = SharedIntegerTerm::from(term);
+            assert_eq!(
+                shared.id(),
+                SharedIntegerTerm::from(shared.as_ref().clone()).id()
+            );
+        }
+    }
+
+    #[test]
     fn typed_machine_observations_are_canonical_but_signedness_is_distinct() {
         let value = Bitvector32Term::Variable(Variable(77));
         let signed = SharedMachineIntegerTerm::intern(MachineIntegerType::Int32, value.clone());
@@ -1010,6 +1624,18 @@ mod tests {
         assert_ne!(signed.id(), unsigned.id());
         assert_eq!(signed.ty(), MachineIntegerType::Int32);
         assert_eq!(signed.value(), signed_again.value());
+    }
+
+    #[test]
+    fn range_endpoints_retain_machine_interner_identity_while_live() {
+        let first = SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(17));
+        let first_id = first.id();
+        for value in 0..32 {
+            let _ = SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(value));
+        }
+        let second = SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(17));
+        assert_eq!(first_id, second.id());
+        assert_eq!(first.value(), second.value());
     }
 
     #[test]

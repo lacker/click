@@ -196,6 +196,10 @@ impl<'a> Proof<'a> {
         // it cannot silently search for an omitted theorem requirement.
         let state = CState::new().with_memory(context.theorem_context.memory.clone());
         let recorded_snapshots = RecordedSnapshots::new();
+        let mut integer_values = context.theorem_context.integer_values.clone();
+        for (name, value) in self.local_integer_values().iter() {
+            integer_values = integer_values.with_inserted(name.clone(), value.clone());
+        }
         let application_context = TheoremApplicationContext {
             values: &context.theorem_context.values,
             array_refs: &context.theorem_context.array_refs,
@@ -203,7 +207,7 @@ impl<'a> Proof<'a> {
             post_state: &state,
             result: None,
             recorded_snapshots: &recorded_snapshots,
-            integer_values: &context.theorem_context.integer_values,
+            integer_values: &integer_values,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let applied = apply_theorem_applications_to_available(
@@ -226,7 +230,9 @@ impl<'a> Proof<'a> {
             }
             facts = facts.with_kernel_checked_fact(fact);
         }
-        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
+        let complete = self
+            .goal()
+            .is_some_and(|goal| facts.pure_assumption_available(goal));
         Ok(self.checked_fact_transition(
             self.state().locals().clone(),
             facts,
@@ -255,6 +261,7 @@ impl<'a> Proof<'a> {
             view.pre_state,
             view.state,
             view.result,
+            self.local_integer_values(),
             view.recorded_snapshots,
             view.surface_propositions,
             &unfolded_predicates,
@@ -262,7 +269,9 @@ impl<'a> Proof<'a> {
             view.predicate_environment,
             view.click_function_environment,
         )?;
-        let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
+        let complete = self
+            .goal()
+            .is_some_and(|goal| checked.facts.pure_assumption_available(goal));
         Ok(self.checked_fact_transition(
             self.state().locals().clone(),
             checked.facts,
@@ -297,6 +306,7 @@ impl<'a> Proof<'a> {
             &pre_state,
             &execution.core.state,
             None,
+            self.local_integer_values(),
             &execution.presentation.recorded_snapshots,
             &execution.presentation.surface_propositions,
             &execution.core.unfolded_predicates,
@@ -304,7 +314,9 @@ impl<'a> Proof<'a> {
             context.predicate_environment,
             context.click_function_environment,
         )?;
-        let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
+        let complete = self
+            .goal()
+            .is_some_and(|goal| checked.facts.pure_assumption_available(goal));
         Ok(self.checked_execution_transition(
             checked.facts,
             complete,

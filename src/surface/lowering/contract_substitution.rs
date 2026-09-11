@@ -791,6 +791,306 @@ pub(in crate::surface) fn rewrite_click_proposition_by_surface_equality(
     changed.then_some(rewritten)
 }
 
+/// Reduce the constructor arms exposed by an explicit surface rewrite.
+///
+/// The checked kernel lowering performs constructor iota while it rebuilds a
+/// goal.  Keep the retained source view at the same reduction frontier so a
+/// later explicit unfold can see calls that were inside selected arms.  This
+/// is only a presentation transform: callers still lower the returned
+/// proposition and use that checked kernel result as the authority.
+pub(in crate::surface) fn reduce_constructor_iota_in_proposition(
+    proposition: &ClickProposition,
+) -> Result<ClickProposition, String> {
+    let expression = |value: &ContractExpression| reduce_constructor_iota_in_expression(value);
+    let proposition = match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => ClickProposition::Comparison {
+            left: expression(left)?,
+            operator: *operator,
+            right: expression(right)?,
+        },
+        ClickProposition::FloatClassification {
+            expression: value,
+            classification,
+        } => ClickProposition::FloatClassification {
+            expression: expression(value)?,
+            classification: *classification,
+        },
+        ClickProposition::Defined { expression: value } => ClickProposition::Defined {
+            expression: expression(value)?,
+        },
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(reduce_constructor_iota_in_proposition(proposition)?),
+        },
+        ClickProposition::And(left, right) => ClickProposition::And(
+            Box::new(reduce_constructor_iota_in_proposition(left)?),
+            Box::new(reduce_constructor_iota_in_proposition(right)?),
+        ),
+        ClickProposition::Or(left, right) => ClickProposition::Or(
+            Box::new(reduce_constructor_iota_in_proposition(left)?),
+            Box::new(reduce_constructor_iota_in_proposition(right)?),
+        ),
+        ClickProposition::Not(body) => {
+            ClickProposition::Not(Box::new(reduce_constructor_iota_in_proposition(body)?))
+        }
+        ClickProposition::Implies(left, right) => ClickProposition::Implies(
+            Box::new(reduce_constructor_iota_in_proposition(left)?),
+            Box::new(reduce_constructor_iota_in_proposition(right)?),
+        ),
+        ClickProposition::ForAll {
+            click_type,
+            name,
+            body,
+        } => ClickProposition::ForAll {
+            click_type: click_type.clone(),
+            name: name.clone(),
+            body: Box::new(reduce_constructor_iota_in_proposition(body)?),
+        },
+        ClickProposition::Exists {
+            click_type,
+            name,
+            body,
+        } => ClickProposition::Exists {
+            click_type: click_type.clone(),
+            name: name.clone(),
+            body: Box::new(reduce_constructor_iota_in_proposition(body)?),
+        },
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => ClickProposition::RangeAll {
+            start: expression(start)?,
+            end: expression(end)?,
+            item: item.clone(),
+            body: Box::new(reduce_constructor_iota_in_proposition(body)?),
+        },
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => ClickProposition::RangeAny {
+            start: expression(start)?,
+            end: expression(end)?,
+            item: item.clone(),
+            body: Box::new(reduce_constructor_iota_in_proposition(body)?),
+        },
+        ClickProposition::PredicateCall { name, arguments } => ClickProposition::PredicateCall {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(expression)
+                .collect::<Result<Vec<_>, _>>()?,
+        },
+        ClickProposition::Separate { left, right } => ClickProposition::Separate {
+            left: left.clone(),
+            right: right.clone(),
+        },
+        ClickProposition::Contains { parent, child } => ClickProposition::Contains {
+            parent: parent.clone(),
+            child: child.clone(),
+        },
+        ClickProposition::Loadable { segment } => ClickProposition::Loadable {
+            segment: segment.clone(),
+        },
+    };
+    Ok(proposition)
+}
+
+fn reduce_constructor_iota_in_expression(
+    expression: &ContractExpression,
+) -> Result<ContractExpression, String> {
+    let recurse = |value: &ContractExpression| reduce_constructor_iota_in_expression(value);
+    match expression {
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            let scrutinee = recurse(scrutinee)?;
+            if let ContractExpression::AlgebraicConstructor {
+                algebraic_type,
+                variant,
+                arguments,
+            } = &scrutinee
+                && let Some(arm) = arms.iter().find(|arm| {
+                    arm.type_name == algebraic_type.name
+                        && arm.variant == *variant
+                        && arm.bindings.len() == arguments.len()
+                })
+            {
+                let substitutions = arm
+                    .bindings
+                    .iter()
+                    .cloned()
+                    .zip(arguments.iter().cloned())
+                    .collect::<BTreeMap<_, _>>();
+                let selected = substitute_contract_expression(&arm.body, &substitutions)?;
+                return recurse(&selected);
+            }
+            Ok(ContractExpression::AlgebraicMatch {
+                scrutinee: Box::new(scrutinee),
+                arms: arms
+                    .iter()
+                    .map(|arm| {
+                        Ok(AlgebraicMatchArm {
+                            type_name: arm.type_name.clone(),
+                            variant: arm.variant.clone(),
+                            bindings: arm.bindings.clone(),
+                            body: recurse(&arm.body)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            })
+        }
+        ContractExpression::AlgebraicConstructor {
+            algebraic_type,
+            variant,
+            arguments,
+        } => Ok(ContractExpression::AlgebraicConstructor {
+            algebraic_type: algebraic_type.clone(),
+            variant: variant.clone(),
+            arguments: arguments
+                .iter()
+                .map(recurse)
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        ContractExpression::SequenceLiteral(elements) => Ok(ContractExpression::SequenceLiteral(
+            elements
+                .iter()
+                .map(recurse)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        ContractExpression::SequenceConcat(left, right) => Ok(ContractExpression::SequenceConcat(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::Old(inner) => Ok(ContractExpression::Old(Box::new(recurse(inner)?))),
+        ContractExpression::At {
+            selector,
+            expression,
+        } => Ok(ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(recurse(expression)?),
+        }),
+        ContractExpression::Negate(inner) => {
+            Ok(ContractExpression::Negate(Box::new(recurse(inner)?)))
+        }
+        ContractExpression::Add(left, right) => Ok(ContractExpression::Add(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::Subtract(left, right) => Ok(ContractExpression::Subtract(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::Multiply(left, right) => Ok(ContractExpression::Multiply(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::Divide(left, right) => Ok(ContractExpression::Divide(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::Remainder(left, right) => Ok(ContractExpression::Remainder(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::ShiftLeft(left, right) => Ok(ContractExpression::ShiftLeft(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::ShiftRight(left, right) => Ok(ContractExpression::ShiftRight(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::BitwiseAnd(left, right) => Ok(ContractExpression::BitwiseAnd(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::BitwiseOr(left, right) => Ok(ContractExpression::BitwiseOr(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::BitwiseXor(left, right) => Ok(ContractExpression::BitwiseXor(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::BitwiseNot(inner) => {
+            Ok(ContractExpression::BitwiseNot(Box::new(recurse(inner)?)))
+        }
+        ContractExpression::Index(left, right) => Ok(ContractExpression::Index(
+            Box::new(recurse(left)?),
+            Box::new(recurse(right)?),
+        )),
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => Ok(ContractExpression::If {
+            condition: Box::new(reduce_constructor_iota_in_proposition(condition)?),
+            then_branch: Box::new(recurse(then_branch)?),
+            else_branch: Box::new(recurse(else_branch)?),
+        }),
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => Ok(ContractExpression::RangeFold {
+            start: Box::new(recurse(start)?),
+            end: Box::new(recurse(end)?),
+            initial: Box::new(recurse(initial)?),
+            accumulator: accumulator.clone(),
+            item: item.clone(),
+            body: Box::new(recurse(body)?),
+        }),
+        ContractExpression::Let {
+            name,
+            click_type,
+            value,
+            body,
+        } => Ok(ContractExpression::Let {
+            name: name.clone(),
+            click_type: click_type.clone(),
+            value: Box::new(recurse(value)?),
+            body: Box::new(recurse(body)?),
+        }),
+        ContractExpression::Call { name, arguments } => Ok(ContractExpression::Call {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(recurse)
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        ContractExpression::Field {
+            base,
+            field,
+            lowered,
+        } => Ok(ContractExpression::Field {
+            base: Box::new(recurse(base)?),
+            field: field.clone(),
+            lowered: lowered.clone(),
+        }),
+        ContractExpression::IntegerLiteral(_)
+        | ContractExpression::QualifiedC { .. }
+        | ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_)
+        | ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceCount(_)
+        | ContractExpression::ResourceWildcard => Ok(expression.clone()),
+    }
+}
+
 /// Views an equality recorded at a program point as an equality between two
 /// expressions at that point. This is the expression-level form needed by a
 /// checked rewrite: `at(s, x == y)` permits replacing `at(s, x)` with

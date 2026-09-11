@@ -17,7 +17,8 @@ mod contracts;
 pub(crate) use contracts::{memory_range_byte_count, memory_range_byte_count_guards};
 mod integer;
 pub use integer::{
-    IntegerComparisonOperator, IntegerTerm, SharedIntegerApplication, SharedIntegerTerm,
+    AlgebraicIntegerMatchArm, IntegerComparisonOperator, IntegerRangeFoldIndex, IntegerTerm,
+    SharedIntegerApplication, SharedIntegerRangeEndpoint, SharedIntegerTerm,
 };
 pub use integer::{MachineIntegerType, SharedMachineIntegerTerm};
 mod derivations;
@@ -889,11 +890,38 @@ pub enum SpecIntegerExpression {
         name: String,
         arguments: Vec<SpecPureFunctionArgument>,
     },
+    AlgebraicMatch {
+        scrutinee: Box<SpecAlgebraicExpression>,
+        arms: Vec<SpecIntegerMatchArm>,
+    },
     FromMachine(Box<SpecExpression>),
     Negate(Box<Self>),
     Add(Box<Self>, Box<Self>),
     Subtract(Box<Self>, Box<Self>),
     Multiply(Box<Self>, Box<Self>),
+    /// A symbolic fold over either machine Int32 or mathematical Integer
+    /// endpoints.  The kernel keeps this opaque; bounded expansion belongs
+    /// to explicit fold reasoning, so evaluating this node never unrolls a
+    /// range in proportion to its endpoint values.
+    RangeFold {
+        index: SpecIntegerRangeFoldIndex,
+        initial: Box<Self>,
+        accumulator: Variable,
+        item: Variable,
+        body: Box<Self>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecIntegerRangeFoldIndex {
+    Int32 {
+        start: Box<SpecExpression>,
+        end: Box<SpecExpression>,
+    },
+    Integer {
+        start: Box<SpecIntegerExpression>,
+        end: Box<SpecIntegerExpression>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -958,6 +986,17 @@ pub struct SpecAlgebraicResultMatchArm {
     pub bindings: Vec<String>,
     pub binding_types: Vec<AlgebraicValueType>,
     pub body: Box<SpecAlgebraicExpression>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SpecIntegerMatchArm {
+    pub variant: String,
+    pub bindings: Vec<String>,
+    pub binding_types: Vec<AlgebraicValueType>,
+    /// Kernel identities used by Integer binders in the lowered arm body.
+    /// C and algebraic binders are represented by their typed environments.
+    pub binding_variables: Vec<Option<Variable>>,
+    pub body: Box<SpecIntegerExpression>,
 }
 
 /// A fully resolved application of a Click algebraic datatype. Keeping the

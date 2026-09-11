@@ -1,4 +1,5 @@
 use super::*;
+use num_traits::ToPrimitive;
 
 /// Rewrites kernel-minted load variables back to their defining load terms,
 /// using the certified defining equations the canonicalizing loader pushed
@@ -1447,85 +1448,106 @@ fn substitute_bitvector_variable_in_integer(
     from: Variable,
     to: &Bitvector32Term,
 ) -> IntegerTerm {
-    let mut memo = std::collections::HashMap::new();
-    substitute_bitvector_variable_in_shared_integer(
-        &crate::kernel::SharedIntegerTerm::from(term.clone()),
-        from,
-        to,
-        &mut memo,
-    )
-    .as_ref()
-    .clone()
+    match substitute_bitvector_variable_in_integer_checked(term, from, to) {
+        Ok(result) => result,
+        Err(_) => term.clone(),
+    }
 }
 
-fn substitute_bitvector_variable_in_shared_integer(
-    term: &crate::kernel::SharedIntegerTerm,
+fn substitute_bitvector_variable_in_integer_checked(
+    term: &IntegerTerm,
     from: Variable,
     to: &Bitvector32Term,
-    memo: &mut std::collections::HashMap<u64, crate::kernel::SharedIntegerTerm>,
-) -> crate::kernel::SharedIntegerTerm {
-    if let Some(result) = memo.get(&term.id()) {
-        return result.clone();
-    }
-    crate::instrumentation::record_deterministic_work(1);
-    let result = match term.as_ref() {
-        IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => term.clone(),
-        IntegerTerm::PureFunctionApplication(application) => {
-            let arguments = application
-                .arguments()
-                .iter()
-                .map(|argument| match argument {
-                    crate::kernel::PureFunctionArgument::Integer(value) => {
-                        crate::kernel::PureFunctionArgument::Integer(
-                            substitute_bitvector_variable_in_shared_integer(value, from, to, memo),
-                        )
-                    }
-                    other => {
-                        substitute_bitvector_variable_in_pure_function_argument(other, from, to)
-                    }
-                })
-                .collect();
-            crate::kernel::IntegerTerm::PureFunctionApplication(
-                crate::kernel::SharedIntegerApplication::intern(
-                    application.name().to_string(),
-                    arguments,
-                ),
-            )
-            .into()
-        }
-        IntegerTerm::Machine(source) => crate::kernel::SharedIntegerTerm::from(
-            IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
-                source.ty(),
-                substitute_bitvector_variable(source.value(), from, to),
-            )),
-        ),
-        IntegerTerm::Negate(value) => IntegerTerm::Negate(
-            substitute_bitvector_variable_in_shared_integer(value, from, to, memo),
-        )
-        .into(),
-        IntegerTerm::Add(left, right) => IntegerTerm::Add(
-            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
-            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
-        )
-        .into(),
-        IntegerTerm::Subtract(left, right) => IntegerTerm::Subtract(
-            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
-            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
-        )
-        .into(),
-        IntegerTerm::Multiply(left, right) => IntegerTerm::Multiply(
-            substitute_bitvector_variable_in_shared_integer(left, from, to, memo),
-            substitute_bitvector_variable_in_shared_integer(right, from, to, memo),
-        )
-        .into(),
+) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
+    let source = Bitvector32Term::Variable(from);
+    let mut rewrite =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_bits_checked(&source, to);
+    let result = match rewrite.term(&Term::Integer(term.clone())) {
+        Term::Integer(result) => result,
+        _ => unreachable!(),
     };
-    memo.insert(term.id(), result.clone());
-    result
+    if rewrite.integer_work_exhausted {
+        return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
+    }
+    if rewrite.unsupported_integer_scope {
+        return Err(IntegerPureSubstitutionError::UnsupportedCarrier);
+    }
+    Ok(result)
 }
 
-fn collect_integer_bound_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
-    // Carrier identities share a namespace; reserve nested observations too.
-    crate::kernel::prelude::collect_integer_variables(term, variables);
+pub(in crate::kernel) fn collect_integer_bound_variables(
+    term: &IntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    let mut seen = BTreeSet::new();
+    collect_integer_bound_variables_seen(term, variables, &mut seen);
+}
+
+fn collect_integer_bound_variables_seen(
+    term: &IntegerTerm,
+    variables: &mut BTreeSet<Variable>,
+    seen: &mut BTreeSet<u64>,
+) {
+    match term {
+        IntegerTerm::Constant(_) | IntegerTerm::Machine(_) => {}
+        IntegerTerm::PureFunctionApplication(application) => {
+            for argument in application.arguments() {
+                if let PureFunctionArgument::Integer(value) = argument
+                    && seen.insert(value.id())
+                {
+                    collect_integer_bound_variables_seen(value, variables, seen);
+                }
+            }
+        }
+        IntegerTerm::Variable(variable) => {
+            variables.insert(*variable);
+        }
+        IntegerTerm::Negate(value) => {
+            if seen.insert(value.id()) {
+                collect_integer_bound_variables_seen(value, variables, seen);
+            }
+        }
+        IntegerTerm::Add(left, right)
+        | IntegerTerm::Subtract(left, right)
+        | IntegerTerm::Multiply(left, right) => {
+            if seen.insert(left.id()) {
+                collect_integer_bound_variables_seen(left, variables, seen);
+            }
+            if seen.insert(right.id()) {
+                collect_integer_bound_variables_seen(right, variables, seen);
+            }
+        }
+        IntegerTerm::AlgebraicMatch { .. } => {
+            // The algebraic scrutinee and arm declarations can carry C or
+            // Integer expressions; use the established carrier-aware walker
+            // for this shared namespace instead of dropping either side.
+            crate::kernel::prelude::collect_integer_variables(term, variables);
+        }
+        IntegerTerm::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            match index {
+                crate::kernel::IntegerRangeFoldIndex::Int32 { start, end } => {
+                    collect_bitvector_variables(start.value(), variables);
+                    collect_bitvector_variables(end.value(), variables);
+                }
+                crate::kernel::IntegerRangeFoldIndex::Integer { start, end } => {
+                    collect_integer_bound_variables_seen(start, variables, seen);
+                    collect_integer_bound_variables_seen(end, variables, seen);
+                }
+            }
+            collect_integer_bound_variables_seen(initial, variables, seen);
+            let mut body_variables = BTreeSet::new();
+            collect_integer_bound_variables_seen(body, &mut body_variables, &mut BTreeSet::new());
+            body_variables.remove(accumulator);
+            body_variables.remove(item);
+            variables.extend(body_variables);
+        }
+    }
 }
 
 /// The proposition fragment accepted by checked mathematical-integer
@@ -1542,9 +1564,9 @@ pub(crate) enum IntegerPureSubstitutionError {
 }
 
 /// Capture-avoiding substitution for the complete pure Integer proposition
-/// fragment.  Validation and replacement each visit the source once.  The
-/// mutable renaming environment gives nested binders lexical scope without
-/// cloning a complete suffix for every binder.
+/// fragment. Validation collects the source once, and replacement uses one
+/// carrier-aware walker. Its scoped Integer map gives nested binders lexical
+/// scope without cloning a complete suffix environment for every binder.
 pub(crate) fn substitute_integer_variable_in_pure_proposition(
     proposition: &Proposition,
     from: Variable,
@@ -1554,32 +1576,36 @@ pub(crate) fn substitute_integer_variable_in_pure_proposition(
     // Traverse the replacement once, then charge only the shallow root copy
     // at each occurrence. Shared descendants are not copied by substitution.
     validate_integer_pure_term(to, &mut reserved)?;
-    let replacement_work = match to {
-        IntegerTerm::Constant(value) => value.bits() as usize + 1,
-        _ => 1,
-    };
     validate_integer_pure_proposition(proposition, &mut reserved)?;
     let mut replacement_variables = BTreeSet::new();
-    collect_integer_bound_variables(to, &mut replacement_variables);
-    reserved.extend(replacement_variables.iter().copied());
+    collect_integer_free_variables(to, &mut replacement_variables);
+    collect_integer_carrier_variables(to, &mut reserved);
+    collect_integer_capture_bitvector_variables(to, &mut reserved);
     reserved.insert(from);
-    let mut next = reserved
-        .iter()
-        .next_back()
-        .map_or(0, |variable| variable.0)
-        .saturating_add(1);
-    let mut renamings = BTreeMap::new();
-    substitute_integer_pure_proposition(
+    // The general proposition walker intentionally stops at binder-bearing
+    // propositions.  Keep one checked walker for all atomic leaves instead
+    // of rebuilding its replacement summary and fresh allocator per leaf.
+    // The lexical Integer scope is pushed and popped by the recursive
+    // proposition traversal below.
+    let renamings = BTreeMap::new();
+    let mut walker = crate::kernel::proof::term_rewrite::TermRewrite::for_integer_variables(
+        from, to, false, &renamings,
+    );
+    walker.reserve_integer_substitution_variables(&reserved);
+    let result = substitute_integer_pure_proposition_with_walker(
         proposition,
         from,
-        to,
         &replacement_variables,
-        &mut reserved,
-        &mut next,
         false,
-        &mut renamings,
-        replacement_work,
-    )
+        &mut walker,
+    );
+    if walker.integer_work_exhausted {
+        return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
+    }
+    if walker.unsupported_integer_scope {
+        return Err(IntegerPureSubstitutionError::UnsupportedCarrier);
+    }
+    result
 }
 
 fn integer_work(units: usize) -> Result<(), IntegerPureSubstitutionError> {
@@ -1670,7 +1696,10 @@ fn validate_integer_atomic_proposition(
         true,
         &BTreeMap::new(),
     )?;
-    collect_proposition_bitvector_variables(proposition, variables);
+    crate::kernel::proof::term_rewrite::collect_integer_substitution_variables(
+        proposition,
+        variables,
+    );
     Ok(())
 }
 
@@ -1696,240 +1725,179 @@ fn rewrite_integer_atomic_proposition(
     Ok(result)
 }
 
-fn fresh_integer_variable(
-    reserved: &mut BTreeSet<Variable>,
-    next: &mut u64,
-) -> Result<Variable, IntegerPureSubstitutionError> {
-    loop {
-        let candidate = Variable(*next);
-        if reserved.insert(candidate) {
-            *next = next
-                .checked_add(1)
-                .ok_or(IntegerPureSubstitutionError::FreshVariableExhausted)?;
-            return Ok(candidate);
-        }
-        *next = next
-            .checked_add(1)
-            .ok_or(IntegerPureSubstitutionError::FreshVariableExhausted)?;
+fn rewrite_integer_atomic_proposition_with_walker(
+    proposition: &Proposition,
+    walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
+) -> Result<Proposition, IntegerPureSubstitutionError> {
+    integer_work(1)?;
+    let result = walker.proposition(proposition);
+    if walker.integer_work_exhausted {
+        return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
     }
+    if walker.unsupported_integer_scope {
+        return Err(IntegerPureSubstitutionError::UnsupportedCarrier);
+    }
+    integer_work(0)?;
+    Ok(result)
 }
 
-fn substitute_integer_pure_proposition(
+/// Recursive proposition traversal for checked Integer substitution.  The
+/// caller supplies one walker for the whole proposition.  In particular, the
+/// replacement's carrier summary, DAG cache, fresh allocator, and work state
+/// are shared across sibling atomic propositions.
+fn substitute_integer_pure_proposition_with_walker(
     proposition: &Proposition,
     from: Variable,
-    to: &IntegerTerm,
     replacement_variables: &BTreeSet<Variable>,
-    reserved: &mut BTreeSet<Variable>,
-    next: &mut u64,
     shadowed: bool,
-    renamings: &mut BTreeMap<Variable, Variable>,
-    replacement_work: usize,
+    walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
     integer_work(1)?;
     match proposition {
         Proposition::Equal(Term::Integer(left), Term::Integer(right)) => Ok(Proposition::Equal(
-            Term::Integer(substitute_integer_pure_term(
-                left,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
-            Term::Integer(substitute_integer_pure_term(
-                right,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?),
+            Term::Integer(substitute_integer_pure_term_with_walker(left, walker)?),
+            Term::Integer(substitute_integer_pure_term_with_walker(right, walker)?),
         )),
         Proposition::Equal(left, right)
             if integer_atomic_term_supported(left) && integer_atomic_term_supported(right) =>
         {
-            rewrite_integer_atomic_proposition(proposition, from, to, shadowed, renamings)
+            rewrite_integer_atomic_proposition_with_walker(proposition, walker)
         }
         Proposition::ConditionIs(condition, value) => Ok(Proposition::ConditionIs(
-            substitute_integer_pure_condition(
-                condition,
-                from,
-                to,
-                shadowed,
-                renamings,
-                replacement_work,
-            )?,
+            substitute_integer_pure_condition_with_walker(condition, walker)?,
             *value,
         )),
         Proposition::And(left, right) => Ok(Proposition::And(
-            Box::new(substitute_integer_pure_proposition(
+            Box::new(substitute_integer_pure_proposition_with_walker(
                 left,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?),
-            Box::new(substitute_integer_pure_proposition(
+            Box::new(substitute_integer_pure_proposition_with_walker(
                 right,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?),
         )),
         Proposition::Or(left, right) => Ok(Proposition::Or(
-            Box::new(substitute_integer_pure_proposition(
+            Box::new(substitute_integer_pure_proposition_with_walker(
                 left,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?),
-            Box::new(substitute_integer_pure_proposition(
+            Box::new(substitute_integer_pure_proposition_with_walker(
                 right,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?),
         )),
         Proposition::Not(body) => Ok(Proposition::Not(Box::new(
-            substitute_integer_pure_proposition(
+            substitute_integer_pure_proposition_with_walker(
                 body,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?,
         ))),
         Proposition::Implies(left, right) => Ok(Proposition::Implies(
-            Box::new(substitute_integer_pure_proposition(
+            Box::new(substitute_integer_pure_proposition_with_walker(
                 left,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?),
-            Box::new(substitute_integer_pure_proposition(
+            Box::new(substitute_integer_pure_proposition_with_walker(
                 right,
                 from,
-                to,
                 replacement_variables,
-                reserved,
-                next,
                 shadowed,
-                renamings,
-                replacement_work,
+                walker,
             )?),
         )),
-        Proposition::ForAll { var, sort, body } => substitute_integer_quantifier(
+        Proposition::ForAll { var, sort, body } => substitute_integer_quantifier_with_walker(
             false,
             None,
             *var,
             sort,
             body,
             from,
-            to,
             replacement_variables,
-            reserved,
-            next,
             shadowed,
-            renamings,
-            replacement_work,
+            walker,
         ),
         Proposition::Exists {
             name,
             var,
             sort,
             body,
-        } => substitute_integer_quantifier(
+        } => substitute_integer_quantifier_with_walker(
             true,
             Some(name),
             *var,
             sort,
             body,
             from,
-            to,
             replacement_variables,
-            reserved,
-            next,
             shadowed,
-            renamings,
-            replacement_work,
+            walker,
         ),
         _ => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
     }
 }
 
+// Keep the proposition's carrier and lexical state explicit at this boundary;
+// hiding them in a mutable context would make it easier to apply a scope to
+// the replacement rather than to the source body.
 #[allow(clippy::too_many_arguments)]
-fn substitute_integer_quantifier(
+fn substitute_integer_quantifier_with_walker(
     exists: bool,
     name: Option<&String>,
     var: Variable,
     sort: &Sort,
     body: &Proposition,
     from: Variable,
-    to: &IntegerTerm,
     replacement_variables: &BTreeSet<Variable>,
-    reserved: &mut BTreeSet<Variable>,
-    next: &mut u64,
     shadowed: bool,
-    renamings: &mut BTreeMap<Variable, Variable>,
-    replacement_work: usize,
+    walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
     if *sort != Sort::Integer {
         return Err(IntegerPureSubstitutionError::UnsupportedSort);
     }
     let renamed = !shadowed && var != from && replacement_variables.contains(&var);
     let new_var = if renamed {
-        fresh_integer_variable(reserved, next)?
+        let Some(variable) = walker.fresh_integer_substitution_variable() else {
+            return if walker.integer_work_exhausted {
+                Err(IntegerPureSubstitutionError::WorkLimitExceeded)
+            } else {
+                Err(IntegerPureSubstitutionError::FreshVariableExhausted)
+            };
+        };
+        variable
     } else {
         var
     };
-    let previous = renamings.insert(var, new_var);
-    let transformed = substitute_integer_pure_proposition(
+    if walker.integer_work_exhausted {
+        return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
+    }
+    let scope = walker.push_integer_substitution_scope(var, new_var, shadowed || var == from);
+    let transformed = substitute_integer_pure_proposition_with_walker(
         body,
         from,
-        to,
         replacement_variables,
-        reserved,
-        next,
         shadowed || var == from,
-        renamings,
-        replacement_work,
+        walker,
     );
-    match previous {
-        Some(previous) => {
-            renamings.insert(var, previous);
-        }
-        None => {
-            renamings.remove(&var);
-        }
-    }
+    walker.pop_integer_substitution_scope(scope);
     let body = transformed?;
     if exists {
         Ok(Proposition::Exists {
@@ -1947,6 +1915,38 @@ fn substitute_integer_quantifier(
     }
 }
 
+fn substitute_integer_pure_condition_with_walker(
+    condition: &ConditionTerm,
+    walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
+) -> Result<ConditionTerm, IntegerPureSubstitutionError> {
+    let Proposition::ConditionIs(result, _) = rewrite_integer_atomic_proposition_with_walker(
+        &Proposition::ConditionIs(condition.clone(), true),
+        walker,
+    )?
+    else {
+        unreachable!()
+    };
+    Ok(result)
+}
+
+fn substitute_integer_pure_term_with_walker(
+    term: &IntegerTerm,
+    walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
+) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
+    let Proposition::Equal(Term::Integer(result), _) =
+        rewrite_integer_atomic_proposition_with_walker(
+            &Proposition::Equal(
+                Term::Integer(term.clone()),
+                Term::Integer(IntegerTerm::constant_i64(0)),
+            ),
+            walker,
+        )?
+    else {
+        unreachable!()
+    };
+    Ok(result)
+}
+
 fn integer_atomic_term_supported(term: &Term) -> bool {
     matches!(
         term,
@@ -1957,27 +1957,6 @@ fn integer_atomic_term_supported(term: &Term) -> bool {
             | Term::Condition(_)
             | Term::PointerOffset(_)
     )
-}
-
-fn substitute_integer_pure_condition(
-    condition: &ConditionTerm,
-    from: Variable,
-    to: &IntegerTerm,
-    shadowed: bool,
-    renamings: &BTreeMap<Variable, Variable>,
-    _replacement_work: usize,
-) -> Result<ConditionTerm, IntegerPureSubstitutionError> {
-    let Proposition::ConditionIs(result, _) = rewrite_integer_atomic_proposition(
-        &Proposition::ConditionIs(condition.clone(), true),
-        from,
-        to,
-        shadowed,
-        renamings,
-    )?
-    else {
-        unreachable!()
-    };
-    Ok(result)
 }
 
 fn substitute_integer_pure_term(
@@ -2002,6 +1981,117 @@ fn substitute_integer_pure_term(
         unreachable!()
     };
     Ok(result)
+}
+
+/// Instantiate one Integer fold step without expanding the surrounding
+/// range. The two binders are substituted through the existing
+/// capture-avoiding DAG walker, so a nested fold cannot capture either step
+/// value.
+#[allow(dead_code)]
+pub(in crate::kernel) fn instantiate_integer_range_fold_step(
+    body: &IntegerTerm,
+    accumulator: Variable,
+    accumulator_value: &IntegerTerm,
+    item: Variable,
+    item_value: &IntegerTerm,
+    c_item: bool,
+) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
+    let replacement_work = |term: &IntegerTerm| match term {
+        IntegerTerm::Constant(value) => value.bits() as usize + 1,
+        _ => 1,
+    };
+    let mut reserved = BTreeSet::new();
+    collect_integer_carrier_variables(body, &mut reserved);
+    collect_integer_capture_bitvector_variables(body, &mut reserved);
+    collect_integer_carrier_variables(accumulator_value, &mut reserved);
+    collect_integer_capture_bitvector_variables(accumulator_value, &mut reserved);
+    collect_integer_carrier_variables(item_value, &mut reserved);
+    collect_integer_capture_bitvector_variables(item_value, &mut reserved);
+    let mut integer_binders = BTreeSet::new();
+    let mut bitvector_binders = BTreeSet::new();
+    collect_integer_binder_variables(body, &mut integer_binders, &mut bitvector_binders);
+    collect_integer_binder_variables(
+        accumulator_value,
+        &mut integer_binders,
+        &mut bitvector_binders,
+    );
+    collect_integer_binder_variables(item_value, &mut integer_binders, &mut bitvector_binders);
+    reserved.extend(integer_binders);
+    reserved.extend(bitvector_binders);
+    reserved.insert(accumulator);
+    reserved.insert(item);
+    let mut generator = KernelVariableGenerator::fresh_for(0, reserved);
+    let temporary = generator.next();
+    let temporary_item = generator.next();
+    let with_temporary = substitute_integer_pure_term(
+        body,
+        accumulator,
+        &IntegerTerm::Variable(temporary),
+        false,
+        &BTreeMap::new(),
+        1,
+    )?;
+    // Keep the two carriers separate.  An Int32 fold binds a machine
+    // variable, while an Integer fold binds an Integer variable.  In
+    // particular, substituting the Integer spelling of an Int32 binder would
+    // leave the machine occurrence untouched (and trying both substitutions
+    // would rewrite an unrelated Integer variable with the same identity).
+    let with_item = if c_item {
+        substitute_bitvector_variable_in_integer_checked(
+            &with_temporary,
+            item,
+            &Bitvector32Term::Variable(temporary_item),
+        )?
+    } else {
+        substitute_integer_pure_term(
+            &with_temporary,
+            item,
+            &IntegerTerm::Variable(temporary_item),
+            false,
+            &BTreeMap::new(),
+            1,
+        )?
+    };
+    let with_accumulator = substitute_integer_pure_term(
+        &with_item,
+        temporary,
+        accumulator_value,
+        false,
+        &BTreeMap::new(),
+        replacement_work(accumulator_value),
+    )?;
+    if c_item {
+        let Some(bits) = integer_item_bitvector(item_value) else {
+            return Err(IntegerPureSubstitutionError::UnsupportedCarrier);
+        };
+        Ok(substitute_bitvector_variable_in_integer_checked(
+            &with_accumulator,
+            temporary_item,
+            &bits,
+        )?)
+    } else {
+        substitute_integer_pure_term(
+            &with_accumulator,
+            temporary_item,
+            item_value,
+            false,
+            &BTreeMap::new(),
+            replacement_work(item_value),
+        )
+    }
+}
+
+fn integer_item_bitvector(value: &IntegerTerm) -> Option<Bitvector32Term> {
+    match value {
+        IntegerTerm::Machine(machine) if machine.ty() == MachineIntegerType::Int32 => {
+            Some(machine.value().clone())
+        }
+        IntegerTerm::Constant(value) => value
+            .to_i64()
+            .filter(|value| (i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(value))
+            .map(|value| Bitvector32Term::Constant(value as i32 as u32)),
+        _ => None,
+    }
 }
 
 fn substitute_bitvector_variable_in_algebraic_term(
@@ -2041,14 +2131,9 @@ fn substitute_bitvector_variable_in_pure_function_argument(
     to: &Bitvector32Term,
 ) -> PureFunctionArgument {
     match argument {
-        PureFunctionArgument::Integer(value) => {
-            PureFunctionArgument::Integer(substitute_bitvector_variable_in_shared_integer(
-                value,
-                from,
-                to,
-                &mut std::collections::HashMap::new(),
-            ))
-        }
+        PureFunctionArgument::Integer(value) => PureFunctionArgument::Integer(
+            substitute_bitvector_variable_in_integer(value.as_ref(), from, to).into(),
+        ),
         PureFunctionArgument::Value(value) => {
             PureFunctionArgument::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
@@ -3057,6 +3142,25 @@ fn substitute_bitvector_variable_in_spec_integer(
 ) -> SpecIntegerExpression {
     match expression {
         SpecIntegerExpression::ResourceField(_) => expression.clone(),
+        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+            SpecIntegerExpression::AlgebraicMatch {
+                scrutinee: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
+                    scrutinee, from, to,
+                )),
+                arms: arms
+                    .iter()
+                    .map(|arm| SpecIntegerMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: arm.binding_types.clone(),
+                        binding_variables: arm.binding_variables.clone(),
+                        body: Box::new(substitute_bitvector_variable_in_spec_integer(
+                            &arm.body, from, to,
+                        )),
+                    })
+                    .collect(),
+            }
+        }
         SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
             SpecIntegerExpression::PureFunctionApplication {
                 name: name.clone(),
@@ -3103,6 +3207,45 @@ fn substitute_bitvector_variable_in_spec_integer(
                 right, from, to,
             )),
         ),
+        SpecIntegerExpression::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let index = match index {
+                SpecIntegerRangeFoldIndex::Int32 { start, end } => {
+                    SpecIntegerRangeFoldIndex::Int32 {
+                        start: Box::new(substitute_bitvector_variable_in_spec_expression(
+                            start, from, to,
+                        )),
+                        end: Box::new(substitute_bitvector_variable_in_spec_expression(
+                            end, from, to,
+                        )),
+                    }
+                }
+                SpecIntegerRangeFoldIndex::Integer { start, end } => {
+                    SpecIntegerRangeFoldIndex::Integer {
+                        start: Box::new(substitute_bitvector_variable_in_spec_integer(
+                            start, from, to,
+                        )),
+                        end: Box::new(substitute_bitvector_variable_in_spec_integer(end, from, to)),
+                    }
+                }
+            };
+            SpecIntegerExpression::RangeFold {
+                index,
+                initial: Box::new(substitute_bitvector_variable_in_spec_integer(
+                    initial, from, to,
+                )),
+                accumulator: *accumulator,
+                item: *item,
+                body: Box::new(substitute_bitvector_variable_in_spec_integer(
+                    body, from, to,
+                )),
+            }
+        }
     }
 }
 
@@ -3907,17 +4050,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
         | ConditionTerm::IntegerGreaterEqual(left, right)
         | ConditionTerm::IntegerEqual(left, right)
         | ConditionTerm::IntegerNotEqual(left, right) => {
-            let mut memo = std::collections::HashMap::new();
-            let mut rewrite = |term: &IntegerTerm| {
-                substitute_bitvector_variable_in_shared_integer(
-                    &crate::kernel::SharedIntegerTerm::from(term.clone()),
-                    from,
-                    to,
-                    &mut memo,
-                )
-                .as_ref()
-                .clone()
-            };
+            let rewrite =
+                |term: &IntegerTerm| substitute_bitvector_variable_in_integer(term, from, to);
             match condition {
                 ConditionTerm::IntegerLessThan(_, _) => {
                     ConditionTerm::integer_less_than(rewrite(left), rewrite(right))
@@ -4340,12 +4474,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         )),
         Bitvector32Term::IntegerToMachine { value, destination } => {
             Bitvector32Term::IntegerToMachine {
-                value: substitute_bitvector_variable_in_shared_integer(
-                    value,
-                    from,
-                    to,
-                    &mut std::collections::HashMap::new(),
-                ),
+                value: substitute_bitvector_variable_in_integer(value.as_ref(), from, to).into(),
                 destination: *destination,
             }
         }
@@ -6183,6 +6312,25 @@ fn substitute_pointer_variable_in_spec_integer(
 ) -> SpecIntegerExpression {
     match expression {
         SpecIntegerExpression::ResourceField(_) => expression.clone(),
+        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
+            SpecIntegerExpression::AlgebraicMatch {
+                scrutinee: Box::new(substitute_pointer_variable_in_spec_algebraic_expression(
+                    scrutinee, from, to,
+                )),
+                arms: arms
+                    .iter()
+                    .map(|arm| SpecIntegerMatchArm {
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: arm.binding_types.clone(),
+                        binding_variables: arm.binding_variables.clone(),
+                        body: Box::new(substitute_pointer_variable_in_spec_integer(
+                            &arm.body, from, to,
+                        )),
+                    })
+                    .collect(),
+            }
+        }
         SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
             SpecIntegerExpression::PureFunctionApplication {
                 name: name.clone(),
@@ -6221,6 +6369,43 @@ fn substitute_pointer_variable_in_spec_integer(
             Box::new(substitute_pointer_variable_in_spec_integer(left, from, to)),
             Box::new(substitute_pointer_variable_in_spec_integer(right, from, to)),
         ),
+        SpecIntegerExpression::RangeFold {
+            index,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let index = match index {
+                SpecIntegerRangeFoldIndex::Int32 { start, end } => {
+                    SpecIntegerRangeFoldIndex::Int32 {
+                        start: Box::new(substitute_pointer_variable_in_spec_expression(
+                            start, from, to,
+                        )),
+                        end: Box::new(substitute_pointer_variable_in_spec_expression(
+                            end, from, to,
+                        )),
+                    }
+                }
+                SpecIntegerRangeFoldIndex::Integer { start, end } => {
+                    SpecIntegerRangeFoldIndex::Integer {
+                        start: Box::new(substitute_pointer_variable_in_spec_integer(
+                            start, from, to,
+                        )),
+                        end: Box::new(substitute_pointer_variable_in_spec_integer(end, from, to)),
+                    }
+                }
+            };
+            SpecIntegerExpression::RangeFold {
+                index,
+                initial: Box::new(substitute_pointer_variable_in_spec_integer(
+                    initial, from, to,
+                )),
+                accumulator: *accumulator,
+                item: *item,
+                body: Box::new(substitute_pointer_variable_in_spec_integer(body, from, to)),
+            }
+        }
     }
 }
 
@@ -6973,6 +7158,382 @@ mod integer_function_traversal_tests {
             );
         }
     }
+
+    #[test]
+    fn public_integer_substitution_keeps_array_ref_snapshots_opaque() {
+        let source = Variable(840);
+        let pointer = CValue::Pointer(CPointerValue::new(
+            Pointer {
+                block: PointerBlock::Symbolic(Variable(841)),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            CType::VoidPointer,
+        ));
+        let make_memory = |count: u64| {
+            let mut memory = CMemory::new().with_block("array", 8);
+            for index in 0..count {
+                memory = memory.with_block(PointerBlock::Heap(index + 1), 8);
+            }
+            memory
+        };
+        let make = |memory: CMemory| {
+            Proposition::Equal(
+                Term::Integer(IntegerTerm::PureFunctionApplication(
+                    SharedIntegerApplication::intern(
+                        "observe_array".into(),
+                        vec![
+                            PureFunctionArgument::Integer(IntegerTerm::var(source).into()),
+                            PureFunctionArgument::ArrayRef {
+                                memory,
+                                pointer: pointer.clone(),
+                                element_type: CType::UInt8,
+                            },
+                        ],
+                    ),
+                )),
+                Term::Integer(IntegerTerm::constant_i64(0)),
+            )
+        };
+        let small_memory = make_memory(0);
+        let large_memory = make_memory(256);
+        let (small, small_work) = crate::instrumentation::measure_deterministic_work(|| {
+            substitute_integer_variable_in_pure_proposition(
+                &make(small_memory.clone()),
+                source,
+                &IntegerTerm::constant_i64(7),
+            )
+            .expect("small snapshot substitution should be supported")
+        });
+        let (large, large_work) = crate::instrumentation::measure_deterministic_work(|| {
+            substitute_integer_variable_in_pure_proposition(
+                &make(large_memory.clone()),
+                source,
+                &IntegerTerm::constant_i64(7),
+            )
+            .expect("large snapshot substitution should be supported")
+        });
+        let snapshot = |proposition: Proposition| {
+            let Proposition::Equal(Term::Integer(value), _) = proposition else {
+                panic!("expected Integer equality")
+            };
+            let IntegerTerm::PureFunctionApplication(application) = value else {
+                panic!("expected pure Integer application")
+            };
+            let [
+                PureFunctionArgument::Integer(integer),
+                PureFunctionArgument::ArrayRef { memory, .. },
+            ] = application.arguments()
+            else {
+                panic!("expected Integer and ArrayRef arguments")
+            };
+            assert!(matches!(integer.as_ref(), IntegerTerm::Constant(_)));
+            memory.clone()
+        };
+        assert!(std::sync::Arc::ptr_eq(
+            &snapshot(small).blocks,
+            &small_memory.blocks
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &snapshot(large).blocks,
+            &large_memory.blocks
+        ));
+        assert_eq!(small_work, large_work);
+    }
+}
+
+#[cfg(test)]
+mod integer_match_substitution_scope_tests {
+    use super::*;
+
+    fn symbolic_match(body: IntegerTerm, binding: Variable) -> IntegerTerm {
+        symbolic_match_with_binding(
+            body,
+            AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(binding))),
+        )
+    }
+
+    fn symbolic_match_with_binding(body: IntegerTerm, binding: AlgebraicValue) -> IntegerTerm {
+        let scrutinee = AlgebraicTerm {
+            algebraic_type: AlgebraicType::parameter("MatchInput".into()),
+            node: AlgebraicTermNode::Variable(Variable(9000)),
+        };
+        IntegerTerm::AlgebraicMatch {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![AlgebraicIntegerMatchArm {
+                variant: "Arm".into(),
+                bindings: vec![binding],
+                body: body.into(),
+            }],
+        }
+    }
+
+    fn shared_symbolic_match(body: IntegerTerm, binding: Variable) -> IntegerTerm {
+        let scrutinee = AlgebraicTerm {
+            algebraic_type: AlgebraicType::parameter("SharedMatchInput".into()),
+            node: AlgebraicTermNode::Variable(Variable(9060)),
+        };
+        IntegerTerm::AlgebraicMatch {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![
+                AlgebraicIntegerMatchArm {
+                    variant: "Left".into(),
+                    bindings: vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(
+                        binding,
+                    )))],
+                    body: body.clone().into(),
+                },
+                AlgebraicIntegerMatchArm {
+                    variant: "Right".into(),
+                    bindings: vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(
+                        binding,
+                    )))],
+                    body: body.into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn substitution_freshens_match_binder_while_preserving_free_replacement() {
+        let x = Variable(9001);
+        let y = Variable(9002);
+        let body = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+            "observe".into(),
+            vec![
+                PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(y))),
+                PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(x))),
+                PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(Variable(
+                    9003,
+                )))),
+            ],
+        ));
+        let rewritten = substitute_bitvector_variable_in_integer(
+            &symbolic_match(body, y),
+            x,
+            &Bitvector32Term::Variable(y),
+        );
+        let IntegerTerm::AlgebraicMatch { arms, .. } = rewritten else {
+            panic!("expected algebraic match")
+        };
+        let AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(fresh))) =
+            arms[0].bindings[0]
+        else {
+            panic!("expected C binder")
+        };
+        assert_ne!(fresh, y);
+        let IntegerTerm::PureFunctionApplication(application) = arms[0].body.as_ref() else {
+            panic!("expected application body")
+        };
+        let [
+            PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(first))),
+            PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(second))),
+            PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(free))),
+        ] = application.arguments()
+        else {
+            panic!("expected two C arguments")
+        };
+        assert_eq!(*first, fresh);
+        assert_eq!(*second, y);
+        assert_eq!(*free, Variable(9003));
+        assert_ne!(fresh, Variable(9003));
+    }
+
+    #[test]
+    fn substitution_reserves_match_binders_on_the_rhs_before_rewriting_lhs() {
+        let source = Variable(9030);
+        let replacement = Variable(9031);
+        let free = Variable(9032);
+        let rhs = IntegerTerm::AlgebraicMatch {
+            scrutinee: Box::new(AlgebraicTerm {
+                algebraic_type: AlgebraicType::parameter("RhsMatchInput".into()),
+                node: AlgebraicTermNode::Variable(free),
+            }),
+            arms: vec![AlgebraicIntegerMatchArm {
+                variant: "Arm".into(),
+                bindings: vec![AlgebraicValue::Integer(IntegerTerm::var(replacement))],
+                body: IntegerTerm::Add(
+                    IntegerTerm::var(replacement).into(),
+                    IntegerTerm::var(free).into(),
+                )
+                .into(),
+            }],
+        };
+        let proposition =
+            Proposition::Equal(Term::Integer(IntegerTerm::var(source)), Term::Integer(rhs));
+        let rewritten = substitute_integer_variable_in_pure_proposition(
+            &proposition,
+            source,
+            &IntegerTerm::var(replacement),
+        )
+        .expect("Integer substitution should preserve the RHS match");
+        let Proposition::Equal(Term::Integer(left), Term::Integer(right)) = rewritten else {
+            panic!("expected Integer equality")
+        };
+        assert_eq!(left, IntegerTerm::var(replacement));
+        let IntegerTerm::AlgebraicMatch { arms, .. } = right else {
+            panic!("expected RHS algebraic match")
+        };
+        let AlgebraicValue::Integer(IntegerTerm::Variable(fresh)) = arms[0].bindings[0] else {
+            panic!("expected Integer match binder")
+        };
+        assert_ne!(fresh, replacement);
+        assert_ne!(fresh, free);
+        assert_eq!(
+            arms[0].body.as_ref(),
+            &IntegerTerm::Add(
+                IntegerTerm::var(fresh).into(),
+                IntegerTerm::var(free).into()
+            )
+        );
+    }
+
+    #[test]
+    fn substitution_does_not_rewrite_a_match_binder_or_its_bound_body() {
+        let y = Variable(9010);
+        let z = Variable(9011);
+        let body = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+            "observe".into(),
+            vec![PureFunctionArgument::Value(CValue::Int32(
+                Bitvector32Term::Variable(y),
+            ))],
+        ));
+        let rewritten = substitute_bitvector_variable_in_integer(
+            &symbolic_match(body, y),
+            y,
+            &Bitvector32Term::Variable(z),
+        );
+        let IntegerTerm::AlgebraicMatch { arms, .. } = rewritten else {
+            panic!("expected algebraic match")
+        };
+        assert_eq!(
+            arms[0].bindings[0],
+            AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(y),))
+        );
+        let IntegerTerm::PureFunctionApplication(application) = arms[0].body.as_ref() else {
+            panic!("expected application body")
+        };
+        assert_eq!(
+            application.arguments(),
+            &[PureFunctionArgument::Value(CValue::Int32(
+                Bitvector32Term::Variable(y),
+            ))]
+        );
+    }
+
+    #[test]
+    fn substitution_freshens_each_integral_match_carrier() {
+        let source = Variable(9040);
+        let replacement = Variable(9041);
+        let carriers = [
+            CValue::Bool(Bitvector32Term::Variable(replacement)),
+            CValue::Int16(Bitvector32Term::Variable(replacement)),
+            CValue::Int32(Bitvector32Term::Variable(replacement)),
+            CValue::UInt8(Bitvector32Term::Variable(replacement)),
+            CValue::UInt16(Bitvector32Term::Variable(replacement)),
+            CValue::UInt32(Bitvector32Term::Variable(replacement)),
+            CValue::Int64(Bitvector32Term::Variable(replacement)),
+            CValue::UInt64(Bitvector32Term::Variable(replacement)),
+        ];
+        for carrier in carriers {
+            let body = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                "observe".into(),
+                vec![PureFunctionArgument::Value(CValue::Int32(
+                    Bitvector32Term::Variable(source),
+                ))],
+            ));
+            let rewritten = substitute_bitvector_variable_in_integer(
+                &symbolic_match_with_binding(body, AlgebraicValue::C(carrier.clone())),
+                source,
+                &Bitvector32Term::Variable(replacement),
+            );
+            let IntegerTerm::AlgebraicMatch { arms, .. } = rewritten else {
+                panic!("expected algebraic match")
+            };
+            assert_ne!(arms[0].bindings[0], AlgebraicValue::C(carrier));
+        }
+    }
+
+    #[test]
+    fn match_substitution_shared_function_dag_scales_linearly() {
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let mut body = IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(Variable(9050)),
+            )
+            .unwrap();
+            for _ in 0..depth {
+                body = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                    "pair".into(),
+                    vec![
+                        PureFunctionArgument::Integer(body.clone().into()),
+                        PureFunctionArgument::Integer(body.into()),
+                    ],
+                ));
+            }
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                substitute_bitvector_variable_in_integer(
+                    &symbolic_match(body, Variable(9051)),
+                    Variable(9050),
+                    &Bitvector32Term::Variable(Variable(9052)),
+                )
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(pair[1] <= pair[0] * 3, "function DAG expanded: {work:?}");
+        }
+    }
+
+    #[test]
+    fn nested_match_construction_and_diagnostics_preserve_sharing() {
+        for depth in [8usize, 16, 32, 64] {
+            let mut body = IntegerTerm::constant_i64(1);
+            for _ in 0..depth {
+                body = shared_symbolic_match(body, Variable(9070));
+                let IntegerTerm::AlgebraicMatch { arms, .. } = &body else {
+                    unreachable!()
+                };
+                assert_eq!(arms[0].body.id(), arms[1].body.id());
+            }
+            let copy = body.clone();
+            assert_eq!(copy, body);
+            let diagnostic = format!("{copy:?}");
+            assert!(
+                diagnostic.len() < depth * 500,
+                "diagnostic expanded a shared match graph"
+            );
+        }
+    }
+
+    #[test]
+    fn match_substitution_shared_bodies_scale_linearly() {
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let mut body = IntegerTerm::from_machine(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(Variable(9020)),
+            )
+            .unwrap();
+            for _ in 0..depth {
+                body = shared_symbolic_match(body, Variable(9021));
+            }
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                substitute_bitvector_variable_in_integer(
+                    &symbolic_match(body, Variable(9021)),
+                    Variable(9020),
+                    &Bitvector32Term::Variable(Variable(9022)),
+                )
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3,
+                "match substitution expanded: {work:?}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -7112,5 +7673,283 @@ mod integer_mixed_quantifier_tests {
         for pair in work.windows(2) {
             assert!(pair[1] <= pair[0] * 3, "{work:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod integer_range_fold_substitution_tests {
+    use super::*;
+
+    fn int32_index(start: Bitvector32Term, end: Bitvector32Term) -> IntegerRangeFoldIndex {
+        IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(start),
+            end: SharedIntegerRangeEndpoint::intern(end),
+        }
+    }
+
+    fn c_item(value: Variable) -> IntegerTerm {
+        IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+            MachineIntegerType::Int32,
+            Bitvector32Term::Variable(value),
+        ))
+    }
+
+    #[test]
+    fn int32_fold_substitution_freshens_item_and_preserves_free_replacement_and_y_plus_one() {
+        let source = Variable(70_000);
+        let item = Variable(70_001);
+        let free_y_plus_one = Variable(70_002);
+        let free_zero = Variable(0);
+        let accumulator = Variable(70_003);
+        let body = IntegerTerm::add(
+            IntegerTerm::add(
+                IntegerTerm::add(c_item(source), c_item(item)),
+                c_item(free_y_plus_one),
+            ),
+            c_item(free_zero),
+        );
+        let fold = IntegerTerm::range_fold(
+            int32_index(Bitvector32Term::Constant(0), Bitvector32Term::Constant(1)),
+            IntegerTerm::var(accumulator),
+            accumulator,
+            item,
+            body,
+        );
+
+        let replaced = substitute_bitvector_variable_in_integer(
+            &fold,
+            source,
+            &Bitvector32Term::Variable(item),
+        );
+        let IntegerTerm::RangeFold {
+            item: fresh_item,
+            body,
+            ..
+        } = replaced
+        else {
+            panic!("substitution changed the fold shape")
+        };
+        assert_ne!(fresh_item, item);
+        assert_ne!(fresh_item, free_y_plus_one);
+        assert_ne!(fresh_item, free_zero);
+        let IntegerTerm::Add(left, free_zero_term) = body.as_ref() else {
+            panic!("missing fold body additions")
+        };
+        assert!(
+            matches!(free_zero_term.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Variable(free_zero))
+        );
+        let IntegerTerm::Add(prefix, free_item) = left.as_ref() else {
+            panic!("missing free y+1 term")
+        };
+        assert!(matches!(free_item.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Variable(free_y_plus_one)));
+        let IntegerTerm::Add(replaced_source, bound_item) = prefix.as_ref() else {
+            panic!("missing source and item terms")
+        };
+        assert!(
+            matches!(replaced_source.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Variable(item))
+        );
+        assert!(matches!(bound_item.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Variable(fresh_item)));
+    }
+
+    #[test]
+    fn int32_fold_substitution_keeps_bound_item_but_rewrites_endpoints_and_initial() {
+        let source = Variable(70_010);
+        let accumulator = Variable(70_011);
+        let body = c_item(source);
+        let fold = IntegerTerm::range_fold(
+            int32_index(
+                Bitvector32Term::Variable(source),
+                Bitvector32Term::Variable(source),
+            ),
+            c_item(source),
+            accumulator,
+            source,
+            body,
+        );
+
+        let replaced =
+            substitute_bitvector_variable_in_integer(&fold, source, &Bitvector32Term::Constant(9));
+        let IntegerTerm::RangeFold {
+            index,
+            initial,
+            item,
+            body,
+            ..
+        } = replaced
+        else {
+            panic!("substitution changed the fold shape")
+        };
+        assert_eq!(item, source);
+        let IntegerRangeFoldIndex::Int32 { start, end } = index else {
+            panic!("substitution changed the index carrier")
+        };
+        assert_eq!(start.value(), &Bitvector32Term::Constant(9));
+        assert_eq!(end.value(), &Bitvector32Term::Constant(9));
+        assert!(matches!(initial.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Constant(9)));
+        assert!(matches!(body.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Variable(source)));
+    }
+
+    #[test]
+    fn unchanged_nested_fold_body_reuses_shared_dag_nodes() {
+        let accumulator = Variable(70_020);
+        let item = Variable(70_021);
+        let nested_body = IntegerTerm::add(IntegerTerm::var(accumulator), IntegerTerm::var(item));
+        let nested = IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Integer {
+                start: IntegerTerm::constant_i64(0).into(),
+                end: IntegerTerm::constant_i64(1).into(),
+            },
+            IntegerTerm::constant_i64(0),
+            accumulator,
+            item,
+            nested_body,
+        );
+        let outer = IntegerTerm::add(nested.clone(), nested);
+        let replaced = substitute_bitvector_variable_in_integer(
+            &outer,
+            Variable(70_022),
+            &Bitvector32Term::Constant(9),
+        );
+        let IntegerTerm::Add(left, right) = replaced else {
+            panic!("substitution changed the shared outer shape")
+        };
+        assert_eq!(left.id(), right.id());
+    }
+
+    #[test]
+    fn integer_substitution_shared_nested_folds_scales_with_dag_size() {
+        let from = Variable(70_040);
+        let accumulator = Variable(70_041);
+        let item = Variable(70_042);
+        for depth in [8, 16, 32, 64] {
+            let mut value = IntegerTerm::var(from);
+            for _ in 0..depth {
+                let body = IntegerTerm::add(value.clone(), value.clone());
+                value = IntegerTerm::range_fold(
+                    IntegerRangeFoldIndex::Integer {
+                        start: IntegerTerm::constant_i64(0).into(),
+                        end: IntegerTerm::constant_i64(1).into(),
+                    },
+                    IntegerTerm::constant_i64(0),
+                    accumulator,
+                    item,
+                    body,
+                );
+            }
+            let proposition = Proposition::Equal(
+                Term::Integer(value),
+                Term::Integer(IntegerTerm::constant_i64(0)),
+            );
+            let replaced = substitute_integer_variable_in_pure_proposition(
+                &proposition,
+                from,
+                &IntegerTerm::constant_i64(2),
+            )
+            .expect("fold substitution should preserve the supported Integer carrier");
+            let Proposition::Equal(Term::Integer(mut value), _) = replaced else {
+                panic!("equality carrier changed")
+            };
+            for _ in 0..depth {
+                let IntegerTerm::RangeFold { body, .. } = value else {
+                    panic!("nested fold shape changed")
+                };
+                let IntegerTerm::Add(left, right) = body.as_ref() else {
+                    panic!("shared fold body shape changed")
+                };
+                assert_eq!(left.id(), right.id());
+                value = left.as_ref().clone();
+            }
+            assert_eq!(value, IntegerTerm::Constant(2.into()));
+        }
+    }
+
+    #[test]
+    fn int32_fold_substitution_rejects_non_machine_item_value() {
+        let item = Variable(70_050);
+        let body = c_item(item);
+        let result = instantiate_integer_range_fold_step(
+            &body,
+            Variable(70_051),
+            &IntegerTerm::constant_i64(0),
+            item,
+            &IntegerTerm::var(Variable(70_052)),
+            true,
+        );
+        assert_eq!(
+            result,
+            Err(IntegerPureSubstitutionError::UnsupportedCarrier)
+        );
+    }
+
+    #[test]
+    fn int32_fold_substitution_rejects_wrong_width_machine_item_value() {
+        let item = Variable(70_053);
+        let body = c_item(item);
+        let malformed = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+            MachineIntegerType::UInt32,
+            Bitvector32Term::Variable(Variable(70_054)),
+        ));
+        let result = instantiate_integer_range_fold_step(
+            &body,
+            Variable(70_055),
+            &IntegerTerm::constant_i64(0),
+            item,
+            &malformed,
+            true,
+        );
+        assert_eq!(
+            result,
+            Err(IntegerPureSubstitutionError::UnsupportedCarrier)
+        );
+    }
+
+    #[test]
+    fn checked_machine_fold_substitution_rejects_work_exhaustion() {
+        use crate::instrumentation::{self, TacticEvent, TacticWorkLimits, VerificationEvent};
+
+        let source = Variable(70_060);
+        let mut payload = Bitvector32Term::Variable(source);
+        for _ in 0..64 {
+            payload =
+                Bitvector32Term::Add(Box::new(payload), Box::new(Bitvector32Term::Constant(1)));
+        }
+        let term = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+            MachineIntegerType::Int32,
+            payload,
+        ));
+        let (result, _events) = instrumentation::with_tactic_work_limits(
+            TacticWorkLimits {
+                simple: 4,
+                smart: 4,
+                control: 4,
+            },
+            || {
+                instrumentation::collect(|| {
+                    let tactic = TacticEvent {
+                        claim: "integer fold checked substitution".into(),
+                        tactic_index: 0,
+                        tactic_name: "integer_fold_checked_substitution".into(),
+                        class: "simple".into(),
+                        statement_index: 0,
+                        source_index: 0,
+                    };
+                    instrumentation::emit(VerificationEvent::TacticStarted(tactic.clone()));
+                    let result = substitute_bitvector_variable_in_integer_checked(
+                        &term,
+                        source,
+                        &Bitvector32Term::Constant(7),
+                    );
+                    instrumentation::emit(VerificationEvent::TacticFailed(tactic));
+                    result
+                })
+            },
+        );
+        assert_eq!(result, Err(IntegerPureSubstitutionError::WorkLimitExceeded));
     }
 }

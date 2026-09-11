@@ -804,6 +804,42 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression(
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: BTreeSet<String>,
 ) -> Result<crate::kernel::SpecIntegerExpression, String> {
+    elaborate_fixed_state_integer_expression_with_integer_values(
+        expression,
+        array_element_types,
+        entry_state,
+        entry_values,
+        current_values,
+        &crate::persistent::PersistentMap::default(),
+        result,
+        snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    )
+}
+
+/// Elaborates a fixed-state Integer expression with already captured
+/// mathematical bindings in scope.  The ordinary helper above is used for
+/// expressions whose Integer names are all introduced by the expression
+/// itself; theorem application also needs to preserve caller Integer
+/// parameters and checked-proof locals while capturing a fold argument.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_values(
+    expression: &ContractExpression,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+) -> Result<crate::kernel::SpecIntegerExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
         entry_state,
@@ -816,7 +852,44 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression(
         click_function_environment,
         opaque_click_functions,
     );
+    let mut context = context;
+    let referenced_names =
+        crate::surface::lowering::contract_expression_referenced_names(expression);
+    let mut referenced_integer_values = crate::persistent::PersistentMap::default();
+    for name in referenced_names {
+        if let Some(value) = integer_values.get(&name) {
+            referenced_integer_values =
+                referenced_integer_values.with_inserted(name, value.clone());
+        }
+    }
+    context.integer_values = referenced_integer_values.clone();
+
+    // Fold binders allocate from the fixed-state elaborator's local range.
+    // Reserve identities already present in captured Integer arguments so a
+    // fold's accumulator or item cannot capture a caller value.
+    for (_, value) in referenced_integer_values.iter() {
+        if let Some(variable) = max_spec_integer_expression_variable(value) {
+            lowerer.next_quantifier_variable = lowerer.next_quantifier_variable.max(
+                variable
+                    .0
+                    .checked_add(1)
+                    .ok_or("quantifier variable identity exhausted")?,
+            );
+        }
+    }
     lowerer.lower_contract_integer_to_spec(expression, &context)
+}
+
+/// Finds the largest variable identity nested in a captured Integer binding.
+/// The kernel visitor includes free identities, quantifier identities, fold
+/// binders, and identities nested in machine/C payloads. Keeping this query
+/// here makes the lowering path independent of the visitor's representation.
+fn max_spec_integer_expression_variable(
+    expression: &crate::kernel::SpecIntegerExpression,
+) -> Option<crate::kernel::Variable> {
+    let mut variables = BTreeSet::new();
+    crate::kernel::collect_spec_integer_bound_variables(expression, &mut variables);
+    variables.into_iter().next_back()
 }
 
 /// Elaborates an expression stated in a fixed-state proof into the kernel's
@@ -2399,33 +2472,266 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> bool {
+        self.contract_expression_click_type(expression, environment)
+            .is_some_and(|click_type| click_type == ClickType::Integer)
+    }
+
+    /// Infer the result kind needed when choosing between the C and Integer
+    /// lowering paths.  Surface validation already checks algebraic match
+    /// arms against their datatype schema, but the fixed-state lowerer does
+    /// not retain that result type in the syntax tree.  Recover it here so a
+    /// match whose arms return an Integer binding is still recognized when
+    /// the other comparison operand is an untyped numeral.
+    fn contract_expression_click_type(
+        &self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Option<ClickType> {
+        self.contract_expression_click_type_in_scope(expression, environment, &mut Vec::new())
+    }
+
+    fn contract_expression_click_type_in_scope(
+        &self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+        lexical_bindings: &mut Vec<(String, Option<ClickType>)>,
+    ) -> Option<ClickType> {
         match expression {
-            ContractExpression::ResourceField(access) => {
-                matches!(access.click_type, Some(ClickType::Integer))
+            ContractExpression::ResourceField(access) => access.click_type.clone(),
+            ContractExpression::IntegerLiteral(_) => None,
+            ContractExpression::Binding(name) => {
+                if let Some((_, click_type)) = lexical_bindings
+                    .iter()
+                    .rev()
+                    .find(|(binding, _)| binding == name)
+                {
+                    click_type.clone()
+                } else if environment.integer_values.contains_key(name) {
+                    Some(ClickType::Integer)
+                } else if let Some(value) = environment.algebraic_values.get(name) {
+                    Some(generics::click_type_from_algebraic_value_type(
+                        &value.algebraic_type.value_type(),
+                    ))
+                } else {
+                    environment
+                        .values
+                        .get(name)
+                        .and_then(spec_expression_click_type)
+                }
             }
-            ContractExpression::IntegerLiteral(_) => false,
-            ContractExpression::Binding(name) => environment.integer_values.contains_key(name),
+            ContractExpression::AlgebraicVariable { algebraic_type, .. }
+            | ContractExpression::AlgebraicConstructor { algebraic_type, .. } => {
+                Some(ClickType::Algebraic(algebraic_type.clone()))
+            }
             ContractExpression::Negate(inner)
             | ContractExpression::Old(inner)
             | ContractExpression::At {
                 expression: inner, ..
-            } => self.contract_expression_is_integer(inner, environment),
+            } => self.contract_expression_click_type_in_scope(inner, environment, lexical_bindings),
             ContractExpression::Add(left, right)
             | ContractExpression::Subtract(left, right)
             | ContractExpression::Multiply(left, right) => {
-                self.contract_expression_is_integer(left, environment)
-                    || self.contract_expression_is_integer(right, environment)
+                let left = self.contract_expression_click_type_in_scope(
+                    left,
+                    environment,
+                    lexical_bindings,
+                );
+                let right = self.contract_expression_click_type_in_scope(
+                    right,
+                    environment,
+                    lexical_bindings,
+                );
+                if left == Some(ClickType::Integer) || right == Some(ClickType::Integer) {
+                    Some(ClickType::Integer)
+                } else {
+                    left.or(right)
+                }
+            }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                accumulator,
+                item,
+                body,
+                ..
+            } => {
+                // The index carrier and accumulator carrier are independent.
+                // In particular, an Int32 index can feed a C array load while
+                // `to_integer(...)` makes the accumulator mathematical.  A
+                // fold's result follows the accumulator/body type; the
+                // endpoint type only selects the item carrier in the body.
+                let start_type = self.contract_expression_click_type_in_scope(
+                    start,
+                    environment,
+                    lexical_bindings,
+                );
+                let end_type = self.contract_expression_click_type_in_scope(
+                    end,
+                    environment,
+                    lexical_bindings,
+                );
+                let integer_index =
+                    start_type == Some(ClickType::Integer) || end_type == Some(ClickType::Integer);
+                let initial_type = self.contract_expression_click_type_in_scope(
+                    initial,
+                    environment,
+                    lexical_bindings,
+                );
+                let lexical_len = lexical_bindings.len();
+                let accumulator_type = initial_type.clone();
+                lexical_bindings.push((accumulator.clone(), accumulator_type));
+                lexical_bindings.push((
+                    item.clone(),
+                    if integer_index {
+                        Some(ClickType::Integer)
+                    } else {
+                        Some(ClickType::C(C0Type::Int32))
+                    },
+                ));
+                let body_type = self.contract_expression_click_type_in_scope(
+                    body,
+                    environment,
+                    lexical_bindings,
+                );
+                lexical_bindings.truncate(lexical_len);
+                if initial_type == Some(ClickType::Integer) || body_type == Some(ClickType::Integer)
+                {
+                    Some(ClickType::Integer)
+                } else {
+                    initial_type.or(body_type)
+                }
+            }
+            ContractExpression::CFragment(CExpression::Variable(name))
+            | ContractExpression::CBinding(name) => {
+                if let Some((_, click_type)) = lexical_bindings
+                    .iter()
+                    .rev()
+                    .find(|(binding, _)| binding == name)
+                {
+                    click_type.clone()
+                } else if environment.integer_values.contains_key(name) {
+                    Some(ClickType::Integer)
+                } else {
+                    environment
+                        .values
+                        .get(name)
+                        .and_then(spec_expression_click_type)
+                }
             }
             ContractExpression::Let {
+                name,
                 click_type: Some(ClickType::Integer),
-                ..
-            } => true,
-            ContractExpression::Call { name, .. } if name == "to_integer" => true,
+                value: _,
+                body,
+            } => {
+                lexical_bindings.push((name.clone(), Some(ClickType::Integer)));
+                let body_type = self.contract_expression_click_type_in_scope(
+                    body,
+                    environment,
+                    lexical_bindings,
+                );
+                lexical_bindings.pop();
+                body_type
+            }
+            ContractExpression::Let {
+                name,
+                click_type: _,
+                value,
+                body,
+            } => {
+                let value_type = self.contract_expression_click_type_in_scope(
+                    value,
+                    environment,
+                    lexical_bindings,
+                );
+                lexical_bindings.push((name.clone(), value_type));
+                let body_type = self.contract_expression_click_type_in_scope(
+                    body,
+                    environment,
+                    lexical_bindings,
+                );
+                lexical_bindings.pop();
+                body_type
+            }
+            ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+                let Some(ClickType::Algebraic(application)) = self
+                    .contract_expression_click_type_in_scope(
+                        scrutinee,
+                        environment,
+                        lexical_bindings,
+                    )
+                else {
+                    return None;
+                };
+                let Ok(algebraic_type) =
+                    algebraic_kernel_type(self.click_function_environment, &application)
+                else {
+                    return None;
+                };
+                let variants = algebraic_type
+                    .variants
+                    .iter()
+                    .map(|variant| (variant.name.as_str(), variant))
+                    .collect::<BTreeMap<_, _>>();
+                crate::instrumentation::record_deterministic_work(algebraic_type.variants.len());
+                let mut result_type = None;
+                let mut has_contextual_literal = false;
+                for arm in arms {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let variant = variants.get(arm.variant.as_str())?;
+                    if arm.bindings.len() != variant.fields.len() {
+                        return None;
+                    }
+                    let lexical_len = lexical_bindings.len();
+                    for (binding, field) in arm.bindings.iter().zip(&variant.fields) {
+                        lexical_bindings.push((
+                            binding.clone(),
+                            Some(generics::click_type_from_algebraic_value_type(field)),
+                        ));
+                    }
+                    let arm_type = self.contract_expression_click_type_in_scope(
+                        &arm.body,
+                        environment,
+                        lexical_bindings,
+                    );
+                    lexical_bindings.truncate(lexical_len);
+                    let Some(arm_type) = arm_type else {
+                        if is_unsuffixed_integer_literal_expression(&arm.body) {
+                            // A numeral arm stays untyped until another arm
+                            // supplies the match result carrier.  In
+                            // particular, do not make an all-literal match
+                            // mathematical Integer by default.
+                            has_contextual_literal = true;
+                            continue;
+                        }
+                        return None;
+                    };
+                    if let Some(previous) = &result_type
+                        && previous != &arm_type
+                    {
+                        return None;
+                    }
+                    result_type = Some(arm_type);
+                }
+                if has_contextual_literal
+                    && !matches!(
+                        result_type.as_ref(),
+                        Some(ClickType::Integer) | Some(ClickType::C(_))
+                    )
+                {
+                    return None;
+                }
+                result_type
+            }
+            ContractExpression::Call { name, .. } if name == "to_integer" => {
+                Some(ClickType::Integer)
+            }
             ContractExpression::Call { name, .. } => self
                 .click_function_environment
                 .get(name)
-                .is_some_and(|function| function.return_type() == &ClickType::Integer),
-            _ => false,
+                .map(|function| function.return_type().clone()),
+            _ => None,
         }
     }
 
@@ -2474,41 +2780,108 @@ impl AnnotationLowerer<'_> {
         }
         if let ContractExpression::AlgebraicMatch { scrutinee, arms } = expression {
             let scrutinee = self.lower_contract_algebraic_to_spec(scrutinee, environment)?;
-            if let crate::kernel::SpecAlgebraicExpressionNode::Constructor { variant, fields } =
-                &scrutinee.node
-            {
-                let arm = arms
+            let mut lowered_arms = Vec::new();
+            let mut seen = std::collections::BTreeSet::new();
+            for arm in arms {
+                if !seen.insert(arm.variant.clone()) {
+                    return Err(format!("duplicate match arm `{}`", arm.variant));
+                }
+                let variant = scrutinee
+                    .algebraic_type
+                    .variants
                     .iter()
-                    .find(|arm| arm.variant == *variant)
-                    .ok_or_else(|| format!("missing match arm for `{variant}`"))?;
-                if arm.bindings.len() != fields.len() {
-                    return Err("datatype match field count mismatch".into());
+                    .find(|variant| variant.name == arm.variant)
+                    .ok_or_else(|| format!("unknown match variant `{}`", arm.variant))?;
+                if arm.bindings.len() != variant.fields.len() {
+                    return Err(format!(
+                        "match arm `{}` has the wrong number of bindings",
+                        arm.variant
+                    ));
                 }
                 let mut body_environment = environment.clone();
-                for (name, field) in arm.bindings.iter().zip(fields) {
-                    body_environment.integer_values.remove(name);
-                    body_environment.values.remove(name);
-                    body_environment.algebraic_values.remove(name);
-                    body_environment.array_refs.remove(name);
-                    match field {
-                        crate::kernel::SpecAlgebraicValue::Integer(value) => {
-                            body_environment
-                                .integer_values
-                                .insert(name.clone(), value.clone());
+                for (binding, binding_type) in arm.bindings.iter().zip(&variant.fields) {
+                    match binding_type {
+                        AlgebraicValueType::C(_) => {
+                            body_environment.integer_values.remove(binding);
+                            body_environment.algebraic_values.remove(binding);
+                            body_environment.values.insert(
+                                binding.clone(),
+                                crate::kernel::SpecExpression::CExpression(
+                                    crate::kernel::CExpression::Variable(binding.clone()),
+                                ),
+                            );
                         }
-                        crate::kernel::SpecAlgebraicValue::C(value) => {
-                            body_environment.values.insert(name.clone(), value.clone());
+                        AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
+                            body_environment.values.remove(binding);
+                            body_environment.integer_values.remove(binding);
+                            body_environment.algebraic_values.insert(
+                                binding.clone(),
+                                crate::kernel::SpecAlgebraicExpression {
+                                    algebraic_type: self
+                                        .cached_algebraic_kernel_type_from_value_type(
+                                            binding_type,
+                                        )?,
+                                    node: crate::kernel::SpecAlgebraicExpressionNode::Binding(
+                                        binding.clone(),
+                                    ),
+                                },
+                            );
                         }
-                        crate::kernel::SpecAlgebraicValue::Algebraic(value) => {
-                            body_environment
-                                .algebraic_values
-                                .insert(name.clone(), value.clone());
+                        AlgebraicValueType::Integer => {
+                            body_environment.values.remove(binding);
+                            body_environment.algebraic_values.remove(binding);
+                            let variable = crate::kernel::Variable(self.next_quantifier_variable);
+                            self.next_quantifier_variable += 1;
+                            body_environment.integer_values.insert(
+                                binding.clone(),
+                                crate::kernel::SpecIntegerExpression::Term(
+                                    crate::kernel::IntegerTerm::var(variable),
+                                ),
+                            );
                         }
                     }
                 }
-                return self.lower_contract_integer_to_spec(&arm.body, &body_environment);
+                let body = self.lower_contract_integer_to_spec(&arm.body, &body_environment)?;
+                lowered_arms.push(crate::kernel::SpecIntegerMatchArm {
+                    variant: arm.variant.clone(),
+                    bindings: arm.bindings.clone(),
+                    binding_types: variant.fields.clone(),
+                    binding_variables: arm
+                        .bindings
+                        .iter()
+                        .zip(&variant.fields)
+                        .map(|(binding, binding_type)| {
+                            if binding_type == &AlgebraicValueType::Integer {
+                                match body_environment.integer_values.get(binding) {
+                                    Some(crate::kernel::SpecIntegerExpression::Term(
+                                        crate::kernel::IntegerTerm::Variable(variable),
+                                    )) => Some(*variable),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    body: Box::new(body),
+                });
             }
-            return Err("symbolic Integer-valued datatype matches are not supported yet".into());
+            if seen.len() != scrutinee.algebraic_type.variants.len() {
+                return Err("symbolic Integer-valued datatype matches must be exhaustive".into());
+            }
+            return Ok(SpecIntegerExpression::AlgebraicMatch {
+                scrutinee: Box::new(scrutinee),
+                arms: lowered_arms,
+            });
+        }
+        // The proof parser preserves a variable reference as a C fragment
+        // until contextual typing identifies it as an Integer.  Resolve it
+        // through the active scoped environment so fold accumulator and
+        // captured Integer references retain their preallocated kernel terms.
+        if let ContractExpression::CFragment(CExpression::Variable(name)) = expression
+            && let Some(value) = environment.integer_values.get(name)
+        {
+            return Ok(value.clone());
         }
         match expression {
             ContractExpression::Call { name, arguments } if name != "to_integer" => {
@@ -2560,6 +2933,9 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::Call { name, arguments } if name == "to_integer" => {
                 let argument = integer_conversion_argument(name, arguments)?;
+                if self.contract_expression_is_integer(argument, environment) {
+                    return Err("to_integer expects a machine integer or Nat".to_string());
+                }
                 if let Ok(nat) = self.lower_contract_algebraic_to_spec(argument, environment)
                     && crate::kernel::is_conversion_nat_type(&nat.algebraic_type)
                 {
@@ -2635,6 +3011,96 @@ impl AnnotationLowerer<'_> {
                         }
                     }),
                 }
+            }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                accumulator,
+                item,
+                body,
+            } => {
+                let initial = self.lower_contract_integer_to_spec(initial, environment)?;
+                let accumulator_variable = crate::kernel::Variable(self.next_quantifier_variable);
+                self.next_quantifier_variable = self.next_quantifier_variable.saturating_add(1);
+                let item_variable = crate::kernel::Variable(self.next_quantifier_variable);
+                self.next_quantifier_variable = self.next_quantifier_variable.saturating_add(1);
+                let integer_expression = |expression: &ContractExpression| {
+                    fn is_integer(
+                        expression: &ContractExpression,
+                        environment: &SpecElaborationContext,
+                        functions: &ClickFunctionEnvironment,
+                    ) -> bool {
+                        match expression {
+                            ContractExpression::Binding(name)
+                            | ContractExpression::CFragment(CExpression::Variable(name))
+                            | ContractExpression::CBinding(name) => {
+                                environment.integer_values.contains_key(name)
+                            }
+                            ContractExpression::ResourceField(access) => {
+                                access.click_type == Some(ClickType::Integer)
+                            }
+                            ContractExpression::Call { name, .. } => {
+                                functions.get(name).is_some_and(|function| {
+                                    function.return_type() == &ClickType::Integer
+                                })
+                            }
+                            ContractExpression::Add(left, right)
+                            | ContractExpression::Subtract(left, right)
+                            | ContractExpression::Multiply(left, right) => {
+                                is_integer(left, environment, functions)
+                                    || is_integer(right, environment, functions)
+                            }
+                            _ => false,
+                        }
+                    }
+                    is_integer(expression, environment, self.click_function_environment)
+                };
+                let integer_index = integer_expression(start) || integer_expression(end);
+                let mut body_environment = environment.clone();
+                body_environment.integer_values.insert(
+                    accumulator.clone(),
+                    SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(
+                        accumulator_variable,
+                    )),
+                );
+                body_environment.integer_values.insert(
+                    item.clone(),
+                    SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(item_variable)),
+                );
+                if integer_index {
+                    let start = self.lower_contract_integer_to_spec(start, environment)?;
+                    let end = self.lower_contract_integer_to_spec(end, environment)?;
+                    let body = self.lower_contract_integer_to_spec(body, &body_environment)?;
+                    return Ok(SpecIntegerExpression::RangeFold {
+                        index: crate::kernel::SpecIntegerRangeFoldIndex::Integer {
+                            start: Box::new(start),
+                            end: Box::new(end),
+                        },
+                        initial: Box::new(initial),
+                        accumulator: accumulator_variable,
+                        item: item_variable,
+                        body: Box::new(body),
+                    });
+                }
+                body_environment.integer_values.remove(item);
+                body_environment.values.insert(
+                    item.clone(),
+                    SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(item_variable))),
+                );
+                let body = self.lower_contract_integer_to_spec(body, &body_environment)?;
+                let start = self.lower_contract_expression_to_spec(start, environment)?;
+                let end = self.lower_contract_expression_to_spec(end, environment)?;
+                Ok(SpecIntegerExpression::RangeFold {
+                    index: crate::kernel::SpecIntegerRangeFoldIndex::Int32 {
+                        start: Box::new(start),
+                        end: Box::new(end),
+                    },
+                    initial: Box::new(initial),
+                    accumulator: accumulator_variable,
+                    item: item_variable,
+                    body: Box::new(body),
+                })
             }
             ContractExpression::Let {
                 name,
@@ -4582,6 +5048,54 @@ fn instantiate_algebraic_kernel_field_type(
 mod integer_source_quantifier_tests {
     use super::*;
     use crate::kernel::{IntegerTerm, SpecIntegerExpression};
+
+    #[test]
+    fn captured_integer_freshness_ignores_unrelated_heap_snapshot() {
+        use crate::kernel::{
+            Bitvector32Term, CMemory, CType, CValue, Pointer, PointerBlock, PointerOffsetTerm,
+            SpecExpression, SpecMemory, SpecPureFunctionArgument,
+        };
+
+        let explicit = Variable(2_001);
+        let unrelated_heap_variable = Variable(9_000_001);
+        let heap_pointer = Pointer {
+            block: PointerBlock::Heap(77),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new()
+            .with_block(heap_pointer.block.clone(), 4)
+            .store(
+                heap_pointer,
+                CValue::Int32(Bitvector32Term::Variable(unrelated_heap_variable)),
+            );
+        let captured_array = SpecIntegerExpression::PureFunctionApplication {
+            name: "captured_array_value".to_string(),
+            arguments: vec![SpecPureFunctionArgument::ArrayRef {
+                memory: SpecMemory::Fixed(memory.clone()),
+                pointer: SpecExpression::Value(CValue::pointer(Pointer::null())),
+                element_type: CType::Int32,
+            }],
+        };
+        let captured_from_machine_load =
+            SpecIntegerExpression::FromMachine(Box::new(SpecExpression::MemoryLoad {
+                memory: SpecMemory::Fixed(memory),
+                pointer: Box::new(SpecExpression::Value(CValue::pointer(Pointer::null()))),
+                value_type: CType::Int32,
+            }));
+        let captured = SpecIntegerExpression::Add(
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::var(explicit))),
+            Box::new(SpecIntegerExpression::Add(
+                Box::new(captured_array),
+                Box::new(captured_from_machine_load),
+            )),
+        );
+
+        assert_eq!(
+            max_spec_integer_expression_variable(&captured),
+            Some(explicit),
+            "freshness must follow explicit expression identities, not cells in an unrelated snapshot"
+        );
+    }
 
     #[test]
     fn integer_quantifier_does_not_capture_a_caller_binding() {

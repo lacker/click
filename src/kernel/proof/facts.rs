@@ -1,5 +1,6 @@
 //! Persistent semantic fact state for checked proofs.
 
+use super::fact_keys::{IntegerEqualityAlphaKey, integer_equality_alpha_key};
 use super::fact_reasoning::*;
 use super::{
     PersistentSequence, QuantifiedEquivalenceKey, SnapshotBlindPropositionKey,
@@ -31,6 +32,13 @@ pub(crate) struct ProofFacts {
     /// condition check. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
+    /// True Integer equality facts keyed by the typed alpha form of both
+    /// operands. This is the bounded equivalence boundary for checked
+    /// restatements whose range-fold binders were freshly allocated.
+    /// The map key is a compact fingerprint; each bucket retains one exact
+    /// alpha key and source proposition per fingerprint collision.
+    by_integer_equality_alpha:
+        PersistentMap<u64, PersistentSequence<IntegerEqualityAlphaCandidate>>,
     /// Exact true int32 equalities keyed by constant, variable, opaque Click
     /// application, or interned memory-load operands. Keys have bounded
     /// comparison cost; a goal-local rewrite search walks only atoms named by
@@ -66,6 +74,12 @@ struct PrioritizedProofFacts {
 struct ImplicationCandidate {
     antecedents: PersistentSequence<Proposition>,
     consequent: Proposition,
+}
+
+#[derive(Clone)]
+struct IntegerEqualityAlphaCandidate {
+    key: IntegerEqualityAlphaKey,
+    proposition: Proposition,
 }
 
 /// A bounded-comparison selector for equality rewrite provenance. Complex
@@ -218,6 +232,7 @@ impl ProofFacts {
         let mut exact = PersistentSet::default();
         let mut proper_conjuncts = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
+        let mut by_integer_equality_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
         let mut implications_by_consequent = PersistentMap::default();
@@ -243,12 +258,16 @@ impl ProofFacts {
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
                     by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                    by_integer_equality_alpha =
+                        index_integer_equality_fact(by_integer_equality_alpha, &conjunct);
                     bitvector_equalities_by_atom =
                         index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
                     exact = exact.with_value(conjunct);
                 }
             }
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
+            by_integer_equality_alpha =
+                index_integer_equality_fact(by_integer_equality_alpha, fact);
             bitvector_equalities_by_atom =
                 index_bitvector_equality_fact(bitvector_equalities_by_atom, fact);
             exact = exact.with_value(fact.clone());
@@ -264,6 +283,7 @@ impl ProofFacts {
             exact,
             proper_conjuncts,
             by_snapshot_blind,
+            by_integer_equality_alpha,
             bitvector_equalities_by_atom,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
@@ -323,6 +343,7 @@ impl ProofFacts {
         let mut exact = self.exact.clone();
         let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
+        let mut by_integer_equality_alpha = self.by_integer_equality_alpha.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
         let by_quantified_equivalence =
             index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
@@ -334,12 +355,15 @@ impl ProofFacts {
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
                 by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                by_integer_equality_alpha =
+                    index_integer_equality_fact(by_integer_equality_alpha, &conjunct);
                 bitvector_equalities_by_atom =
                     index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
                 exact = exact.with_value(conjunct);
             }
         }
         by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
+        by_integer_equality_alpha = index_integer_equality_fact(by_integer_equality_alpha, &fact);
         bitvector_equalities_by_atom =
             index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
         exact = exact.with_value(fact.clone());
@@ -359,6 +383,7 @@ impl ProofFacts {
             exact,
             proper_conjuncts,
             by_snapshot_blind,
+            by_integer_equality_alpha,
             bitvector_equalities_by_atom,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
@@ -590,7 +615,9 @@ impl ProofFacts {
     /// cross-effect snapshot transport: such a transport needs its own
     /// retained proof step before a later assumption may consume it.
     pub(crate) fn pure_assumption_available(&self, required: &Proposition) -> bool {
-        self.materialization_available(required) || self.quantified_fact_available(required)
+        self.materialization_available(required)
+            || self.integer_alpha_fact_available(required)
+            || self.quantified_fact_available(required)
     }
 
     pub(crate) fn implicit_transport_assumptions(&self) -> &PureFactContext {
@@ -667,6 +694,14 @@ impl ProofFacts {
             return Some(form);
         }
 
+        // A checked Integer equality may contain range-fold binders freshly
+        // allocated by the preceding rewrite. Return the stored proposition
+        // so callers retain the source fact and its certificate provenance;
+        // do not synthesize the requested presentation here.
+        if let Some(candidate) = self.matching_integer_alpha_fact(required) {
+            return Some(candidate);
+        }
+
         if let Some(quantified) = self.matching_quantified_fact(required) {
             return Some(quantified);
         }
@@ -719,6 +754,26 @@ impl ProofFacts {
         self.matching_quantified_fact(required).is_some()
     }
 
+    /// Returns a stored true Integer equality whose typed alpha form matches
+    /// `required`. The candidate is selected by the persistent alpha bucket,
+    /// so unrelated ambient facts are never scanned.
+    fn matching_integer_alpha_fact(&self, required: &Proposition) -> Option<Proposition> {
+        let key = integer_equality_alpha_key(required)?;
+        let fingerprint = key.fingerprint();
+        self.by_integer_equality_alpha
+            .get(&fingerprint)
+            .and_then(|bucket| {
+                bucket
+                    .iter()
+                    .find(|candidate| candidate.key == key)
+                    .map(|candidate| candidate.proposition.clone())
+            })
+    }
+
+    fn integer_alpha_fact_available(&self, required: &Proposition) -> bool {
+        self.matching_integer_alpha_fact(required).is_some()
+    }
+
     pub(crate) fn contains_discharged_implication_consequent(
         &self,
         required: &Proposition,
@@ -746,6 +801,10 @@ impl ProofFacts {
                 .iter()
                 .any(|form| self.exact.contains(form))
         {
+            return true;
+        }
+
+        if self.integer_alpha_fact_available(required) {
             return true;
         }
 
@@ -936,6 +995,28 @@ fn index_snapshot_fact(
         }
     }
     by_snapshot_blind
+}
+
+fn index_integer_equality_fact(
+    mut index: PersistentMap<u64, PersistentSequence<IntegerEqualityAlphaCandidate>>,
+    fact: &Proposition,
+) -> PersistentMap<u64, PersistentSequence<IntegerEqualityAlphaCandidate>> {
+    let Some(key) = integer_equality_alpha_key(fact) else {
+        return index;
+    };
+    let fingerprint = key.fingerprint();
+    let mut bucket = index.get(&fingerprint).cloned().unwrap_or_default();
+    // Keep one source proposition for each exact alpha key. Equivalent
+    // restatements are common after fold freshening; appending each one would
+    // make lookup and persistent updates grow with the ambient proof history.
+    if !bucket.iter().any(|candidate| candidate.key == key) {
+        bucket.push(IntegerEqualityAlphaCandidate {
+            key,
+            proposition: fact.clone(),
+        });
+        index = index.with_inserted(fingerprint, bucket);
+    }
+    index
 }
 
 fn index_bitvector_equality_fact(
@@ -1341,5 +1422,273 @@ fn collect_owned_atomic_conjuncts(fact: &Proposition, output: &mut Vec<Propositi
             collect_owned_atomic_conjuncts(right, output);
         }
         _ => output.push(fact.clone()),
+    }
+}
+
+#[cfg(test)]
+mod integer_equality_fact_index_tests {
+    use super::*;
+    use crate::kernel::{
+        Bitvector32Term, IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType,
+        SharedIntegerRangeEndpoint, SharedIntegerTerm, SharedMachineIntegerTerm, Variable,
+    };
+
+    fn integer_index() -> IntegerRangeFoldIndex {
+        IntegerRangeFoldIndex::Integer {
+            start: IntegerTerm::constant_i64(0).into(),
+            end: IntegerTerm::constant_i64(2).into(),
+        }
+    }
+
+    fn int32_index() -> IntegerRangeFoldIndex {
+        IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(2)),
+        }
+    }
+
+    fn fold(
+        index: IntegerRangeFoldIndex,
+        accumulator: Variable,
+        item: Variable,
+        body: IntegerTerm,
+    ) -> IntegerTerm {
+        IntegerTerm::range_fold(index, IntegerTerm::constant_i64(0), accumulator, item, body)
+    }
+
+    fn equality(left: IntegerTerm, right: IntegerTerm) -> Proposition {
+        Proposition::ConditionIs(ConditionTerm::IntegerEqual(left.into(), right.into()), true)
+    }
+
+    fn unrelated_fact(value: i64) -> Proposition {
+        equality(
+            IntegerTerm::constant_i64(value),
+            IntegerTerm::constant_i64(value + 1),
+        )
+    }
+
+    fn growing_shared_scalar_dag(depth: usize) -> IntegerTerm {
+        let mut term = IntegerTerm::var(Variable(204_000));
+        for _ in 0..depth {
+            let child: SharedIntegerTerm = term.into();
+            term = IntegerTerm::Add(child.clone(), child);
+        }
+        term
+    }
+
+    #[test]
+    fn integer_alpha_fact_lookup_returns_the_stored_bound_source() {
+        let source = fold(
+            integer_index(),
+            Variable(200_000),
+            Variable(200_001),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(200_000)),
+                IntegerTerm::var(Variable(200_001)),
+            ),
+        );
+        let required = fold(
+            integer_index(),
+            Variable(200_100),
+            Variable(200_101),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(200_100)),
+                IntegerTerm::var(Variable(200_101)),
+            ),
+        );
+        let source_fact = equality(IntegerTerm::constant_i64(9), source);
+        let required_fact = equality(IntegerTerm::constant_i64(9), required);
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source_fact));
+
+        assert_eq!(
+            facts.matching_fact_across_effects(&required_fact, &[]),
+            Some(source_fact.clone())
+        );
+        assert!(facts.exact_available_across_effects(&required_fact, &[]));
+        assert!(facts.pure_assumption_available(&required_fact));
+    }
+
+    #[test]
+    fn integer_alpha_fact_lookup_rejects_free_bound_and_carrier_mismatches() {
+        let accumulator = Variable(201_000);
+        let item = Variable(201_001);
+        let source = fold(
+            integer_index(),
+            accumulator,
+            item,
+            IntegerTerm::add(IntegerTerm::var(accumulator), IntegerTerm::var(item)),
+        );
+        let source_fact = equality(IntegerTerm::constant_i64(9), source);
+
+        let free_mismatch = fold(
+            integer_index(),
+            Variable(201_100),
+            Variable(201_101),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(201_100)),
+                IntegerTerm::var(Variable(201_999)),
+            ),
+        );
+        let bound_mismatch = fold(
+            integer_index(),
+            Variable(202_000),
+            Variable(202_001),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(202_001)),
+                IntegerTerm::constant_i64(1),
+            ),
+        );
+        let carrier_mismatch = fold(
+            int32_index(),
+            accumulator,
+            item,
+            IntegerTerm::add(
+                IntegerTerm::var(accumulator),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(item),
+                )),
+            ),
+        );
+
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source_fact));
+        for candidate in [free_mismatch, bound_mismatch, carrier_mismatch] {
+            let required = equality(IntegerTerm::constant_i64(9), candidate);
+            assert!(facts.matching_fact_across_effects(&required, &[]).is_none());
+            assert!(!facts.exact_available_across_effects(&required, &[]));
+        }
+    }
+
+    #[test]
+    fn integer_alpha_fact_lookup_ignores_unrelated_facts_without_scanning_them() {
+        let source = fold(
+            integer_index(),
+            Variable(203_000),
+            Variable(203_001),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(203_000)),
+                IntegerTerm::var(Variable(203_001)),
+            ),
+        );
+        let required = fold(
+            integer_index(),
+            Variable(203_100),
+            Variable(203_101),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(203_100)),
+                IntegerTerm::var(Variable(203_101)),
+            ),
+        );
+        let source_fact = equality(IntegerTerm::constant_i64(9), source);
+        let required_fact = equality(IntegerTerm::constant_i64(9), required);
+
+        let mut small = vec![source_fact.clone()];
+        small.extend((0..8).map(unrelated_fact));
+        let mut large = vec![source_fact];
+        large.extend((0..128).map(|value| unrelated_fact(value + 100)));
+        let small_facts = ProofFacts::from_ordered(&small);
+        let large_facts = ProofFacts::from_ordered(&large);
+
+        crate::kernel::proof::reset_alpha_proposition_key_visits();
+        assert!(
+            small_facts
+                .matching_fact_across_effects(&required_fact, &[])
+                .is_some()
+        );
+        let small_visits = crate::kernel::proof::alpha_proposition_key_visits();
+        crate::kernel::proof::reset_alpha_proposition_key_visits();
+        assert!(
+            large_facts
+                .matching_fact_across_effects(&required_fact, &[])
+                .is_some()
+        );
+        let large_visits = crate::kernel::proof::alpha_proposition_key_visits();
+        assert_eq!(small_visits, large_visits);
+    }
+
+    #[test]
+    fn integer_alpha_index_skips_growing_scalar_certificate_facts() {
+        let mut samples = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let scalar = growing_shared_scalar_dag(depth);
+            let facts = (0..depth)
+                .map(|value| equality(scalar.clone(), IntegerTerm::constant_i64(value as i64)))
+                .collect::<Vec<_>>();
+
+            crate::kernel::proof::reset_alpha_proposition_key_visits();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut index: PersistentMap<
+                    u64,
+                    PersistentSequence<IntegerEqualityAlphaCandidate>,
+                > = PersistentMap::default();
+                for fact in &facts {
+                    index = index_integer_equality_fact(index, fact);
+                }
+                index
+            });
+            assert_eq!(
+                crate::kernel::proof::alpha_proposition_key_visits(),
+                0,
+                "scalar certificate facts must stay off the fold alpha index"
+            );
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(pair[1] <= pair[0] * 3 + 32, "{samples:?}");
+        }
+    }
+
+    #[test]
+    fn integer_alpha_index_keeps_one_source_for_renamed_fold_restatements() {
+        let mut samples = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let (index, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut index: PersistentMap<
+                    u64,
+                    PersistentSequence<IntegerEqualityAlphaCandidate>,
+                > = PersistentMap::default();
+                for restatement in 0..depth {
+                    let accumulator = Variable(205_000 + restatement as u64 * 2);
+                    let item = Variable(205_001 + restatement as u64 * 2);
+                    let fold = fold(
+                        integer_index(),
+                        accumulator,
+                        item,
+                        IntegerTerm::add(IntegerTerm::var(accumulator), IntegerTerm::var(item)),
+                    );
+                    index = index_integer_equality_fact(
+                        index,
+                        &equality(IntegerTerm::constant_i64(9), fold),
+                    );
+                }
+                index
+            });
+            let representative = equality(
+                IntegerTerm::constant_i64(9),
+                fold(
+                    integer_index(),
+                    Variable(205_000),
+                    Variable(205_001),
+                    IntegerTerm::add(
+                        IntegerTerm::var(Variable(205_000)),
+                        IntegerTerm::var(Variable(205_001)),
+                    ),
+                ),
+            );
+            let key = integer_equality_alpha_key(&representative)
+                .expect("fold equality should be alpha-indexed")
+                .fingerprint();
+            let bucket = index.get(&key).expect("representative bucket");
+            assert_eq!(
+                bucket.len(),
+                1,
+                "renamed folds must not grow one alpha bucket"
+            );
+            assert_eq!(bucket.iter().next().unwrap().proposition, representative);
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(pair[1] <= pair[0] * 3 + 32, "{samples:?}");
+        }
     }
 }

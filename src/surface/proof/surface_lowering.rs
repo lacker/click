@@ -207,6 +207,25 @@ fn expression_uses_integer(
     }
 }
 
+fn integer_values_for_surface_proposition(
+    proposition: &ClickProposition,
+    theorem_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    local_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+) -> crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression> {
+    let mut referenced = BTreeSet::new();
+    collect_click_proposition_referenced_names(proposition, &mut referenced);
+    let mut values = crate::persistent::PersistentMap::default();
+    for name in referenced {
+        if let Some(value) = local_values
+            .get(&name)
+            .or_else(|| theorem_values.get(&name))
+        {
+            values = values.with_inserted(name, value.clone());
+        }
+    }
+    values
+}
+
 impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn lower_surface_proposition(
         &self,
@@ -227,6 +246,11 @@ impl<'a> Proof<'a> {
                 // do not mention them.
                 let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
+                let integer_values = integer_values_for_surface_proposition(
+                    surface,
+                    &context.theorem_context.integer_values,
+                    self.local_integer_values(),
+                );
                 lower_pure_theorem_proposition_with_algebraic_and_integer_values(
                     context.claim_label,
                     surface,
@@ -237,7 +261,7 @@ impl<'a> Proof<'a> {
                         .as_ref()
                         .map(|setup| &setup.algebraic_values)
                         .unwrap_or(&empty_algebraic_values),
-                    &context.theorem_context.integer_values,
+                    &integer_values,
                     &context.theorem_context.memory,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -365,6 +389,11 @@ impl<'a> Proof<'a> {
             ProofContext::Pure(context) => {
                 let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
+                let integer_values = integer_values_for_surface_proposition(
+                    surface,
+                    &context.theorem_context.integer_values,
+                    self.local_integer_values(),
+                );
                 lower_pure_theorem_proposition_with_algebraic_and_integer_values(
                     context.claim_label,
                     surface,
@@ -375,7 +404,7 @@ impl<'a> Proof<'a> {
                         .as_ref()
                         .map(|setup| &setup.algebraic_values)
                         .unwrap_or(&empty_algebraic_values),
-                    &context.theorem_context.integer_values,
+                    &integer_values,
                     &context.theorem_context.memory,
                     context.predicate_environment,
                     context.click_function_environment,
