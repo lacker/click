@@ -49,22 +49,99 @@ An emitted requirement becomes an ordinary goal closed before the step.
 - The `Planning` leg is deleted. `step()` over a call is then simple: exact
   routes only.
 
-## What exists
+## What has been established
 
-Two attempts landed the mechanism but not the closure; the second is
-preserved on the remote branch `origin/claude/simplify-step-checkpoint`,
-three commits rebased onto master as of 2026-09-11 (red, a checkpoint,
-never integrate as is). It has the structured
-`UnresolvedRequirement` on `ClickError`, `Proof::step_discharging_reported_requirements`
-with the planned `have` installed under `ProofScope::with_recorded_goal_introductions`
-so `intro` consumes the chain, and `propositions_are_alpha_equal` with unit
-tests. It discharges seven of the twelve affected fixtures.
+Two attempts built the mechanism and measured what it closes. Nothing from
+them is on master; the design below is the retained result, and the next
+implementation starts from it rather than from a branch.
 
-Prerequisites already landed on master: emitted requirements carry the
+**Reporting the requirement.** In `transition_certification.rs`, the
+`Contextual` arm's checked-derivation leg is gated on
+`obligation.is_assumable()`, so a required verification condition gets no
+derivation leg. The refusal carries a structured payload,
+`UnresolvedRequirement { proposition, context, introductions }`, on
+`ClickError` (a private field with an accessor), built from the obligation
+itself: its proposition, its context label such as `"strlen precondition"`,
+and the package 17 chain from `ProofObligation::introductions()`. The
+payload must survive unmodified up to `apply_step(ProofStep::Step)`; the
+step drivers re-wrap errors on the way up and each re-wrap must forward it.
+
+**Planning the `have`.** `Proof::step_discharging_reported_requirements`
+wraps the statement step. On a reported requirement it synthesizes the
+written form under a `QualifiedSynthesisScope`, `begin_have`s it, requires
+the scope's goal to match the reported proposition (see the comparison
+below), installs the obligation's chain with a new
+`ProofScope::with_recorded_goal_introductions` so `intro` consumes the
+recorded chain rather than one re-lowered from the synthesized text, closes
+the body with the shared smart-closure vocabulary, and `join`s, which
+retains an ordinary `ProofStep::Have` ahead of the `Step`. The loop is
+bounded structurally: each planned `have` must discharge a requirement not
+already discharged, so it is limited by the statement's distinct
+obligations. `ConstructionEvidence::CertifiedStatementStep` in
+`surface_construction.rs` is never reached for a smart `execute()`, because
+the smart step planner applies `ProofStep::Step` directly; the `have` has
+to be a real proof operation, not rendered evidence.
+
+**One goal for construction and discharge.** A freshly lowered `have`
+never compares equal to the kernel's requirement under derived
+`PartialEq`: contract lowering allocates quantifier binders from 3,100,000
+and fixed-state lowering from 2,000,000, and `Exists` includes its binder
+name in equality while synthesis names binders `__click_qN`. The retained
+answer is `propositions_are_alpha_equal`: `Exists` and `ForAll` compare
+sorts, freshen both bodies to one variable, and recurse, ignoring the
+binder name; `And`/`Or`/`Implies`/`Not` recurse; every other pair is exact
+equality. It is deliberately stricter than the older
+`propositions_alpha_equivalent`, which also canonicalizes loads. Load
+naming is handled separately by `proposition_in_canonical_load_form`,
+applied to both sides first, because contract lowering spells a load out
+where `have` lowering names it. The planner accepts a `have` by that
+comparison and the kernel discharges by the same one:
+`PureFactContext::states_required_goal` takes condition leaves through the
+exact indexed route and compares a quantified leaf against the quantified
+facts alone, so unrelated facts are never visited. Unit tests to keep:
+binder identity ignored; existential binder name ignored; binders
+introduced under every connective; a differing non-binder subterm
+rejected; a free-variable capture rejected; a differing quantifier
+rejected.
+
+**Presentation fixes that were needed.** `Exists` synthesis recovers the
+binder name the contract wrote instead of generating `__click_qN`; `intro`
+keys a universal's binding by the name the written body mentions rather
+than the recorded chain's, so a proof that restates a kernel-built goal in
+its own words resolves its own binder; the named-range loadability
+synthesizer also spells a range whose byte count folded to an element
+count, reading the start from the base pointer's own index. When a kernel
+conjunction the written form does not spell is split with `both`, and one
+conjunct is the lowering's own definedness guard, the written form travels
+with the other conjunct, so the arm below it can still be rendered; the
+arm still owes exactly its kernel conjunct.
+
+**Closing the planned body.** The shared smart vocabulary, plus: a kernel
+conjunction the written form does not spell is split with `both`; an
+existential names a witness from the call's own arguments, then zero, then
+each of the caller's own existential requirements through `choose`; the
+requirement is spelled literally, and failing that with its leading
+definedness-guard conjuncts left to the lowering that regenerates them.
+
+**Measured reach.** With the three prerequisites below landed, that
+mechanism discharged seven of the twelve affected fixtures by a planned
+`have`, plus the two hand-written spelling fixtures
+(`static_local_array_requirement_stated_explicitly`,
+`loadable_range_requirement_stated_explicitly`), which had relied on the
+deleted leg for conjunction splitting. Body shapes seen: the static family
+gets one `have` of the whole six-conjunct requirement closed by nested
+`both`/`rewrite`/`normalize`; `forall_loadable_range` gets
+`intro(); intro(); simp();`; `exists_loadable_range` gets `witness` plus
+`both`. The `cstr` fixtures' universal requirement
+`forall k. 0 <= k and k < len implies loadable(bytes[k..k + 1])` also
+closes once the written form travels across the guard split.
+
+**Prerequisites already on master.** Emitted requirements carry the
 provenance chain; existential lowering places definedness guards under
-their binder as body conjuncts (an implication there would be vacuously
-satisfiable); loads through foreign static objects and `loadable(p[a..b])`
-ranges over an external argument synthesize and round-trip.
+their binder as body conjuncts, since an implication there would be
+vacuously satisfiable; loads through foreign static objects and
+`loadable(p[a..b])` ranges over an external argument synthesize and
+round-trip.
 
 ## Remaining gaps
 
@@ -76,13 +153,15 @@ Twelve fixtures have automatic proofs that rely on the hidden discharge:
 `static_array_parity_fixed_multidimensional`, `static_local_arrays`,
 `contract_refinement_uses_implied_requirement`, plus `examples/bounded-pool`
 and `examples/owned-string`. Their C and their proofs stay as they are; the
-planner must close them. Two capabilities are missing:
+planner must close them. Two capabilities are missing, both supplied by
+the deleted derivation leg:
 
 1. **Planning a witness, a snapshot transport, and range coverage together.**
-   For the `cstr` family the goal is
-   `exists len. (not overflows(len + 1) and loadable(bytes[len..len + 1]) and ...)`.
-   After `witness`, the body owes a loadability at the current point while
-   the covering `loadable(bytes[0..len + 1])` sits at the caller's entry
+   The `cstr` family's remaining red requirement is
+   `exists len. loadable(bytes[len..len + 1])` (with its definedness guard
+   as a body conjunct). After `witness`, the body owes a loadability at the
+   current point while the covering `loadable(bytes[0..len + 1])` sits at
+   the caller's entry snapshot, across the caller's own local-declaration
    snapshot. `simp` closes the coverage alone and the covering range alone;
    no planner selects the `transport` source and composes the three. The
    hand-written form in `mdtests/cstr_readable_witness_stated_before_call.md`
@@ -95,7 +174,9 @@ planner must close them. Two capabilities are missing:
    and range spellings were added.
 
 Also known: `auto` reports it has no explicit simple certificate for an
-existential over `CInt32`, pre-existing.
+existential over `CInt32`, pre-existing; and a `both` on a guard conjunct
+leaves a body below it unrenderable when the written form cannot travel
+with either arm, the conjunct-guard record the normalization planner lacks.
 
 ## Intended regression
 
