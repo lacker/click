@@ -1301,11 +1301,33 @@ planning, validation, and the entry check.
 
 **Dependencies.** None. Not blocking 15.
 
+### Package 18: definedness guards under their binder
+
+**Landed** 2026-09-10 ("Place existential lowering guards under their
+binder"). Root cause of 10(c2)'s gap (iii): the `ExistsInt32` and
+`ExistsPointer` arms of specification lowering published the body's path
+facts beside the binder, so call-requirement wrapping folded them in as
+antecedents around the whole `Exists` with the bound variable free. All
+six quantifier arms now publish no facts; an existential's guard is a
+conjunct of its body, `Exists V. And(not overflows(V + 1), ...)`, not an
+antecedent, because an implication under an existential is vacuously
+satisfiable by an excluded witness (and empirically broke two `cstr`
+fixtures through `derive_exists_from_fact`). The head chain stops at the
+existential, since nothing under that binder is reachable before a
+`witness`. A new fixture states `strlen`'s requirement explicitly with
+`have exists ... by { witness(len = 2); both { ... } and { ... } }` and
+fails without it. Findings: `simp()` cannot close a goal whose kernel head
+is a hidden guard conjunct, because context-free normalization pairs the
+written shape with one conjunct fewer (package 8's planner would need a
+conjunct-guard record); existential body obligations are emitted as
+separate `Exists` obligations with no shared witness, pre-existing;
+`ExistsInteger` refuses guarded bodies rather than hoisting.
+
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 (both slices), 12, 13, 14, 16.
-Open: 10(c2) (blocked on the three spelling prerequisites above), then 15
-last. Package 15 may delete kernel authority while 10(c2) is open, provided
+Open: 10(c2) (gap (iii) fixed by package 18; gaps (i) and (ii) are
+package 19, in flight), then 15 last. Package 15 may delete kernel authority while 10(c2) is open, provided
 the surface's retained checked-derivation leg in
 `transition_certification.rs` moves out of the kernel with the prover.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
