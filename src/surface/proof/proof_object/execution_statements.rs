@@ -178,10 +178,10 @@ impl<'a> Proof<'a> {
         self.close_bundle_member(premises)
     }
 
-    /// One bundle member. The arithmetic candidate is tried first because its
-    /// admission test is the kernel checker itself over a premise list whose
-    /// length is the loop head's and contract's, so a miss costs one
-    /// classification per named premise rather than a search.
+    /// One bundle member. The arithmetic candidate is tried first: its
+    /// admission test is the kernel's own affine checker over the named
+    /// premise list, so a miss costs one pass over that list rather than a
+    /// search. The ordinary smart closer answers every other member.
     fn close_bundle_member(
         &self,
         premises: &[NamedArithmeticPremise],
@@ -438,12 +438,12 @@ impl<'a> Proof<'a> {
                     ClickError::new(format!("{}{detail}", error.message()))
                 }
             })?;
-        // A smart closure request is the one body this planner owns. It is
-        // spelled `close_invariants()`, `close_invariants by { simp(); }`, the
-        // omitted preservation body, and the region `simp()`, all of which
-        // arrive here as the single `simp` script above. When the ordinary
-        // closer declines, descend the bundle's own structure and offer each
-        // member the loop head's and contract's named arithmetic premises.
+        // A smart closure request is the one body this planner owns:
+        // `close_invariants()`, `close_invariants by { simp(); }`, the omitted
+        // preservation body, and the region `simp()` all reach here as the
+        // single `simp` script. When the ordinary closer declines it, descend
+        // the bundle's own structure and offer each member the loop head's and
+        // the contract's named arithmetic premises.
         let attempted = match attempted {
             Some(completed) => Some(completed),
             None if body == [ProofTactic::Simp] => {
