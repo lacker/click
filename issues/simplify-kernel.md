@@ -947,7 +947,31 @@ smart `execute(); simp();` over a disjunctive precondition expands to bare
 steps that re-verify only under the checked-derivation leg; closing that
 means the step driver reports unresolved conditions and the planner
 applies a `have` before the step, an 11-fixture blast radius with
-automatic proofs. Also left: recursive-call `decreases` is a syntactic
+automatic proofs. **Package 10(c2) is blocked** (2026-09-10) on three prerequisites; its
+working prototype is preserved unmerged on
+`claude/simplify-kernel-pkg-10c2-prototype` (commit 807fa456, red on 11
+fixtures) and must not be integrated as is. The mechanism works: the step
+refuses with a structured unresolved-requirement payload carrying the
+package 17 chain, and the planner applies a real `have` before the step
+whose goal must equal the reported proposition exactly, installing the
+chain so `intro` consumes it; it discharges the two fixtures whose
+requirement is spellable. The other eleven fail because
+`synthesize_surface_proposition` has no spelling for the requirement:
+(i) loads through foreign static or file-scope objects
+(`static_array_parity_*`, `static_local_arrays`, `file_scope_static_arrays`),
+because `qualified_load_sources` is empty at the call site since
+`record_lowering` never indexes an indexed qualified object; (ii)
+`loadable(p[a..b])` ranges over an external argument (`forall_loadable_range`,
+`exists_loadable_range`), which has no synthesizer; (iii) an overflow guard
+whose variable is bound by its own consequent (`cstr_dynamic_*`,
+`stdlib_external_contracts`): precondition lowering hoists the definedness
+guard for `len + 1` outside the `exists` that binds `len`, so the emitted
+obligation is `Implies(not overflows(len + 1), Exists len. ...)` with `len`
+free in the antecedent. (iii) is a lowering-fidelity defect, not a
+synthesis gap, and the requirement is not source-expressible in any form
+until it is fixed. Each prerequisite is its own coherent change; the
+blast radius is twelve fixtures (add
+`contract_refinement_uses_implied_requirement`). Also left: recursive-call `decreases` is a syntactic
 walk, not a prover site, and emitting it as a call obligation needs the
 caller's termination plan at the call site, which the whole-program
 termination pass does not provide; any such obligation must include
@@ -1244,8 +1268,10 @@ planning, validation, and the entry check.
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 first slice, 12, 13, 14, 16.
-Open: 10(c2) (present emitted call requirements as goals), 11 second
-slice, then 15 last.
+Open: 10(c2) (blocked on the three spelling prerequisites above), 11
+second slice, then 15 last. Package 15 may delete kernel authority while
+10(c2) is open, provided the surface's retained checked-derivation leg in
+`transition_certification.rs` moves out of the kernel with the prover.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
