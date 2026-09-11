@@ -4378,31 +4378,34 @@ pub(in crate::surface) fn resource_argument_contract_substitutions(
         .collect())
 }
 
-pub(in crate::surface) fn substitute_resource_clause_for_summary(
+pub(in crate::surface) fn substitute_resource_clause_for_summary<'a>(
     resource: &ResourceClause,
-    substitutions: &BTreeMap<String, ContractExpression>,
+    substitutions: impl Into<ContractSubstitutions<'a>>,
+) -> Result<ResourceClause, String> {
+    substitute_resource_clause_for_summary_in(resource, &substitutions.into())
+}
+
+pub(in crate::surface) fn substitute_resource_clause_for_summary_in(
+    resource: &ResourceClause,
+    substitutions: &ContractSubstitutions<'_>,
 ) -> Result<ResourceClause, String> {
     match resource {
         ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
-            binding: match crate::surface::lowering::resource_instance_rename(
-                substitutions,
-                &binding.name,
-                binding.identity,
-            ) {
+            binding: match substitutions.instance_rename(&binding.name, binding.identity) {
                 Some(name) => ResourceInstanceBinding {
                     name,
                     ..binding.clone()
                 },
                 None => binding.clone(),
             },
-            resource: Box::new(substitute_resource_clause_for_summary(
+            resource: Box::new(substitute_resource_clause_for_summary_in(
                 resource,
                 substitutions,
             )?),
         }),
         ResourceClause::Quantified { quantity, resource } => Ok(ResourceClause::Quantified {
-            quantity: substitute_contract_expression(quantity, substitutions)?,
-            resource: Box::new(substitute_resource_clause_for_summary(
+            quantity: substitute_contract_expression_in(quantity, substitutions)?,
+            resource: Box::new(substitute_resource_clause_for_summary_in(
                 resource,
                 substitutions,
             )?),
@@ -4434,7 +4437,7 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary(
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| substitute_contract_expression(argument, substitutions))
+                .map(|argument| substitute_contract_expression_in(argument, substitutions))
                 .collect::<Result<Vec<_>, _>>()?,
             parameter_types: parameter_types.clone(),
         }),
@@ -4443,21 +4446,21 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary(
 
 pub(in crate::surface) fn substitute_contract_segment(
     segment: &ContractSegment,
-    substitutions: &BTreeMap<String, ContractExpression>,
+    substitutions: &ContractSubstitutions<'_>,
 ) -> Result<ContractSegment, String> {
     let surface = match &segment.surface {
         ContractSegmentSurface::Range { base, start, end } => ContractSegmentSurface::Range {
-            base: substitute_contract_expression(base, substitutions)?,
-            start: substitute_contract_expression(start, substitutions)?,
-            end: substitute_contract_expression(end, substitutions)?,
+            base: substitute_contract_expression_in(base, substitutions)?,
+            start: substitute_contract_expression_in(start, substitutions)?,
+            end: substitute_contract_expression_in(end, substitutions)?,
         },
         surface => surface.clone(),
     };
     Ok(ContractSegment {
         state: segment.state,
-        base: substitute_c_fragment(&segment.base, substitutions)?,
-        start: substitute_c_fragment(&segment.start, substitutions)?,
-        end: substitute_c_fragment(&segment.end, substitutions)?,
+        base: substitute_c_fragment_in(&segment.base, substitutions)?,
+        start: substitute_c_fragment_in(&segment.start, substitutions)?,
+        end: substitute_c_fragment_in(&segment.end, substitutions)?,
         surface,
     })
 }

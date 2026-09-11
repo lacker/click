@@ -217,6 +217,15 @@ struct Parser {
     /// Instance binders declared by each C function block already parsed,
     /// keyed by function name. A call step reads exactly the entry for its
     /// callee, so binding a call site costs one lookup per written entry.
+    ///
+    /// This is an index over the clauses, not a second source for a binder's
+    /// spelling: every entry is copied from the `ResourceClause::Named`
+    /// binding the clause already carries, which is also the name lowering
+    /// copies into `CResourceSpec::Instance::binder`. The parser cannot read
+    /// that kernel field instead, because it resolves a call map while
+    /// parsing, before any clause is lowered; and it needs each binder's
+    /// identity, resource family, and `owns`/`produces` kind keyed by callee,
+    /// which no lowered spec offers.
     callee_resource_binders: BTreeMap<String, BTreeMap<String, CalleeResourceBinder>>,
     /// Set while a `contract` block's embedded function block is parsed: its
     /// signature names an interface, not a callable C function.

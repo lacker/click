@@ -762,9 +762,12 @@ When the contract declares proof parameters, formation also requires the
 pairing between its parameters and the implementation's binders to be forced:
 for each parameter exactly one binder of the same resource family with equal
 arguments, and the reverse. Two binders of one family, or a binder with no
-counterpart, leaves the pairing unforced. Click then refuses rather than
-choosing one, and prints the `executes` theorem that states the pairing, with
-the contract's `as` map and the implementation's binder map filled in.
+counterpart, leaves the pairing unforced. The resource family alone decides
+this, so two binders of one family on either side refuse even when their
+arguments differ and only one pairing could match. Click then refuses
+rather than choosing one, and prints the `executes` theorem that states the
+pairing, with the contract's `as` map and the implementation's binder map
+filled in.
 
 ## Requirements
 

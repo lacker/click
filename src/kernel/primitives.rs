@@ -3745,6 +3745,11 @@ pub enum CResourceSpec {
         /// written with, retained the same way [`CResourceChildSpec::name`]
         /// retains a child slot's spelling, so diagnostics can print the map
         /// the user has to write.
+        ///
+        /// The surface binding the clause carries is the single source for
+        /// this spelling: lowering copies it here, and the parser copies the
+        /// same name into its own per-callee binder index for the call maps it
+        /// checks before lowering runs.
         binder: String,
         schema: ResourceFieldSchema,
         resource: Box<CResourceSpec>,

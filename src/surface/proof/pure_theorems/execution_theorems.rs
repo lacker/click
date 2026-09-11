@@ -2,19 +2,19 @@
 //! checked execution artifacts. Only the final contract implication is new.
 use super::*;
 use crate::surface::verification::{
-    substitute_contract_segment, substitute_resource_clause_for_summary,
+    substitute_contract_segment, substitute_resource_clause_for_summary_in,
 };
 
 fn substitute_requirement(
     r: &Requirement,
-    substitutions: &BTreeMap<String, ContractExpression>,
+    substitutions: &ContractSubstitutions<'_>,
 ) -> Result<Requirement, String> {
     Ok(match r {
         Requirement::Proposition(p) => {
-            Requirement::Proposition(substitute_click_proposition(p, substitutions)?)
+            Requirement::Proposition(substitute_click_proposition_in(p, substitutions)?)
         }
         Requirement::Resource(r) => {
-            Requirement::Resource(substitute_resource_clause_for_summary(r, substitutions)?)
+            Requirement::Resource(substitute_resource_clause_for_summary_in(r, substitutions)?)
         }
         Requirement::LoadableSegment { segment } => Requirement::LoadableSegment {
             segment: substitute_contract_segment(segment, substitutions)?,
@@ -194,7 +194,7 @@ pub(super) fn verify_execution_theorem(
     let SourceProof::Script(tactics) = ensure.proof() else {
         return Err(error("requires an explicit execution proof block"));
     };
-    let mut substitutions = target
+    let values = target
         .function_block()
         .signature()
         .parameters()
@@ -211,6 +211,7 @@ pub(super) fn verify_execution_theorem(
     // named inside the block, so the target's clauses are rewritten to those
     // names before anything reads them. Goals, ambient facts, diagnostics, and
     // expanded proofs then agree with what the proof script may write.
+    let mut instance_renames = BTreeMap::new();
     let declared_parameters = target.proof_parameters().unwrap_or_default();
     if declared_parameters.len() != execution.target_instances().len() {
         return Err(error(
@@ -223,7 +224,7 @@ pub(super) fn verify_execution_theorem(
         let ResourceClause::Named { binding, resource } = declared else {
             return Err(error("a target proof parameter must be a named instance"));
         };
-        let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+        let ResourceClause::Declared { .. } = resource.as_ref() else {
             return Err(error(
                 "a target proof parameter must name a declared resource",
             ));
@@ -233,14 +234,15 @@ pub(super) fn verify_execution_theorem(
                 "the conclusion's instance map does not match the target proof parameters",
             ));
         }
-        let (key, value) = crate::surface::lowering::resource_instance_rename_entry(
-            parameter,
-            introduced,
-            name,
-            binding.identity,
+        instance_renames.insert(
+            parameter.clone(),
+            InstanceRename {
+                name: introduced.clone(),
+                identity: binding.identity,
+            },
         );
-        substitutions.insert(key, value);
     }
+    let substitutions = ContractSubstitutions::with_instance_renames(&values, &instance_renames);
     let mut block = target.function_block().clone();
     block.one_call_proof = true;
     block.signature.name = theorem.name().to_string();
@@ -258,10 +260,10 @@ pub(super) fn verify_execution_theorem(
     for clause in &mut block.ensures {
         clause.ensure = match &clause.ensure {
             Ensure::Proposition(p) => Ensure::Proposition(
-                substitute_click_proposition(p, &substitutions).map_err(ClickError::new)?,
+                substitute_click_proposition_in(p, &substitutions).map_err(ClickError::new)?,
             ),
             Ensure::Resource(r) => Ensure::Resource(
-                substitute_resource_clause_for_summary(r, &substitutions)
+                substitute_resource_clause_for_summary_in(r, &substitutions)
                     .map_err(ClickError::new)?,
             ),
         };
