@@ -9090,38 +9090,121 @@ fn callback_status_proofs_expand_at_every_smart_site() {
     }
 }
 
-#[test]
-fn nested_callback_status_cases_expand_at_every_theorem_site() {
+fn nested_callback_status_sources() -> (String, Vec<(String, String)>) {
     let markdown = include_str!("../../../mdtests/c_contract_executes_status_nested.md");
     let mdtest =
         crate::cli::parse_mdtest(std::path::Path::new("nested-status.md"), markdown).unwrap();
-    let source = mdtest.click_source.as_deref().unwrap();
+    let source = mdtest.click_source.as_deref().unwrap().to_string();
     let c_sources = mdtest
         .c_sources
         .iter()
+        .map(|(name, source)| (name.clone(), source.clone()))
+        .collect::<Vec<_>>();
+    (source, c_sources)
+}
+
+/// The `lift.` theorem sites of the nested status fixture, grouped so each
+/// expansion test below stays independently bounded. The ordinary verification
+/// test asserts this inventory; update the groups when it changes.
+fn nested_callback_status_lift_site_groups() -> Vec<Vec<usize>> {
+    vec![vec![6, 7], vec![8, 10, 11], vec![13, 16]]
+}
+
+fn expand_nested_callback_lift_site(source: &str, c_sources: &[(&str, &str)], source_index: usize) {
+    let position =
+        c0_tactic_source_position(source, c_sources, "lift.ensures_0", source_index).unwrap();
+    let expanded =
+        expand_c0_tactic_source_at(source, c_sources, position.line, position.column).unwrap();
+    verify_c0_sources(&expanded, c_sources).unwrap_or_else(|error| {
+        panic!(
+            "{}:{}: {}\n{expanded}",
+            position.line,
+            position.column,
+            error.message()
+        );
+    });
+}
+
+#[test]
+fn nested_callback_status_cases_verify() {
+    let (source, c_sources) = nested_callback_status_sources();
+    let c_sources = c_sources
+        .iter()
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
-    verify_c0_sources(source, &c_sources).expect("nested status proofs verify");
-    let sites = c0_smart_tactic_source_sites(source, &c_sources).unwrap();
-    let sites = sites
+    verify_c0_sources(&source, &c_sources).expect("nested status proofs verify");
+    let sites = c0_smart_tactic_source_sites(&source, &c_sources).unwrap();
+    let lift = sites
         .iter()
         .filter(|site| site.claim_label.starts_with("lift."))
+        .map(|site| (site.source_index, site.tactic_name.clone()))
         .collect::<Vec<_>>();
-    assert!(!sites.is_empty());
-    for site in sites {
-        let position =
-            c0_tactic_source_position(source, &c_sources, &site.claim_label, site.source_index)
-                .unwrap();
-        let expanded =
-            expand_c0_tactic_source_at(source, &c_sources, position.line, position.column).unwrap();
-        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
-            panic!(
-                "{}:{}: {}\n{expanded}",
-                position.line,
-                position.column,
-                error.message()
-            );
-        });
+    let expected = [
+        (6, "have"),
+        (7, "have"),
+        (8, "have"),
+        (10, "have"),
+        (11, "have"),
+        (13, "simp"),
+        (16, "simp"),
+    ];
+    assert_eq!(
+        lift.iter()
+            .map(|(index, tactic)| (*index, tactic.as_str()))
+            .collect::<Vec<_>>(),
+        expected,
+        "the split expansion tests must cover every `lift.` theorem site",
+    );
+    let grouped = nested_callback_status_lift_site_groups();
+    assert_eq!(
+        grouped
+            .iter()
+            .flatten()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+            .iter()
+            .map(|(index, _)| index)
+            .collect::<std::collections::BTreeSet<_>>(),
+        "each `lift.` site must belong to exactly one expansion group",
+    );
+}
+
+#[test]
+fn nested_callback_status_item_zero_cases_expand_and_reverify() {
+    let (source, c_sources) = nested_callback_status_sources();
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(&source, &c_sources).expect("nested status proofs verify");
+    for source_index in nested_callback_status_lift_site_groups()[0].clone() {
+        expand_nested_callback_lift_site(&source, &c_sources, source_index);
+    }
+}
+
+#[test]
+fn nested_callback_status_item_branch_cases_expand_and_reverify() {
+    let (source, c_sources) = nested_callback_status_sources();
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(&source, &c_sources).expect("nested status proofs verify");
+    for source_index in nested_callback_status_lift_site_groups()[1].clone() {
+        expand_nested_callback_lift_site(&source, &c_sources, source_index);
+    }
+}
+
+#[test]
+fn nested_callback_status_closer_cases_expand_and_reverify() {
+    let (source, c_sources) = nested_callback_status_sources();
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(&source, &c_sources).expect("nested status proofs verify");
+    for source_index in nested_callback_status_lift_site_groups()[2].clone() {
+        expand_nested_callback_lift_site(&source, &c_sources, source_index);
     }
 }
 
