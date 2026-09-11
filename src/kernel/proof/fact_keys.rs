@@ -5,7 +5,8 @@
 //! validates every selected candidate.
 
 use crate::kernel::{
-    AlgebraicTerm, IntegerComparisonOperator, IntegerTerm, MachineIntegerType, Sort,
+    AlgebraicTerm, IntegerComparisonOperator, IntegerTerm, MachineIntegerType, SharedCMemory,
+    SharedIntegerTerm, Sort,
 };
 use crate::kernel::{
     Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
@@ -14,8 +15,12 @@ use crate::kernel::{
 };
 use num_bigint::BigInt;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Weak};
 
 #[cfg(test)]
 thread_local! {
@@ -486,8 +491,43 @@ enum AlphaPropositionKey {
     Exists(Sort, Box<Self>),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct IntegerEqualityAlphaKey(AlphaPropositionKey);
+#[derive(Clone)]
+pub(crate) struct IntegerEqualityAlphaKey {
+    key: AlphaPropositionKey,
+    work_units: usize,
+}
+
+impl fmt::Debug for IntegerEqualityAlphaKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.key.fmt(formatter)
+    }
+}
+
+impl PartialEq for IntegerEqualityAlphaKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for IntegerEqualityAlphaKey {}
+
+impl PartialOrd for IntegerEqualityAlphaKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for IntegerEqualityAlphaKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl Hash for IntegerEqualityAlphaKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
 
 impl IntegerEqualityAlphaKey {
     pub(crate) fn fingerprint(&self) -> u64 {
@@ -495,16 +535,34 @@ impl IntegerEqualityAlphaKey {
         self.hash(&mut hasher);
         hasher.finish()
     }
+
+    pub(crate) fn checked_fingerprint(&self) -> Option<u64> {
+        if crate::instrumentation::deadline_exceeded_with_work(self.work_units) {
+            return None;
+        }
+        Some(self.fingerprint())
+    }
+
+    pub(crate) fn checked_eq(&self, other: &Self) -> Option<bool> {
+        if crate::instrumentation::deadline_exceeded_with_work(
+            self.work_units.saturating_add(other.work_units),
+        ) {
+            return None;
+        }
+        Some(self == other)
+    }
 }
 
 /// Alpha key used by the checked fact index for Integer equality atoms.
 ///
-/// Integer range-fold binders are canonicalized by the same typed alpha
-/// environment used by the normalization bridge.  The entry point is kept
-/// deliberately narrow: only a true `IntegerEqual` condition with a
-/// range-fold operand at its root is eligible. Scalar arithmetic equalities
-/// remain on their existing exact/certificate path, so indexing them cannot
-/// turn a sequence of growing arithmetic facts into repeated deep walks.
+/// Integer range-fold binders are canonicalized by a typed alpha environment.
+/// Load-bearing C payloads retain their exact `SharedCMemory` identities, so
+/// this index is authoritative only for equalities whose loads name the same
+/// snapshots. The entry point is deliberately narrow: only a true
+/// `IntegerEqual` condition with a range-fold operand at its root is eligible.
+/// Scalar arithmetic equalities remain on their existing exact/certificate
+/// path, so indexing them cannot turn a sequence of growing arithmetic facts
+/// into repeated deep walks.
 pub(crate) fn integer_equality_alpha_key(
     proposition: &Proposition,
 ) -> Option<IntegerEqualityAlphaKey> {
@@ -517,8 +575,8 @@ pub(crate) fn integer_equality_alpha_key(
     {
         return None;
     }
-    alpha_proposition_key::<false>(proposition, &mut BTreeMap::new(), &mut 0)
-        .map(IntegerEqualityAlphaKey)
+    snapshot_alpha_proposition_key(proposition)
+        .map(|(key, work_units)| IntegerEqualityAlphaKey { key, work_units })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -594,6 +652,7 @@ enum AlphaBitvectorKey {
         arguments: Vec<Self>,
     },
     Load(Box<AlphaPointerKey>),
+    RegisteredLoad(AlphaRegisteredLoadId),
     Address(Box<AlphaPointerKey>),
     IntegerToMachine(MachineIntegerType, AlphaIntegerKey),
     Int64From32(Box<Self>),
@@ -604,11 +663,70 @@ enum AlphaBitvectorKey {
     UInt64FromInt64(Box<Self>),
 }
 
+/// O(1) identity for a retained memory snapshot.
+///
+/// A same-arena `(arena, id)` pair is the exact identity assigned by the
+/// immutable memory arena.  Handles are retained so the identity cannot be
+/// observed after its backing snapshot has been dropped.  Cross-arena
+/// snapshots deliberately compare unequal: structural equality there would
+/// scan the complete memory, so the exact authority falls back to its normal
+/// proof path instead of consulting unrelated heap/history state.
+#[derive(Clone)]
+struct AlphaSnapshotKey {
+    identity: (u32, u32),
+    _snapshot: SharedCMemory,
+}
+
+impl AlphaSnapshotKey {
+    fn new(snapshot: &SharedCMemory) -> Self {
+        Self {
+            identity: snapshot.arena_id(),
+            _snapshot: snapshot.clone(),
+        }
+    }
+}
+
+impl fmt::Debug for AlphaSnapshotKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("AlphaSnapshotKey")
+            .field(&self.identity)
+            .finish()
+    }
+}
+
+impl PartialEq for AlphaSnapshotKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+
+impl Eq for AlphaSnapshotKey {}
+
+impl PartialOrd for AlphaSnapshotKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AlphaSnapshotKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.identity.cmp(&other.identity)
+    }
+}
+
+impl Hash for AlphaSnapshotKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity.hash(state);
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPointerOffsetKey {
     Constant(i64),
     Variable(AlphaVariableKey),
     Add(Box<Self>, Box<Self>),
+    RegisteredLoad(AlphaRegisteredLoadId),
     Int32Scaled {
         value: Box<AlphaBitvectorKey>,
         byte_width: i64,
@@ -635,6 +753,168 @@ enum AlphaPointerBlockKey {
 struct AlphaPointerKey {
     block: AlphaPointerBlockKey,
     offset: AlphaPointerOffsetKey,
+}
+
+/// A compact reference to one live canonical registered-load node. The node
+/// owns its snapshot and its immediate pointer descriptor, while nested load
+/// references own only their child nodes. This makes each key retain exactly
+/// the reachable load DAG; the process-local interner stores weak records and
+/// cannot keep unrelated snapshots alive after their keys are dropped.
+#[derive(Clone)]
+struct AlphaRegisteredLoadId(Arc<AlphaRegisteredLoadRecord>);
+
+impl AlphaRegisteredLoadId {
+    fn id(&self) -> u64 {
+        self.0.id
+    }
+}
+
+impl fmt::Debug for AlphaRegisteredLoadId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("AlphaRegisteredLoadId")
+            .field(&self.id())
+            .finish()
+    }
+}
+
+impl PartialEq for AlphaRegisteredLoadId {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for AlphaRegisteredLoadId {}
+
+impl PartialOrd for AlphaRegisteredLoadId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AlphaRegisteredLoadId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id().cmp(&other.id())
+    }
+}
+
+impl Hash for AlphaRegisteredLoadId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+struct AlphaRegisteredLoadRecord {
+    id: u64,
+    _interner: Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>,
+    snapshot: AlphaSnapshotKey,
+    pointer: AlphaPointerKey,
+}
+
+struct AlphaRegisteredLoadInterner {
+    buckets: HashMap<u64, Vec<Weak<AlphaRegisteredLoadRecord>>>,
+    cleanup: VecDeque<u64>,
+}
+
+impl AlphaRegisteredLoadInterner {
+    fn clean_some(&mut self) -> Option<()> {
+        let limit = self.cleanup.len().min(8);
+        for _ in 0..limit {
+            let Some(fingerprint) = self.cleanup.pop_front() else {
+                break;
+            };
+            let Some(bucket) = self.buckets.get_mut(&fingerprint) else {
+                continue;
+            };
+            if crate::instrumentation::deadline_exceeded_with_work(bucket.len().max(1)) {
+                self.cleanup.push_front(fingerprint);
+                return None;
+            }
+            bucket.retain(|candidate| candidate.strong_count() != 0);
+            let bucket_is_empty = bucket.is_empty();
+            if bucket_is_empty {
+                self.buckets.remove(&fingerprint);
+            } else {
+                // Keep a live bucket on the bounded queue so a later drop of
+                // its records is eventually observed even if no new query
+                // hashes this fingerprint.
+                self.cleanup.push_back(fingerprint);
+            }
+        }
+        Some(())
+    }
+}
+
+thread_local! {
+    static ALPHA_REGISTERED_LOAD_INTERNER:
+        std::cell::RefCell<Weak<std::sync::Mutex<AlphaRegisteredLoadInterner>>> =
+            const { std::cell::RefCell::new(Weak::new()) };
+}
+
+static NEXT_ALPHA_REGISTERED_LOAD_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+fn alpha_registered_load_interner() -> Option<Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>> {
+    ALPHA_REGISTERED_LOAD_INTERNER.with(|cell| {
+        if let Some(interner) = cell.borrow().upgrade() {
+            return Some(interner);
+        }
+        let interner = Arc::new(std::sync::Mutex::new(AlphaRegisteredLoadInterner {
+            buckets: HashMap::new(),
+            cleanup: VecDeque::new(),
+        }));
+        *cell.borrow_mut() = Arc::downgrade(&interner);
+        Some(interner)
+    })
+}
+
+fn alpha_registered_load_descriptor_fingerprint(
+    snapshot: &AlphaSnapshotKey,
+    pointer: &AlphaPointerKey,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    snapshot.hash(&mut hasher);
+    pointer.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn intern_alpha_registered_load(
+    interner: &Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>,
+    snapshot: AlphaSnapshotKey,
+    pointer: AlphaPointerKey,
+) -> Option<AlphaRegisteredLoadId> {
+    let fingerprint = alpha_registered_load_descriptor_fingerprint(&snapshot, &pointer);
+    let mut interner_state = interner.lock().ok()?;
+    interner_state.clean_some()?;
+    let bucket = interner_state.buckets.entry(fingerprint).or_default();
+    if crate::instrumentation::deadline_exceeded_with_work(bucket.len().max(1)) {
+        return None;
+    }
+    bucket.retain(|candidate| candidate.strong_count() != 0);
+    for candidate in bucket.iter() {
+        let Some(record) = candidate.upgrade() else {
+            continue;
+        };
+        if record.snapshot == snapshot && record.pointer == pointer {
+            return Some(AlphaRegisteredLoadId(record));
+        }
+    }
+    let id = NEXT_ALPHA_REGISTERED_LOAD_ID
+        .fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |value| value.checked_add(1),
+        )
+        .ok()?;
+    let record = Arc::new(AlphaRegisteredLoadRecord {
+        id,
+        _interner: interner.clone(),
+        snapshot,
+        pointer,
+    });
+    bucket.push(Arc::downgrade(&record));
+    interner_state.cleanup.push_back(fingerprint);
+    Some(AlphaRegisteredLoadId(record))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -665,6 +945,74 @@ enum AlphaConditionKey {
 struct AlphaIntegerKey {
     nodes: Vec<AlphaIntegerNode>,
     root: usize,
+}
+
+/// Opaque, exact alpha identity for one root Integer range fold.
+///
+/// The inner node graph retains carrier-aware binders and, in the snapshot
+/// aware mode, the `SharedCMemory` handles named by load-bearing C payloads.
+/// Consumers may hash or compare this value, but cannot inspect or rebuild its
+/// structural representation on an arithmetic hot path.
+#[derive(Clone)]
+pub(crate) struct IntegerFoldAlphaKey {
+    key: AlphaIntegerKey,
+    work_units: usize,
+}
+
+impl fmt::Debug for IntegerFoldAlphaKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.key.fmt(formatter)
+    }
+}
+
+impl PartialEq for IntegerFoldAlphaKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for IntegerFoldAlphaKey {}
+
+impl PartialOrd for IntegerFoldAlphaKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for IntegerFoldAlphaKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl Hash for IntegerFoldAlphaKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
+
+impl IntegerFoldAlphaKey {
+    pub(crate) fn fingerprint(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub(crate) fn checked_fingerprint(&self) -> Option<u64> {
+        if crate::instrumentation::deadline_exceeded_with_work(self.work_units) {
+            return None;
+        }
+        Some(self.fingerprint())
+    }
+
+    pub(crate) fn checked_eq(&self, other: &Self) -> Option<bool> {
+        if crate::instrumentation::deadline_exceeded_with_work(
+            self.work_units.saturating_add(other.work_units),
+        ) {
+            return None;
+        }
+        Some(self == other)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -710,6 +1058,11 @@ fn alpha_integer_key(
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
+        snapshot_aware: false,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
     };
     let mut next_binder = environment
         .integer
@@ -729,12 +1082,48 @@ fn alpha_integer_key(
 /// reason about a term outside this supported fragment receives `None` and
 /// can continue through its ordinary proof path.
 pub(crate) fn integer_terms_alpha_equivalent(
-    left: &crate::kernel::SharedIntegerTerm,
-    right: &crate::kernel::SharedIntegerTerm,
+    left: &SharedIntegerTerm,
+    right: &SharedIntegerTerm,
 ) -> Option<bool> {
+    if matches!(left.as_ref(), IntegerTerm::RangeFold { .. })
+        || matches!(right.as_ref(), IntegerTerm::RangeFold { .. })
+    {
+        let left_key = integer_fold_alpha_key(left)?;
+        let right_key = integer_fold_alpha_key(right)?;
+        return left_key.checked_eq(&right_key);
+    }
     let left_key = alpha_integer_key(left.as_ref(), &mut BTreeMap::new())?;
     let right_key = alpha_integer_key(right.as_ref(), &mut BTreeMap::new())?;
     Some(left_key == right_key)
+}
+
+/// Build the exact snapshot-aware alpha identity used by fold comparisons.
+/// Only a root `IntegerTerm::RangeFold` is admitted; callers needing a larger
+/// expression retain the ordinary proof path instead of treating a partial
+/// key as authority.
+pub(crate) fn integer_fold_alpha_key(term: &SharedIntegerTerm) -> Option<IntegerFoldAlphaKey> {
+    if !matches!(term.as_ref(), IntegerTerm::RangeFold { .. }) {
+        return None;
+    }
+    let mut environment = AlphaBindings {
+        integer: BTreeMap::new(),
+        bitvector: BTreeMap::new(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+        snapshot_aware: true,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
+    };
+    let mut next_binder = 0;
+    alpha_integer_key_with_bindings(term.as_ref(), &mut environment, &mut next_binder).map(|key| {
+        IntegerFoldAlphaKey {
+            key,
+            work_units: environment.work_units,
+        }
+    })
 }
 
 struct AlphaBindings {
@@ -743,6 +1132,22 @@ struct AlphaBindings {
     integer_scope: u64,
     bitvector_scope: u64,
     next_scope_id: u64,
+    snapshot_aware: bool,
+    registered_load_stack: BTreeSet<Variable>,
+    registered_load_memo: HashMap<(Variable, u64, u64, usize), (AlphaRegisteredLoadId, usize)>,
+    load_interner: Option<Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>>,
+    work_units: usize,
+}
+
+fn alpha_work_checkpoint(bindings: &mut AlphaBindings, units: usize) -> Option<()> {
+    bindings.work_units = bindings.work_units.saturating_add(units);
+    let exhausted = if bindings.snapshot_aware {
+        crate::instrumentation::deadline_exceeded_with_work(units)
+    } else {
+        crate::instrumentation::record_deterministic_work(units);
+        false
+    };
+    (!exhausted).then_some(())
 }
 
 fn alpha_integer_key_with_bindings(
@@ -778,10 +1183,10 @@ fn alpha_integer_node(
         return Some(*index);
     }
     let term = shared.as_ref();
-    crate::instrumentation::record_deterministic_work(1);
+    alpha_work_checkpoint(bindings, 1)?;
     let node = match term {
         IntegerTerm::Constant(value) => {
-            crate::instrumentation::record_deterministic_work(value.bits() as usize + 1);
+            alpha_work_checkpoint(bindings, (value.bits() as usize).saturating_add(1))?;
             AlphaIntegerNode::Constant(value.clone())
         }
         IntegerTerm::Variable(variable) => {
@@ -927,17 +1332,94 @@ fn alpha_variable_key<const ALLOW_LOADS: bool>(
     )
 }
 
+fn alpha_variable_key_with_bindings<const ALLOW_LOADS: bool>(
+    variable: Variable,
+    bindings: &AlphaBindings,
+    carrier_bindings: &BTreeMap<Variable, usize>,
+) -> Option<AlphaVariableKey> {
+    if let Some(ordinal) = carrier_bindings.get(&variable) {
+        return Some(AlphaVariableKey::Bound(*ordinal));
+    }
+    if bindings.snapshot_aware && crate::kernel::is_load_variable(&variable) {
+        // An unbound registered load is represented by its snapshot-bearing
+        // load node at bitvector/pointer-offset positions.  Pointer blocks
+        // and logical variables have no load form, so reject them here and
+        // let the ordinary checked path decide the fact.
+        return None;
+    }
+    alpha_variable_key::<ALLOW_LOADS>(variable, carrier_bindings)
+}
+
+fn alpha_registered_load_pointer_with_bindings<const ALLOW_LOADS: bool>(
+    variable: Variable,
+    bindings: &mut AlphaBindings,
+    next_binder: &mut usize,
+) -> Option<AlphaRegisteredLoadId> {
+    let cache_key = (
+        variable,
+        bindings.integer_scope,
+        bindings.bitvector_scope,
+        *next_binder,
+    );
+    if let Some((load_id, next_after)) = bindings.registered_load_memo.get(&cache_key) {
+        *next_binder = *next_after;
+        return Some(load_id.clone());
+    }
+    if !bindings.registered_load_stack.insert(variable) {
+        return None;
+    }
+    let result = (|| {
+        let (memory, pointer) = crate::kernel::registered_load_for_variable(&variable)?;
+        let snapshot = AlphaSnapshotKey::new(&memory);
+        let pointer =
+            alpha_pointer_key_with_bindings::<ALLOW_LOADS>(&pointer, bindings, next_binder)?;
+        let interner = match bindings.load_interner.clone() {
+            Some(interner) => interner,
+            None => {
+                let interner = alpha_registered_load_interner()?;
+                bindings.load_interner = Some(interner.clone());
+                interner
+            }
+        };
+        alpha_work_checkpoint(bindings, 1)?;
+        let load_id = intern_alpha_registered_load(&interner, snapshot, pointer)?;
+        Some((load_id, *next_binder))
+    })();
+    bindings.registered_load_stack.remove(&variable);
+    let (load_id, next_after) = result?;
+    bindings
+        .registered_load_memo
+        .insert(cache_key, (load_id.clone(), next_after));
+    Some(load_id)
+}
+
 fn alpha_pointer_offset_key_with_bindings<const ALLOW_LOADS: bool>(
     offset: &PointerOffsetTerm,
     bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaPointerOffsetKey> {
-    crate::instrumentation::record_deterministic_work(1);
+    alpha_work_checkpoint(bindings, 1)?;
     Some(match offset {
         PointerOffsetTerm::Constant(value) => AlphaPointerOffsetKey::Constant(*value),
-        PointerOffsetTerm::Variable(variable) => AlphaPointerOffsetKey::Variable(
-            alpha_variable_key::<ALLOW_LOADS>(*variable, &bindings.bitvector)?,
-        ),
+        PointerOffsetTerm::Variable(variable)
+            if bindings.snapshot_aware
+                && crate::kernel::is_load_variable(variable)
+                && !bindings.bitvector.contains_key(variable) =>
+        {
+            let load_id = alpha_registered_load_pointer_with_bindings::<ALLOW_LOADS>(
+                *variable,
+                bindings,
+                next_binder,
+            )?;
+            AlphaPointerOffsetKey::RegisteredLoad(load_id)
+        }
+        PointerOffsetTerm::Variable(variable) => {
+            AlphaPointerOffsetKey::Variable(alpha_variable_key_with_bindings::<ALLOW_LOADS>(
+                *variable,
+                bindings,
+                &bindings.bitvector,
+            )?)
+        }
         PointerOffsetTerm::Add(left, right) => AlphaPointerOffsetKey::Add(
             Box::new(alpha_pointer_offset_key_with_bindings::<ALLOW_LOADS>(
                 left,
@@ -981,7 +1463,7 @@ fn alpha_pointer_key_with_bindings<const ALLOW_LOADS: bool>(
     bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaPointerKey> {
-    crate::instrumentation::record_deterministic_work(1);
+    alpha_work_checkpoint(bindings, 1)?;
     let block = match &pointer.block {
         PointerBlock::Concrete(name) => AlphaPointerBlockKey::Concrete(name.clone()),
         PointerBlock::StringLiteral { identity, bytes } => AlphaPointerBlockKey::StringLiteral {
@@ -989,13 +1471,18 @@ fn alpha_pointer_key_with_bindings<const ALLOW_LOADS: bool>(
             bytes: bytes.clone(),
         },
         PointerBlock::Function(name) => AlphaPointerBlockKey::Function(name.clone()),
-        PointerBlock::FunctionSymbolic(variable) => AlphaPointerBlockKey::FunctionSymbolic(
-            alpha_variable_key::<ALLOW_LOADS>(*variable, &bindings.bitvector)?,
-        ),
+        PointerBlock::FunctionSymbolic(variable) => {
+            AlphaPointerBlockKey::FunctionSymbolic(alpha_variable_key_with_bindings::<ALLOW_LOADS>(
+                *variable,
+                bindings,
+                &bindings.bitvector,
+            )?)
+        }
         PointerBlock::ExternalArgument => AlphaPointerBlockKey::ExternalArgument,
         PointerBlock::Symbolic(variable) => {
-            AlphaPointerBlockKey::Symbolic(alpha_variable_key::<ALLOW_LOADS>(
+            AlphaPointerBlockKey::Symbolic(alpha_variable_key_with_bindings::<ALLOW_LOADS>(
                 *variable,
+                bindings,
                 &bindings.bitvector,
             )?)
         }
@@ -1016,10 +1503,11 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
     bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaBitvectorKey> {
-    crate::instrumentation::record_deterministic_work(1);
+    alpha_work_checkpoint(bindings, 1)?;
     // Load variables hide snapshots too: their binders cannot be treated as
     // opaque free variables by the memory-free structural authority.
     if !ALLOW_LOADS
+        && !bindings.snapshot_aware
         && (matches!(term, Bitvector32Term::MemoryLoad(..))
             || matches!(term, Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable)))
     {
@@ -1046,21 +1534,36 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
         Bitvector32Term::Int64Constant(value) => AlphaBitvectorKey::Int64Constant(*value),
         Bitvector32Term::UInt64Constant(value) => AlphaBitvectorKey::UInt64Constant(*value),
         Bitvector32Term::Variable(variable) => {
-            match crate::kernel::is_load_variable(variable)
-                .then(|| crate::kernel::registered_load_for_variable(variable))
-                .flatten()
-            {
-                Some((_, pointer)) => AlphaBitvectorKey::Load(Box::new(
-                    alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
-                        &pointer,
+            if let Some(ordinal) = bindings.bitvector.get(variable) {
+                AlphaBitvectorKey::Variable(AlphaVariableKey::Bound(*ordinal))
+            } else {
+                match crate::kernel::is_load_variable(variable)
+                    .then(|| crate::kernel::registered_load_for_variable(variable))
+                    .flatten()
+                {
+                    Some(_) if bindings.snapshot_aware => {
+                        let load_id = alpha_registered_load_pointer_with_bindings::<ALLOW_LOADS>(
+                            *variable,
+                            bindings,
+                            next_binder,
+                        )?;
+                        AlphaBitvectorKey::RegisteredLoad(load_id)
+                    }
+                    Some((_, pointer)) => {
+                        AlphaBitvectorKey::Load(Box::new(alpha_pointer_key_with_bindings::<
+                            ALLOW_LOADS,
+                        >(
+                            &pointer, bindings, next_binder
+                        )?))
+                    }
+                    None => AlphaBitvectorKey::Variable(alpha_variable_key_with_bindings::<
+                        ALLOW_LOADS,
+                    >(
+                        *variable,
                         bindings,
-                        next_binder,
-                    )?,
-                )),
-                None => AlphaBitvectorKey::Variable(alpha_variable_key::<ALLOW_LOADS>(
-                    *variable,
-                    &bindings.bitvector,
-                )?),
+                        &bindings.bitvector,
+                    )?),
+                }
             }
         }
         Bitvector32Term::Add(left, right) => binary(AlphaBitvectorBinaryOp::Add, left, right)?,
@@ -1294,6 +1797,23 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
         }
         Bitvector32Term::ClickFunctionApplication { .. }
         | Bitvector32Term::AlgebraicMatch { .. } => return None,
+        Bitvector32Term::MemoryLoad(memory, pointer) if bindings.snapshot_aware => {
+            let snapshot = AlphaSnapshotKey::new(memory);
+            let pointer =
+                alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?;
+            let interner = match bindings.load_interner.clone() {
+                Some(interner) => interner,
+                None => {
+                    let interner = alpha_registered_load_interner()?;
+                    bindings.load_interner = Some(interner.clone());
+                    interner
+                }
+            };
+            alpha_work_checkpoint(bindings, 1)?;
+            AlphaBitvectorKey::RegisteredLoad(intern_alpha_registered_load(
+                &interner, snapshot, pointer,
+            )?)
+        }
         Bitvector32Term::MemoryLoad(_, pointer) => AlphaBitvectorKey::Load(Box::new(
             alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
         )),
@@ -1361,6 +1881,11 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
+        snapshot_aware: false,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
     };
     let result = alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(term, &mut typed, next_binder);
     *bindings = typed.bitvector;
@@ -1372,7 +1897,7 @@ fn alpha_condition_key_with_bindings<const ALLOW_LOADS: bool>(
     bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaConditionKey> {
-    crate::instrumentation::record_deterministic_work(1);
+    alpha_work_checkpoint(bindings, 1)?;
     let mut binary =
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaConditionKey> {
             Some(AlphaConditionKey::Binary(
@@ -1384,8 +1909,9 @@ fn alpha_condition_key_with_bindings<const ALLOW_LOADS: bool>(
     Some(match condition {
         ConditionTerm::Constant(value) => AlphaConditionKey::Constant(*value),
         ConditionTerm::Variable(variable) => {
-            AlphaConditionKey::Variable(alpha_variable_key::<ALLOW_LOADS>(
+            AlphaConditionKey::Variable(alpha_variable_key_with_bindings::<ALLOW_LOADS>(
                 *variable,
+                bindings,
                 &bindings.bitvector,
             )?)
         }
@@ -1472,8 +1998,35 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
+        snapshot_aware: false,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
     };
     alpha_proposition_key_with_bindings::<ALLOW_LOADS>(proposition, &mut environment, next_binder)
+}
+
+/// Exact alpha identity for fold equalities whose C payload contains loads.
+/// Retained snapshot handles make each load part of the key while the
+/// pointer visitor canonicalizes fold-bound C variables by ordinal.
+fn snapshot_alpha_proposition_key(
+    proposition: &Proposition,
+) -> Option<(AlphaPropositionKey, usize)> {
+    let mut environment = AlphaBindings {
+        integer: BTreeMap::new(),
+        bitvector: BTreeMap::new(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+        snapshot_aware: true,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
+    };
+    let key = alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)?;
+    Some((key, environment.work_units))
 }
 
 fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
@@ -1481,7 +2034,7 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
     bindings: &mut AlphaBindings,
     next_binder: &mut usize,
 ) -> Option<AlphaPropositionKey> {
-    crate::instrumentation::record_deterministic_work(1);
+    alpha_work_checkpoint(bindings, 1)?;
     #[cfg(test)]
     ALPHA_PROPOSITION_KEY_VISITS.with(|visits| visits.set(visits.get() + 1));
 
@@ -1789,6 +2342,669 @@ mod integer_alpha_scaling_tests {
         }
         for pair in work.windows(2) {
             assert!(pair[1] <= pair[0] * 3, "{work:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_alpha_tests {
+    use super::*;
+    use crate::kernel::{
+        CMemory, CValue, IntegerRangeFoldIndex, SharedIntegerRangeEndpoint, SharedIntegerTerm,
+        SharedMachineIntegerTerm,
+    };
+
+    fn int32_index() -> IntegerRangeFoldIndex {
+        IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(2)),
+        }
+    }
+
+    fn fold_body(memory: &SharedCMemory, item: Variable) -> IntegerTerm {
+        IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+            MachineIntegerType::Int32,
+            Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(Pointer {
+                    block: "snapshot-alpha".into(),
+                    offset: PointerOffsetTerm::Variable(item),
+                }),
+            ),
+        ))
+    }
+
+    fn fold(memory: &SharedCMemory, accumulator: Variable, item: Variable) -> IntegerTerm {
+        IntegerTerm::range_fold(
+            int32_index(),
+            IntegerTerm::constant_i64(0),
+            accumulator,
+            item,
+            fold_body(memory, item),
+        )
+    }
+
+    fn registered_load_interner_stats() -> (usize, usize) {
+        ALPHA_REGISTERED_LOAD_INTERNER.with(|cell| {
+            let Some(interner) = cell.borrow().upgrade() else {
+                return (0, 0);
+            };
+            let Ok(interner) = interner.lock() else {
+                return (0, 0);
+            };
+            let entries = interner.buckets.values().map(Vec::len).sum();
+            let live = interner
+                .buckets
+                .values()
+                .flat_map(|bucket| bucket.iter())
+                .filter(|candidate| candidate.strong_count() != 0)
+                .count();
+            (entries, live)
+        })
+    }
+
+    fn registered_load_interner_live_snapshots() -> BTreeSet<(u32, u32)> {
+        ALPHA_REGISTERED_LOAD_INTERNER.with(|cell| {
+            let Some(interner) = cell.borrow().upgrade() else {
+                return BTreeSet::new();
+            };
+            let Ok(interner) = interner.lock() else {
+                return BTreeSet::new();
+            };
+            interner
+                .buckets
+                .values()
+                .flat_map(|bucket| bucket.iter())
+                .filter_map(|candidate| candidate.upgrade())
+                .map(|record| record.snapshot.identity)
+                .collect()
+        })
+    }
+
+    fn equality(term: IntegerTerm) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(IntegerTerm::constant_i64(9).into(), term.into()),
+            true,
+        )
+    }
+
+    #[test]
+    fn snapshot_alpha_fold_loads_require_exact_snapshot_identity() {
+        let pointer = Pointer {
+            block: "snapshot-alpha".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha", 8));
+        let after = crate::kernel::intern_c_memory(
+            before
+                .as_ref()
+                .clone()
+                .store(pointer, CValue::Int32(Bitvector32Term::Constant(7))),
+        );
+
+        let source = integer_equality_alpha_key(&equality(fold(
+            &before,
+            Variable(310_000),
+            Variable(310_001),
+        )))
+        .expect("explicit load fold should have an exact alpha key");
+        let renamed = integer_equality_alpha_key(&equality(fold(
+            &before,
+            Variable(311_000),
+            Variable(311_001),
+        )))
+        .expect("renamed explicit load fold should have an exact alpha key");
+        let changed_snapshot = integer_equality_alpha_key(&equality(fold(
+            &after,
+            Variable(311_000),
+            Variable(311_001),
+        )))
+        .expect("changed-snapshot fold should still have a key");
+
+        assert_eq!(source, renamed);
+        assert_ne!(source, changed_snapshot);
+    }
+
+    #[test]
+    fn snapshot_alpha_rejects_unknown_registered_loads() {
+        let unknown_load = Variable((1 << 40) + 313);
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha", 8));
+        let term = IntegerTerm::range_fold(
+            int32_index(),
+            IntegerTerm::constant_i64(0),
+            Variable(312_000),
+            Variable(312_001),
+            IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                Bitvector32Term::MemoryLoad(
+                    memory,
+                    Box::new(Pointer {
+                        block: "snapshot-alpha".into(),
+                        offset: PointerOffsetTerm::Variable(unknown_load),
+                    }),
+                ),
+            )),
+        );
+
+        assert!(integer_equality_alpha_key(&equality(term)).is_none());
+    }
+
+    #[test]
+    fn snapshot_alpha_registered_loads_keep_their_snapshot_identity() {
+        let pointer = Pointer {
+            block: "snapshot-alpha".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha", 8));
+        let after = crate::kernel::intern_c_memory(before.as_ref().clone().store(
+            pointer.clone(),
+            CValue::Int32(Bitvector32Term::Constant(11)),
+        ));
+        let before_load =
+            crate::kernel::load_variable_for_cell_with_origin(&before, &pointer, &before);
+        let after_load =
+            crate::kernel::load_variable_for_cell_with_origin(&after, &pointer, &after);
+
+        let make = |load: Variable, accumulator: Variable, item: Variable| {
+            IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                accumulator,
+                item,
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(load),
+                )),
+            )
+        };
+        let before_key = integer_equality_alpha_key(&equality(make(
+            before_load,
+            Variable(313_000),
+            Variable(313_001),
+        )))
+        .expect("registered load should resolve to an exact key");
+        let renamed_before_key = integer_equality_alpha_key(&equality(make(
+            before_load,
+            Variable(314_000),
+            Variable(314_001),
+        )))
+        .expect("renamed registered load should resolve to an exact key");
+        let after_key = integer_equality_alpha_key(&equality(make(
+            after_load,
+            Variable(314_000),
+            Variable(314_001),
+        )))
+        .expect("registered load from another snapshot should resolve to an exact key");
+
+        assert_eq!(before_key, renamed_before_key);
+        assert_ne!(before_key, after_key);
+    }
+
+    #[test]
+    fn snapshot_alpha_explicit_and_registered_loads_share_nested_identity() {
+        let block = "snapshot-alpha-equivalent-loads";
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block(block, 64));
+        let first_pointer = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let first_load =
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &first_pointer, &memory);
+        let nested_pointer = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Variable(first_load),
+        };
+        let nested_load =
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &nested_pointer, &memory);
+        // The load registry keeps the provenance-projected snapshot used by
+        // the minted variable.  Use those exact identities for the explicit
+        // forms below; the original `memory` may project to a different DAG
+        // epoch even though it names the same source cell.
+        let (first_memory, first_registered_pointer) =
+            crate::kernel::registered_load_for_variable(&first_load)
+                .expect("first load should have a registry entry");
+        let (nested_memory, nested_registered_pointer) =
+            crate::kernel::registered_load_for_variable(&nested_load)
+                .expect("nested load should have a registry entry");
+        let fold_with_body = |body: Bitvector32Term| {
+            IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(313_100),
+                Variable(313_101),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    body,
+                )),
+            )
+        };
+        let explicit_first: SharedIntegerTerm = fold_with_body(Bitvector32Term::MemoryLoad(
+            first_memory,
+            Box::new(first_registered_pointer),
+        ))
+        .into();
+        let registered_first: SharedIntegerTerm =
+            fold_with_body(Bitvector32Term::Variable(first_load)).into();
+        let explicit_nested: SharedIntegerTerm = fold_with_body(Bitvector32Term::MemoryLoad(
+            nested_memory,
+            Box::new(nested_registered_pointer),
+        ))
+        .into();
+        let registered_nested: SharedIntegerTerm =
+            fold_with_body(Bitvector32Term::Variable(nested_load)).into();
+
+        assert_eq!(
+            integer_fold_alpha_key(&explicit_first),
+            integer_fold_alpha_key(&registered_first)
+        );
+        assert_eq!(
+            integer_fold_alpha_key(&explicit_nested),
+            integer_fold_alpha_key(&registered_nested)
+        );
+        assert_eq!(
+            integer_equality_alpha_key(&equality(explicit_nested.as_ref().clone())),
+            integer_equality_alpha_key(&equality(registered_nested.as_ref().clone()))
+        );
+    }
+
+    #[test]
+    fn snapshot_alpha_accepts_free_c_endpoints_and_body_values() {
+        let start = Variable(319_000);
+        let end = Variable(319_001);
+        let payload = Variable(319_002);
+        let make = |accumulator: Variable, item: Variable| {
+            IntegerTerm::range_fold(
+                IntegerRangeFoldIndex::Int32 {
+                    start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(start)),
+                    end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Variable(end)),
+                },
+                IntegerTerm::constant_i64(0),
+                accumulator,
+                item,
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(payload),
+                )),
+            )
+        };
+        let source: SharedIntegerTerm = make(Variable(319_010), Variable(319_011)).into();
+        let renamed: SharedIntegerTerm = make(Variable(319_020), Variable(319_021)).into();
+
+        assert!(integer_equality_alpha_key(&equality(source.as_ref().clone())).is_some());
+        assert_eq!(
+            integer_fold_alpha_key(&source),
+            integer_fold_alpha_key(&renamed)
+        );
+        assert_eq!(
+            integer_terms_alpha_equivalent(&source, &renamed),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn snapshot_alpha_fold_comparison_uses_exact_snapshot_identity() {
+        let pointer = Pointer {
+            block: "snapshot-alpha".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha", 8));
+        let after = crate::kernel::intern_c_memory(
+            before
+                .as_ref()
+                .clone()
+                .store(pointer, CValue::Int32(Bitvector32Term::Constant(13))),
+        );
+        let make = |memory: &SharedCMemory, accumulator: Variable, item: Variable| {
+            let term = fold_body(memory, item);
+            IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                accumulator,
+                item,
+                term,
+            )
+        };
+        let before_term: SharedIntegerTerm =
+            make(&before, Variable(320_000), Variable(320_001)).into();
+        let renamed_term: SharedIntegerTerm =
+            make(&before, Variable(320_100), Variable(320_101)).into();
+        let after_term: SharedIntegerTerm =
+            make(&after, Variable(320_100), Variable(320_101)).into();
+
+        assert_eq!(
+            integer_terms_alpha_equivalent(&before_term, &renamed_term),
+            Some(true)
+        );
+        assert_eq!(
+            integer_terms_alpha_equivalent(&before_term, &after_term),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn snapshot_alpha_nested_folds_canonicalize_load_pointers() {
+        let pointer = Pointer {
+            block: "snapshot-alpha".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha", 8));
+        let after = crate::kernel::intern_c_memory(
+            before
+                .as_ref()
+                .clone()
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(5))),
+        );
+        let nested = |memory: &SharedCMemory, accumulator: Variable, item: Variable| {
+            let inner = fold(memory, Variable(316_000), Variable(316_001));
+            IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                accumulator,
+                item,
+                inner,
+            )
+        };
+        let source = integer_equality_alpha_key(&equality(nested(
+            &before,
+            Variable(316_100),
+            Variable(316_101),
+        )))
+        .expect("nested explicit load fold should have an exact alpha key");
+        let renamed = integer_equality_alpha_key(&equality(nested(
+            &before,
+            Variable(317_100),
+            Variable(317_101),
+        )))
+        .expect("renamed nested explicit load fold should have an exact alpha key");
+        let changed_snapshot = integer_equality_alpha_key(&equality(nested(
+            &after,
+            Variable(317_100),
+            Variable(317_101),
+        )))
+        .expect("changed nested snapshot should still have a key");
+
+        assert_eq!(source, renamed);
+        assert_ne!(source, changed_snapshot);
+    }
+
+    #[test]
+    fn snapshot_alpha_work_ignores_unrelated_heap_size() {
+        let make_memory = |unrelated_size| {
+            crate::kernel::intern_c_memory(
+                CMemory::new()
+                    .with_block("snapshot-alpha", 8)
+                    .with_block("unrelated-snapshot-alpha", unrelated_size),
+            )
+        };
+        let mut work = Vec::new();
+        for unrelated_size in [8, 128, 1024, 8192] {
+            let memory = make_memory(unrelated_size);
+            let term = fold_body(&memory, Variable(318_001));
+            let term = IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(318_000),
+                Variable(318_001),
+                term,
+            );
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                integer_equality_alpha_key(&equality(term)).expect("snapshot alpha key")
+            });
+            work.push(measured);
+        }
+        let first = work[0];
+        for measured in work.into_iter().skip(1) {
+            assert!(
+                measured <= first + 8,
+                "unrelated heap work: {measured} vs {first}"
+            );
+        }
+    }
+
+    fn registered_load_chain(depth: usize) -> (SharedCMemory, Variable) {
+        let block = format!("snapshot-alpha-registry-{depth}");
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block(block.clone(), 4096));
+        let mut pointer = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let mut load =
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+        for _ in 0..depth {
+            pointer = Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::Variable(load),
+            };
+            load = crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+        }
+        (memory, load)
+    }
+
+    fn registered_load_branching_chain(depth: usize) -> (SharedCMemory, Variable) {
+        let block = format!("snapshot-alpha-registry-branch-{depth}");
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block(block.clone(), 4096));
+        let mut pointer = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let mut load =
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+        for _ in 0..depth {
+            pointer = Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::Add(
+                    Box::new(PointerOffsetTerm::Variable(load)),
+                    Box::new(PointerOffsetTerm::Variable(load)),
+                ),
+            };
+            load = crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+        }
+        (memory, load)
+    }
+
+    #[test]
+    fn snapshot_alpha_registered_load_dags_scale_linearly() {
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let (_memory, load) = registered_load_chain(depth);
+            let term = IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(321_000),
+                Variable(321_001),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(load),
+                )),
+            );
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                integer_equality_alpha_key(&equality(term)).expect("registered load DAG key")
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3 + 32,
+                "registered load work: {work:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_alpha_registered_load_branching_dags_stay_linear() {
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let (_memory, load) = registered_load_branching_chain(depth);
+            let term = IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(323_000),
+                Variable(323_001),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(load),
+                )),
+            );
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                integer_equality_alpha_key(&equality(term)).expect("branching load DAG key")
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3 + 32,
+                "branching registered load work: {work:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_alpha_registered_load_dags_stop_at_the_active_budget() {
+        let (_, load) = registered_load_chain(128);
+        let term = IntegerTerm::range_fold(
+            int32_index(),
+            IntegerTerm::constant_i64(0),
+            Variable(322_000),
+            Variable(322_001),
+            IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(load),
+            )),
+        );
+        let tactic = crate::instrumentation::TacticEvent {
+            claim: "integer.snapshot_alpha_budget".into(),
+            tactic_index: 0,
+            tactic_name: "snapshot_alpha_budget".into(),
+            class: "simple".into(),
+            statement_index: 0,
+            source_index: 0,
+        };
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 16,
+            smart: 16,
+            control: 16,
+        };
+        let ((key, work), events) = crate::instrumentation::with_tactic_work_limits(limits, || {
+            crate::instrumentation::collect(|| {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticStarted(tactic.clone()),
+                );
+                let result = crate::instrumentation::measure_deterministic_work(|| {
+                    integer_equality_alpha_key(&equality(term))
+                });
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticFailed(tactic.clone()),
+                );
+                result
+            })
+        });
+        assert!(key.is_none(), "budgeted snapshot traversal must reject");
+        assert!(
+            work <= 32,
+            "registry traversal exceeded bounded work: {work}"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            crate::instrumentation::VerificationEvent::TacticWorkBudgetExceeded { .. }
+        )));
+    }
+
+    #[test]
+    fn snapshot_alpha_drops_unreachable_registered_load_snapshots() {
+        let early_memory =
+            crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha-early", 8));
+        let early_term: SharedIntegerTerm =
+            fold(&early_memory, Variable(324_000), Variable(324_001)).into();
+        let early_key = integer_fold_alpha_key(&early_term).expect("early fold key");
+        let early_identity = early_memory.arena_id();
+
+        for index in 0..64u64 {
+            let block = format!("snapshot-alpha-temporary-{index}");
+            let memory =
+                crate::kernel::intern_c_memory(CMemory::new().with_block(block.clone(), 8));
+            let term: SharedIntegerTerm = IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(324_100 + index * 2),
+                Variable(324_101 + index * 2),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::MemoryLoad(
+                        memory,
+                        Box::new(Pointer {
+                            block: block.into(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        }),
+                    ),
+                )),
+            )
+            .into();
+            let _temporary_key = integer_fold_alpha_key(&term).expect("temporary fold key");
+        }
+
+        let (entries, live) = registered_load_interner_stats();
+        assert!(
+            entries <= 16,
+            "weak registry entries were not cleaned: {entries}"
+        );
+        assert_eq!(live, 1, "only the retained early load should stay live");
+        assert!(registered_load_interner_live_snapshots().contains(&early_identity));
+        drop(early_key);
+
+        let mut trigger_key = None;
+        for index in 0..16u64 {
+            let block = format!("snapshot-alpha-cleanup-trigger-{index}");
+            let memory =
+                crate::kernel::intern_c_memory(CMemory::new().with_block(block.clone(), 8));
+            let term: SharedIntegerTerm = IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(325_000 + index * 2),
+                Variable(325_001 + index * 2),
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::MemoryLoad(
+                        memory,
+                        Box::new(Pointer {
+                            block: block.into(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        }),
+                    ),
+                )),
+            )
+            .into();
+            trigger_key = Some(integer_fold_alpha_key(&term).expect("cleanup trigger key"));
+        }
+        assert!(!registered_load_interner_live_snapshots().contains(&early_identity));
+        drop(trigger_key);
+        assert_eq!(registered_load_interner_stats(), (0, 0));
+    }
+
+    #[test]
+    fn snapshot_alpha_nested_shared_load_dags_scale_linearly() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha", 8));
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let item = Variable(315_001);
+            let mut body = fold_body(&memory, item);
+            for _ in 0..depth {
+                let child: SharedIntegerTerm = body.into();
+                body = IntegerTerm::Add(child.clone(), child);
+            }
+            let term = IntegerTerm::range_fold(
+                int32_index(),
+                IntegerTerm::constant_i64(0),
+                Variable(315_000),
+                item,
+                body,
+            );
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                integer_equality_alpha_key(&equality(term)).expect("shared load DAG key")
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(pair[1] <= pair[0] * 3 + 32, "snapshot alpha work: {work:?}");
         }
     }
 }

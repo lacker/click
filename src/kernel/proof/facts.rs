@@ -759,15 +759,16 @@ impl ProofFacts {
     /// so unrelated ambient facts are never scanned.
     fn matching_integer_alpha_fact(&self, required: &Proposition) -> Option<Proposition> {
         let key = integer_equality_alpha_key(required)?;
-        let fingerprint = key.fingerprint();
-        self.by_integer_equality_alpha
-            .get(&fingerprint)
-            .and_then(|bucket| {
-                bucket
-                    .iter()
-                    .find(|candidate| candidate.key == key)
-                    .map(|candidate| candidate.proposition.clone())
-            })
+        let fingerprint = key.checked_fingerprint()?;
+        let bucket = self.by_integer_equality_alpha.get(&fingerprint)?;
+        for candidate in bucket {
+            match candidate.key.checked_eq(&key) {
+                Some(true) => return Some(candidate.proposition.clone()),
+                Some(false) => {}
+                None => return None,
+            }
+        }
+        None
     }
 
     fn integer_alpha_fact_available(&self, required: &Proposition) -> bool {
@@ -1004,12 +1005,25 @@ fn index_integer_equality_fact(
     let Some(key) = integer_equality_alpha_key(fact) else {
         return index;
     };
-    let fingerprint = key.fingerprint();
+    let Some(fingerprint) = key.checked_fingerprint() else {
+        return index;
+    };
     let mut bucket = index.get(&fingerprint).cloned().unwrap_or_default();
     // Keep one source proposition for each exact alpha key. Equivalent
     // restatements are common after fold freshening; appending each one would
     // make lookup and persistent updates grow with the ambient proof history.
-    if !bucket.iter().any(|candidate| candidate.key == key) {
+    let mut equivalent = false;
+    for candidate in &bucket {
+        match candidate.key.checked_eq(&key) {
+            Some(true) => {
+                equivalent = true;
+                break;
+            }
+            Some(false) => {}
+            None => return index,
+        }
+    }
+    if !equivalent {
         bucket.push(IntegerEqualityAlphaCandidate {
             key,
             proposition: fact.clone(),
@@ -1429,8 +1443,9 @@ fn collect_owned_atomic_conjuncts(fact: &Proposition, output: &mut Vec<Propositi
 mod integer_equality_fact_index_tests {
     use super::*;
     use crate::kernel::{
-        Bitvector32Term, IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType,
-        SharedIntegerRangeEndpoint, SharedIntegerTerm, SharedMachineIntegerTerm, Variable,
+        Bitvector32Term, CMemory, IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType, Pointer,
+        PointerOffsetTerm, SharedIntegerRangeEndpoint, SharedIntegerTerm, SharedMachineIntegerTerm,
+        Variable,
     };
 
     fn integer_index() -> IntegerRangeFoldIndex {
@@ -1458,6 +1473,28 @@ mod integer_equality_fact_index_tests {
 
     fn equality(left: IntegerTerm, right: IntegerTerm) -> Proposition {
         Proposition::ConditionIs(ConditionTerm::IntegerEqual(left.into(), right.into()), true)
+    }
+
+    fn explicit_load_fold(
+        memory: &crate::kernel::SharedCMemory,
+        accumulator: Variable,
+        item: Variable,
+    ) -> IntegerTerm {
+        fold(
+            int32_index(),
+            accumulator,
+            item,
+            IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                Bitvector32Term::MemoryLoad(
+                    memory.clone(),
+                    Box::new(Pointer {
+                        block: "snapshot-alpha-facts".into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    }),
+                ),
+            )),
+        )
     }
 
     fn unrelated_fact(value: i64) -> Proposition {
@@ -1557,6 +1594,42 @@ mod integer_equality_fact_index_tests {
             assert!(facts.matching_fact_across_effects(&required, &[]).is_none());
             assert!(!facts.exact_available_across_effects(&required, &[]));
         }
+    }
+
+    #[test]
+    fn integer_alpha_fact_lookup_requires_the_same_load_snapshot() {
+        let before =
+            crate::kernel::intern_c_memory(CMemory::new().with_block("snapshot-alpha-facts", 8));
+        let changed = crate::kernel::intern_c_memory(before.as_ref().clone().store(
+            Pointer {
+                block: "snapshot-alpha-facts".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            CValue::Int32(Bitvector32Term::Constant(7)),
+        ));
+        let source_fact = equality(
+            IntegerTerm::constant_i64(9),
+            explicit_load_fold(&before, Variable(206_000), Variable(206_001)),
+        );
+        let renamed_fact = equality(
+            IntegerTerm::constant_i64(9),
+            explicit_load_fold(&before, Variable(206_100), Variable(206_101)),
+        );
+        let changed_snapshot_fact = equality(
+            IntegerTerm::constant_i64(9),
+            explicit_load_fold(&changed, Variable(206_100), Variable(206_101)),
+        );
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source_fact));
+
+        assert_eq!(
+            facts.matching_fact_across_effects(&renamed_fact, &[]),
+            Some(source_fact)
+        );
+        assert!(
+            facts
+                .matching_fact_across_effects(&changed_snapshot_fact, &[])
+                .is_none()
+        );
     }
 
     #[test]

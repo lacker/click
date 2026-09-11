@@ -1745,7 +1745,7 @@ pub(in crate::surface) fn plan_integer_affine_certificate(
     let lower_key = (expected.terms.clone(), expected.constant.clone());
     let mut opposite_terms = BTreeMap::new();
     for (variable, coefficient) in &expected.terms {
-        opposite_terms.insert(*variable, -coefficient);
+        opposite_terms.insert(variable.clone(), -coefficient);
     }
     let upper_key = (opposite_terms, -expected.constant.clone());
     let lower = *bounds.get(&lower_key)?;

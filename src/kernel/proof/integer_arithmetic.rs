@@ -4,25 +4,19 @@
 //! validates only the referenced premises and local nodes; it does not invoke
 //! the machine signed arithmetic checker or search ambient facts.
 
-use crate::kernel::{ConditionTerm, IntegerTerm, Proposition, Variable};
+pub(crate) use super::integer_affine_atoms::IntegerAffineAtom;
+use super::integer_affine_atoms::{IntegerFoldAtomRecord, intern_integer_fold_atom};
+use crate::kernel::{ConditionTerm, IntegerTerm, Proposition};
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 /// The normalized relation `sum(coeff * variable) + constant REL 0`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IntegerAffineRelation {
     LessEqual,
     Equal,
-}
-
-/// A sorted opaque arithmetic atom. Machine observations retain their canonical
-/// typed source identity; no machine arithmetic law is assumed here.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) enum IntegerAffineAtom {
-    Variable(Variable),
-    Machine(u64),
-    Application(u64),
 }
 
 /// A claimed local affine result. The checker recomputes this value at every
@@ -93,8 +87,13 @@ impl IntegerArithmeticCertificate {
         goal: &Proposition,
         premises: &[Proposition],
     ) -> Result<(), IntegerArithmeticCheckError> {
-        let expected =
-            integer_affine_claim(goal).ok_or(IntegerArithmeticCheckError::UnsupportedGoal)?;
+        let mut collection_context = IntegerAffineCollectionContext::default();
+        // Keep fold alpha keys scoped to this checked certificate. This
+        // reuses one key for shared source nodes across the goal and all
+        // explicitly selected premises without retaining a process-wide
+        // source-id cache.
+        let expected = integer_affine_claim_with_context(goal, &mut collection_context)
+            .ok_or(IntegerArithmeticCheckError::UnsupportedGoal)?;
         let mut checked: Vec<IntegerAffineClaim> = Vec::with_capacity(self.nodes.len());
         // A premise can be referenced by many nodes. Cache by its explicit
         // index so a large expression is normalized once per check.
@@ -115,7 +114,9 @@ impl IntegerArithmeticCertificate {
                         .get(*index)
                         .ok_or(IntegerArithmeticCheckError::InvalidPremise(*index))?;
                     if matches!(premise_cache[*index], CachedPremise::Unknown) {
-                        let Some(expected) = integer_affine_claim(premise) else {
+                        let Some(expected) =
+                            integer_affine_claim_with_context(premise, &mut collection_context)
+                        else {
                             premise_cache[*index] = CachedPremise::Unsupported;
                             return Err(IntegerArithmeticCheckError::UnsupportedPremise(*index));
                         };
@@ -289,7 +290,7 @@ fn scale_claim(claim: &IntegerAffineClaim, coefficient: &BigInt) -> Option<Integ
         }
         let value = value * coefficient;
         if !value.is_zero() {
-            terms.push((*term, value));
+            terms.push((term.clone(), value));
         }
     }
     if !charge_integer_product(&claim.constant, coefficient) {
@@ -309,7 +310,7 @@ fn add_claim(left: &IntegerAffineClaim, right: &IntegerAffineClaim) -> IntegerAf
         if value.is_zero() {
             terms.remove(term);
         } else {
-            terms.insert(*term, value);
+            terms.insert(term.clone(), value);
         }
     }
     IntegerAffineClaim {
@@ -323,7 +324,7 @@ fn negate_claim(claim: &IntegerAffineClaim, relation: IntegerAffineRelation) -> 
     let terms = claim
         .terms
         .iter()
-        .map(|(term, coefficient)| (*term, -coefficient))
+        .map(|(term, coefficient)| (term.clone(), -coefficient))
         .filter(|(_, coefficient)| !coefficient.is_zero())
         .collect();
     IntegerAffineClaim {
@@ -351,12 +352,64 @@ fn claim_is_trivial(claim: &IntegerAffineClaim) -> bool {
         }
 }
 
+/// Per-claim cache for fold identities.  This is deliberately scoped to one
+/// normalization: a shared source node is never alpha-keyed once for each
+/// occurrence in the same claim, while load-registry epochs cannot make a
+/// process-wide source-id cache stale.
+#[derive(Default)]
+struct IntegerAffineCollectionContext {
+    fold_atoms: HashMap<crate::kernel::SharedIntegerTerm, Arc<IntegerFoldAtomRecord>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static INTEGER_FOLD_ALPHA_CONSTRUCTIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+fn reset_fold_alpha_constructions() {
+    INTEGER_FOLD_ALPHA_CONSTRUCTIONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn fold_alpha_constructions() -> usize {
+    INTEGER_FOLD_ALPHA_CONSTRUCTIONS.with(std::cell::Cell::get)
+}
+
+fn fold_atom_for_claim(
+    context: &mut IntegerAffineCollectionContext,
+    term: &crate::kernel::SharedIntegerTerm,
+) -> Option<Arc<IntegerFoldAtomRecord>> {
+    if let Some(atom) = context.fold_atoms.get(term) {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return None;
+        }
+        return Some(atom.clone());
+    }
+    #[cfg(test)]
+    INTEGER_FOLD_ALPHA_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
+    let atom = intern_integer_fold_atom(term)?;
+    context.fold_atoms.insert(term.clone(), atom.clone());
+    Some(atom)
+}
+
 /// Normalize one integer proposition for use in a certificate node.
 ///
 /// This is intentionally a small, context-free conversion. The returned
-/// atom map contains only `Variable` identities; arbitrary integer terms are
-/// never used as map keys.
+/// atom map contains only checked source identities: variables, machine
+/// observations, pure applications, and snapshot-aware opaque folds. An
+/// arbitrary deep Integer term is never used directly as a map key.
 pub(crate) fn integer_affine_claim(proposition: &Proposition) -> Option<IntegerAffineClaim> {
+    let mut context = IntegerAffineCollectionContext::default();
+    integer_affine_claim_with_context(proposition, &mut context)
+}
+
+fn integer_affine_claim_with_context(
+    proposition: &Proposition,
+    context: &mut IntegerAffineCollectionContext,
+) -> Option<IntegerAffineClaim> {
     let (condition, value) = match proposition {
         Proposition::ConditionIs(condition, value) => (condition, *value),
         Proposition::Not(body) => match body.as_ref() {
@@ -408,8 +461,14 @@ pub(crate) fn integer_affine_claim(proposition: &Proposition) -> Option<IntegerA
             // Disequality is outside this fragment, except for constants.
             let mut terms = BTreeMap::new();
             let mut constant = BigInt::zero();
-            collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant)?;
-            collect_integer_affine_terms(right, &BigInt::from(-1), &mut terms, &mut constant)?;
+            collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant, context)?;
+            collect_integer_affine_terms(
+                right,
+                &BigInt::from(-1),
+                &mut terms,
+                &mut constant,
+                context,
+            )?;
             return (terms.is_empty() && !constant.is_zero()).then_some(IntegerAffineClaim {
                 relation: IntegerAffineRelation::LessEqual,
                 terms,
@@ -419,8 +478,14 @@ pub(crate) fn integer_affine_claim(proposition: &Proposition) -> Option<IntegerA
         ConditionTerm::IntegerNotEqual(left, right) if value => {
             let mut terms = BTreeMap::new();
             let mut constant = BigInt::zero();
-            collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant)?;
-            collect_integer_affine_terms(right, &BigInt::from(-1), &mut terms, &mut constant)?;
+            collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant, context)?;
+            collect_integer_affine_terms(
+                right,
+                &BigInt::from(-1),
+                &mut terms,
+                &mut constant,
+                context,
+            )?;
             return (terms.is_empty() && !constant.is_zero()).then_some(IntegerAffineClaim {
                 relation: IntegerAffineRelation::LessEqual,
                 terms,
@@ -430,8 +495,14 @@ pub(crate) fn integer_affine_claim(proposition: &Proposition) -> Option<IntegerA
         ConditionTerm::IntegerNotEqual(left, right) => {
             let mut terms = BTreeMap::new();
             let mut constant = BigInt::zero();
-            collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant)?;
-            collect_integer_affine_terms(right, &BigInt::from(-1), &mut terms, &mut constant)?;
+            collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant, context)?;
+            collect_integer_affine_terms(
+                right,
+                &BigInt::from(-1),
+                &mut terms,
+                &mut constant,
+                context,
+            )?;
             return (terms.is_empty() && constant.is_zero()).then_some(IntegerAffineClaim {
                 relation: IntegerAffineRelation::Equal,
                 terms,
@@ -442,8 +513,8 @@ pub(crate) fn integer_affine_claim(proposition: &Proposition) -> Option<IntegerA
     };
     let mut terms = BTreeMap::new();
     let mut constant = BigInt::zero();
-    collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant)?;
-    collect_integer_affine_terms(right, &BigInt::from(-1), &mut terms, &mut constant)?;
+    collect_integer_affine_terms(left, &BigInt::one(), &mut terms, &mut constant, context)?;
+    collect_integer_affine_terms(right, &BigInt::from(-1), &mut terms, &mut constant, context)?;
     if strict {
         if crate::instrumentation::deadline_exceeded_with_work(constant.bits() as usize + 1) {
             return None;
@@ -462,6 +533,7 @@ fn collect_integer_affine_terms(
     coefficient: &BigInt,
     terms: &mut BTreeMap<IntegerAffineAtom, BigInt>,
     constant: &mut BigInt,
+    context: &mut IntegerAffineCollectionContext,
 ) -> Option<()> {
     // First collect the reachable DAG in postorder.  The interner gives each
     // node a stable identity, so this schedules a shared node exactly once.
@@ -493,7 +565,10 @@ fn collect_integer_affine_terms(
             | IntegerTerm::Machine(_)
             | IntegerTerm::PureFunctionApplication(_)
             | IntegerTerm::AlgebraicMatch { .. } => {}
-            IntegerTerm::RangeFold { .. } => return None,
+            // A RangeFold is a checked opaque atom.  Its body and endpoints
+            // are represented by the kernel-issued alpha key below; affine
+            // normalization must never enumerate or lower the range here.
+            IntegerTerm::RangeFold { .. } => {}
         }
     }
 
@@ -548,7 +623,19 @@ fn collect_integer_affine_terms(
                     terms.insert(atom, merged);
                 }
             }
-            IntegerTerm::RangeFold { .. } => return None,
+            IntegerTerm::RangeFold { .. } => {
+                let atom = IntegerAffineAtom::Fold(fold_atom_for_claim(context, &node)?);
+                let existing = terms.get(&atom).map_or(0, |value| value.bits() as usize);
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    existing + weight.bits() as usize + 1,
+                ) {
+                    return None;
+                }
+                let merged = terms.remove(&atom).unwrap_or_else(BigInt::zero) + weight;
+                if !merged.is_zero() {
+                    terms.insert(atom, merged);
+                }
+            }
             IntegerTerm::Negate(child) => {
                 if !add_weight(&mut weights, child.id(), -weight) {
                     return None;
@@ -601,6 +688,8 @@ fn add_weight(weights: &mut HashMap<u64, BigInt>, id: u64, weight: BigInt) -> bo
 
 #[cfg(test)]
 mod tests {
+    use crate::kernel::Variable;
+
     use super::*;
 
     #[test]
@@ -749,6 +838,255 @@ mod tests {
             conclusion: 0,
         };
         assert!(forged.check(&unchecked_distribution, &[]).is_err());
+    }
+
+    fn int32_fold(
+        start: u32,
+        end: u32,
+        accumulator: u64,
+        item: u64,
+        body: IntegerTerm,
+    ) -> IntegerTerm {
+        use crate::kernel::{IntegerRangeFoldIndex, SharedIntegerRangeEndpoint};
+        IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Int32 {
+                start: SharedIntegerRangeEndpoint::intern(
+                    crate::kernel::Bitvector32Term::Constant(start),
+                ),
+                end: SharedIntegerRangeEndpoint::intern(crate::kernel::Bitvector32Term::Constant(
+                    end,
+                )),
+            },
+            IntegerTerm::constant_i64(0),
+            Variable(accumulator),
+            Variable(item),
+            body,
+        )
+    }
+
+    fn integer_fold(
+        start: i64,
+        end: i64,
+        accumulator: u64,
+        item: u64,
+        body: IntegerTerm,
+    ) -> IntegerTerm {
+        use crate::kernel::IntegerRangeFoldIndex;
+        IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Integer {
+                start: IntegerTerm::constant_i64(start).into(),
+                end: IntegerTerm::constant_i64(end).into(),
+            },
+            IntegerTerm::constant_i64(0),
+            Variable(accumulator),
+            Variable(item),
+            body,
+        )
+    }
+
+    fn fold_body(accumulator: u64, item: u64) -> IntegerTerm {
+        IntegerTerm::add(
+            IntegerTerm::var(Variable(accumulator)),
+            IntegerTerm::var(Variable(item)),
+        )
+    }
+
+    fn machine_item(item: u64) -> IntegerTerm {
+        IntegerTerm::from_machine(
+            crate::kernel::MachineIntegerType::Int32,
+            crate::kernel::Bitvector32Term::Variable(Variable(item)),
+        )
+        .expect("a symbolic Int32 item should be a machine observation")
+    }
+
+    fn machine_fold_body(accumulator: u64, item: u64) -> IntegerTerm {
+        IntegerTerm::add(IntegerTerm::var(Variable(accumulator)), machine_item(item))
+    }
+
+    #[test]
+    fn alpha_renamed_folds_cancel_as_one_checked_affine_atom() {
+        let left = int32_fold(0, 8, 100, 101, machine_fold_body(100, 101));
+        let right = int32_fold(0, 8, 200, 201, machine_fold_body(200, 201));
+        let goal = proposition(ConditionTerm::IntegerEqual(left.into(), right.into()));
+        let normalized = claim(&goal);
+        assert!(normalized.terms.is_empty());
+        assert!(normalized.constant.is_zero());
+
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::Trivial { result: normalized }],
+            conclusion: 0,
+        };
+        certificate.check(&goal, &[]).unwrap();
+    }
+
+    #[test]
+    fn fold_atom_identity_keeps_endpoints_body_and_carrier_distinct() {
+        let baseline = int32_fold(0, 8, 300, 301, machine_fold_body(300, 301));
+        let changed_end = int32_fold(0, 9, 300, 301, machine_fold_body(300, 301));
+        let changed_body = int32_fold(
+            0,
+            8,
+            300,
+            301,
+            IntegerTerm::subtract(IntegerTerm::var(Variable(300)), machine_item(301)),
+        );
+        let changed_carrier = integer_fold(0, 8, 300, 301, fold_body(300, 301));
+
+        for other in [changed_end, changed_body, changed_carrier] {
+            let goal = proposition(ConditionTerm::IntegerEqual(
+                baseline.clone().into(),
+                other.into(),
+            ));
+            assert_eq!(claim(&goal).terms.len(), 2);
+        }
+    }
+
+    #[test]
+    fn fold_atom_tampering_is_rejected_at_the_certificate_boundary() {
+        let source_fold = int32_fold(0, 8, 400, 401, machine_fold_body(400, 401));
+        let changed_fold = int32_fold(0, 9, 400, 401, machine_fold_body(400, 401));
+        let source = proposition(ConditionTerm::IntegerLessEqual(
+            source_fold.into(),
+            IntegerTerm::constant_i64(0).into(),
+        ));
+        let forged = proposition(ConditionTerm::IntegerLessEqual(
+            changed_fold.into(),
+            IntegerTerm::constant_i64(0).into(),
+        ));
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::Premise {
+                index: 0,
+                result: claim(&forged),
+            }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&source, std::slice::from_ref(&source)),
+            Err(IntegerArithmeticCheckError::NodeResultMismatch(0))
+        );
+    }
+
+    #[test]
+    fn fold_atom_identity_retains_the_exact_memory_snapshot() {
+        use crate::kernel::{
+            Bitvector32Term, CMemory, CValue, IntegerRangeFoldIndex, MachineIntegerType, Pointer,
+            PointerOffsetTerm, SharedIntegerRangeEndpoint, SharedMachineIntegerTerm,
+        };
+        let pointer = Pointer {
+            block: "affine-fold-snapshot".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before =
+            crate::kernel::intern_c_memory(CMemory::new().with_block("affine-fold-snapshot", 8));
+        let after = crate::kernel::intern_c_memory(
+            before
+                .as_ref()
+                .clone()
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(7))),
+        );
+        let load_fold =
+            |memory: &crate::kernel::SharedCMemory, accumulator: u64, item: u64| -> IntegerTerm {
+                IntegerTerm::range_fold(
+                    IntegerRangeFoldIndex::Int32 {
+                        start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+                        end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(2)),
+                    },
+                    IntegerTerm::constant_i64(0),
+                    Variable(accumulator),
+                    Variable(item),
+                    IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                        MachineIntegerType::Int32,
+                        Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer.clone())),
+                    )),
+                )
+            };
+        let before_fold = load_fold(&before, 700, 701);
+        let renamed_before_fold = load_fold(&before, 800, 801);
+        let after_fold = load_fold(&after, 800, 801);
+
+        let renamed_goal = proposition(ConditionTerm::IntegerEqual(
+            before_fold.clone().into(),
+            renamed_before_fold.into(),
+        ));
+        assert!(claim(&renamed_goal).terms.is_empty());
+
+        let changed_snapshot_goal = proposition(ConditionTerm::IntegerEqual(
+            before_fold.into(),
+            after_fold.into(),
+        ));
+        assert_eq!(claim(&changed_snapshot_goal).terms.len(), 2);
+    }
+
+    #[test]
+    fn repeated_fold_atoms_share_scoped_alpha_work() {
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let item = Variable(500 + depth as u64);
+            let accumulator = Variable(600 + depth as u64);
+            let mut body = machine_fold_body(accumulator.0, item.0);
+            for _ in 0..depth {
+                let shared: crate::kernel::SharedIntegerTerm = body.clone().into();
+                body = IntegerTerm::add(body, shared.as_ref().clone());
+            }
+            let fold = int32_fold(0, 8, accumulator.0, item.0, body);
+            let expression = IntegerTerm::add(fold.clone(), fold);
+            let goal = proposition(ConditionTerm::IntegerEqual(
+                expression.into(),
+                IntegerTerm::constant_i64(0).into(),
+            ));
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| claim(&goal));
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(pair[1] <= pair[0] * 3 + 64, "fold affine work: {work:?}");
+        }
+    }
+
+    #[test]
+    fn selected_fold_premises_reuse_one_certificate_scoped_key() {
+        let mut work = Vec::new();
+        for size in [8usize, 16, 32, 64] {
+            let accumulator = Variable(800 + size as u64);
+            let item = Variable(900 + size as u64);
+            let mut body = machine_fold_body(accumulator.0, item.0);
+            for _ in 0..size {
+                let shared: crate::kernel::SharedIntegerTerm = body.clone().into();
+                body = IntegerTerm::add(shared.as_ref().clone(), body);
+            }
+            let fold = int32_fold(0, 8, accumulator.0, item.0, body);
+            let mut premises = Vec::with_capacity(size);
+            let mut nodes = Vec::with_capacity(size);
+            for index in 0..size {
+                let proposition = proposition(ConditionTerm::IntegerLessEqual(
+                    fold.clone().into(),
+                    IntegerTerm::constant_i64(index as i64).into(),
+                ));
+                let result = claim(&proposition);
+                premises.push(proposition);
+                nodes.push(IntegerArithmeticNode::Premise { index, result });
+            }
+            let goal = premises[0].clone();
+            let certificate = IntegerArithmeticCertificate {
+                nodes,
+                conclusion: 0,
+            };
+            reset_fold_alpha_constructions();
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate.check(&goal, &premises).unwrap();
+            });
+            assert_eq!(
+                fold_alpha_constructions(),
+                1,
+                "fold key rebuilt per certificate"
+            );
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3 + 64,
+                "certificate fold-key work: {work:?}"
+            );
+        }
     }
 
     #[test]

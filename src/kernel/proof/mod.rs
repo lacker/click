@@ -10,6 +10,7 @@ mod execution;
 mod fact_keys;
 pub(crate) mod fact_reasoning;
 mod facts;
+mod integer_affine_atoms;
 pub(crate) mod integer_arithmetic;
 #[cfg(test)]
 mod integer_arithmetic_soundness_tests;
