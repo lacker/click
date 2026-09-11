@@ -70,9 +70,8 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (20)
+## P2: after launch (19)
 
-- [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
 - [Make `step` simple across a call precondition](simplify-step.md)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
