@@ -4169,8 +4169,12 @@ fn evaluate_spec_pure_function_argument_paths(
                             let propositions = path
                                 .facts
                                 .iter()
-                                .filter(|fact| is_definedness_path_fact(fact.proposition()))
                                 .map(|fact| fact.proposition().clone())
+                                .chain(
+                                    path.obligations
+                                        .iter()
+                                        .map(|obligation| obligation.proposition().clone()),
+                                )
                                 .collect::<Vec<_>>();
                             (!propositions.is_empty()).then(|| proposition_and_all(propositions))
                         })
@@ -4249,25 +4253,6 @@ fn evaluate_spec_pure_function_argument_paths(
             .collect())
         }
     }
-}
-
-fn is_definedness_path_fact(proposition: &Proposition) -> bool {
-    matches!(
-        proposition,
-        Proposition::ConditionIs(
-            ConditionTerm::Bitvector32SignedAddOverflows(..)
-                | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
-                | ConditionTerm::Bitvector32SignedMultiplyOverflows(..)
-                | ConditionTerm::Bitvector32SignedDivideOverflows(..)
-                | ConditionTerm::Bitvector32SignedShiftLeftOverflows(..)
-                | ConditionTerm::Bitvector64SignedAddOverflows(..)
-                | ConditionTerm::Bitvector64SignedSubtractOverflows(..)
-                | ConditionTerm::Bitvector64SignedMultiplyOverflows(..)
-                | ConditionTerm::Bitvector64SignedDivideOverflows(..)
-                | ConditionTerm::Bitvector64SignedShiftLeftOverflows(..),
-            false
-        )
-    )
 }
 
 fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
