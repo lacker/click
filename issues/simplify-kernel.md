@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 6, 7, 11 (first slice), 12,
-14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10): packages 1, 2, 3, 6, 7, 9, 11 (first slice),
+12, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -773,6 +773,31 @@ ownership.
 
 ### Package 9: specification branch selection during lowering
 
+**Landed** 2026-09-10 (three commits, "Decide a specification if by exact
+constant folding only" through "Pin the specification-conditional lowering
+boundary"), with one deliberate deviation from the target below. Both
+prover sites now route through `constant_spec_condition_value`: builtin
+solving, builtin disproof, then `decide_intrinsically` on a bare condition;
+no ambient fact is read, and `assumptions_prove_proposition_false` is
+deleted. An undecided condition lowers, as before, to the total
+if-then-else term covering both branches with both branches' obligations
+emitted. The guarded-two-path lowering was implemented, measured, and
+reverted: `c_lower_spec_proposition_at_state_with_provenance`,
+`c_evaluate_spec_expression_at_state`, and range-fold body lowering all
+require exactly one path, and the prelude's `list_contains` and `count`
+use specification conditionals, so every fixture failed. Making that
+target real means making pure-theorem, contract-clause, and fold-body
+lowering path-aware, a separate package if ever wanted; the boundary ruling
+is satisfied without it. The whole-context fallbacks that every failed
+empty-context `proves` ran (`proposition proof: context inconsistency` and
+`singleton substitution`, 999 calls on `sort3_permutation`) no longer
+appear in profiles. Also fixed in passing, pre-existing: expansion rendered
+a specification `if` as `if c then a else b`, which no parser accepts; it
+now prints `(if c { a } else { b })`. Known weaker spot, unreached by the
+corpus and predating this package: `conditional_spec_value` returns `None`
+when the two branch values are not both `Int32`, silently dropping the
+path.
+
 **Entry points.** `src/kernel/spec.rs::evaluate_spec_if_paths` (about line
 3892; decides a spec `if` condition with `proves` on an empty context, about
 line 3920) and `assumptions_prove_proposition_false` (about line 4299).
@@ -1025,7 +1050,7 @@ regression and the deletion becomes an explicit obligation instead.
 
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 6, 7, 11 first slice, 12, 14, 16. In flight: 5, 9, and
+Landed: 0, 1, 2, 3, 6, 7, 9, 11 first slice, 12, 14, 16. In flight: 5, and
 one owner in sequence for 4, then 13, then 8.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
