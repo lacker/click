@@ -3555,6 +3555,9 @@ fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
         | SpecIntegerExpression::Multiply(left, right) => {
             spec_integer_is_obligation_free(left) && spec_integer_is_obligation_free(right)
         }
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(spec_argument_is_obligation_free)
+        }
         SpecIntegerExpression::FromMachine(_) | SpecIntegerExpression::ResourceField(_) => false,
     }
 }

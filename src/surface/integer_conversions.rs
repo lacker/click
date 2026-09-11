@@ -251,6 +251,135 @@ mod tests {
     }
 
     #[test]
+    fn integer_function_let_aliases_preserve_shared_expression_scaling() {
+        let mut measured = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let mut source = String::from(
+                "function f(x: Integer, y: Integer) -> Integer { x + y }\n\
+                 theorem aliases(z: Integer) { let a0: Integer = z;\n",
+            );
+            for index in 1..=depth {
+                source.push_str(&format!(
+                    "let a{index}: Integer = f(a{}, a{});\n",
+                    index - 1,
+                    index - 1
+                ));
+            }
+            source.push_str(&format!(
+                "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ assumption(); }} }}"
+            ));
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &[])
+            });
+            result.unwrap_or_else(|error| panic!("depth {depth}: {}", error.message()));
+            measured.push(work);
+        }
+        for pair in measured.windows(2) {
+            assert!(
+                pair[1] <= 3 * pair[0],
+                "Integer aliases expanded: {measured:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_integer_function_high_arity_scales_with_arguments() {
+        let mut measured = Vec::new();
+        for arity in [8, 16, 32, 64] {
+            let parameters = (0..arity)
+                .map(|index| format!("x{index}: int32"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let arguments = (0..arity)
+                .map(|index| format!("x{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let source = format!(
+                "function mix({parameters}) -> Integer {{ to_integer(x0) }}\n\
+                 theorem call({parameters}) {{\n\
+                 ensures mix({arguments}) == mix({arguments}) by {{ simp(); }} }}"
+            );
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &[])
+            });
+            result.unwrap_or_else(|error| panic!("arity {arity}: {}", error.message()));
+            measured.push(work);
+        }
+        for pair in measured.windows(2) {
+            assert!(
+                pair[1] <= 3 * pair[0],
+                "deferred arity expanded: {measured:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_integer_function_c_arguments_keep_mandatory_definedness() {
+        let unguarded = "function f(x: int32) -> Integer { to_integer(x) }\n\
+            theorem call(x: int32) { ensures f(x + 1) == f(x + 1) by simp; }";
+        assert!(verify_c0_sources(unguarded, &[]).is_err());
+
+        let guarded = unguarded.replace("{ ensures", "{ requires defined(x + 1); ensures");
+        verify_c0_sources(&guarded, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(&guarded, &[], "call.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+
+        let mixed = "function mix(left: int32, right: int32) -> Integer { to_integer(left) }\n\
+            theorem call(left: int32, right: int32) { requires defined(left + 1); requires defined(right + 1); ensures mix(left + 1, right + 1) == mix(left + 1, right + 1) by simp; }";
+        verify_c0_sources(mixed, &[]).unwrap();
+        for missing in [
+            "requires defined(left + 1); ",
+            "requires defined(right + 1); ",
+        ] {
+            let invalid = mixed.replacen(missing, "", 1);
+            assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn deferred_integer_function_argument_domains_cover_division_and_branches() {
+        for proof in ["simp()", "normalize()"] {
+            let division = format!(
+                "function f(x: int32) -> Integer {{ to_integer(x) }}\n\
+                 theorem call(x: int32) {{ ensures f(1 / x) == f(1 / x) by {{ {proof}; }} }}"
+            );
+            assert!(verify_c0_sources(&division, &[]).is_err(), "{division}");
+            let guarded = division.replace("{ ensures", "{ requires x != 0; ensures");
+            verify_c0_sources(&guarded, &[]).unwrap();
+            let expanded =
+                expand_c0_claim_source_by_label(&guarded, &[], "call.ensures_0").unwrap();
+            verify_c0_sources(&expanded, &[]).unwrap();
+
+            let branch = format!(
+                "function f(x: int32) -> Integer {{ to_integer(x) }}\n\
+                 theorem call(c: int32, x: int32, y: int32) {{ ensures f(if c == 0 {{ x + 1 }} else {{ y + 1 }}) == f(if c == 0 {{ x + 1 }} else {{ y + 1 }}) by {{ {proof}; }} }}"
+            );
+            assert!(verify_c0_sources(&branch, &[]).is_err(), "{branch}");
+            let guarded = branch.replace(
+                "{ ensures",
+                "{ requires defined(if c == 0 { x + 1 } else { y + 1 }); ensures",
+            );
+            verify_c0_sources(&guarded, &[]).unwrap();
+            let expanded =
+                expand_c0_claim_source_by_label(&guarded, &[], "call.ensures_0").unwrap();
+            verify_c0_sources(&expanded, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn deferred_integer_function_argument_domains_cross_algebraic_wrappers() {
+        let source = "spec enum Box { Empty, Wrapped(int32), }\n\
+            function pack(x: int32) -> Box { Box::Wrapped(x) }\n\
+            function f(value: Box) -> Integer { 0 }\n\
+            theorem call(x: int32) { ensures f(pack(x + 1)) == f(pack(x + 1)) by simp; }";
+        assert!(verify_c0_sources(source, &[]).is_err());
+        let guarded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+        verify_c0_sources(&guarded, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(&guarded, &[], "call.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+    }
+
+    #[test]
     fn integer_conversion_proofs_expand_and_recheck() {
         for source in [
             "theorem conversion(x: int32) { ensures to_integer(x) == to_integer(x) by simp; }",

@@ -3014,6 +3014,35 @@ fn evaluate_spec_integer_pure_function_application_paths(
                 algebraic_bindings,
                 budget,
             )?;
+            let domain = argument_paths
+                .iter()
+                .map(|path| {
+                    proposition_and_all(
+                        path.facts
+                            .iter()
+                            .map(|fact| fact.proposition().clone())
+                            .chain(
+                                path.obligations
+                                    .iter()
+                                    .map(|obligation| obligation.proposition().clone()),
+                            )
+                            .collect(),
+                    )
+                })
+                .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)));
+            let argument_paths = argument_paths
+                .into_iter()
+                .map(|mut path| {
+                    if let Some(domain) = domain.clone() {
+                        retain_required_conversion_obligation(
+                            &mut path.obligations,
+                            assumptions,
+                            domain,
+                        );
+                    }
+                    path
+                })
+                .collect::<Vec<_>>();
             let single_path = argument_paths.len() == 1;
             let mut prefix = Some(values);
             for (index, argument_path) in argument_paths.into_iter().enumerate() {
@@ -4165,21 +4194,22 @@ fn evaluate_spec_pure_function_argument_paths(
             .collect())
         }
         SpecPureFunctionArgument::Value(expression) => {
-            Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
+            let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
                 expression,
                 loop_entry_state,
                 assumptions,
                 algebraic_bindings,
                 budget,
-            )?
-            .into_iter()
-            .map(|path| SpecPureFunctionArgumentPath {
-                value: PureFunctionArgument::Value(path.value),
-                facts: path.facts,
-                obligations: path.obligations,
-            })
-            .collect())
+            )?;
+            Ok(paths
+                .into_iter()
+                .map(|path| SpecPureFunctionArgumentPath {
+                    value: PureFunctionArgument::Value(path.value),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+                .collect())
         }
         SpecPureFunctionArgument::Algebraic(expression) => {
             Ok(evaluate_spec_algebraic_at_state_with_bindings(
