@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::proof::{CheckedBranchSplit, CheckedBranchSplitError};
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[derive(Clone)]
 pub(in crate::surface::proof) struct CertifiedProofConditionTransition {
@@ -210,8 +211,19 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
+                        // The prover moved out of the kernel with package
+                        // 15, so a derivation is now planning output rather
+                        // than a kernel result. This leg still discharges an
+                        // obligation, so it checks the derivation it planned
+                        // before accepting it. That the discharge never
+                        // reaches a proof site at all is package 10(c2)'s
+                        // remaining audit gap, recorded in
+                        // `issues/simplify-kernel.md`.
                         prerequisite_assumptions
                             .derive_proposition(obligation.proposition())
+                            .filter(|derivation| {
+                                derivation.check(&prerequisite_assumptions)
+                            })
                             .ok_or_else(|| {
                                 ClickError::new(format!(
                                     "{context_label} is missing condition prerequisite{}: {:?}",

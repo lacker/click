@@ -3850,7 +3850,7 @@ pub(super) enum PointerOffsetCongruenceEvidence {
 /// congruence. Each variant names exact equality or order evidence; the
 /// checker follows that path without proposition search.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum DirectBitvectorEqualityEvidence {
+pub(crate) enum DirectBitvectorEqualityEvidence {
     AdditiveCancellation {
         left: Bitvector32Term,
         right: Bitvector32Term,
@@ -3866,7 +3866,7 @@ pub(super) enum DirectBitvectorEqualityEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum SignedConstantEvidence {
+pub(crate) enum SignedConstantEvidence {
     Constant,
     SingletonBounds {
         variable: Variable,
@@ -3876,7 +3876,7 @@ pub(super) enum SignedConstantEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct IndexedSignedOrderBoundEvidence {
+pub(crate) struct IndexedSignedOrderBoundEvidence {
     pub(in crate::kernel) endpoint: Bitvector32Term,
     pub(in crate::kernel) other: Bitvector32Term,
     pub(in crate::kernel) strict: bool,
@@ -3888,14 +3888,14 @@ pub(super) struct IndexedSignedOrderBoundEvidence {
 /// registered origins have the same memory epoch and block and congruent
 /// offsets. The original variables remain distinct context-free names.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct LoadAddressCongruenceEvidence {
+pub(crate) struct LoadAddressCongruenceEvidence {
     pub(super) left_pointer: Pointer,
     pub(super) right_pointer: Pointer,
     pub(super) offset: PointerOffsetCongruenceEvidence,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum PropositionDerivationRule {
+pub(crate) enum PropositionDerivationRule {
     ContextFree,
     ContextualAtomic {
         premises: PureFactContext,
@@ -3972,62 +3972,62 @@ pub(super) enum PropositionDerivationRule {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32IncrementBoundsEvidence {
+pub(crate) struct Int32IncrementBoundsEvidence {
     pub(super) lower_bound: SignedOrderDerivationStep,
     pub(super) upper_bound: SignedOrderDerivationStep,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32PredecessorUpperBoundEvidence {
+pub(crate) struct Int32PredecessorUpperBoundEvidence {
     pub(super) nonnegative: SignedOrderDerivationStep,
     pub(super) upper_bound: SignedOrderDerivationStep,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Int32OneLeEvidence {
+pub(crate) enum Int32OneLeEvidence {
     Direct(Box<SignedOrderDerivationStep>),
     EqualOne(Vec<BitvectorEqualityDerivationStep>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32NonnegativeAddWithinMaxEvidence {
+pub(crate) struct Int32NonnegativeAddWithinMaxEvidence {
     pub(super) amount_nonnegative: SignedOrderDerivationStep,
     pub(super) within_headroom: SignedOrderDerivationStep,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32NonnegativeSubtractWithinValueEvidence {
+pub(crate) struct Int32NonnegativeSubtractWithinValueEvidence {
     pub(super) amount_nonnegative: SignedOrderDerivationStep,
     pub(super) within_value: SignedOrderDerivationStep,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32LeAndNotLtEqualityEvidence {
+pub(crate) struct Int32LeAndNotLtEqualityEvidence {
     pub(super) less_equal: Proposition,
     pub(super) not_less_than: Proposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32GeAndNotGtEqualityEvidence {
+pub(crate) struct Int32GeAndNotGtEqualityEvidence {
     pub(super) greater_equal: Proposition,
     pub(super) not_greater_than: Proposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Int32LeAndNeqStrictEvidence {
+pub(crate) struct Int32LeAndNeqStrictEvidence {
     pub(super) less_equal: Proposition,
     pub(super) not_equal: Proposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ForallInt32InstantiationEvidence {
-    pub(super) quantified: Proposition,
-    pub(super) argument: Bitvector32Term,
-    pub(super) guard_premises: Vec<Proposition>,
+pub(crate) struct ForallInt32InstantiationEvidence {
+    pub(crate) quantified: Proposition,
+    pub(crate) argument: Bitvector32Term,
+    pub(crate) guard_premises: Vec<Proposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum AtomicPropositionDerivationEvidence {
+pub(crate) enum AtomicPropositionDerivationEvidence {
     MemoryDag(Box<AtomicMemoryLoadEqualityEvidence>),
     LoadAddressCongruence(Box<LoadAddressCongruenceEvidence>),
     PointerOffsetMemoryDag(Box<PointerOffsetEqualityEvidence>),

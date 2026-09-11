@@ -374,7 +374,7 @@ pub(crate) fn c_memories_canonically_equal(left: &CMemory, right: &CMemory) -> b
 /// thing — the value of loading the pointer *in that node*. That is what
 /// makes two lookups comparable by node identity alone.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum MemoryDagCell {
+pub(crate) enum MemoryDagCell {
     /// `node`'s derivation is a `Store` whose pointer is provably the loaded
     /// one, so the load reads `value`.
     Stored {
@@ -397,7 +397,7 @@ pub(super) enum MemoryDagCell {
 /// that expose this walk as a certificate must additionally retain the typed
 /// derivation that justified crossing assumption-dependent edges.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct MemoryDagHop {
+pub(crate) struct MemoryDagHop {
     pub(super) derived: SharedCMemory,
     pub(super) derivation: std::sync::Arc<CMemoryDerivation>,
     pub(super) justification: MemoryDagHopJustification,
@@ -790,7 +790,7 @@ impl MemoryDagCell {
 /// DAG. This is retained decision evidence, not yet a complete certificate:
 /// each assumption-dependent hop still needs its own typed justification.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct MemoryDagLoadEqualityEvidence {
+pub(crate) struct MemoryDagLoadEqualityEvidence {
     pub(super) left: MemoryDagCell,
     pub(super) right: MemoryDagCell,
     pub(super) reason: MemoryDagLoadEqualityReason,
@@ -803,7 +803,7 @@ pub(super) enum MemoryDagLoadEqualityReason {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum AtomicMemoryLoadEqualityEvidence {
+pub(crate) enum AtomicMemoryLoadEqualityEvidence {
     SameCell(MemoryDagLoadEqualityEvidence),
     /// One or both load endpoints are pointer-observable canonical
     /// projections. The projection edge is producer-known provenance; the
@@ -822,7 +822,7 @@ pub(super) enum AtomicMemoryLoadEqualityEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct CanonicalLoadProjectionEvidence {
+pub(crate) struct CanonicalLoadProjectionEvidence {
     pub(super) source: SharedCMemory,
     pub(super) projected: SharedCMemory,
     pub(super) pointer: Pointer,
@@ -1647,7 +1647,7 @@ pub(crate) fn checked_origin_load_equality(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum PointerOffsetEqualityEvidence {
+pub(crate) enum PointerOffsetEqualityEvidence {
     Exact,
     Add {
         first: Box<PointerOffsetEqualityEvidence>,
@@ -2689,7 +2689,7 @@ pub(super) fn memory_load_equality_evidence_at(
 /// snapshot's cell literally pins the older form. That is still a pure
 /// DAG answer (the value comes off a derivation edge, compared structurally),
 /// so it stays inside the exact-facts-plus-edges determinism boundary.
-pub(super) fn atomic_loads_equal_along_memory_derivations(
+pub(crate) fn atomic_loads_equal_along_memory_derivations(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
     assumptions: &PureFactContext,
@@ -6092,6 +6092,8 @@ fn effect_pointer_equality_retains_exact_loads_and_explicit_offset_facts() {
 #[cfg(test)]
 #[test]
 fn effect_pointer_equality_does_not_use_general_context_inconsistency() {
+    // Surface planning; only this test reaches it from inside the kernel.
+    use crate::surface::planning::proposition_search::PropositionSearch;
     let left = PointerOffsetTerm::Variable(Variable(911));
     let right = PointerOffsetTerm::Variable(Variable(912));
     let facts = PureFactContext::new().assume_condition(ConditionTerm::Constant(false), true);

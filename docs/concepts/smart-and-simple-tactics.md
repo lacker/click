@@ -23,6 +23,16 @@ budgets. `auto`, `simp`, and other tactics classified as smart can fail to find
 an existing proof. That is bounded incompleteness, not evidence that the claim
 is false.
 
+Search lives on the surface, and so does the logical proposition search
+underneath the smart tactics: the recursion over a goal's connectives, the
+disjunction arm choice, the assumed antecedent, the finite instantiation, and
+the case split over disjunction facts. It plans; the kernel checks what it
+finds. No kernel operation calls it, and a kernel operation that needs to
+know whether a proposition holds either answers from an exact route — the
+fact index, the frozen condition checker on a bare condition, the retained
+atomic memory and resource checkers — or emits the proposition as an
+obligation for an ordinary tactic to prove.
+
 Smart search remains outside the trust boundary:
 
 - search can advance proof state only through checked simple or structural

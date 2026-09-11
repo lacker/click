@@ -77,7 +77,7 @@ impl PureFactContext {
         PROOF_AWARE_POINTER_INDEX_QUERIES.with(std::cell::Cell::get)
     }
 
-    pub(in crate::kernel) fn proves_memory_access(
+    pub(crate) fn proves_memory_access(
         &self,
         memory: &CMemory,
         pointer: &Pointer,
@@ -86,7 +86,7 @@ impl PureFactContext {
         self.proves_memory_loadable(memory, pointer, &Bitvector32Term::Constant(byte_width))
     }
 
-    pub(in crate::kernel) fn proves_memory_loadable(
+    pub(crate) fn proves_memory_loadable(
         &self,
         memory: &CMemory,
         base: &Pointer,
@@ -215,7 +215,7 @@ impl PureFactContext {
     /// A loadable prefix followed immediately by another loadable region
     /// certifies their concatenation. This is the range form produced when a
     /// store initializes the next cell of an already-initialized prefix.
-    pub(super) fn adjacent_loadable_region_facts(
+    pub(crate) fn adjacent_loadable_region_facts(
         &self,
         memory: &CMemory,
         base: &Pointer,
@@ -1186,7 +1186,7 @@ impl PureFactContext {
         })
     }
 
-    pub(in crate::kernel) fn proves_memory_disjoint(
+    pub(crate) fn proves_memory_disjoint(
         &self,
         left_base: &Pointer,
         left_start: &Bitvector32Term,
@@ -1201,7 +1201,7 @@ impl PureFactContext {
             || self.range_covered_by_disjoint_fact_ranges(&right, &left)
     }
 
-    pub(in crate::kernel) fn proves_memory_disjoint_from_resource_separate(
+    pub(crate) fn proves_memory_disjoint_from_resource_separate(
         &self,
         left_base: &Pointer,
         left_start: &Bitvector32Term,
@@ -1219,11 +1219,7 @@ impl PureFactContext {
             || self.range_covered_by_resource_separate_ranges(&right, &left)
     }
 
-    pub(in crate::kernel) fn proves_resource_contains(
-        &self,
-        parent: &CResource,
-        child: &CResource,
-    ) -> bool {
+    pub(crate) fn proves_resource_contains(&self, parent: &CResource, child: &CResource) -> bool {
         self.proves_resource_contains_inner(parent, child)
     }
 
@@ -1257,11 +1253,7 @@ impl PureFactContext {
         false
     }
 
-    pub(in crate::kernel) fn proves_resource_separate(
-        &self,
-        left: &CResource,
-        right: &CResource,
-    ) -> bool {
+    pub(crate) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
         self.proves_resource_separate_inner(left, right)
     }
 

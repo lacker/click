@@ -1,6 +1,7 @@
 //! Checked execution statement steps and loop-invariant bundles.
 
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 /// Names the ranking members a ranked loop's bundle carries, so an explicit
 /// `preserve by` body written before the `decreases` clause existed reports

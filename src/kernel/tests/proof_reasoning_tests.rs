@@ -1,4 +1,8 @@
+// The proposition search these tests exercise is Surface planning now; see
+// `src/surface/planning/proposition_search.rs`. The kernel itself never
+// calls it, so the tests import the planner explicitly.
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[test]
 fn nested_simp_derivations_keep_rule_temporaries_off_the_recursive_stack() {
@@ -3557,9 +3561,14 @@ fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
             )),
         ),
     );
+    // The instantiation guard is stated exactly. Package 15 narrowed the
+    // `ForallInt32Instantiation` rule to guards that are builtin solvable or
+    // exactly available, because the evidence must name the premises it
+    // consumed and the frozen condition checker does not report its own. The
+    // `exit_guard_needing_a_derivation` case below pins that narrowing.
     let exit_guard = Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(exit.clone(), Bitvector32Term::Constant(3)),
-        false,
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(2), exit.clone()),
+        true,
     );
     let goal = Proposition::ConditionIs(
         ConditionTerm::equal(
@@ -3584,6 +3593,73 @@ fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
     assert!(derivation.check(&assumptions));
     assert!(!derivation.check(&PureFactContext::new().assume_proposition(quantified)));
     assert!(!derivation.check(&PureFactContext::new().assume_proposition(exit_guard)));
+}
+
+/// Package 15's narrowing of the `ForallInt32Instantiation` rule.
+///
+/// The instantiation guard `2 < exit` follows from `not (exit < 3)`, but
+/// only through the frozen condition checker, which does not report the
+/// premises it consumed. The rule therefore refuses the instantiation rather
+/// than retaining evidence with no premise, which would make
+/// `checks_atomic_derivation` vacuous for that guard. Restoring it is the
+/// evidence-checked `decide` that `issues/simplify-kernel.md` defers; when
+/// that lands, this test should start selecting the instantiation again and
+/// name `not (exit < 3)` as the guard premise.
+#[test]
+fn a_quantified_instantiation_guard_needing_a_derivation_is_refused() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "refused-guard-data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let index = Variable(2_100_400);
+    let exit = Bitvector32Term::Variable(Variable(2_100_401));
+    let indexed_load = |value| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&memory),
+            Box::new(data.offset_by_int32_elements(value)),
+        )
+    };
+    let quantified = forall_int32(
+        index,
+        Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(Bitvector32Term::Variable(index), exit.clone()),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    indexed_load(Bitvector32Term::Variable(index)),
+                    Bitvector32Term::Variable(index),
+                ),
+                true,
+            )),
+        ),
+    );
+    // `not (exit < 3)` entails `2 < exit`, but not exactly.
+    let derivable_guard_source = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(exit, Bitvector32Term::Constant(3)),
+        false,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            indexed_load(Bitvector32Term::Constant(2)),
+            Bitvector32Term::Constant(2),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(quantified)
+        .assume_proposition(derivable_guard_source);
+
+    let retained = assumptions
+        .derive_simp_proposition(&goal)
+        .and_then(|derivation| derivation.forall_int32_instantiation().map(|_| ()));
+    assert!(
+        retained.is_none(),
+        "an instantiation guard that needs a derivation must not be retained \
+         as evidence whose premise list cannot name what discharged it"
+    );
 }
 
 #[test]

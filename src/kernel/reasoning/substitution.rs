@@ -146,7 +146,7 @@ pub fn resolve_minted_load_variables(
     resolved
 }
 
-pub(in crate::kernel) fn substitute_bitvector_variable_in_proposition(
+pub(crate) fn substitute_bitvector_variable_in_proposition(
     proposition: &Proposition,
     from: Variable,
     to: &Bitvector32Term,
@@ -4102,7 +4102,7 @@ fn substitute_through_load_variable(
     ))
 }
 
-pub(in crate::kernel) fn substitute_bitvector_variable(
+pub(crate) fn substitute_bitvector_variable(
     term: &Bitvector32Term,
     from: Variable,
     to: &Bitvector32Term,

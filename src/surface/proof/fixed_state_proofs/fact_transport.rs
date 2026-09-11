@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn plan_explicit_fact_transport(

@@ -1,4 +1,8 @@
+// The proposition search these tests exercise is Surface planning now; see
+// `src/surface/planning/proposition_search.rs`. The kernel itself never
+// calls it, so the tests import the planner explicitly.
 use super::prelude::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 mod callback_signature_tests;
 
 fn checked_memory_load_equality(

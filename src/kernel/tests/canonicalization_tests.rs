@@ -1,4 +1,8 @@
+// The proposition search these tests exercise is Surface planning now; see
+// `src/surface/planning/proposition_search.rs`. The kernel itself never
+// calls it, so the tests import the planner explicitly.
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 // --- the canonicalization model's production invariants -------------------
 // See docs/internals/canonicalization.md.

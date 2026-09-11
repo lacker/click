@@ -5,6 +5,7 @@ use crate::kernel::proof::integer_arithmetic::{
     IntegerArithmeticCertificate, IntegerArithmeticNode, integer_affine_claim,
 };
 use crate::kernel::{CFloatClassification, CFloatCondition};
+use crate::surface::planning::proposition_search::PropositionSearch;
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 fn integer_plan_to_surface_certificate(

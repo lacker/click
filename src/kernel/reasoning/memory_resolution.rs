@@ -267,6 +267,8 @@ fn memoized_resolution_query(key: Option<ResolutionQueryKey>, run: impl FnOnce()
 #[cfg(test)]
 #[test]
 fn expired_nested_reasoning_does_not_poison_resolution_memo() {
+    // Surface planning; only this test reaches it from inside the kernel.
+    use crate::surface::planning::proposition_search::PropositionSearch;
     clear_memory_resolution_memos();
     let key = ResolutionQueryKey::BitvectorEqual(
         7_490_001,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ResourceBodyAccess {

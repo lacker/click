@@ -1,6 +1,7 @@
 use super::*;
 #[cfg(test)]
 use crate::persistent::persistent_node_allocations;
+use crate::surface::planning::proposition_search::PropositionSearch;
 #[cfg(test)]
 use std::sync::Arc;
 

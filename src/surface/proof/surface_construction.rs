@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 pub(super) fn checked_surface_fact_in_state(
     view: ExecutionView<'_>,

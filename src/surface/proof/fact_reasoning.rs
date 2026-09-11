@@ -1,6 +1,7 @@
 //! Language diagnostics and smart-search policy over kernel proof-fact reasoning.
 
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) use crate::kernel::proof::fact_reasoning::*;

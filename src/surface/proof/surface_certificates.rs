@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::LoweringIntroduction;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 pub(super) fn surface_logical_children(
     goal: &ClickProposition,

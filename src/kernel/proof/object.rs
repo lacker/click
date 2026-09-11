@@ -624,7 +624,8 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
     ) -> Option<Self> {
         let (goal, facts) = self.focused_proposition()?;
         (super::execution::checked_branch_fact_is_available(facts, goal.proposition())
-            || definition.is_some_and(|definition| definition.proves(goal.proposition()))
+            || definition
+                .is_some_and(|definition| definition.matches_goal_exactly(goal.proposition()))
             || read_premise.is_some_and(|premise| {
                 facts.contains(premise)
                     && super::execution::interface_read_is_subrange(goal.proposition(), premise)

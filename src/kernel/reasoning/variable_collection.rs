@@ -20,7 +20,7 @@ pub(in crate::kernel) fn bitvector_same_base_nonzero_const_offset(
     false
 }
 
-pub(in crate::kernel) fn collect_proposition_bitvector_variables(
+pub(crate) fn collect_proposition_bitvector_variables(
     proposition: &Proposition,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1727,7 +1727,7 @@ fn checked_collection_checkpoint() -> bool {
     crate::instrumentation::checked_collection_exhausted()
 }
 
-pub(in crate::kernel) fn collect_condition_bitvector_variables(
+pub(crate) fn collect_condition_bitvector_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
 ) {

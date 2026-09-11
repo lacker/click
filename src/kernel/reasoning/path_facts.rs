@@ -216,7 +216,7 @@ pub(in crate::kernel) fn memory_effect_execution_facts(
         .collect()
 }
 
-pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
+pub(crate) fn solve_builtin_prop(proposition: &Proposition) -> bool {
     match proposition {
         Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
             algebraic_terms_equal(left, right)

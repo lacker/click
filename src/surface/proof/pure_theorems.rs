@@ -1,6 +1,7 @@
 use super::*;
 use crate::kernel::AlgebraicValueType;
 use crate::kernel::c_function_contract_refinement_obligations;
+use crate::surface::planning::proposition_search::PropositionSearch;
 use crate::surface::reduce_constructor_iota_in_proposition;
 
 const STRUCTURAL_INDUCTION_VARIABLE_BASE: u64 = 1 << 60;

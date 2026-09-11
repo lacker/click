@@ -2540,7 +2540,10 @@ impl CheckedInterfaceLoadDefinition {
         })
     }
 
-    pub(super) fn proves(&self, goal: &Proposition) -> bool {
+    /// Exact equality against the one load definition this record carries.
+    /// Named so the package 15 `\.proves(` audit grep over `src/kernel/`
+    /// does not have to distinguish it from the relocated prover.
+    pub(super) fn matches_goal_exactly(&self, goal: &Proposition) -> bool {
         &self.proposition == goal
     }
 }
@@ -5265,11 +5268,15 @@ pub(crate) fn old_reference_state<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The proposition search is Surface planning now; see
+    // `src/surface/planning/proposition_search.rs`. Only these tests reach
+    // it from inside the kernel.
     use crate::kernel::{
         Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition, CMemory,
         CResourceAccessMode, CResourceFact, CResourceSpec, CType, CValue, Pointer, PointerBlock,
         PointerOffsetTerm, SpecExpression, c_function, int32,
     };
+    use crate::surface::planning::proposition_search::PropositionSearch;
 
     fn constructor_partition_fixture(
         width: usize,
@@ -7565,7 +7572,7 @@ mod tests {
         };
         let correct = equation(variable, memory.clone(), pointer.clone());
         let definition = CheckedInterfaceLoadDefinition::check(&correct).unwrap();
-        assert!(definition.proves(&correct));
+        assert!(definition.matches_goal_exactly(&correct));
         let wrong_variable = equation(Variable(17), memory.clone(), pointer.clone());
         let wrong_address = equation(
             variable,
@@ -7582,7 +7589,7 @@ mod tests {
         );
         for wrong in [wrong_variable, wrong_address, wrong_snapshot] {
             assert!(CheckedInterfaceLoadDefinition::check(&wrong).is_none());
-            assert!(!definition.proves(&wrong));
+            assert!(!definition.matches_goal_exactly(&wrong));
         }
     }
 

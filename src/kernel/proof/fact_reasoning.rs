@@ -1001,10 +1001,23 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
             _ => {}
         }
     }
-    PureFactContext::new()
-        .derive_atomic_proposition(goal)
-        .or_else(|| PureFactContext::new().derive_proposition(goal))
-        .is_some()
+    if crate::kernel::reasoning::path_facts::solve_builtin_prop(goal) {
+        return true;
+    }
+    // Constructor congruence is definitional reduction over the goal's own
+    // structure: two applications of one constructor are equal when their
+    // corresponding fields are. The walk is bounded by the goal.
+    if let Some(fields) = crate::kernel::assumptions::algebraic_constructor_field_equalities(goal)
+        && !fields.is_empty()
+    {
+        return fields.iter().all(normalizes_context_free);
+    }
+    // No premises, so what remains is the atomic theory on the empty
+    // context. The ambient legs of the relocated planner -- fact lookup,
+    // case splits over disjunction facts, universal instantiation,
+    // singleton substitution, the inconsistency fallback -- are vacuous
+    // here by construction.
+    PureFactContext::new().proves_atomic_for_derivation(goal, false)
 }
 
 /// Transitional leaf check for structural-normalization migration:
@@ -1150,12 +1163,8 @@ pub(crate) fn discharge_instantiated_guards(
             || premise_conjuncts.iter().any(|premise| {
                 premise == conjunct || condition_polarity_equivalent(premise, conjunct)
             })
-            || premise_assumptions
-                .derive_atomic_proposition(conjunct)
-                .is_some()
-            || premise_assumptions
-                .derive_simp_atomic_proposition(conjunct)
-                .is_some()
+            || premise_assumptions.proves_atomic_for_derivation(conjunct, false)
+            || premise_assumptions.proves_atomic_for_derivation(conjunct, true)
     };
     let mut guards = Vec::new();
     let mut current = instantiated;
@@ -2088,8 +2097,8 @@ pub(crate) fn directly_covering_loadability_fact(
         matches!(fact, Proposition::CMemoryLoadable { .. })
             .then(|| {
                 assumptions_from_propositions(std::slice::from_ref(fact))
-                    .derive_atomic_proposition(required)
-                    .map(|_| fact.clone())
+                    .proves_atomic_for_derivation(required, false)
+                    .then(|| fact.clone())
             })
             .flatten()
     })

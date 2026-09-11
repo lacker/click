@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 /// Checks that a returning path wrote no caller-visible memory.
 ///

@@ -3,6 +3,8 @@ use super::prelude::*;
 #[cfg(test)]
 mod pointee_const_return_tests {
     use super::*;
+    // Surface planning; only this test reaches it from inside the kernel.
+    use crate::surface::planning::proposition_search::PropositionSearch;
 
     #[test]
     fn pointee_const_return_rebinding_is_allowed_but_store_through_pointer_is_not() {

@@ -1,6 +1,7 @@
 //! Logical/execution/outcome splits, joins, and `have`/`open` scopes.
 
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn apply_both_source(

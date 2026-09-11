@@ -5,8 +5,8 @@
 //! Click axioms: trusted built-in operations that produce theorem objects
 //! directly.
 //!
-mod api;
-mod assumptions;
+pub(crate) mod api;
+pub(crate) mod assumptions;
 mod eval;
 mod functions;
 #[cfg(test)]
@@ -18,7 +18,7 @@ mod nat_integer;
 pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
 pub(crate) mod proof;
-mod reasoning;
+pub(crate) mod reasoning;
 mod spec;
 pub(crate) use spec::{capture_spec_algebraic_value, capture_spec_integer_value};
 mod termination;
@@ -95,6 +95,37 @@ mod prelude {
     pub(super) use super::reasoning::*;
     pub(super) use super::spec::*;
     pub(super) use std::collections::{BTreeMap, BTreeSet};
+}
+
+/// The kernel vocabulary the Surface proposition planner is built from.
+///
+/// The planner in `src/surface/planning/proposition_search.rs` used to be a
+/// kernel module, so it names kernel types directly. This is the complete,
+/// deliberately enumerated list of what it may reach: the proposition and
+/// term vocabulary, the derivation records it produces, the checked context
+/// operations it advances state through, and the exact queries and frozen
+/// atomic checkers it calls at its leaves. Nothing here issues authority --
+/// a `PropositionDerivation` is inert until `check` validates it -- and
+/// nothing under `src/kernel/` imports this module.
+pub(crate) mod planning_api {
+    pub(crate) use super::assumptions::proposition_reasoning::forall_loadable_range_parts;
+    pub(crate) use super::assumptions::{
+        algebraic_constructor_field_equalities, atomic_premise_minimization_disabled,
+        collect_proposition_conjuncts, proposition_derivation, reasoning_interrupted,
+        simp_reasoning_interrupted,
+    };
+    pub(crate) use super::memory_provenance::{
+        atomic_loads_equal_along_memory_derivations, canonicalize_atomic_loads,
+    };
+    pub(crate) use super::reasoning::order_reasoning::{
+        FiniteForAllRange, collect_forall_chain, collect_or_cases, finite_forall_ranges,
+        signed_i64_bitvector_constant,
+    };
+    pub(crate) use super::reasoning::path_facts::solve_builtin_prop;
+    pub(crate) use super::reasoning::substitute_bitvector_variable_in_proposition;
+    pub(crate) use super::reasoning::variable_collection::{
+        collect_condition_bitvector_variables, collect_proposition_bitvector_variables,
+    };
 }
 
 #[cfg(test)]

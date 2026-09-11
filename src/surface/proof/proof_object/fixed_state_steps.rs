@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::kernel::proof::{CheckedProofCasePartition, OutcomeEvidenceFork};
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 /// A source-sized decision graph. Both arms point to the shared continuation;
 /// walking an arm never visits the syntax or outcomes of its sibling.

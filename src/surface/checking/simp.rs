@@ -6,6 +6,7 @@ use crate::kernel::proof::integer_arithmetic::{
 use crate::kernel::{
     AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, PureFunctionArgument,
 };
+use crate::surface::planning::proposition_search::PropositionSearch;
 use num_bigint::BigInt;
 use std::collections::BTreeMap;
 

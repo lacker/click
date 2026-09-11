@@ -1,7 +1,7 @@
 use super::prelude::*;
 
-mod order_reasoning;
-mod path_facts;
+pub(crate) mod order_reasoning;
+pub(crate) mod path_facts;
 mod substitution;
 pub(in crate::kernel) use substitution::IntegerPureSubstitutionError;
 pub(in crate::kernel) use substitution::instantiate_integer_range_fold_step;

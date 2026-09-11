@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::planning::proposition_search::PropositionSearch;
 
 pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickError> {
     validate_algebraic_type_declarations(file)?;

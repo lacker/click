@@ -200,7 +200,7 @@ impl PureFactContext {
         })
     }
 
-    pub(in crate::kernel) fn singleton_constant_equality_evidence(
+    pub(crate) fn singleton_constant_equality_evidence(
         &self,
         variable: Variable,
     ) -> Option<(i64, DirectBitvectorEqualityEvidence)> {

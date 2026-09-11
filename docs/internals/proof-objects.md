@@ -394,6 +394,25 @@ execution, memory, or resource transition. `Theorem` is authority for an
 established proposition; `PropositionDerivation` retains the checked reasoning
 tree; other typed evidence records execution and memory transitions.
 
+A `PropositionDerivation` is *found* by planning and *validated* by the
+kernel. The logical search that finds one — the recursion over a goal's
+connectives, the disjunction arm choice, the antecedent assumption, the
+finite instantiation, the case split over disjunction facts, the singleton
+substitution — is Surface Click planning in
+`src/surface/planning/proposition_search.rs`. It advances state only through
+checked kernel operations (`assume_proposition`, `restricted_to_facts`,
+`with_only_proposition_facts`, `without_exact_fact`) and public exact
+queries. The checker, `PropositionDerivation::check`, stays in the kernel:
+it is local, deterministic, and bounded by the derivation it was handed.
+
+Nothing under `src/kernel/` calls that planner. A kernel operation that
+needs to know whether a proposition holds uses an exact route — the fact
+index, the frozen condition checker on a bare condition, or the retained
+atomic memory and resource checkers — or emits the proposition as an
+obligation for an ordinary tactic to prove. Because a derivation carries no
+authority until it is checked, a planning bug can lose a proof but cannot
+issue one.
+
 The target invariants are:
 
 - explicit and smart tactics advance one `Proof` through checked operations;

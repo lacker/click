@@ -93,6 +93,7 @@ mod generics;
 mod integer_conversions;
 mod lowering;
 mod parser;
+pub(crate) mod planning;
 use integer_conversions::*;
 mod printing;
 mod proof;

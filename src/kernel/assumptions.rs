@@ -13,7 +13,7 @@ mod condition_reasoning;
 mod memory_reasoning;
 pub(crate) use memory_reasoning::arm_frame_composite_definitions;
 pub(crate) use memory_reasoning::clear_frame_expansion_memo;
-mod proposition_reasoning;
+pub(crate) mod proposition_reasoning;
 
 pub(crate) use proposition_reasoning::clear_context_inconsistency_memos;
 pub(crate) use proposition_reasoning::finite_forall_goal_instances;
@@ -391,16 +391,17 @@ pub(crate) fn record_reasoning_provenance(
         return;
     }
     let _recording = ReasoningProvenanceRecordingGuard::start();
-    // Exact facts already identify their own certificate premise. Asking the
-    // general derivation builder for them would conservatively attach its
-    // complete ambient context and defeat precise dependency collection.
+    // Exact facts already identify their own certificate premise. The
+    // general derivation builder used to fill in the rest, but it left the
+    // kernel with the rest of the proposition search, and asking it for a
+    // premise set would have conservatively attached its complete ambient
+    // context anyway. A proposition the exact index does not name
+    // contributes no premise here; certificate planning that needs one
+    // spells the step instead.
     let premises = if assumptions.proves_exact(proposition) {
         vec![proposition.clone()]
     } else {
-        assumptions
-            .derive_proposition(proposition)
-            .map(|derivation| derivation.context_premises())
-            .unwrap_or_default()
+        Vec::new()
     };
     REASONING_PROVENANCE_STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
@@ -433,7 +434,7 @@ pub(crate) fn record_implicit_reasoning_provenance(
     }
 }
 
-fn atomic_premise_minimization_disabled() -> bool {
+pub(crate) fn atomic_premise_minimization_disabled() -> bool {
     ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.get() != 0)
 }
 
@@ -646,7 +647,7 @@ pub(super) fn incomplete_reasoning_epoch() -> u64 {
 /// The instrumentation checkpoint also checks deterministic tactic work and
 /// retains diagnostics for the outer verification error boundary. Call it
 /// exactly once so this wrapper does not change checkpoint work accounting.
-pub(super) fn reasoning_interrupted() -> bool {
+pub(crate) fn reasoning_interrupted() -> bool {
     let interrupted = crate::instrumentation::deadline_exceeded();
     if interrupted {
         note_incomplete_reasoning();
@@ -660,7 +661,7 @@ pub(super) fn reasoning_interrupted() -> bool {
 /// per condition and cycle-cut, its recursion follows the proposition, and
 /// its premise selection is bounded by the candidate facts, so its work is
 /// bounded by the goal and the facts the goal names.
-fn simp_reasoning_interrupted() -> bool {
+pub(crate) fn simp_reasoning_interrupted() -> bool {
     reasoning_interrupted()
 }
 
@@ -1359,7 +1360,9 @@ impl Proposition {
 /// applications of the same checked algebraic constructor. This single
 /// definition is shared by evidence production, index maintenance, and proof
 /// checking so none of those layers can disagree about the rule.
-fn algebraic_constructor_field_equalities(proposition: &Proposition) -> Option<Vec<Proposition>> {
+pub(crate) fn algebraic_constructor_field_equalities(
+    proposition: &Proposition,
+) -> Option<Vec<Proposition>> {
     let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = proposition else {
         return None;
     };
@@ -1996,7 +1999,7 @@ impl PureFactContext {
         }
     }
 
-    fn algebraic_constructor_field_sources(
+    pub(crate) fn algebraic_constructor_field_sources(
         &self,
         field: &Proposition,
     ) -> impl Iterator<Item = &(Proposition, usize)> {
@@ -2030,7 +2033,7 @@ impl PureFactContext {
             .flat_map(|facts| facts.iter())
     }
 
-    pub(super) fn memory_loadable_candidates_for_base(
+    pub(crate) fn memory_loadable_candidates_for_base(
         &self,
         base: &Pointer,
     ) -> impl Iterator<Item = &Proposition> {
@@ -2569,7 +2572,114 @@ impl PureFactContext {
         facts
     }
 
-    pub(in crate::kernel) fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
+    /// The condition facts of this context, in the index's own order.
+    ///
+    /// This is a read-only view for a planner outside the kernel: it names
+    /// what is available without exposing the index that stores it.
+    pub fn condition_fact_pairs(&self) -> impl Iterator<Item = (&ConditionTerm, bool)> {
+        self.condition_facts
+            .iter()
+            .map(|(condition, value)| (condition, *value))
+    }
+
+    /// The proposition facts of this context, in the index's own order.
+    pub fn proposition_facts(&self) -> impl Iterator<Item = &Proposition> {
+        self.prop_facts.iter()
+    }
+
+    /// One checked restriction: a context carrying exactly the named
+    /// condition facts and proposition facts, with every derived index
+    /// rebuilt from them.
+    ///
+    /// This is the only operation by which a planner outside the kernel
+    /// narrows a context to a premise selection, so no caller reaches the
+    /// private fact indexes or their rebuild hooks. The non-fact settings of
+    /// `self` (transport and deferral flags) are preserved, because a
+    /// restricted context must answer under the same regime as the context
+    /// it was cut from.
+    pub fn restricted_to_facts(
+        &self,
+        conditions: &[(ConditionTerm, bool)],
+        propositions: &[Proposition],
+    ) -> Self {
+        let mut restricted = self.clone();
+        restricted.condition_facts = conditions.iter().fold(
+            crate::persistent::PersistentMap::default(),
+            |facts, (condition, value)| facts.with_inserted(condition.clone(), *value),
+        );
+        restricted.clear_proposition_facts();
+        for proposition in propositions {
+            restricted.insert_proposition_fact(proposition.clone());
+        }
+        restricted.rebuild_signed_order_bounds();
+        restricted.rebuild_memory_load_condition_facts();
+        restricted.recompute_content_fingerprint();
+        restricted
+    }
+
+    /// The loadability facts of this context, in the index's own order.
+    pub fn memory_loadable_fact_propositions(&self) -> impl Iterator<Item = &Proposition> {
+        self.memory_loadable_facts.values().flatten()
+    }
+
+    /// The disjunction facts of this context, in the index's own order.
+    pub fn disjunction_fact_propositions(&self) -> impl Iterator<Item = &Proposition> {
+        self.disjunction_facts.iter()
+    }
+
+    /// Whether `proposition` is an exact proposition fact of this context.
+    pub fn contains_proposition_fact(&self, proposition: &Proposition) -> bool {
+        self.prop_facts.contains(proposition)
+    }
+
+    /// One checked weakening: this context without the single exact entry
+    /// that `proposition` names, with the indexes keyed by that entry
+    /// adjusted.
+    ///
+    /// Removing one exact entry touches only the persistent indexes keyed by
+    /// it; it never rebuilds or scans the fact set. A `proposition` that is
+    /// not an exact fact here leaves the context unchanged.
+    pub fn without_exact_fact(&self, proposition: &Proposition) -> Self {
+        let mut weakened = self.clone();
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                if weakened.condition_facts.get(condition) == Some(value) {
+                    weakened.forget_condition_fact(condition, *value);
+                }
+            }
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(condition, value)
+                    if weakened.condition_facts.get(condition) == Some(&!*value) =>
+                {
+                    weakened.forget_condition_fact(condition, !*value);
+                }
+                _ => weakened.remove_proposition_fact(proposition),
+            },
+            _ => weakened.remove_proposition_fact(proposition),
+        }
+        weakened
+    }
+
+    fn forget_condition_fact(&mut self, condition: &ConditionTerm, assumed: bool) {
+        self.condition_facts = self.condition_facts.without_key(condition);
+        self.adjust_signed_order_bound(condition, assumed, false);
+        self.rebuild_memory_load_condition_facts();
+        self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), assumed));
+    }
+
+    /// Like [`Self::restricted_to_facts`], but keeping every condition fact
+    /// and replacing only the proposition facts.
+    pub fn with_only_proposition_facts(&self, propositions: &[Proposition]) -> Self {
+        let mut restricted = self.clone();
+        restricted.clear_proposition_facts();
+        for proposition in propositions {
+            restricted.insert_proposition_fact(proposition.clone());
+        }
+        restricted.recompute_content_fingerprint();
+        restricted
+    }
+
+    pub(crate) fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
         let mut assumptions = self.clone();
         assumptions.condition_facts = self
             .condition_facts
@@ -2608,7 +2718,7 @@ impl PureFactContext {
     }
 }
 
-fn proposition_derivation(
+pub(crate) fn proposition_derivation(
     conclusion: &Proposition,
     rule: PropositionDerivationRule,
 ) -> PropositionDerivation {
@@ -2828,7 +2938,10 @@ impl PropositionDerivation {
     }
 }
 
-fn collect_proposition_conjuncts(proposition: &Proposition, into: &mut Vec<Proposition>) {
+pub(crate) fn collect_proposition_conjuncts(
+    proposition: &Proposition,
+    into: &mut Vec<Proposition>,
+) {
     match proposition {
         Proposition::And(left, right) => {
             collect_proposition_conjuncts(left, into);

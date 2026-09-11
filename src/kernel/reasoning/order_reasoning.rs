@@ -34,9 +34,9 @@ pub(in crate::kernel) fn condition_as_order_fact(
 }
 
 #[derive(Clone, Debug, Default)]
-pub(in crate::kernel) struct FiniteForAllRange {
-    pub(in crate::kernel) lower: i64,
-    pub(in crate::kernel) upper: i64,
+pub(crate) struct FiniteForAllRange {
+    pub(crate) lower: i64,
+    pub(crate) upper: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -46,7 +46,7 @@ pub(in crate::kernel) struct VariableOrderEdge {
     pub(in crate::kernel) strict: bool,
 }
 
-pub(in crate::kernel) fn collect_forall_chain<'a>(
+pub(crate) fn collect_forall_chain<'a>(
     proposition: &'a Proposition,
     variables: &mut Vec<Variable>,
 ) -> &'a Proposition {
@@ -63,7 +63,7 @@ pub(in crate::kernel) fn collect_forall_chain<'a>(
     }
 }
 
-pub(in crate::kernel) fn collect_or_cases(proposition: &Proposition, cases: &mut Vec<Proposition>) {
+pub(crate) fn collect_or_cases(proposition: &Proposition, cases: &mut Vec<Proposition>) {
     match proposition {
         Proposition::Or(left, right) => {
             collect_or_cases(left, cases);
@@ -86,7 +86,7 @@ pub(in crate::kernel) fn collect_or_cases(proposition: &Proposition, cases: &mut
 /// outside that hull every such antecedent is false, so every leaf, and
 /// therefore the whole tree, is true without inspection. A bare conjunct
 /// such as `... and (k < 3)` is never vacuous and so never qualifies.
-pub(in crate::kernel) fn finite_forall_ranges(
+pub(crate) fn finite_forall_ranges(
     variables: &[Variable],
     body: &Proposition,
 ) -> Option<Vec<FiniteForAllRange>> {
@@ -304,7 +304,7 @@ pub(in crate::kernel) fn propagate_variable_order_bounds(
     Some(())
 }
 
-pub(in crate::kernel) fn signed_i64_bitvector_constant(value: i64) -> Bitvector32Term {
+pub(crate) fn signed_i64_bitvector_constant(value: i64) -> Bitvector32Term {
     debug_assert!((i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&value));
     Bitvector32Term::Constant(value as i32 as u32)
 }
