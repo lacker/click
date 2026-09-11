@@ -1136,6 +1136,73 @@ fn certification_proves_exists_obligation_from_facts(
     })
 }
 
+/// Renders a kernel runtime error for a certification diagnostic. Contract
+/// errors carry a sentence written for the user; the structured variants have
+/// no kernel-side rendering of their payload, so they are named by kind rather
+/// than dumped as internal state.
+pub(super) fn describe_certification_runtime_error(error: &CRuntimeError) -> String {
+    match error {
+        CRuntimeError::PointerConversion(message) | CRuntimeError::FunctionContract(message) => {
+            message.clone()
+        }
+        CRuntimeError::UnboundVariable(name) => format!("unbound variable `{name}`"),
+        CRuntimeError::UnknownFunction(name) => format!("unknown function `{name}`"),
+        CRuntimeError::MissingVerifiedFunctionRule(name) => {
+            format!("the contract of `{name}` has not been verified yet")
+        }
+        CRuntimeError::UnsupportedOpaqueFunctionContract(name) => {
+            format!("the contract of `{name}` refers to an unavailable program point")
+        }
+        CRuntimeError::AbstractFunctionPointerCall(name) => {
+            format!("no named contract is available for function pointer `{name}`")
+        }
+        CRuntimeError::TypeMismatch => "type mismatch".to_string(),
+        CRuntimeError::IndeterminatePointeeType => {
+            "a pointer operation has no known pointee type".to_string()
+        }
+        CRuntimeError::WrongArity { expected, actual } => {
+            format!("wrong argument count: expected {expected}, got {actual}")
+        }
+        CRuntimeError::MissingReturn => "missing return".to_string(),
+        CRuntimeError::MissingResource { .. } => "a required resource is not available".to_string(),
+        CRuntimeError::InvalidFree(_) => "an invalid free".to_string(),
+        CRuntimeError::UnresolvedAllocationOutcome => {
+            "an unresolved allocation outcome".to_string()
+        }
+        CRuntimeError::LiveAllocationLeak { .. } => {
+            "a live allocation is neither returned nor freed".to_string()
+        }
+        CRuntimeError::StaleResourceAfterFree { .. } => {
+            "a resource would remain usable after its allocation is freed".to_string()
+        }
+        CRuntimeError::DuplicateResource { .. } => {
+            "the same resource is declared twice".to_string()
+        }
+        CRuntimeError::OverlappingOwnedMemoryResources { .. } => {
+            "two owned memory resource clauses overlap".to_string()
+        }
+    }
+}
+
+/// Names the budget or deadline a bounded evaluation ran into.
+pub(super) fn describe_execution_limit(limit: ExecutionLimit) -> &'static str {
+    match limit {
+        ExecutionLimit::Deadline => "the verification deadline",
+        ExecutionLimit::ExpressionSteps => "the expression step budget",
+        ExecutionLimit::StatementSteps => "the statement step budget",
+        ExecutionLimit::FunctionCalls => "the function call budget",
+        ExecutionLimit::LoopUnrolls => "the loop unrolling budget",
+        ExecutionLimit::Paths => "the path budget",
+        ExecutionLimit::UnsupportedIntegerExistentialBody => {
+            "an unsupported integer existential body"
+        }
+    }
+}
+
+/// Builds the assumptions an exact contract certification runs under, or says
+/// why it could not. The failure text is reported to the user: certification
+/// with no paths and no reason is a dead end for whoever wrote the contract,
+/// so every exit below names what stopped it.
 pub(super) fn c_function_contract_certification_assumptions(
     caller_state: &CState,
     function: &CFunction,
@@ -1143,9 +1210,11 @@ pub(super) fn c_function_contract_certification_assumptions(
     mut assumptions: PureFactContext,
     selection_assumptions: &PureFactContext,
     authorized_theorem_facts: &[Proposition],
-) -> Option<PureFactContext> {
+) -> Result<PureFactContext, String> {
     let mut budget = ExecutionBudget::default();
-    let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
+        return Err("could not build the contract entry state from the call arguments".to_string());
+    };
     if function
         .parameters()
         .iter()
@@ -1157,7 +1226,10 @@ pub(super) fn c_function_contract_certification_assumptions(
                 CExpression::Value(value) => Some(value.clone()),
                 _ => None,
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                "an aggregate contract argument is not a value at the contract entry".to_string()
+            })?;
         entry_state = match prepare_function_contract_entry_state_with_values(
             caller_state,
             function,
@@ -1166,7 +1238,18 @@ pub(super) fn c_function_contract_certification_assumptions(
             &mut budget,
         ) {
             Ok(Ok(state)) => state,
-            Ok(Err(_)) | Err(_) => return None,
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "could not build the aggregate contract entry state: {}",
+                    describe_certification_runtime_error(&error)
+                ));
+            }
+            Err(limit) => {
+                return Err(format!(
+                    "building the aggregate contract entry state stopped at {}",
+                    describe_execution_limit(limit)
+                ));
+            }
         };
     }
     // Resource-backed loadability is authoritative only after the exact
@@ -1198,7 +1281,7 @@ pub(super) fn c_function_contract_certification_assumptions(
         }
     }
     let mut requirement_obligations = Vec::new();
-    for requirement in function.contract_requires() {
+    for (requirement_index, requirement) in function.contract_requires().iter().enumerate() {
         let lowering_assumptions = assumptions
             .clone()
             .allow_symbolic_contract_loads()
@@ -1220,7 +1303,11 @@ pub(super) fn c_function_contract_certification_assumptions(
                         )),
                     );
                 }
-                return None;
+                return Err(format!(
+                    "lowering `requires` clause {} stopped at {}",
+                    requirement_index + 1,
+                    describe_execution_limit(limit)
+                ));
             }
         };
         let path = if let [path] = paths.as_slice() {
@@ -1263,7 +1350,15 @@ pub(super) fn c_function_contract_certification_assumptions(
                             )),
                         );
                     }
-                    return None;
+                    return Err(format!(
+                        "`requires` clause {} lowered to {} paths, of which {} matched the \
+                         selected facts and {} stayed consistent; certification needs exactly \
+                         one",
+                        requirement_index + 1,
+                        paths.len(),
+                        proposition_matches.len(),
+                        consistent.len(),
+                    ));
                 };
                 *path
             }
@@ -1291,26 +1386,51 @@ pub(super) fn c_function_contract_certification_assumptions(
             true,
         ));
     }
-    let quantity_assumptions = quantified_resource_requirement_assumptions(
+    let quantity_assumptions = match quantified_resource_requirement_assumptions(
         &entry_state,
         function.resource_requires(),
         &assumptions,
         &mut budget,
-    )
-    .ok()
-    .and_then(Result::ok)?;
+    ) {
+        Ok(Ok(assumptions)) => assumptions,
+        Ok(Err(error)) => {
+            return Err(format!(
+                "could not evaluate a declared resource quantity in the contract entry \
+                 resources: {}",
+                describe_certification_runtime_error(&error)
+            ));
+        }
+        Err(limit) => {
+            return Err(format!(
+                "evaluating the declared resource quantities of the contract entry resources \
+                 stopped at {}",
+                describe_execution_limit(limit)
+            ));
+        }
+    };
     for proposition in quantity_assumptions {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    let required_resources = evaluate_function_resource_context(
+    let required_resources = match evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
         &assumptions,
         &mut budget,
-    )
-    .ok()
-    .and_then(Result::ok);
-    let required_resources = required_resources?;
+    ) {
+        Ok(Ok(resources)) => resources,
+        Ok(Err(error)) => {
+            return Err(format!(
+                "could not evaluate the contract entry resources: {}",
+                describe_certification_runtime_error(&error)
+            ));
+        }
+        Err(limit) => {
+            return Err(format!(
+                "evaluating the contract entry resources stopped at {}",
+                describe_execution_limit(limit)
+            ));
+        }
+    };
     for fact in required_resources.facts() {
         let Some(range) = fact.memory_view_range() else {
             continue;
@@ -1337,7 +1457,9 @@ pub(super) fn c_function_contract_certification_assumptions(
         entry_state.memory(),
         &assumptions,
     );
-    let (_, resource_definition_facts) = expanded?;
+    let (_, resource_definition_facts) = expanded.ok_or_else(|| {
+        "could not expand the composite resources required at the contract entry".to_string()
+    })?;
     for proposition in resource_definition_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
@@ -1347,7 +1469,10 @@ pub(super) fn c_function_contract_certification_assumptions(
         &entry_state,
         &assumptions,
         false,
-    )?;
+    )
+    .ok_or_else(|| {
+        "could not evaluate the tracked populations of the contract entry resources".to_string()
+    })?;
     for proposition in population_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
@@ -1356,7 +1481,10 @@ pub(super) fn c_function_contract_certification_assumptions(
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
+    )
+    .ok_or_else(|| {
+        "could not expand the composite resources required at the contract entry".to_string()
+    })?;
     let mut entry_resources = entry_state.resources().clone().normalized(&assumptions);
     let mut missing = Vec::new();
     for (index, required) in expanded_required_resources.facts().iter().enumerate() {
@@ -1390,31 +1518,33 @@ pub(super) fn c_function_contract_certification_assumptions(
         entry_resources = exposed;
     }
     if !missing.is_empty() {
+        let missing = missing
+            .into_iter()
+            .map(|(index, required)| {
+                let kind = match required.resource() {
+                    CResource::Memory(range) => {
+                        format!("memory in {}", range.base().block)
+                    }
+                    CResource::Composite { name, .. } => format!("composite {name}"),
+                    CResource::Token { name, .. } => format!("token {name}"),
+                    CResource::Instance(instance) => format!("instance {}", instance.name()),
+                };
+                format!("{index}: {kind}")
+            })
+            .collect::<Vec<_>>();
+        let detail = format!(
+            "the caller's resources do not satisfy the contract entry requirements ({}/{}, \
+             missing {})",
+            entry_resources.facts().len(),
+            expanded_required_resources.facts().len(),
+            missing.join(", ")
+        );
         if crate::instrumentation::enabled() {
-            let missing = missing
-                .into_iter()
-                .map(|(index, required)| {
-                    let kind = match required.resource() {
-                        CResource::Memory(range) => {
-                            format!("memory in {}", range.base().block)
-                        }
-                        CResource::Composite { name, .. } => format!("composite {name}"),
-                        CResource::Token { name, .. } => format!("token {name}"),
-                        CResource::Instance(instance) => format!("instance {}", instance.name()),
-                    };
-                    format!("{index}: {kind}")
-                })
-                .collect::<Vec<_>>();
             crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
-                format!(
-                    "contract entry resources do not satisfy requirements ({}/{}, missing {})",
-                    entry_resources.facts().len(),
-                    expanded_required_resources.facts().len(),
-                    missing.join(", ")
-                ),
+                detail.clone(),
             ));
         }
-        return None;
+        return Err(detail);
     }
     // Owned declared-resource requirements are a kernel witness that the
     // tracked population contains at least the transferred quantity. Expose
@@ -1472,16 +1602,36 @@ pub(super) fn c_function_contract_certification_assumptions(
                 "contract entry resources do not certify requirement safety".to_string(),
             ));
         }
-        return None;
+        return Err(
+            "the contract entry resources do not show that every `requires` clause is safe to \
+             evaluate"
+                .to_string(),
+        );
     }
     for obligation in requirement_obligations {
         assumptions = assumptions.assume_proposition(obligation.proposition().clone());
     }
-    for proposition in entry_resources.observable_facts(&assumptions).ok()? {
+    let observable_facts = entry_resources
+        .observable_facts(&assumptions)
+        .map_err(|error| {
+            let detail = match error {
+                ResourceContextValidityError::DuplicateOwnedResourceFact(_) => {
+                    "the same resource is owned twice"
+                }
+                ResourceContextValidityError::InvalidInstanceAccess(_) => {
+                    "a field-bearing resource instance is not owned exclusively"
+                }
+                ResourceContextValidityError::OverlappingOwnedMemoryResources { .. } => {
+                    "two owned memory resources overlap"
+                }
+            };
+            format!("the contract entry resources are not a valid context: {detail}")
+        })?;
+    for proposition in observable_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
     entry_state.resources = entry_resources.clone();
-    Some(assumptions)
+    Ok(assumptions)
 }
 
 pub(super) fn instantiate_contract_predicate_unfolding(

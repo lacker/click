@@ -3531,7 +3531,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         .collect::<Vec<_>>();
     let selection_assumptions =
         assumptions_with_propositions(&PureFactContext::new(), &derived_entry_facts);
-    let Some(base_assumptions) = crate::instrumentation::measure_operation(
+    let base_assumptions = match crate::instrumentation::measure_operation(
         function.name(),
         "contract certification",
         "contract assumptions",
@@ -3545,16 +3545,19 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 &pure_theorem_facts,
             )
         },
-    ) else {
-        if crate::instrumentation::enabled() {
-            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
-                format!(
-                    "exact certification could not construct contract assumptions for {}",
-                    function.name()
-                ),
-            ));
+    ) {
+        Ok(assumptions) => assumptions,
+        Err(reason) => {
+            if crate::instrumentation::enabled() {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::Diagnostic(format!(
+                        "exact certification could not construct contract assumptions for {}: {reason}",
+                        function.name()
+                    )),
+                );
+            }
+            return CFunctionContractExecution::failed(reason);
         }
-        return CFunctionContractExecution::empty();
     };
     let Some(resource_condition_cases) = crate::instrumentation::measure_operation(
         function.name(),
@@ -3570,13 +3573,15 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 ),
             ));
         }
-        return CFunctionContractExecution::empty();
+        return CFunctionContractExecution::failed(
+            "could not enumerate the undecided resource guards of the contract entry".to_string(),
+        );
     };
     let mut cases = Vec::new();
     let mut reuse_diagnostic = None;
     for case_facts in resource_condition_cases {
         let case_seed = assumptions_with_propositions(&PureFactContext::new(), &case_facts);
-        let Some(mut assumptions) = crate::instrumentation::measure_operation(
+        let mut assumptions = match crate::instrumentation::measure_operation(
             function.name(),
             "contract certification",
             "contract case assumptions",
@@ -3590,19 +3595,26 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     &pure_theorem_facts,
                 )
             },
-        ) else {
-            if crate::instrumentation::enabled() {
-                crate::instrumentation::emit(
-                    crate::instrumentation::VerificationEvent::Diagnostic(format!(
-                        "exact certification rejected a resource-guard case for {}",
-                        function.name()
-                    )),
-                );
+        ) {
+            Ok(assumptions) => assumptions,
+            Err(reason) => {
+                if crate::instrumentation::enabled() {
+                    crate::instrumentation::emit(
+                        crate::instrumentation::VerificationEvent::Diagnostic(format!(
+                            "exact certification rejected a resource-guard case for {}: {reason}",
+                            function.name()
+                        )),
+                    );
+                }
+                return CFunctionContractExecution::failed(format!(
+                    "in one resource-guard case of the contract entry, {reason}"
+                ));
             }
-            return CFunctionContractExecution::empty();
         };
         let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments) else {
-            return CFunctionContractExecution::empty();
+            return CFunctionContractExecution::failed(
+                "could not build the contract entry state from the call arguments".to_string(),
+            );
         };
         let has_recursive_resources = function
             .composite_resource_definitions()
@@ -3622,7 +3634,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     )
                 },
             ) else {
-                return CFunctionContractExecution::empty();
+                return CFunctionContractExecution::failed(
+                    "could not expand the composite resources of the contract entry state"
+                        .to_string(),
+                );
             };
             entry_state.resources = entry_resources.clone();
             assumptions = crate::instrumentation::measure_operation(

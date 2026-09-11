@@ -4398,8 +4398,9 @@ pub struct CFunctionContractExecution {
     /// joined path; another publishes each arm), and a claim completed on
     /// one proof's outcome is matched against that proof's paths.
     pub(super) cases: Vec<Vec<CContractPathSet>>,
-    /// Why no supplied checked artifact could be reused when certification
-    /// produced no paths. Callers report it; it carries no authority.
+    /// Why certification produced no paths: either no supplied checked
+    /// artifact could be reused, or the contract entry context itself could
+    /// not be built. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
     pub(super) checked_call_events: super::proof::CheckedCallEvents,
 }
@@ -4432,10 +4433,13 @@ pub enum CFunctionContractExecutionMode {
 }
 
 impl CFunctionContractExecution {
-    pub(crate) fn empty() -> Self {
+    /// An empty certification that carries why it produced no paths. A
+    /// diagnostic is not authority: the result is still empty and certifies
+    /// nothing.
+    pub(crate) fn failed(diagnostic: String) -> Self {
         Self {
             cases: Vec::new(),
-            reuse_diagnostic: None,
+            reuse_diagnostic: Some(diagnostic),
             checked_call_events: Default::default(),
         }
     }

@@ -11307,7 +11307,7 @@ fn evaluate_function_resource_context_with_normalization(
     normalize: bool,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
-    for resource in resources {
+    for (index, resource) in resources.iter().enumerate() {
         let evaluation_state = state.clone().with_resource_context(
             state
                 .resources()
@@ -11321,7 +11321,13 @@ fn evaluate_function_resource_context_with_normalization(
             budget,
         )? {
             Ok(resource) => resource,
-            Err(error) => return Ok(Err(error)),
+            Err(error) => {
+                return Ok(Err(resource_clause_runtime_error(
+                    error,
+                    index,
+                    resources.len(),
+                )));
+            }
         };
         // Instance rewrites retain the declared memory pieces so folding does
         // not need to normalize an ambient block just to consume those pieces.
@@ -11336,6 +11342,25 @@ fn evaluate_function_resource_context_with_normalization(
         };
     }
     Ok(Ok(context))
+}
+
+/// Names which resource clause of a contract section failed to evaluate. The
+/// evaluator walks the declared clauses in order, so the position is the only
+/// identification available here, and it is enough for a user to find the
+/// clause. Structured errors already print the offending resource and are
+/// passed through unchanged.
+fn resource_clause_runtime_error(
+    error: CRuntimeError,
+    index: usize,
+    total: usize,
+) -> CRuntimeError {
+    let CRuntimeError::FunctionContract(message) = error else {
+        return error;
+    };
+    CRuntimeError::FunctionContract(format!(
+        "{message} (resource clause {} of {total})",
+        index + 1
+    ))
 }
 
 fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRuntimeError {
