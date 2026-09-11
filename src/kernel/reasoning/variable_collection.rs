@@ -1174,7 +1174,7 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
     }
 }
 
-fn collect_integer_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+pub(crate) fn collect_integer_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
     let mut seen = BTreeSet::new();
     collect_integer_variables_seen(term, variables, &mut seen);
 }

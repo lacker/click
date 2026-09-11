@@ -495,6 +495,11 @@ impl IntegerTerm {
                         variables,
                     )
                 }
+                IntegerTerm::PureFunctionApplication(_application) => {
+                    crate::kernel::reasoning::variable_collection::collect_integer_variables(
+                        term, variables,
+                    );
+                }
                 IntegerTerm::Negate(value) => visit_shared(value, variables, seen),
                 IntegerTerm::Add(left, right)
                 | IntegerTerm::Subtract(left, right)
