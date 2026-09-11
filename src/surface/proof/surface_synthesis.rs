@@ -523,6 +523,22 @@ fn synthesize_zero_based_loadable_segment(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
+    // A displaced pointer may encode the start of a named range. Prefer that
+    // faithful spelling when a folded byte count still identifies the named
+    // pointer; otherwise retain the ordinary zero-based fallback for pointer
+    // expressions whose offset has no recoverable written range.
+    if bytes.as_const().is_some()
+        && let Some(named) = synthesize_named_range_loadable_segment(
+            base,
+            bytes,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )
+    {
+        return Some(named);
+    }
     let element_count = if let Some(byte_count) = bytes.as_const() {
         if !byte_count.is_multiple_of(4) {
             return None;
@@ -536,6 +552,15 @@ fn synthesize_zero_based_loadable_segment(
         } else {
             return None;
         };
+        // A scaled difference is the byte count of a written named range.
+        // Its nonzero start must remain in the surface spelling; treating the
+        // difference as a zero-based element count would lose that endpoint
+        // and can accidentally attribute it to an unrelated index.
+        if let Bitvector32Term::Subtract(_, start) = elements
+            && start.as_const() != Some(0)
+        {
+            return None;
+        }
         contract_expression_to_c_fragment(&synthesize_surface_bitvector(
             elements,
             parameters,
@@ -589,6 +614,50 @@ fn synthesize_named_range_loadable_segment(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
+    if let Some(byte_count) = bytes.as_const() {
+        let (named, width, start) = named_pointer_bases(parameters, arguments, state)
+            .filter_map(|(name, pointer, width)| {
+                if pointer.offset == PointerOffsetTerm::Constant(0) || byte_count % width != 0 {
+                    return None;
+                }
+                Some((
+                    name,
+                    width,
+                    base.element_index_from_base_with_width(&pointer, width)?,
+                ))
+            })
+            .find(|(_, _, start)| start.as_const().is_some_and(|start| start != 0))?;
+        let element_count = byte_count / width;
+        let end = Bitvector32Term::add(start.clone(), Bitvector32Term::Constant(element_count));
+        let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+            &start,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )?)?;
+        let end = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+            &end,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )?)?;
+        let named = CExpression::Variable(named);
+        return Some(ClickProposition::Loadable {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: named.clone(),
+                start: start.clone(),
+                end: end.clone(),
+                surface: ContractSegmentSurface::Range {
+                    base: ContractExpression::CFragment(named),
+                    start: ContractExpression::CFragment(start),
+                    end: ContractExpression::CFragment(end),
+                },
+            },
+        });
+    }
     // The byte count as the segment lowering builds it: the element span,
     // scaled by the element width when that is not one byte.
     let (span, scale) = match bytes {

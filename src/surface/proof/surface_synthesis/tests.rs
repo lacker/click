@@ -353,6 +353,75 @@ fn external_byte_range_requirement(binder: Variable, length: &Bitvector32Term) -
     }
 }
 
+fn external_element_range_context(
+    parameter_type: syntax::C0Type,
+    pointer_type: CType,
+    width: u32,
+) -> (Vec<syntax::C0Parameter>, Vec<CExpression>, CState) {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+            byte_width: i64::from(width),
+        },
+    };
+    let pointer = CValue::typed_pointer(pointer, pointer_type);
+    let parameters = vec![syntax::C0Parameter::new(
+        parameter_type,
+        "elements".to_string(),
+        None,
+    )]
+    .into_iter()
+    .chain([
+        syntax::C0Parameter::new(C0Type::Int32, "start".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32, "end".to_string(), None),
+    ])
+    .collect();
+    let arguments = vec![
+        CExpression::Value(pointer.clone()),
+        CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(100_001)))),
+        CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(100_002)))),
+    ];
+    let state = CState::new()
+        .with_local("elements", pointer)
+        .with_local(
+            "start",
+            CValue::Int32(Bitvector32Term::Variable(Variable(100_001))),
+        )
+        .with_local(
+            "end",
+            CValue::Int32(Bitvector32Term::Variable(Variable(100_002))),
+        );
+    (parameters, arguments, state)
+}
+
+fn external_element_range_requirement(
+    width: u32,
+    start: Bitvector32Term,
+    end: Bitvector32Term,
+) -> Proposition {
+    Proposition::CMemoryLoadable {
+        memory: CMemory::new(),
+        base: Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                    byte_width: i64::from(width),
+                }),
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(start.clone()),
+                    byte_width: i64::from(width),
+                }),
+            ),
+        },
+        bytes: Bitvector32Term::Multiply(
+            Box::new(Bitvector32Term::Subtract(Box::new(end), Box::new(start))),
+            Box::new(Bitvector32Term::Constant(width)),
+        ),
+    }
+}
+
 /// A `loadable` range over an external argument is spelled as the
 /// `loadable(p[a..b])` range form over the caller's own pointer name, and
 /// that spelling lowers back to exactly the requirement.
@@ -396,6 +465,127 @@ fn external_argument_range_loadability_round_trips_through_the_range_form() {
         panic!("re-lowering keeps the universal: {lowered:?}");
     };
     assert_eq!(lowered, external_byte_range_requirement(*var, &length));
+}
+
+#[test]
+fn named_element_ranges_preserve_nonzero_starts_and_folded_byte_counts() {
+    for (parameter_type, pointer_type, width, spelling) in [
+        (
+            syntax::C0Type::UInt16Pointer,
+            CType::UInt16Pointer,
+            2,
+            "uint16",
+        ),
+        (
+            syntax::C0Type::Int32Pointer,
+            CType::Int32Pointer,
+            4,
+            "int32",
+        ),
+    ] {
+        let (parameters, arguments, state) =
+            external_element_range_context(parameter_type, pointer_type, width);
+        let requirement = external_element_range_requirement(
+            width,
+            Bitvector32Term::Variable(Variable(100_001)),
+            Bitvector32Term::Variable(Variable(100_002)),
+        );
+        let synthesized = {
+            let _budget = SurfaceSynthesisScope::enter();
+            synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+                .expect("a named element range must be spellable")
+        };
+        let ClickProposition::Loadable { segment } = &synthesized else {
+            panic!("the requirement should synthesize as one loadable range: {synthesized:?}");
+        };
+        assert_eq!(segment.base, CExpression::Variable("elements".into()));
+        assert_eq!(segment.start, CExpression::Variable("start".into()));
+        assert_eq!(segment.end, CExpression::Variable("end".into()));
+
+        let source = format!(
+            "int32 range_{width}({spelling}* elements, int32 start, int32 end) {{ requires loadable(elements[start..end]); ensures result == 0; }}"
+        );
+        let parsed = crate::surface::parse(&source).expect("the range spelling must parse");
+        let Requirement::LoadableSegment { segment } = &parsed.function_blocks()[0].requires()[0]
+        else {
+            panic!("the parsed requirement should remain a loadable range");
+        };
+        assert_eq!(
+            synthesized,
+            ClickProposition::Loadable {
+                segment: segment.clone(),
+            }
+        );
+        let lowered = relower_written_proposition(&synthesized, &state)
+            .expect("the parsed range spelling must re-lower");
+        assert_eq!(lowered, requirement);
+    }
+
+    let (parameters, arguments, state) =
+        external_element_range_context(C0Type::Int32Pointer, CType::Int32Pointer, 4);
+    let requirement = external_element_range_requirement(
+        4,
+        Bitvector32Term::Constant(3),
+        Bitvector32Term::Constant(8),
+    );
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("a folded byte count must retain its nonzero named range")
+    };
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the folded requirement should synthesize as one range");
+    };
+    assert_eq!(segment.base, CExpression::Variable("elements".into()));
+    assert_eq!(segment.start, CExpression::Value(int32(3)));
+    assert_eq!(segment.end, CExpression::Value(int32(8)));
+    let Proposition::CMemoryLoadable { base, bytes, .. } =
+        relower_written_proposition(&synthesized, &state)
+            .expect("the folded named range must re-lower")
+    else {
+        panic!("the folded range must remain a memory-loadability requirement");
+    };
+    assert_eq!(bytes, Bitvector32Term::Constant(20));
+    assert_eq!(
+        base.offset,
+        PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                byte_width: 4,
+            }),
+            Box::new(PointerOffsetTerm::Constant(12)),
+        )
+    );
+}
+
+#[test]
+fn named_element_range_does_not_infer_start_from_an_unrelated_index() {
+    let (parameters, arguments, state) =
+        external_element_range_context(syntax::C0Type::Int32Pointer, CType::Int32Pointer, 4);
+    let mut requirement = external_element_range_requirement(
+        4,
+        Bitvector32Term::Variable(Variable(100_001)),
+        Bitvector32Term::Variable(Variable(100_002)),
+    );
+    let Proposition::CMemoryLoadable { base, .. } = &mut requirement else {
+        unreachable!();
+    };
+    base.offset = PointerOffsetTerm::Add(
+        Box::new(PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+            byte_width: 4,
+        }),
+        Box::new(PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100_003))),
+            byte_width: 4,
+        }),
+    );
+    let _budget = SurfaceSynthesisScope::enter();
+    let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state);
+    assert!(
+        synthesized.is_none(),
+        "a range start must come from the named pointer's exact offset, not an unrelated index: {synthesized:?}"
+    );
 }
 
 /// `forall_loadable_range` calls `need_cells`, whose precondition ranges
