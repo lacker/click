@@ -276,6 +276,15 @@ impl<'a> Proof<'a> {
         for (_, value) in theorem_context.integer_values.iter() {
             crate::kernel::collect_spec_integer_variables(value, &mut ambient_variables);
         }
+        ambient_variables.extend(crate::kernel::proposition_variables(&goal));
+        if let Some(setup) = &structural_induction_setup {
+            for value in setup.algebraic_values.values() {
+                crate::kernel::collect_spec_algebraic_expression_bitvector_variables(
+                    value,
+                    &mut ambient_variables,
+                );
+            }
+        }
         let facts = ProofFacts::from_ordered(requires).with_reserved_variables(ambient_variables);
         Self {
             site: ProofStepSite::default(),

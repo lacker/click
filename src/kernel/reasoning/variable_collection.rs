@@ -693,7 +693,7 @@ pub(crate) fn collect_spec_integer_variables(
     }
 }
 
-fn collect_spec_algebraic_expression_bitvector_variables(
+pub(crate) fn collect_spec_algebraic_expression_bitvector_variables(
     expression: &SpecAlgebraicExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
