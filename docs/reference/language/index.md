@@ -281,9 +281,15 @@ comparisons. General multiplication is a valid expression; it does not imply
 a general nonlinear arithmetic solver. Expanded proofs retain the arithmetic
 evidence for ordinary verification to check.
 
-Integer values have no C storage or runtime representation. The initial slice
-does not yet support Integer quantifiers, pure-function signatures, datatype
-or resource fields, folds, or conversions to `Nat`. Division,
+Integer values have no C storage or runtime representation. Datatype fields and
+generic arguments such as `Box<Integer>` are supported, as is extraction from
+known constructors. Symbolic Integer-valued datatype matches remain unsupported.
+Resources may declare `field total: Integer;`: folding checks the resource's
+facts, and `old(model.total)` retains the entry value across updates.
+See [resource field examples](https://github.com/lacker/click/blob/master/mdtests/integer_resource_fields.md).
+
+Integer quantifiers, pure-function signatures, folds, and conversions to `Nat`
+are still being implemented. Division,
 remainder, and bitwise operators are also unavailable. `Nat` remains the
 existing [structural natural-number datatype](../library/index.md#natural-numbers).
 

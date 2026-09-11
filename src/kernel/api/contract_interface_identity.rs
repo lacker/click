@@ -257,7 +257,7 @@ impl Names {
     fn integer(&mut self, expression: &mut SpecIntegerExpression) {
         self.visit();
         match expression {
-            SpecIntegerExpression::Term(_) => {}
+            SpecIntegerExpression::Term(_) | SpecIntegerExpression::ResourceField(_) => {}
             SpecIntegerExpression::FromMachine(machine) => self.expression(machine),
             SpecIntegerExpression::Negate(inner) => self.integer(inner),
             SpecIntegerExpression::Add(left, right)

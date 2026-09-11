@@ -324,6 +324,22 @@ families and two rules into 14 tests. The full gate measured 1.3–2.2 seconds p
 partition, compared with roughly 22–32 seconds for the original test. The existing
 60-second cutoff and all verifier budgets are unchanged.
 
+## Datatype and resource field checkpoint (2026-09-10)
+
+Integer fields and generic arguments such as `Box<Integer>` are integrated in
+`f7570a38`. Known-constructor matches extract correctly typed fields and shadow
+outer bindings. Symbolic Integer-valued datatype matches still reject explicitly;
+they require a checked representation of each arm and are not complete.
+
+Resource schemas now accept Integer fields, which carry exact mathematical values
+without adding C storage. Named instances preserve current and entry snapshots;
+unfolding and folding check declared resource facts. Regressions cover large
+values, updates distinct from `old(...)`, invalid machine-typed initializers,
+negative initializers violating a nonnegative fact, and expansion/rechecking.
+An unchanged C memory read verifies against a field related to memory by
+`to_integer(p[0]) == value`. Variable collection traverses observed machine
+expressions inside deferred Integer arithmetic and algebraic field values.
+
 ## Implementation and integration sequence
 
 1. Land this design record, then agree on the minimal shared kernel/surface

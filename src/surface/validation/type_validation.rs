@@ -227,12 +227,19 @@ fn integer_expression_kind(
         ContractExpression::Call { name, arguments } if name == "to_integer" => {
             (arguments.len() == 1).then_some(true)
         }
+        ContractExpression::ResourceField(access)
+            if access.click_type == Some(ClickType::Integer) =>
+        {
+            Some(true)
+        }
         ContractExpression::Binding(name) => {
             (locals.contains(name) || integer_bindings.contains(name)).then_some(true)
         }
-        ContractExpression::Negate(inner) => {
-            integer_expression_kind(inner, integer_bindings, locals)
-        }
+        ContractExpression::Negate(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => integer_expression_kind(inner, integer_bindings, locals),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right) => {
@@ -397,6 +404,11 @@ fn infer_spec_value_type(
     context: &str,
 ) -> Result<SpecValueType, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access)
+            if access.click_type == Some(ClickType::Integer) =>
+        {
+            Ok(SpecValueType::Integer)
+        }
         ContractExpression::ResourceField(access)
             if matches!(access.click_type, Some(ClickType::Algebraic(_))) =>
         {
@@ -1029,9 +1041,7 @@ pub(super) fn infer_contract_expression_type(
     match expression {
         ContractExpression::ResourceField(access) => match &access.click_type {
             Some(ClickType::C(ty)) => Ok(Some(*ty)),
-            Some(ClickType::Integer) => Err(ClickError::new(
-                "Integer resource fields are not available in this slice",
-            )),
+            Some(ClickType::Integer) => Ok(None),
             _ => Err(ClickError::new("expected a scalar resource field")),
         },
         ContractExpression::IntegerLiteral(value) => {
