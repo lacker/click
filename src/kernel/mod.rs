@@ -114,9 +114,6 @@ pub(crate) mod planning_api {
         collect_proposition_conjuncts, proposition_derivation, reasoning_interrupted,
         simp_reasoning_interrupted,
     };
-    pub(crate) use super::memory_provenance::{
-        atomic_loads_equal_along_memory_derivations, canonicalize_atomic_loads,
-    };
     pub(crate) use super::reasoning::order_reasoning::{
         FiniteForAllRange, collect_forall_chain, collect_or_cases, finite_forall_ranges,
         signed_i64_bitvector_constant,
