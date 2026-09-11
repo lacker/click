@@ -27,7 +27,13 @@ int32 sometimes_stuck(int32 n, int32 choose) {
                     apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
                 }
                 step(); step();
-                close_invariants by { arithmetic() using { 0 <= n; } }
+                close_invariants by {
+                    both { arithmetic() using { 0 <= n; } }
+                    and {
+                        both { arithmetic() using { 0 <= n; } }
+                        and { arithmetic() using { 0 <= n; } }
+                    }
+                }
             } else {
                 step(); step();
                 close_invariants by { simp(); }
@@ -40,5 +46,5 @@ int32 sometimes_stuck(int32 n, int32 choose) {
 ```
 
 ```expect
-fail: does not decrease `n` to a nonnegative value on every back edge
+fail: `n` decreases at the back edge
 ```

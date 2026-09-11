@@ -58,5 +58,5 @@ int32 stuck_phase(int32 n) {
 ```
 
 ```expect
-fail: loop 0 does not decrease `(i, j)`
+fail: `(i, j)` decreases at the back edge
 ```

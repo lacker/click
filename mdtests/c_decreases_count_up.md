@@ -27,7 +27,12 @@ int32 count_to_n(int32 n) {
         initialize by simp;
         preserve by {
             step();
-            close_invariants();
+            have i >= 0 by { simp(); }
+            have i <= n by { simp(); }
+            close_invariants by {
+                both { arithmetic() using { at(statement(3).entry, i) >= 0; at(statement(3).entry, i) < n; n >= 0; n <= 2147483647; } }
+                and { arithmetic() using { at(statement(3).entry, i) >= 0; at(statement(3).entry, i) < n; n >= 0; n <= 2147483647; } }
+            }
         }
     }
     step();

@@ -14,7 +14,7 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 6, 7, 9, 11 (first slice),
+Landed so far (2026-09-10): packages 1, 2, 3, 5, 6, 7, 9, 11 (first slice),
 12, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
@@ -576,6 +576,45 @@ flat in unrelated context size.
 
 ### Package 5: termination evidence
 
+**Landed** 2026-09-10 (three commits, "Move loop ranking obligations into
+the close_invariants bundle" onward). `CStatement::While` carries
+`ranking_measures`; `loops.rs::collect_loop_ranking_obligations` appends,
+after the invariants, one nonnegativity member per component then one
+decrease member (right-nested pivot disjunction for tuples), at both the
+surface `close_invariants` route and the kernel-executed preservation
+route; `CheckedLoopInvariantLowerings` compares the measures exactly.
+`ranking_proves`, the pivot loop, the opportunistic strengthening, and the
+whole separate ranking context (about 580 lines of termination.rs) are
+deleted; `check_loops` only binds a verified rule's measure by index and
+shape. Expansion of the lexicographic fixture prints `right();` on the
+path where only the second component decreases and `left();` on the other,
+and swapped arms are rejected. Deviations and follow-ups:
+
+- `assume_structural_path` is route-restricted to `proves_exact`, not
+  emitting, because it is a boolean helper inside witness-child comparison
+  with no proof site to receive an obligation; refusing the path is the
+  conservative equivalent. No reaching fixture exists; a kernel unit test
+  pins the route.
+- **Follow-up, package 5b (surface, smart):** the smart `close_invariants()`
+  planner does not close ranking members that need the iteration-entry
+  guard and invariants as arithmetic premises, so `c_decreases_count_up`,
+  `c_decreases_loop`, `c_decreases_nested_loop`, the four
+  `c_decreases_*recursive_in_loop*` fixtures, and `nested_loop_measure_rejected`
+  now spell explicit `both` blocks with `arithmetic() using` premises such
+  as `at(statement(3).entry, i) >= 0`. That is a bounded smart-tactic gap,
+  not kernel work: the planner should cite exactly the loop guard,
+  invariants, and preconditions at iteration entry, which is what the
+  deleted kernel pass gathered. Until it does, the user-facing `decreases`
+  experience is worse than before this package.
+- The failure diagnostic names all of a loop's ranking members rather than
+  the one left open; pinpointing would rerun the closer per member.
+- Hand-written ranking premises spell iteration entry as
+  `at(statement(N).entry, x)`, existing grammar but brittle under source
+  edits; a friendlier selector would be a language addition.
+- Deterministic work fell about 5% on the explicit fixtures and rose about
+  10% on the lexicographic one, whose pivot is now found by the region
+  `simp()` planner.
+
 **Entry points.** `src/kernel/termination.rs::assume_structural_path` (about
 line 508; discharges non-loadability path obligations with `decide`/`proves`),
 `ranking_proves` (about line 2111; `proves`, then the affine checker over the
@@ -1050,8 +1089,9 @@ regression and the deletion becomes an explicit obligation instead.
 
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 6, 7, 9, 11 first slice, 12, 14, 16. In flight: 5, and
-one owner in sequence for 4, then 13, then 8.
+Landed: 0, 1, 2, 3, 5, 6, 7, 9, 11 first slice, 12, 14, 16. In flight: one
+owner in sequence for 4, then 13, then 8. Open after those: 5b (smart
+closure of ranking members), 10, 11 second slice, 15.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
