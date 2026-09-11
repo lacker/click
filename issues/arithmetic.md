@@ -106,6 +106,16 @@ not, each with the fixture that had to route around it:
   value has no surface spelling for a `have`. `mdtests/c_call_binder_transport.md`
   therefore proves one increment, not the `twice` example the function-contracts
   outline wrote. Both belong to the explicit certificate this issue proposes.
+- `0 <= n`, `n <= 100` does not yield `n + n <= 200`, by `simp` or by
+  `arithmetic() using { 0 <= n; n <= 100; }` (`int32 twice(int32 n) { return
+  n + n; }` with `ensures result <= 200`).
+- A strict inequality over a resource field cannot be stated as a `have`:
+  `have c.revision < 1000 by { simp(); }` after a call fails with "comparison
+  fact has no checkable surface form at this proof state" while `have
+  c.revision == 1 by { simp(); }` works, and `arithmetic() using {
+  c.revision == 1; }` refuses the goal `< 1000` with `== 1` available. The
+  kernel derives it; the surface certificate cannot spell the resource-field
+  premise.
 
 ## Intended regression
 

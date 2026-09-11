@@ -130,6 +130,12 @@ same clause without the `old->left != 0` requirement.
 
 ## R3. A `have` between execution steps in a grouped proof
 
+**Status: landed** as `7b0d94a2`. The `have` placement already worked at
+HEAD; the real gap was `arithmetic() using` as a grouped-proof closer,
+which is now accepted post-execution and refused mid-execution with a hint
+pointing at `have`. Regressions `mdtests/c_call_binder_transport_tighter_bound*.md`
+and `mdtests/c_grouped_contract_arithmetic_closer*.md`.
+
 **Gap.** A grouped `by { ... }` contract proof declines a `have` placed
 between two execution steps ("nested `have`") and a top-level `arithmetic()
 using`, while a `have` after `execute()` is accepted. A per-clause `ensures
@@ -150,6 +156,8 @@ before the step. A negative fixture where the `have` is wrong.
 
 ## R4. Undeclared identifiers are rejected at parse time
 
+**Status: landed** as `a9c45ae5`.
+
 **Gap.** A never-declared identifier in a value position resolves to itself
 and reaches the kernel as `unbound variable`, failing as a proof error. The
 function-pointer argument path now reports `use of undeclared identifier`;
@@ -167,6 +175,8 @@ unit test for the call case.
 
 ## R5. Diagnostics that read backwards
 
+**Status: landed** as `522b17b5`.
+
 `src/surface/diagnostics.rs` renders an available `Contract(p)` fact on a
 symbolic pointer as ``named contract `X` is not established for p`` inside
 "available pure facts", and a missing fact inside a `fold` failure as
@@ -177,6 +187,9 @@ as ``no `N(&f)` fact is available; apply a refinement theorem or pass `&f`
 where `N` is required``. Regressions: one fixture asserting each text.
 
 ## R6. Skeleton spelling for struct pointers
+
+**Status: landed** as `b11631bc`; the surface `PredicateEnvironment` is
+threaded to the diagnostic and the kernel stores no tag.
 
 The refusal skeleton spells an aggregate-pointer parameter by its pointer
 type because the kernel interface keeps a layout, not a struct tag, so
@@ -189,6 +202,11 @@ parameters asserting the exact spelling, and a round-trip variant like
 `mdtests/c_named_contract_refusal_theorem_roundtrip.md`.
 
 ## R7. Cleanups
+
+**Status: landed** as `570ac8a0`: `ContractSubstitutions` with an
+`InstanceRename` map replaces the sentinel (which also removes a latent
+keyspace collision); the parser binder registry stays as the single index
+with the kernel field copied from the same clause binding.
 
 - The `as`-map rename of target clauses is encoded as a field-free
   `ResourceField` substitution entry guarded by identity
