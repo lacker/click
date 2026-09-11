@@ -1367,9 +1367,15 @@ fn empty_atomic_premise_derivation_cannot_hide_an_ambient_premise() {
     assert!(error.contains("at least one explicit premise"), "{error}");
 }
 
+/// A quantifier is a proof step, not a normalization.
+///
+/// Package 8 of `issues/simplify-kernel.md`: `normalize` no longer closes a
+/// `forall` or `exists` goal. A vacuous range is discharged by the explicit
+/// `enumerate`, which checks the quantifier's own named instances -- here,
+/// none.
 #[test]
-fn normalize_closes_context_free_quantified_contradictions() {
-    let source = r#"
+fn normalize_does_not_close_quantified_contradictions() {
+    let opaque = r#"
 theorem impossible_interval() {
     ensures forall (k: int32) {
         0 <= k and k < 0 implies k == 7
@@ -1378,9 +1384,20 @@ theorem impossible_interval() {
     }
 }
 "#;
+    let error = verify_c0_sources(opaque, &[])
+        .expect_err("normalize must not construct a quantified proof");
+    assert!(error.message().contains("normalize"), "{error:?}");
 
-    verify_c0_sources(source, &[])
-        .expect("normalize should check a context-free quantified derivation");
+    let explicit = r#"
+theorem impossible_interval() {
+    ensures forall (k: int32) {
+        0 <= k and k < 0 implies k == 7
+    } by {
+        enumerate();
+    }
+}
+"#;
+    verify_c0_sources(explicit, &[]).expect("the explicit enumeration should verify");
 }
 
 #[test]

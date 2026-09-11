@@ -399,7 +399,7 @@ impl ProofFacts {
             && (self.contains(&negated)
                 || matches!(fact, Proposition::ConditionIs(condition, value)
                     if self.contains(&Proposition::ConditionIs(condition.clone(), !value)))
-                || super::fact_reasoning::normalizes_context_free(&negated))
+                || super::fact_reasoning::normalizes_context_free_leaf(&negated))
     }
 
     pub(crate) fn freshen_pointer_forall_body(

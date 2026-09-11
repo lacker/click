@@ -225,6 +225,19 @@ fn plan_context_free_normalization_with_assumptions(
             )?);
             Some(tactics)
         }
+        Proposition::ForAll { body, .. } => {
+            // A universal is introduced, never normalized: the binder is a
+            // proof step the certificate must name. The written body under
+            // the binder keeps the Surface goal focused.
+            let surface_body = written_universal_body(surface_goal)?;
+            let mut tactics = vec![ProofTactic::Intro];
+            tactics.extend(plan_context_free_normalization_with_assumptions(
+                body,
+                &surface_body,
+                assumptions,
+            )?);
+            Some(tactics)
+        }
         _ if crate::kernel::proof::fact_reasoning::normalizes_context_free_leaf(goal) => {
             Some(vec![ProofTactic::Normalize])
         }

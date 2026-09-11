@@ -159,12 +159,16 @@ pub(crate) fn finite_forall_goal_instances(
     if variables.is_empty() {
         return None;
     }
-    let ranges = finite_forall_ranges(&variables, body)?;
+    // A guard that no integer satisfies names a range with zero members;
+    // `enumerate` then checks zero instances, which is exactly the evidence
+    // a vacuous universal has.
+    let ranges =
+        crate::kernel::reasoning::finite_forall_ranges_allowing_empty(&variables, body, true)?;
     // The instances are the quantifier's own finite domain: one unit of
     // deterministic work each, so a wide domain is charged to the tactic
     // that asked, never cut by a count.
     let instance_count = ranges.iter().try_fold(1usize, |count, range| {
-        usize::try_from(range.upper - range.lower + 1)
+        usize::try_from((range.upper - range.lower + 1).max(0))
             .ok()
             .and_then(|width| count.checked_mul(width))
     })?;
