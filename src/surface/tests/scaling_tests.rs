@@ -620,10 +620,23 @@ fn function_with_unrelated_facts(fact_count: usize, proof: &str) -> (String, Str
     (c_source, click_source)
 }
 
+/// Distinct surface forms of one kernel fact, each of constant size, so the
+/// source grows linearly with `form_count`. Form `k` wraps `target` in a
+/// fixed number of `+ 0` additions and the bits of `k` choose which side each
+/// zero is on, so every form up to 32 is a different nesting.
 fn theorem_with_many_forms(form_count: usize) -> String {
+    const ADDITIONS: usize = 5;
+    assert!(form_count <= 1 << ADDITIONS, "forms must stay distinct");
     let mut requirements = String::new();
-    for zero_count in 0..form_count {
-        let expression = format!("target{}", " + 0".repeat(zero_count));
+    for form in 0..form_count {
+        let mut expression = "target".to_string();
+        for bit in 0..ADDITIONS {
+            expression = if form >> bit & 1 == 1 {
+                format!("(0 + {expression})")
+            } else {
+                format!("({expression} + 0)")
+            };
+        }
         requirements.push_str(&format!("    requires {expression} == 7;\n"));
     }
     format!(
