@@ -9,6 +9,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Component, Path};
+use std::sync::Arc;
+
+use crate::source::{SourceOrigin, SourcePosition};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CSourceError {
@@ -37,6 +40,7 @@ impl fmt::Display for CSourceError {
 pub struct ExpandedCSource {
     source: String,
     dependencies: BTreeSet<String>,
+    line_map: ExpandedLineMap,
 }
 
 impl ExpandedCSource {
@@ -46,6 +50,52 @@ impl ExpandedCSource {
 
     pub fn dependencies(&self) -> &BTreeSet<String> {
         &self.dependencies
+    }
+
+    /// The bundle file and line behind each emitted expanded line.
+    pub fn line_map(&self) -> &ExpandedLineMap {
+        &self.line_map
+    }
+}
+
+/// Maps emitted expanded-translation-unit lines to the bundle file and line
+/// that produced them, so diagnostics for header-supplied code (such as
+/// `static inline` helpers) name the header rather than an expanded offset.
+///
+/// Like compiler-import locations, the mapping is file-and-line only:
+/// macro-expanded columns remain the expanded column.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExpandedLineMap {
+    origins: Vec<Option<Arc<SourceOrigin>>>,
+}
+
+impl ExpandedLineMap {
+    pub fn empty() -> Self {
+        Self {
+            origins: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, origin: Option<Arc<SourceOrigin>>) {
+        self.origins.push(origin);
+    }
+
+    /// Maps an expanded-TU position to its bundle origin. Lines with no
+    /// origin (removed directives) keep their expanded position.
+    pub fn lookup(&self, position: SourcePosition) -> SourcePosition {
+        let Some(origin) = self
+            .origins
+            .get(position.line.saturating_sub(1))
+            .and_then(|origin| origin.as_ref())
+        else {
+            return position;
+        };
+        SourcePosition::with_origin(
+            position.line,
+            position.column,
+            origin.filename.clone(),
+            origin.line,
+        )
     }
 }
 
@@ -192,6 +242,8 @@ pub fn expand_includes<'a>(
     let mut macros = target_macros();
     let mut defined_macros = macros.keys().cloned().collect();
     let mut expanded = String::new();
+    let mut line_map = ExpandedLineMap::empty();
+    let mut origin_names = BTreeMap::new();
     expand_source(
         root_path,
         root_source,
@@ -203,11 +255,39 @@ pub fn expand_includes<'a>(
         &mut defined_macros,
         None,
         &mut expanded,
+        &mut line_map,
+        &mut origin_names,
     )?;
+    debug_assert_eq!(
+        expanded.chars().filter(|ch| *ch == '\n').count(),
+        line_map.origins.len(),
+        "expanded text and line map must stay line-aligned"
+    );
     Ok(ExpandedCSource {
         source: expanded,
         dependencies,
+        line_map,
     })
+}
+
+fn origin_for(
+    names: &mut BTreeMap<String, Arc<str>>,
+    path: &str,
+    line: usize,
+) -> Arc<SourceOrigin> {
+    let filename = names
+        .entry(path.to_string())
+        .or_insert_with(|| Arc::<str>::from(path))
+        .clone();
+    Arc::new(SourceOrigin { filename, line })
+}
+
+/// Emits a removed-directive placeholder. Placeholders carry no tokens, so
+/// they keep no origin; the entry only preserves line-count alignment between
+/// the expanded text and the map.
+fn push_blank_line(expanded: &mut String, line_map: &mut ExpandedLineMap) {
+    expanded.push('\n');
+    line_map.push(None);
 }
 
 fn expand_source<'a>(
@@ -221,6 +301,8 @@ fn expand_source<'a>(
     defined_macros: &mut BTreeSet<String>,
     include_site: Option<(&str, usize)>,
     expanded: &mut String,
+    line_map: &mut ExpandedLineMap,
+    origin_names: &mut BTreeMap<String, Arc<str>>,
 ) -> Result<(), CSourceError> {
     let source = splice_source_lines(source);
     let analysis = analyze_source(source_path, &source)?;
@@ -248,7 +330,14 @@ fn expand_source<'a>(
                 let expanded_line =
                     expand_macros_in_line(line, macros, &mut macro_block_comment)
                         .map_err(|message| CSourceError::new(source_path, line_number, message))?;
+                debug_assert!(
+                    !expanded_line.contains('\n'),
+                    "macro expansion must not introduce new lines"
+                );
                 expanded.push_str(&expanded_line);
+                line_map.push(Some(origin_for(origin_names, source_path, line_number)));
+            } else {
+                line_map.push(None);
             }
             expanded.push('\n');
             continue;
@@ -276,7 +365,7 @@ fn expand_source<'a>(
                     else_seen: false,
                 });
                 active = and_truth(active, condition_active);
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
             SourceDirective::ConditionalElif(condition) => {
                 let Some(frame) = conditional_stack.last_mut() else {
@@ -301,7 +390,7 @@ fn expand_source<'a>(
                     and_truth(negate_truth(previous_branch_taken), condition_active);
                 frame.branch_taken = or_truth(previous_branch_taken, condition_active);
                 active = and_truth(frame.parent_active, branch_active);
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
             SourceDirective::ConditionalElse => {
                 let Some(frame) = conditional_stack.last_mut() else {
@@ -309,14 +398,14 @@ fn expand_source<'a>(
                 };
                 frame.else_seen = true;
                 active = and_truth(frame.parent_active, negate_truth(frame.branch_taken));
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
             SourceDirective::ConditionalEnd => {
                 let Some(frame) = conditional_stack.pop() else {
                     unreachable!("analyze_source validates conditional structure")
                 };
                 active = frame.parent_active;
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
             SourceDirective::Include(include) if active != ConditionalTruth::False => {
                 let included_path = resolve_include_path(source_path, line_number, include)?;
@@ -342,9 +431,11 @@ fn expand_source<'a>(
                     defined_macros,
                     Some((source_path, line_number)),
                     expanded,
+                    line_map,
+                    origin_names,
                 )?;
             }
-            SourceDirective::Include(_) => expanded.push('\n'),
+            SourceDirective::Include(_) => push_blank_line(expanded, line_map),
             SourceDirective::SystemInclude(header) if active != ConditionalTruth::False => {
                 if !matches!(header.as_str(), "stdint.h" | "inttypes.h" | "stdbool.h") {
                     return Err(CSourceError::new(
@@ -355,9 +446,9 @@ fn expand_source<'a>(
                         ),
                     ));
                 }
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
-            SourceDirective::SystemInclude(_) => expanded.push('\n'),
+            SourceDirective::SystemInclude(_) => push_blank_line(expanded, line_map),
             SourceDirective::MacroDefinition { name, definition }
                 if active != ConditionalTruth::False =>
             {
@@ -371,15 +462,15 @@ fn expand_source<'a>(
                 macros.insert(name.clone(), definition.clone());
                 // Keep a line for the removed directive so source positions in
                 // the following C code remain aligned with the original file.
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
-            SourceDirective::MacroDefinition { .. } => expanded.push('\n'),
+            SourceDirective::MacroDefinition { .. } => push_blank_line(expanded, line_map),
             SourceDirective::MacroUndefine(name) if active != ConditionalTruth::False => {
                 defined_macros.remove(name);
                 macros.remove(name);
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
-            SourceDirective::MacroUndefine(_) => expanded.push('\n'),
+            SourceDirective::MacroUndefine(_) => push_blank_line(expanded, line_map),
             SourceDirective::HeaderGuardDefine(name) if active != ConditionalTruth::False => {
                 if analysis.header_guard_define_line != Some(line_number) {
                     return Err(CSourceError::new(
@@ -395,18 +486,18 @@ fn expand_source<'a>(
                         format!("macro `{name}` is redefined"),
                     ));
                 }
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
-            SourceDirective::HeaderGuardDefine(_) => expanded.push('\n'),
+            SourceDirective::HeaderGuardDefine(_) => push_blank_line(expanded, line_map),
             SourceDirective::PragmaOnce if active != ConditionalTruth::False => {
                 expanded_once.insert(source_path.to_string());
-                expanded.push('\n');
+                push_blank_line(expanded, line_map);
             }
-            SourceDirective::PragmaOnce => expanded.push('\n'),
+            SourceDirective::PragmaOnce => push_blank_line(expanded, line_map),
             SourceDirective::Unsupported(message) if active != ConditionalTruth::False => {
                 return Err(CSourceError::new(source_path, line_number, message));
             }
-            SourceDirective::Unsupported(_) => expanded.push('\n'),
+            SourceDirective::Unsupported(_) => push_blank_line(expanded, line_map),
         }
     }
     debug_assert!(conditional_stack.is_empty());
@@ -2453,8 +2544,9 @@ int32 run(int32 value) {
 
     #[test]
     fn void_parameter_lists_mean_no_parameters_but_void_objects_are_rejected() {
+        use super::ExpandedLineMap;
         use crate::languages::c::syntax::{parse_functions, validate_header};
-        validate_header("extern int version(void);").unwrap();
+        validate_header("extern int version(void);", &ExpandedLineMap::empty()).unwrap();
         parse_functions("int version(void) { return 17; }").unwrap();
         for parameters in ["void value", "int x, void", "void, int x", "const void"] {
             let source = format!("int version({parameters}) {{ return 17; }}");
@@ -2544,6 +2636,38 @@ int32 preserved(int32 value) { /* APPLY(value) */ return value; }
         assert!(!expanded.source().contains("TWICE("));
         assert!(!expanded.source().contains("return APPLY("));
         assert!(expanded.dependencies().contains("macros.h"));
+    }
+
+    #[test]
+    fn expanded_line_map_attributes_expanded_lines_to_bundle_files() {
+        let sources = BTreeMap::from([
+            (
+                "main.c",
+                "#include \"helper.h\"\nint32 run() { return 1; }\n",
+            ),
+            (
+                "helper.h",
+                "#ifndef HELPER_H\n#define HELPER_H\nint32 helper();\n#endif\n",
+            ),
+        ]);
+        let expanded = expand_includes("main.c", &sources).unwrap();
+        let map = expanded.line_map();
+        assert_eq!(
+            map.lookup(crate::source::SourcePosition::new(3, 1))
+                .to_string(),
+            "helper.h:3"
+        );
+        assert_eq!(
+            map.lookup(crate::source::SourcePosition::new(5, 1))
+                .to_string(),
+            "main.c:2"
+        );
+        // Removed directives keep their expanded position.
+        assert_eq!(
+            map.lookup(crate::source::SourcePosition::new(1, 1))
+                .to_string(),
+            "line 1, column 1"
+        );
     }
 
     #[test]

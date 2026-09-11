@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::source::{SourcePosition, character_positions};
 
 use super::provenance::CSourceMap;
+use super::source::ExpandedLineMap;
 
 /// Stable documentation IDs for the accepted C0 surface. This registry
 /// describes source forms rather than the lowered enum variants because some
@@ -3657,9 +3658,15 @@ pub(crate) struct C0TranslationUnit {
 pub(crate) fn parse_translation_unit_for_source(
     source: &str,
     source_identity: &str,
+    line_map: &ExpandedLineMap,
 ) -> Result<C0TranslationUnit, C0SyntaxError> {
-    Parser::new_with_source_identity(source, CAbi::SUPPORTED, Some(source_identity))?
-        .parse_translation_unit()
+    Parser::new_with_source_identity_and_line_map(
+        source,
+        CAbi::SUPPORTED,
+        Some(source_identity),
+        line_map,
+    )?
+    .parse_translation_unit()
 }
 
 /// Parses compiler-preprocessed C while retaining original file/line
@@ -3688,11 +3695,14 @@ pub fn parse_functions_for_abi(source: &str, abi: CAbi) -> Result<Vec<C0Function
     Parser::new(source, abi)?.parse_functions()
 }
 
-/// Validates a declaration-only C header after its includes have been
-/// expanded. Headers may contain type declarations and function prototypes,
-/// but never executable function definitions.
-pub fn validate_header(source: &str) -> Result<(), C0SyntaxError> {
-    Parser::new(source, CAbi::SUPPORTED)?.parse_header()
+/// Validates a C header after its includes have been expanded. Headers may
+/// contain type declarations, prototypes, and supported `static inline` or
+/// `static __always_inline` bodies; other function definitions are rejected.
+/// `line_map` attributes diagnostics to the bundle header lines behind the
+/// expanded text.
+pub fn validate_header(source: &str, line_map: &ExpandedLineMap) -> Result<(), C0SyntaxError> {
+    Parser::new_with_source_identity_and_line_map(source, CAbi::SUPPORTED, None, line_map)?
+        .parse_header()
 }
 
 fn validate_function_returns(
@@ -5290,6 +5300,30 @@ impl Parser {
         Self::from_tokens(tokens, positions, abi, source_identity, true)
     }
 
+    /// Parses source-bundle C while attributing diagnostics to the bundle
+    /// file and line behind each expanded line. `source_identity` remains the
+    /// translation-unit linkage identity and is deliberately independent of
+    /// the diagnostic origin filename.
+    fn new_with_source_identity_and_line_map(
+        source: &str,
+        abi: CAbi,
+        source_identity: Option<&str>,
+        line_map: &ExpandedLineMap,
+    ) -> Result<Self, C0SyntaxError> {
+        let (tokens, positions) = tokenize(source).map_err(|error| {
+            let position = error.position().map(|position| line_map.lookup(position));
+            match position {
+                Some(position) => C0SyntaxError::at(position, error.message()),
+                None => error,
+            }
+        })?;
+        let positions = positions
+            .into_iter()
+            .map(|position| line_map.lookup(position))
+            .collect();
+        Self::from_tokens(tokens, positions, abi, source_identity, false)
+    }
+
     fn from_tokens(
         tokens: Vec<Token>,
         positions: Vec<SourcePosition>,
@@ -6431,10 +6465,16 @@ impl Parser {
         }
         if let Some(previous) = self.function_declarations.get(&header.source_name) {
             if !function_headers_compatible(previous, header) {
-                return Err(self.error_here(format!(
+                let mut message = format!(
                     "conflicting declarations for function `{}`",
                     header.source_name
-                )));
+                );
+                if previous.internal_linkage || header.internal_linkage {
+                    message.push_str(
+                        "; translation-unit-local inline helpers must keep matching linkage and signatures",
+                    );
+                }
+                return Err(self.error_here(message));
             }
         } else {
             self.function_declarations
@@ -6443,10 +6483,13 @@ impl Parser {
                 .insert(header.name.clone(), header.source_name.clone());
         }
         if definition && !self.defined_functions.insert(header.source_name.clone()) {
-            return Err(self.error_here(format!(
-                "duplicate function definition `{}`",
-                header.source_name
-            )));
+            let mut message = format!("duplicate function definition `{}`", header.source_name);
+            if header.internal_linkage {
+                message.push_str(
+                    "; a translation-unit-local inline helper must be defined once per translation unit",
+                );
+            }
+            return Err(self.error_here(message));
         }
         Ok(())
     }

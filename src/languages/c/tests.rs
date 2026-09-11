@@ -171,6 +171,7 @@ fn c0_wide_static_initializers_use_checked_wide_values() {
         static long promoted = 4294967295U;
     "#,
         "wide.c",
+        &source::ExpandedLineMap::empty(),
     )
     .unwrap();
     for (name, expected) in [
@@ -208,7 +209,14 @@ fn c0_wide_static_initializers_use_checked_wide_values() {
         "static long bad = 9223372036854775808UL;",
         "static long bad = 9223372036854775807L + 1;",
     ] {
-        assert!(syntax::parse_translation_unit_for_source(source, "bad.c").is_err());
+        assert!(
+            syntax::parse_translation_unit_for_source(
+                source,
+                "bad.c",
+                &source::ExpandedLineMap::empty()
+            )
+            .is_err()
+        );
     }
 }
 
@@ -1359,8 +1367,11 @@ fn c0_preserves_const_global_tables_and_pointer_views() {
 
 #[test]
 fn c0_headers_accept_const_global_table_declarations() {
-    syntax::validate_header("extern const int32 table[3]; int32 read_table(const int32 *values);")
-        .expect("headers should accept const scalar tables and pointer views");
+    syntax::validate_header(
+        "extern const int32 table[3]; int32 read_table(const int32 *values);",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("headers should accept const scalar tables and pointer views");
 }
 
 #[test]
@@ -1996,9 +2007,9 @@ fn c0_file_static_arrays_are_qualified_by_translation_unit() {
 
 #[test]
 fn c0_headers_accept_extern_scalar_arrays() {
-    syntax::validate_header("extern int32 table[3];")
+    syntax::validate_header("extern int32 table[3];", &source::ExpandedLineMap::empty())
         .expect("headers should accept extern scalar arrays");
-    let error = syntax::validate_header("int32 table[3];")
+    let error = syntax::validate_header("int32 table[3];", &source::ExpandedLineMap::empty())
         .expect_err("headers must keep array definitions in source files");
     assert!(error.message().contains("only with `extern`"));
 }
@@ -2447,12 +2458,12 @@ fn c0_file_static_struct_aggregates_are_qualified_by_translation_unit() {
 
 #[test]
 fn c0_headers_accept_extern_scalar_globals_only() {
-    syntax::validate_header("extern int32 counter;")
+    syntax::validate_header("extern int32 counter;", &source::ExpandedLineMap::empty())
         .expect("headers should accept extern scalar globals");
-    let error = syntax::validate_header("int32 counter;")
+    let error = syntax::validate_header("int32 counter;", &source::ExpandedLineMap::empty())
         .expect_err("headers must keep definitions in source files");
     assert!(error.message().contains("only with `extern`"));
-    let error = syntax::validate_header("static int32 counter;")
+    let error = syntax::validate_header("static int32 counter;", &source::ExpandedLineMap::empty())
         .expect_err("headers must not define file-scope static storage");
     assert!(error.message().contains("only with `extern`"));
 }
@@ -3155,15 +3166,22 @@ fn c0_headers_accept_declarations_and_static_inline_function_bodies() {
         static inline __attribute__((always_inline)) int32 add_three(int32 value) { return value + 3; }
         static __always_inline int32 add_four(int32 value) __attribute__((__always_inline__)) { return value + 4; }
         "#,
+        &source::ExpandedLineMap::empty(),
     )
     .expect("headers should accept supported inline and always-inline helpers");
 
-    let error = syntax::validate_header("inline int32 helper() { return 1; }")
-        .expect_err("headers must require internal linkage for inline definitions");
+    let error = syntax::validate_header(
+        "inline int32 helper() { return 1; }",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect_err("headers must require internal linkage for inline definitions");
     assert!(error.message().contains("require `static inline`"));
 
-    let error = syntax::validate_header("__always_inline int32 helper() { return 1; }")
-        .expect_err("headers must require internal linkage for always-inline definitions");
+    let error = syntax::validate_header(
+        "__always_inline int32 helper() { return 1; }",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect_err("headers must require internal linkage for always-inline definitions");
     assert!(error.message().contains("static __always_inline"));
 }
 
@@ -3171,6 +3189,7 @@ fn c0_headers_accept_declarations_and_static_inline_function_bodies() {
 fn c0_rejects_unknown_gnu_function_attributes() {
     let error = syntax::validate_header(
         "static inline int32 helper(int32 value) __attribute__((aligned(8))) { return value; }",
+        &source::ExpandedLineMap::empty(),
     )
     .expect_err("unknown GNU function attributes should not be silently discarded");
     assert!(
@@ -3363,6 +3382,128 @@ fn c0_static_inline_header_helpers_are_translation_unit_local() {
     .expect("second expanded static inline helper should parse");
     assert_eq!(beta[0].name(), "add_one#inline:beta.c");
     assert_ne!(functions[0].name(), beta[0].name());
+}
+
+#[test]
+fn c0_bundle_header_origins_locate_parse_errors() {
+    let expanded = source::expand_includes(
+        "alpha.c",
+        &std::collections::BTreeMap::from([
+            (
+                "alpha.c",
+                "#include \"helper.h\"\nint32 run(int32 value) { return add_one(value); }",
+            ),
+            (
+                "helper.h",
+                "static inline int32 add_one(int32 value) { return value + ...; }",
+            ),
+        ]),
+    )
+    .expect("helper with unsupported syntax should still expand");
+    let error = match syntax::parse_translation_unit_for_source(
+        expanded.source(),
+        "alpha.c",
+        expanded.line_map(),
+    ) {
+        Ok(_) => panic!("unsupported helper syntax should fail"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().starts_with("helper.h:1:"),
+        "unexpected location: {error}"
+    );
+}
+
+#[test]
+fn c0_bundle_duplicate_inline_helpers_across_headers_are_rejected() {
+    let expanded = source::expand_includes(
+        "main.c",
+        &std::collections::BTreeMap::from([
+            (
+                "main.c",
+                "#include \"left.h\"\n#include \"right.h\"\nint32 run() { return helper(1); }",
+            ),
+            (
+                "left.h",
+                "static inline int32 helper(int32 value) { return value + 1; }",
+            ),
+            (
+                "right.h",
+                "static inline int32 helper(int32 value) { return value + 1; }",
+            ),
+        ]),
+    )
+    .expect("conflicting headers should still expand");
+    let error = match syntax::parse_translation_unit_for_source(
+        expanded.source(),
+        "main.c",
+        expanded.line_map(),
+    ) {
+        Ok(_) => panic!("duplicate inline helpers should fail"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .message()
+            .contains("duplicate function definition `helper`"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("translation-unit-local"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.to_string().starts_with("right.h:1:"),
+        "unexpected location: {error}"
+    );
+}
+
+#[test]
+fn c0_bundle_conflicting_inline_helpers_across_headers_are_rejected() {
+    let expanded = source::expand_includes(
+        "main.c",
+        &std::collections::BTreeMap::from([
+            (
+                "main.c",
+                "#include \"left.h\"\n#include \"right.h\"\nint32 run() { return helper(1); }",
+            ),
+            (
+                "left.h",
+                "static inline int32 helper(int32 value) { return value + 1; }",
+            ),
+            (
+                "right.h",
+                "static inline uint8 helper(uint8 value) { return value + 1; }",
+            ),
+        ]),
+    )
+    .expect("conflicting headers should still expand");
+    let error = match syntax::parse_translation_unit_for_source(
+        expanded.source(),
+        "main.c",
+        expanded.line_map(),
+    ) {
+        Ok(_) => panic!("conflicting inline helpers should fail"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .message()
+            .contains("conflicting declarations for function `helper`"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("translation-unit-local"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.to_string().starts_with("right.h:1:"),
+        "unexpected location: {error}"
+    );
 }
 
 #[test]

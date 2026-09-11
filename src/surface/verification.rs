@@ -2647,13 +2647,18 @@ fn parse_c_source_unit(
                         "failed to resolve includes for C header `{header_path}`: {error}"
                     ))
                 })?;
-            syntax::validate_header(header.source()).map_err(|error| {
+            syntax::validate_header(header.source(), header.line_map()).map_err(|error| {
                 ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
             })?;
         }
-        syntax::parse_translation_unit_for_source(expanded.source(), source_path).map_err(
-            |error| ClickError::new(format!("failed to parse C source `{source_path}`: {error}")),
-        )?
+        syntax::parse_translation_unit_for_source(
+            expanded.source(),
+            source_path,
+            expanded.line_map(),
+        )
+        .map_err(|error| {
+            ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
+        })?
     } else {
         #[cfg(test)]
         c_sources

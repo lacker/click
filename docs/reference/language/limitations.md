@@ -125,7 +125,12 @@ the expanded translation unit and
 their calls execute the checked body directly, on the caller's own memory
 and resources, with no contract boundary. A sidecar contract may name an
 inline helper by its ordinary C spelling for direct verification, but is not
-applied as a call boundary. The declaration-only GNU spellings
+applied as a call boundary. Every call executes the header body; Click
+never emits a standalone definition or selects an external one, matching
+the observable `always_inline` behavior under the single supported
+`x86_64-linux-kernel` profile. `extern inline` has profile-dependent
+emission rules and stays rejected, as do bare `inline` and other inline
+spellings. The declaration-only GNU spellings
 `__attribute__((always_inline))` and `__attribute__((__always_inline__))` are
 accepted on those helpers; other attributes and function definitions in headers
 remain unsupported. The exact trailing struct spelling
