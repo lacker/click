@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::LoweringIntroduction;
 use std::sync::Arc;
 
 /// The goal one loop-entry invariant certificate must discharge.
@@ -17,16 +18,29 @@ pub(in crate::surface::proof) fn loop_entry_checked_goal(
     obligation: &Proposition,
     available: &[Proposition],
 ) -> Proposition {
+    loop_entry_checked_goal_with_stripped(obligation, available).0
+}
+
+/// [`loop_entry_checked_goal`], also reporting how many head nodes it
+/// stripped. The lowering record for the obligation describes those same
+/// nodes from the outside in, so dropping that many entries leaves the
+/// record that describes the checked goal.
+pub(in crate::surface::proof) fn loop_entry_checked_goal_with_stripped(
+    obligation: &Proposition,
+    available: &[Proposition],
+) -> (Proposition, usize) {
     let facts = crate::kernel::proof::ProofFacts::from_ordered(available);
     let mut goal = obligation.clone();
+    let mut stripped = 0;
     while let Proposition::Implies(antecedent, body) = &goal {
         if !facts.contains(antecedent) {
             break;
         }
-        let stripped = body.as_ref().clone();
-        goal = stripped;
+        let body = body.as_ref().clone();
+        goal = body;
+        stripped += 1;
     }
-    goal
+    (goal, stripped)
 }
 
 /// Whether the facts an initialization proof established discharge one entry
@@ -54,27 +68,41 @@ fn loop_entry_obligation_is_discharged(
     }
 }
 
-/// The kernel form the surface invariant itself denotes inside a checked goal
-/// that still carries leading guards.
+/// The kernel form the surface invariant itself denotes inside a checked
+/// goal that still carries leading guards, read from the lowering record.
 ///
 /// Lowering wraps an entry obligation in implications that have no Surface
 /// connective: path guards and loadability or definedness premises. The
-/// certificate introduces those with `intro`, which keeps the written Surface
-/// goal focused, and the surface proposition map records the same pairing. A
-/// Surface goal that does write an implication keeps its antecedent, so a
-/// written antecedent is never paired away.
-fn invariant_lowering_under_guards<'a>(
-    surface: &ClickProposition,
+/// certificate introduces those with `intro`, which keeps the written
+/// Surface goal focused, and the surface proposition map records the same
+/// pairing. Only the recorded chain says which leading implications are
+/// those guards, so this walks the record, not the constructor shape: it
+/// stops at the first node the spec wrote.
+///
+/// `None` means the pairing is not exact here — the record ran out before
+/// the guards did, or an already-discharged written connective was stripped
+/// from the goal — and nothing is recorded rather than pairing by shape.
+fn invariant_lowering_under_recorded_guards<'a>(
     goal: &'a Proposition,
-) -> &'a Proposition {
-    if matches!(surface, ClickProposition::Implies(_, _)) {
-        return goal;
-    }
+    introductions: Option<&[LoweringIntroduction]>,
+) -> Option<&'a Proposition> {
+    let mut introductions = introductions?.iter();
     let mut goal = goal;
-    while let Proposition::Implies(_, body) = goal {
-        goal = body;
+    loop {
+        match introductions.next() {
+            Some(LoweringIntroduction::PathFactGuard | LoweringIntroduction::ObligationGuard) => {
+                let Proposition::Implies(_, body) = goal else {
+                    // The record and the proposition disagree; refuse the
+                    // pairing instead of guessing which is right.
+                    return None;
+                };
+                goal = body;
+            }
+            // A written node, or the end of the record, is where the
+            // written invariant itself starts.
+            _ => return Some(goal),
+        }
     }
-    goal
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -191,13 +219,23 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
                 let obligation_context =
                     format!("loop {loop_index} invariant {invariant_index} entry");
-                let exact_expected_goal = entry_obligations
+                let exact_expected_obligation = entry_obligations
                     .iter()
-                    .find(|obligation| obligation.context() == Some(&obligation_context))
+                    .find(|obligation| obligation.context() == Some(&obligation_context));
+                let exact_expected_goal = exact_expected_obligation
                     .map(|obligation| obligation.proposition().clone());
-                let checked_goal = exact_expected_goal
-                    .as_ref()
-                    .map(|obligation| loop_entry_checked_goal(obligation, &planning_available));
+                // Stripping already-available antecedents consumes head
+                // nodes, so the record for the checked goal starts that
+                // many entries in. The kernel recorded the chain while it
+                // built this obligation; nothing is re-derived here.
+                let checked = exact_expected_goal.as_ref().map(|obligation| {
+                    loop_entry_checked_goal_with_stripped(obligation, &planning_available)
+                });
+                let checked_goal = checked.as_ref().map(|(goal, _)| goal.clone());
+                let checked_goal_introductions = checked.as_ref().and_then(|(_, stripped)| {
+                    let recorded = exact_expected_obligation?.introductions()?;
+                    Some(recorded.get(*stripped..).unwrap_or_default().to_vec())
+                });
                 // Planning an invariant's entry proof is proof search, not
                 // check. Classify it by the `by` clause the search is
                 // discharging, exactly as if it were written as a `have`.
@@ -236,6 +274,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         &context.surface_propositions,
                         checked_goal.as_ref(),
                         checked_goal.as_ref(),
+                        checked_goal_introductions.as_ref(),
                         environment.theorem_environment,
                     )
                 };
@@ -253,14 +292,17 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     fact: planned_fact,
                     certificate: planned_certificate,
                     certificate_already_checked,
+                    introductions: planned_introductions,
                 } = direct_plan;
                 all_invariants_checked &= certificate_already_checked;
-                initialization_surface_propositions
-                    .borrow_mut()
-                    .record_lowering(
-                        proposition,
-                        invariant_lowering_under_guards(proposition, &planned_fact),
-                    )?;
+                if let Some(lowered) = invariant_lowering_under_recorded_guards(
+                    &planned_fact,
+                    planned_introductions.as_deref(),
+                ) {
+                    initialization_surface_propositions
+                        .borrow_mut()
+                        .record_lowering(proposition, lowered)?;
+                }
                 tactics.push(ProofTactic::Have(ProofHave {
                     proposition: proposition.clone(),
                     proof: SourceProof::Script(planned_certificate.to_proof_tactics().to_vec()),

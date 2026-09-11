@@ -3477,6 +3477,7 @@ impl ProofObligation {
             proposition,
             context: None,
             assumable: true,
+            introductions: None,
         }
     }
 
@@ -3485,12 +3486,46 @@ impl ProofObligation {
             proposition,
             context: None,
             assumable: false,
+            introductions: None,
         }
     }
 
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());
         self
+    }
+
+    /// Attaches the head chain the lowering that produced this obligation's
+    /// proposition recorded for it. One `Arc` clone per obligation copy; the
+    /// chain itself is never rebuilt or scanned here.
+    pub(super) fn with_introductions(
+        mut self,
+        introductions: crate::kernel::LoweringIntroductions,
+    ) -> Self {
+        self.introductions = Some(std::sync::Arc::new(introductions));
+        self
+    }
+
+    /// The same chain, shared. Used when one obligation's record is carried
+    /// onto the copy another collector keeps.
+    pub(super) fn with_shared_introductions(
+        mut self,
+        introductions: Option<&std::sync::Arc<crate::kernel::LoweringIntroductions>>,
+    ) -> Self {
+        self.introductions = introductions.cloned();
+        self
+    }
+
+    /// What lowering recorded about this obligation's outermost nodes, when
+    /// a lowering built it. Indexed access by the consumer; no scan here.
+    pub fn introductions(&self) -> Option<&crate::kernel::LoweringIntroductions> {
+        self.introductions.as_deref()
+    }
+
+    pub(super) fn shared_introductions(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::kernel::LoweringIntroductions>> {
+        self.introductions.as_ref()
     }
 
     pub fn is_assumable(&self) -> bool {
@@ -3538,6 +3573,10 @@ impl ProofObligation {
             proposition: f(self.proposition),
             context: self.context,
             assumable: self.assumable,
+            // The chain describes the head nodes of the proposition it was
+            // recorded for. A rewrite adds or removes head nodes, so the
+            // record is dropped rather than left describing another shape.
+            introductions: None,
         }
     }
 }
