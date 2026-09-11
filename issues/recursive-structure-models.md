@@ -71,6 +71,8 @@ folded as some binary tree.
   or on the pinned source), required MVR model proofs, and
   `scripts/check.sh` pass.
 
-Related: [algebraic-data-types.md](algebraic-data-types.md),
-[mathematical-integers-in-specs.md](mathematical-integers-in-specs.md), and
+Integer specification coverage is landed and documented in
+[the mathematical-integer internals](../docs/internals/mathematical-integers.md);
+this MVR model work has no pending dependency on the retired Integer P1
+issue. Related: [algebraic-data-types.md](algebraic-data-types.md) and
 [resource-algebra-extensions.md](resource-algebra-extensions.md).

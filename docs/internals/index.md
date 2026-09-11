@@ -11,6 +11,7 @@ name differ, user-facing documentation uses the Surface Click name.
 - [Kernel implementation](kernel.md)
 - [Separation logic](separation-logic.md)
 - [Memory derivation DAG](memory-dag.md)
+- [Mathematical integers](mathematical-integers.md)
 
 ## Engineering constraints
 

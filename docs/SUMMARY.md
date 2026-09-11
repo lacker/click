@@ -62,6 +62,7 @@
 - [Kernel](internals/kernel.md)
 - [Separation logic](internals/separation-logic.md)
 - [Memory derivation DAG](internals/memory-dag.md)
+- [Mathematical integers](internals/mathematical-integers.md)
 - [Canonicalization](internals/canonicalization.md)
 - [Verification efficiency](internals/verification-efficiency.md)
 - [Testing](internals/testing.md)

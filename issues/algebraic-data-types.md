@@ -87,6 +87,8 @@ relation to concrete memory and owned children.
 - This issue closes when these generalizations are covered, not when MVR
   launches. It does not own additional tree algorithm deliverables.
 
-Related: [recursive-structure-models.md](recursive-structure-models.md),
-[mathematical-integers-in-specs.md](mathematical-integers-in-specs.md), and
-[resource-algebra-extensions.md](resource-algebra-extensions.md).
+Integer specification coverage is landed and documented in
+[the mathematical-integer internals](../docs/internals/mathematical-integers.md);
+the remaining ADT generalizations do not depend on the retired Integer P1
+issue. Related: [recursive-structure-models.md](recursive-structure-models.md)
+and [resource-algebra-extensions.md](resource-algebra-extensions.md).

@@ -274,11 +274,12 @@ arbitrary size. It is separate from the C type `int` (an alias for `int32`).
 Integer addition, subtraction, negation, and multiplication are exact and do
 not generate machine-overflow obligations.
 
-The initial supported use sites are scalar theorem parameters, applications of
-those pure theorems, and explicitly typed specification `let` bindings.
+Integer is supported in specification bindings, typed `let` bindings, theorem
+and pure-function parameters and results, quantifiers, datatype fields and
+generic arguments, resource fields and patterns, and typed range folds.
 Applications support exact Integer guards, explicit `using` premises, and
-mixed Integer/C parameters. Unsuffixed decimal literals take their
-type from an Integer expression, including values larger than 64 bits.
+mixed Integer/C parameters. Unsuffixed decimal literals take their type from
+an Integer expression, including values larger than 64 bits.
 Machine variables and suffixed machine literals require explicit conversions.
 `to_integer(value)` preserves the numeric value of each supported machine
 integer type: `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, and `uint64`.
@@ -336,8 +337,6 @@ Pure functions with Integer parameters and results are supported. Calls remain
 opaque until an explicit `unfold(function(args))` exposes the defining equation.
 Arithmetic may treat an opaque result as an unknown Integer without unfolding.
 A smart tactic may emit a checked unfold step; expansion makes that step visible.
-General function argument types and arguments requiring deferred evaluation are
-still being implemented.
 See [the function example](https://github.com/lacker/click/blob/master/mdtests/integer_function_successor.md).
 
 Integer and mixed C/Integer quantifiers support checked introduction and
@@ -351,8 +350,11 @@ intermediate definedness, and loop-invariant obligations; range folds do not
 enumerate a symbolic array to discharge those obligations.
 Checked conversions between `Nat` and `Integer` are available; implicit
 conversions to C integers are not.
-Division, remainder, and bitwise operators are also unavailable. `Nat` remains
-the existing [structural natural-number datatype](../library/index.md#natural-numbers).
+Division and remainder are deferred; when implemented they will use Euclidean
+semantics. Bitwise operators remain unavailable for `Integer` values. See the
+[mathematical Integer internals](../../internals/mathematical-integers.md) for
+the supported coverage, definedness rules, and deferred work. `Nat` remains the
+existing [structural natural-number datatype](../library/index.md#natural-numbers).
 
 ## Pure theorems
 
