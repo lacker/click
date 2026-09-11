@@ -25,6 +25,13 @@ theorem nat_to_integer_zero_unfolds() {
         normalize();
     }
 }
+
+theorem nat_to_integer_succ_unfolds(k: Nat) {
+    ensures nat_to_integer_probe(Nat::Succ(k)) == nat_to_integer_probe(k) + 1 by {
+        unfold(nat_to_integer_probe(Nat::Succ(k)));
+        normalize();
+    }
+}
 ```
 
 ```expect
