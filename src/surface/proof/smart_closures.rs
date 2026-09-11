@@ -4081,7 +4081,21 @@ impl<'a> Proof<'a> {
         step: ProofStep,
         retried_requirements: &mut std::collections::BTreeSet<PropositionIdentityKey>,
     ) -> Result<Self, ClickError> {
-        match self.apply_step(step.clone()) {
+        let initial = self.apply_step(step.clone());
+        self.retry_statement_after_refusal(step, retried_requirements, initial)
+    }
+
+    /// Continues one checked smart statement after its initial exact attempt
+    /// has reported an unresolved requirement.  Keeping the refused result as
+    /// an input makes the retry core directly testable without changing the
+    /// production checked-step dispatch.
+    pub(in crate::surface::proof) fn retry_statement_after_refusal(
+        &self,
+        step: ProofStep,
+        retried_requirements: &mut std::collections::BTreeSet<PropositionIdentityKey>,
+        initial: Result<Self, ClickError>,
+    ) -> Result<Self, ClickError> {
+        match initial {
             Ok(proof) => Ok(proof),
             Err(error) => {
                 let Some(mut requirement) = error.unresolved_requirement().cloned() else {

@@ -3039,6 +3039,108 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
 }
 
 #[test]
+fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
+    let click_file = crate::surface::parse(
+        r#"
+            int32 identity(int32 x) {
+                ensures result == 0;
+            }
+        "#,
+    )
+    .expect("test function should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return 0; }")
+        .expect("test C function should parse");
+    let function = parsed_function.to_kernel_function();
+    let function_environment = CExecutionEnvironment::new();
+    let resource_environment = ResourceEnvironment::new(&[]);
+    let arguments = [CExpression::Value(CValue::Int32(
+        Bitvector32Term::Constant(7),
+    ))];
+    let state = CState::new();
+    let true_fact = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let requirement = Proposition::Or(Box::new(true_fact.clone()), Box::new(true_fact.clone()));
+    let root = Proof::for_execution_frontier(
+        "smart retry",
+        0,
+        ExecutionProofState::at_entry(
+            state,
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        vec![requirement.clone()],
+        ExecutionProofConstants {
+            source_layout: SourceExecutionLayout::new(parsed_function.body()),
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let refusal = ClickError::new("injected unresolved requirement")
+        .with_unresolved_requirement(&ProofObligation::verification_condition(requirement));
+    let mut retried = BTreeSet::new();
+    let retried = root
+        .retry_statement_after_refusal(ProofStep::Step, &mut retried, Err(refusal))
+        .expect("the checked have should discharge the injected requirement");
+    let certificate = retried.certificate();
+    let steps = certificate.steps();
+    assert_eq!(steps.len(), 2);
+    assert!(matches!(steps[0], ProofStep::Have { .. }));
+    assert_eq!(steps[1], ProofStep::Step);
+    let have = match &steps[0] {
+        ProofStep::Have { proposition, .. } => proposition,
+        _ => unreachable!(),
+    };
+    let cold = root
+        .begin_have(have.clone())
+        .expect("the retained have should be independently reopenable");
+    assert!(cold.try_simp_closure().unwrap().is_some());
+
+    // This injected requirement is already present in the fixture's fact
+    // context, so the test intentionally checks retention mechanics and exact
+    // step provenance, not semantic necessity of the Have.
+    let unsupported = Proposition::Predicate {
+        name: "unrepresentable".to_string(),
+        arguments: Vec::new(),
+    };
+    let refusal = ClickError::new("injected unsupported requirement").with_unresolved_requirement(
+        &ProofObligation::verification_condition(unsupported.clone()),
+    );
+    let error = match root.retry_statement_after_refusal(
+        ProofStep::Step,
+        &mut BTreeSet::new(),
+        Err(refusal),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("an unrepresentable reported goal must remain a refusal"),
+    };
+    assert_eq!(
+        error.unresolved_requirement().unwrap().proposition,
+        unsupported
+    );
+    assert!(root.certificate().steps().is_empty());
+    assert!(
+        root.execution()
+            .unwrap()
+            .core
+            .frontier
+            .is_at_function_entry()
+    );
+}
+
+#[test]
 fn nested_have_accepts_trailing_assumption_after_closure() {
     let click_file = crate::surface::parse(
         r#"
