@@ -1918,6 +1918,7 @@ pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
             name,
             "int32_add_defined_by_integer_bounds"
                 | "int32_add_to_integer"
+                | "int32_less_equal_to_integer"
                 | "int32_subtract_to_integer"
                 | "int32_increment_upper_bound"
                 | "int32_increment_strictly_increases"
@@ -1972,7 +1973,9 @@ fn verify_kernel_standard_theorem_axiom(
         "integer_nat_round_trip" => (1, 1),
         name if integer_round_trip_destination(name).is_some() => (1, 2),
         "int32_add_defined_by_integer_bounds" => (2, 2),
-        "int32_add_to_integer" | "int32_subtract_to_integer" => (2, 1),
+        "int32_add_to_integer" | "int32_less_equal_to_integer" | "int32_subtract_to_integer" => {
+            (2, 1)
+        }
         "int32_increment_upper_bound" | "int32_increment_strictly_increases" => (2, 1),
         "int32_increment_lower_bound"
         | "int32_increment_greater_equal_lower_bound"
@@ -2059,6 +2062,9 @@ fn verify_kernel_standard_theorem_axiom(
             }
             "int32_add_to_integer" => {
                 crate::kernel::prove_int32_add_to_integer(value, int32_parameter(1)?)
+            }
+            "int32_less_equal_to_integer" => {
+                crate::kernel::prove_int32_less_equal_to_integer(value, int32_parameter(1)?)
             }
             "int32_subtract_to_integer" => {
                 crate::kernel::prove_int32_subtract_to_integer(value, int32_parameter(1)?)
@@ -5110,5 +5116,72 @@ fn prove_pure_theorem_tactics(
             "tactics failed for `{claim_label}`: {}",
             describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn verify_standard_declaration(source: &str) -> Result<(), ClickError> {
+        let file = crate::surface::parser::parse_file_items(source)?;
+        let predicate_environment = PredicateEnvironment::new(file.predicate_definitions())
+            .with_contracts(file.contract_definitions());
+        let click_function_environment =
+            ClickFunctionEnvironment::new(file.click_function_definitions());
+        let theorem = file
+            .theorem_definitions()
+            .first()
+            .ok_or_else(|| ClickError::new("test source did not contain a theorem"))?;
+        let context =
+            pure_theorem_context(theorem, &predicate_environment, &click_function_environment)?;
+        let ensure = theorem
+            .ensures()
+            .first()
+            .ok_or_else(|| ClickError::new("test source did not contain an ensures clause"))?;
+        let Ensure::Proposition(surface_goal) = ensure.ensure() else {
+            return Err(ClickError::new("test source did not contain a proposition"));
+        };
+        let (goal, _) = lower_pure_theorem_proposition_recording_introductions(
+            theorem.name(),
+            surface_goal,
+            &assumptions_from_propositions(&context.requires),
+            &context.values,
+            &context.array_refs,
+            &BTreeMap::new(),
+            &context.integer_values,
+            &context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .map_err(ClickError::new)?;
+        verify_kernel_standard_theorem_axiom(theorem, 0, ensure, theorem.name(), &context, goal)
+            .map(|_| ())
+    }
+
+    #[test]
+    fn int32_order_to_integer_kernel_declaration_checks_its_guard_and_conclusion() {
+        let source = r#"
+theorem int32_less_equal_to_integer(left: int32, right: int32) {
+    requires left <= right;
+    ensures to_integer(left) <= to_integer(right);
+}
+"#;
+        verify_standard_declaration(source)
+            .expect("the checked order axiom declaration should verify");
+
+        for invalid in [
+            source.replace("requires left <= right;", ""),
+            source.replace("requires left <= right;", "requires right <= left;"),
+            source.replace(
+                "ensures to_integer(left) <= to_integer(right);",
+                "ensures to_integer(right) <= to_integer(left);",
+            ),
+        ] {
+            assert!(
+                verify_standard_declaration(&invalid).is_err(),
+                "invalid order axiom declaration was accepted: {invalid}"
+            );
+        }
     }
 }

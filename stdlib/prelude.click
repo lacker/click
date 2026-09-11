@@ -850,6 +850,11 @@ theorem int32_add_to_integer(left: int32, right: int32) {
     ensures to_integer(left + right) == to_integer(left) + to_integer(right);
 }
 
+theorem int32_less_equal_to_integer(left: int32, right: int32) {
+    requires left <= right;
+    ensures to_integer(left) <= to_integer(right);
+}
+
 theorem int32_subtract_to_integer(left: int32, right: int32) {
     requires defined(left - right);
     ensures to_integer(left - right) == to_integer(left) - to_integer(right);

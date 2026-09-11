@@ -2975,6 +2975,10 @@ id = "stdlib.theorem.int32_add_to_integer"
 path = "reference/library/index.md#int32_add_to_integer"
 
 [[item]]
+id = "stdlib.theorem.int32_less_equal_to_integer"
+path = "reference/library/index.md#int32_less_equal_to_integer"
+
+[[item]]
 id = "stdlib.theorem.int32_subtract_to_integer"
 path = "reference/library/index.md#int32_subtract_to_integer"
 

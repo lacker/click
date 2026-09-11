@@ -223,6 +223,24 @@ mod tests {
     }
 
     #[test]
+    fn integer_order_observation_requires_the_c_guard_and_rechecks_expansion() {
+        let source = "theorem bridge(left: int32, right: int32) { requires left <= right; ensures to_integer(left) <= to_integer(right) by { apply(int32_less_equal_to_integer(left, right)); } }";
+        verify_c0_sources(source, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(source, &[], "bridge.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+
+        for invalid in [
+            source.replace("requires left <= right;", ""),
+            source.replace("requires left <= right;", "requires right <= left;"),
+        ] {
+            assert!(
+                verify_c0_sources(&invalid, &[]).is_err(),
+                "order observation accepted an invalid guard: {invalid}"
+            );
+        }
+    }
+
+    #[test]
     fn integer_conversion_aliases_preserve_shared_expression_scaling() {
         let mut measured = Vec::new();
         for depth in [8, 16, 32, 64] {

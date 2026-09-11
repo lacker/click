@@ -6366,6 +6366,58 @@ fn integer_machine_operation_axioms_agree_with_boundary_models() {
 }
 
 #[test]
+fn int32_order_observation_axiom_agrees_with_boundary_model() {
+    fn bits(term: &Bitvector32Term, left: i32, right: i32) -> i32 {
+        match term {
+            Bitvector32Term::Variable(Variable(920)) => left,
+            Bitvector32Term::Variable(Variable(921)) => right,
+            Bitvector32Term::Constant(value) => *value as i32,
+            _ => panic!("unexpected machine term: {term:?}"),
+        }
+    }
+
+    fn integer(term: &IntegerTerm, left: i32, right: i32) -> i64 {
+        match term {
+            IntegerTerm::Machine(value) => {
+                assert_eq!(value.ty(), MachineIntegerType::Int32);
+                i64::from(bits(value.value(), left, right))
+            }
+            _ => panic!("unexpected Integer term: {term:?}"),
+        }
+    }
+
+    let theorem = prove_int32_less_equal_to_integer(
+        Bitvector32Term::Variable(Variable(920)),
+        Bitvector32Term::Variable(Variable(921)),
+    );
+    let Proposition::Implies(guard, conclusion) = theorem.proposition() else {
+        panic!("missing order premise")
+    };
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedLessEqual(left, right), true) =
+        guard.as_ref()
+    else {
+        panic!("wrong C order premise")
+    };
+    let Proposition::ConditionIs(
+        ConditionTerm::IntegerLessEqual(left_integer, right_integer),
+        true,
+    ) = conclusion.as_ref()
+    else {
+        panic!("wrong Integer order conclusion")
+    };
+
+    for left_value in [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX] {
+        for right_value in [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX] {
+            let c_order =
+                bits(left, left_value, right_value) <= bits(right, left_value, right_value);
+            let integer_order = integer(left_integer, left_value, right_value)
+                <= integer(right_integer, left_value, right_value);
+            assert_eq!(c_order, integer_order, "{left_value} <= {right_value}");
+        }
+    }
+}
+
+#[test]
 fn integer_machine_round_trip_axioms_hold_in_independent_boundary_models() {
     use num_bigint::BigInt;
     use num_traits::One;

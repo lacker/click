@@ -5553,6 +5553,28 @@ pub fn prove_int32_add_to_integer(left: Bitvector32Term, right: Bitvector32Term)
     prove_int32_operation_to_integer(left, right, false)
 }
 
+/// Signed int32 order is preserved by its exact mathematical observation.
+/// Every int32 bit pattern has an Integer interpretation, so this law needs
+/// only the corresponding C order premise and no definedness side condition.
+pub fn prove_int32_less_equal_to_integer(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    let observe = |value| {
+        IntegerTerm::from_machine(MachineIntegerType::Int32, value)
+            .expect("every int32 bit pattern has a mathematical interpretation")
+    };
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(
+        ConditionTerm::IntegerLessEqual(observe(left).into(), observe(right).into()),
+        true,
+    );
+    Theorem::new(Proposition::Implies(
+        Box::new(premise),
+        Box::new(conclusion),
+    ))
+}
+
 /// Exact mathematical observation of a defined signed 32-bit subtraction.
 pub fn prove_int32_subtract_to_integer(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
     prove_int32_operation_to_integer(left, right, true)

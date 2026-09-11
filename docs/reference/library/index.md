@@ -34,8 +34,9 @@ abstract resource allocation(base: int32*, bytes: int32);
 Its values are mathematical naturals, with no machine-width bound or wrapping.
 Unknown naturals remain symbolic; they are not eagerly built as successor chains.
 Addition is a pure recursive definition with checked induction proofs, not a new
-kernel arithmetic primitive. This slice does not add numeral sugar, ordering,
-or conversions to C integers.
+kernel arithmetic primitive. Checked `to_integer` and `to_nat` conversions are
+available; this slice does not add numeral sugar or implicit conversions to C
+integers.
 
 ### `Nat`
 
@@ -998,6 +999,21 @@ theorem int32_subtract_to_integer(left: int32, right: int32) {
 
 A defined signed C subtraction has the same value as mathematical Integer subtraction.
 The definedness premise excludes overflow; the equality is not unconditional.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+### `int32_less_equal_to_integer`
+
+```click
+theorem int32_less_equal_to_integer(left: int32, right: int32) {
+    requires left <= right;
+    ensures to_integer(left) <= to_integer(right);
+}
+```
+
+A signed C order fact transfers to the exact mathematical observations of the
+two operands. The C order premise is required; the bridge does not assume an
+order between unrelated machine values.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
 

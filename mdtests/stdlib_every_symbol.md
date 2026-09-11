@@ -29,6 +29,13 @@ theorem integer_add_bridge(left: int32, right: int32) {
     }
 }
 
+theorem integer_order_bridge(left: int32, right: int32) {
+    requires left <= right;
+    ensures to_integer(left) <= to_integer(right) by {
+        apply(int32_less_equal_to_integer(left, right));
+    }
+}
+
 theorem integer_subtract_bridge(left: int32, right: int32) {
     requires defined(left - right);
     ensures to_integer(left - right) == to_integer(left) - to_integer(right) by {
