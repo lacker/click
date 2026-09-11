@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 5, 5b, 6, 7, 9, 11 (first
-slice), 12, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11
+(first slice), 12, 13, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -527,6 +527,24 @@ exact primitives to call.
 
 ### Package 4: obligation propagation in lowering and execution
 
+**Landed** 2026-09-10 (two commits, "cf4c05e2"/"cc097207" on the loop-family
+branch). Every listed site is a route restriction: `proves_exact`, the
+frozen condition checker on a bare `ConditionIs` (`condition_is_decided`,
+`bare_condition_is_decided`), or the new
+`PureFactContext::proves_atomic_memory_or_resource` dispatch over the five
+retained atomic arms, which a corpus census showed is exactly what the
+obligation route ever decided (517 loadability and 4 store obligations,
+nothing else). Deviation: the two `loop_effect_segment_contains_*` helpers
+became `decide` on their bare conditions rather than two ordered
+obligations, sanctioned by the freeze rule and preserving six diagnostics
+fixtures; the census listed them as never reached. Structural change:
+restricting the required-obligation route exposed that
+`c_loop_invariants_hold_at_entry` re-lowered invariants from the
+post-initialization facts while planning used the entry obligations, so
+`verify_loop_initialization_pure_proof` now checks the obligations it was
+given through `loop_entry_checked_goal` plus an exact walk down each
+goal's leading-implication chain. No fixture proof text changed.
+
 **Entry points.**
 `src/kernel/reasoning/path_facts.rs::add_path_fact_with_visibility_after_effect`
 (about line 604; drops a fact when `proves` says it is redundant),
@@ -779,6 +797,21 @@ shape. Replace that with the provenance record as part of this package.
 
 ### Package 8: quantifier normalization
 
+**Landed** 2026-09-10 ("b0399e6b"). `normalizes_context_free_leaf` rejects
+`ForAll` and `Exists`; the planner spells `intro` and recurses into the
+written body; a vacuous universal gets an explicit `enumerate` with zero
+instances; `apply_enumerate` and `ProofFacts::contradicts` no longer call
+`derive_proposition`. Fixture proof text changed, C and claims unchanged:
+`copy3_array_demo` and `bubble_sort3_two_pass_sorted` (vacuous entry
+invariants, `normalize()` to `enumerate()`), `loop_entry_guard_intro`
+(same), `exists_and_symbolic_any` and `pure_click_functions` (concrete
+range `any` goals now name `witness(k = 1)`). Deterministic work fell 23
+to 27 percent on the copy and bubble fixtures. Non-test `.proves(` sites
+under `src/kernel/` are now 55. Left for package 17:
+`invariant_lowering_under_guards` and the planner's written-body pairing
+still decide by Surface constructor shape because loop-bundle obligations
+carry no provenance chain.
+
 **Entry points.** `src/kernel/proof/fact_reasoning.rs::normalizes_context_free`
 (about line 984), `normalizes_context_free_leaf` (about line 995),
 `normalize_using_conditions` (about line 1010); the other callers of the
@@ -1000,6 +1033,15 @@ names one; the other is rejected without its prerequisite.
 
 ### Package 13: derived order facts
 
+**Landed** 2026-09-10 ("4d4fc3b6"). `proves_condition_from_derived_order_facts`
+reads `condition_order_facts()` only; the whole-`prop_facts` walk and the
+in-query quantifier instantiation are gone, and `proves_without_prop_facts`
+no longer appears in `bounds.rs`. The residual structural walk, reachable
+only from the simplifier's named quantified instantiation, consumes guards
+by structural conjunction split and exact or `decide` leaves.
+`bubble_pass3_max_suffix` survived the exact-only target. No fixture text
+changed.
+
 **Entry point.** `src/kernel/assumptions/condition_reasoning/bounds.rs::collect_derived_order_facts`
 (about line 60), which walks all `prop_facts`, discharges `Implies`
 antecedents through `proves_without_prop_facts`, and instantiates finite
@@ -1093,11 +1135,37 @@ regression and the deletion becomes an explicit obligation instead.
 
 **Dependencies.** None. Blocks package 15.
 
+### Package 17: provenance on kernel-built obligations
+
+**Entry points.** `ProofObligation` (src/kernel/assumptions.rs), the loop
+bundle collection `loops.rs::collect_invariant_check_obligations_with_mode`
+and `collect_loop_ranking_obligations`, the call-requirement obligations in
+`functions.rs::prepare_verified_function_call`, and their consumers
+`loop_planning.rs::invariant_lowering_under_guards` and
+`surface_certificates.rs::written_universal_body`.
+
+**Why.** Package 7 attaches a `LoweringIntroductions` chain only to goals
+that lowering produced. Obligations the kernel builds itself (loop bundle
+members, call requirements) carry none, so two surface helpers still pair
+the written proposition with its kernel form by constructor shape. That is
+goal-presentation fidelity, not proof search; no authority depends on it.
+
+**Target.** `ProofObligation` carries the chain; the two collectors fill it
+from `wrap_path_context_with_introductions`; the two consumers read it and
+the shape heuristics are deleted. `intro` on a loop-bundle member targets a
+hidden guard exactly as it does on a lowered goal.
+
+**Regression.** A loop invariant whose lowering inserts a loadability guard
+in front of a written implication: the retained certificate introduces
+both in order, and reordering is rejected; the same certificate checks at
+planning, validation, and the entry check.
+
+**Dependencies.** None. Not blocking 15.
+
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 5, 5b, 6, 7, 9, 11 first slice, 12, 14, 16. In flight:
-one owner in sequence for 4, then 13, then 8. Open after those: 10, 11
-second slice, 15.
+Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 first slice, 12, 13, 14, 16.
+Open: 10 (slices a to e), 11 second slice after 10(b), 17, then 15 last.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
