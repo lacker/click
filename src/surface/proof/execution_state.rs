@@ -952,6 +952,12 @@ pub(super) enum PostExecutionTactic {
     Assumption,
     Normalize,
     NormalizeUsing(Vec<ClickProposition>),
+    /// `arithmetic() using { ... }`: the explicit simple closer for an
+    /// int32 comparison claim, written where `simp()` would otherwise
+    /// search. It closes a focused claim goal from exactly its listed
+    /// premises, so it belongs to the same post-execution closer family as
+    /// `normalize`.
+    ArithmeticUsing(Vec<ClickProposition>),
     Rewrite(ClickProposition),
     /// Surface-only control structure scheduled after terminal execution.
     /// The arms contain no semantic state: ordered finalization asks the
@@ -1228,6 +1234,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::Assumption => ("assumption", "simple"),
         PostExecutionTactic::Normalize => ("normalize", "simple"),
         PostExecutionTactic::NormalizeUsing(_) => ("normalize", "simple"),
+        PostExecutionTactic::ArithmeticUsing(_) => ("arithmetic", "simple"),
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::If { .. } => ("if", "control"),
     }

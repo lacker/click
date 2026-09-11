@@ -442,6 +442,9 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         ProofTactic::NormalizeUsing(premises) => {
             Some(PostExecutionTactic::NormalizeUsing(premises.clone()))
         }
+        ProofTactic::ArithmeticUsing(premises) => {
+            Some(PostExecutionTactic::ArithmeticUsing(premises.clone()))
+        }
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
         ProofTactic::Simp => Some(PostExecutionTactic::Simp),
         _ => None,

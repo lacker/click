@@ -137,6 +137,10 @@ fn proof_shape_hint(tactics: &[ProofTactic]) -> Option<(usize, &'static str)> {
             ProofTactic::ConstructResource(_) => "resource construction",
             ProofTactic::Witness(_) => "`witness`",
             ProofTactic::Choose(_) => "`choose`",
+            // `arithmetic()` closes a focused proposition goal. Between
+            // execution steps there is no such goal, so name the tactic and
+            // let the shared rewrite hint point at `have ... by { ... }`.
+            ProofTactic::ArithmeticUsing(_) => "`arithmetic()`",
             ProofTactic::Induct { .. }
             | ProofTactic::ApplyInduction { .. }
             | ProofTactic::ApplyInductionUsing { .. } => "induction",
@@ -2787,16 +2791,19 @@ pub(super) fn finish_ordered_proof<'a>(
                             }
                             PostExecutionTactic::Normalize
                             | PostExecutionTactic::NormalizeUsing(_)
+                            | PostExecutionTactic::ArithmeticUsing(_)
                             | PostExecutionTactic::Both(_) => {
-                                let closer_name =
-                                    if matches!(post_tactic, PostExecutionTactic::Both(_)) {
-                                        "both"
-                                    } else {
-                                        "normalize"
-                                    };
+                                let closer_name = match post_tactic {
+                                    PostExecutionTactic::Both(_) => "both",
+                                    PostExecutionTactic::ArithmeticUsing(_) => "arithmetic",
+                                    _ => "normalize",
+                                };
                                 let normalization_step = match post_tactic {
                                     PostExecutionTactic::NormalizeUsing(premises) => {
                                         ProofStep::NormalizeUsing(premises.clone())
+                                    }
+                                    PostExecutionTactic::ArithmeticUsing(premises) => {
+                                        ProofStep::ArithmeticUsing(premises.clone())
                                     }
                                     _ => ProofStep::Normalize,
                                 };
@@ -2861,6 +2868,17 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 "`normalize using` requires a return-state proposition; use context-free `normalize()` for a divergent path",
                                             ));
                                         }
+                                        // Same rule for the explicit arithmetic
+                                        // closer: its premises are cited against
+                                        // a return state this path does not have.
+                                        if matches!(
+                                            normalization_step,
+                                            ProofStep::ArithmeticUsing(_)
+                                        ) {
+                                            return Err(ClickError::new(
+                                                "`arithmetic using` requires a return-state proposition; use context-free `normalize()` for a divergent path",
+                                            ));
+                                        }
                                         closures[claim_index] = ClaimClosure::by_exact_check();
                                         closed_any = true;
                                         continue;
@@ -2899,7 +2917,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             )
                                             .map_err(|message| {
                                                 ClickError::new(format!(
-                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` could not lower goal: {message}"
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `{closer_name}` could not lower goal: {message}"
                                                 ))
                                             })?,
                                             Vec::new(),
