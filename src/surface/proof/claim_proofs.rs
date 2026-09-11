@@ -4586,9 +4586,31 @@ mod tests {
                 true,
             ))
             .assume_proposition(Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(Box::new(right), Box::new(left)),
+                ConditionTerm::Bitvector32SignedLessThan(
+                    Box::new(right.clone()),
+                    Box::new(left.clone()),
+                ),
                 true,
             ));
+        let right_term = right;
+        // A fact whose negation is *exactly* available still registers as a
+        // conflict, and the inconsistency guard is what stops that conflict
+        // from being read as sibling-path evidence.
+        let exactly_refuted = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(right_term.clone()),
+                Box::new(left.clone()),
+            ),
+            false,
+        );
+        assert_eq!(
+            proof_case_fact_conflicts(&exactly_refuted, &assumptions),
+            Err(())
+        );
+
+        // An unrelated fact is not evidence either, but for a narrower
+        // reason since the general prover left the kernel: the exact routes
+        // report no conflict at all rather than deriving one by explosion.
         let unrelated = Proposition::ConditionIs(
             ConditionTerm::Bitvector32SignedLessThan(
                 Box::new(Bitvector32Term::Variable(Variable(2))),
@@ -4596,8 +4618,10 @@ mod tests {
             ),
             true,
         );
-
-        assert_eq!(proof_case_fact_conflicts(&unrelated, &assumptions), Err(()));
+        assert_eq!(
+            proof_case_fact_conflicts(&unrelated, &assumptions),
+            Ok(false)
+        );
     }
 
     #[test]

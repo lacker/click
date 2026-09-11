@@ -329,35 +329,6 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_proposition(
             allocation_base: substitute_bitvector_variable_in_pointer(allocation_base, from, to),
             bytes: substitute_bitvector_variable(bytes, from, to),
         },
-        Proposition::CWhileInvariantRule {
-            state,
-            condition,
-            invariant,
-            body,
-            preserved,
-            postcondition,
-        } => Proposition::CWhileInvariantRule {
-            state: substitute_bitvector_variable_in_c_state(state, from, to),
-            condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
-            invariant: invariant
-                .iter()
-                .map(|proposition| {
-                    substitute_bitvector_variable_in_proposition(proposition, from, to)
-                })
-                .collect(),
-            body: substitute_bitvector_variable_in_c_statement(body, from, to),
-            preserved: preserved
-                .iter()
-                .map(|proposition| {
-                    substitute_bitvector_variable_in_proposition(proposition, from, to)
-                })
-                .collect(),
-            postcondition: Box::new(substitute_bitvector_variable_in_proposition(
-                postcondition,
-                from,
-                to,
-            )),
-        },
         Proposition::And(left, right) => Proposition::And(
             Box::new(substitute_bitvector_variable_in_proposition(left, from, to)),
             Box::new(substitute_bitvector_variable_in_proposition(
@@ -657,17 +628,6 @@ pub(in crate::kernel) fn collect_proposition_bound_variables(
         Proposition::ForAll { var, body, .. } | Proposition::Exists { var, body, .. } => {
             variables.insert(*var);
             collect_proposition_bound_variables(body, variables);
-        }
-        Proposition::CWhileInvariantRule {
-            invariant,
-            preserved,
-            postcondition,
-            ..
-        } => {
-            for proposition in invariant.iter().chain(preserved) {
-                collect_proposition_bound_variables(proposition, variables);
-            }
-            collect_proposition_bound_variables(postcondition, variables);
         }
     }
 }
@@ -4915,35 +4875,6 @@ pub(crate) fn substitute_pointer_variable_in_proposition(
             after: substitute_pointer_variable_in_memory(after, from, to),
             allocation_base: substitute_pointer_variable_in_pointer(allocation_base, from, to),
             bytes: bytes.clone(),
-        },
-        Proposition::CWhileInvariantRule {
-            state,
-            condition,
-            invariant,
-            body,
-            preserved,
-            postcondition,
-        } => Proposition::CWhileInvariantRule {
-            state: substitute_pointer_variable_in_c_state(state, from, to),
-            condition: substitute_pointer_variable_in_c_expression(condition, from, to),
-            invariant: invariant
-                .iter()
-                .map(|proposition| {
-                    substitute_pointer_variable_in_proposition(proposition, from, to)
-                })
-                .collect(),
-            body: substitute_pointer_variable_in_c_statement(body, from, to),
-            preserved: preserved
-                .iter()
-                .map(|proposition| {
-                    substitute_pointer_variable_in_proposition(proposition, from, to)
-                })
-                .collect(),
-            postcondition: Box::new(substitute_pointer_variable_in_proposition(
-                postcondition,
-                from,
-                to,
-            )),
         },
         Proposition::And(left, right) => Proposition::And(
             Box::new(substitute_pointer_variable_in_proposition(left, from, to)),

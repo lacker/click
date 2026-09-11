@@ -321,10 +321,12 @@ fn c_loop_preservation_contexts_with_mode(
         };
         for (facts, obligations) in condition_contexts {
             let context_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
-            if let Some(obligation) = obligations
-                .iter()
-                .find(|obligation| !context_assumptions.proves(obligation.proposition()))
-            {
+            if let Some(obligation) = obligations.iter().find(|obligation| {
+                !required_obligation_is_exactly_discharged(
+                    &context_assumptions,
+                    obligation.proposition(),
+                )
+            }) {
                 return Err(format!(
                     "missing loop-head prerequisite{}: {:?}",
                     obligation
@@ -5965,122 +5967,4 @@ pub fn prove_memory_load_after_store_other(
         pointer: loaded_pointer,
         outcome,
     }))
-}
-
-/// Unsound partial while-rule, fenced to kernel tests. NOT an axiom.
-///
-/// This is deliberately not exported: it is `#[cfg(test)]`-only and
-/// `pub(super)`, so it does not exist in a release build and no caller
-/// outside `crate::kernel` can reach it. `Theorem::new` is `pub(super)`, so
-/// `Proposition::CWhileInvariantRule` is unconstructible as a theorem from
-/// outside the kernel too.
-///
-/// What it checks:
-/// - every proposition in `invariant` is provable from `assumptions`, i.e.
-///   the invariant holds on entry in the caller's `state`;
-/// - there is *at least one* condition-fork context in which the condition is
-///   true where the body runs to a single `Normal` path with no leftover
-///   facts or obligations, and every proposition in `preserved` is provable;
-/// - there is *at least one* condition-fork context in which the condition is
-///   false where `postcondition` is provable.
-///
-/// What it does NOT check, and why that makes it unsound as a while rule:
-/// - preservation in *every* condition-true fork, and the exit postcondition
-///   in *every* condition-false fork. Both quantifiers are `any`, not `all`,
-///   so a fork that breaks the invariant is simply skipped.
-/// - any relation between `preserved` and what `body` actually does. The
-///   body's post-state is matched as `CStatementOutcome::Normal(_)` and
-///   discarded, and `preserved` is discharged against the *pre-body*
-///   assumption context. A `preserved` list that holds before the body and
-///   fails after it is accepted; see the kernel test
-///   `while_invariant_rule_ignores_what_the_body_does_to_the_invariant`.
-/// - genericity of `state` / `assumptions`. There is no havoc of the
-///   locations the loop modifies, so preservation is shown for one step out
-///   of the caller's specific state and does not generalize to an arbitrary
-///   iteration.
-/// - termination, and framing of memory across iterations.
-///
-/// Why it is fenced rather than fixed: the sound loop path already exists as
-/// `c_loop_preservation_contexts` and exact invariant-body proof scopes
-/// over state-parametric `CLoopInvariantCheck` (`SpecProposition`), with
-/// `prepare_loop_top_state` supplying the havoc. Making this rule sound means
-/// evaluating the invariant at the body's post-state, which a flat
-/// `Vec<Proposition>` invariant plus a caller-supplied `preserved` cannot
-/// express — the fix is to carry `CLoopInvariantCheck` instead, which changes
-/// the shape of `Proposition::CWhileInvariantRule` and duplicates machinery
-/// that already exists. That redesign is not worth it for a rule with no
-/// callers, so the rule is fenced instead.
-#[cfg(test)]
-pub(super) fn prove_c_while_invariant_rule(
-    state: CState,
-    condition: CExpression,
-    invariant: Vec<Proposition>,
-    body: CStatement,
-    assumptions: PureFactContext,
-    preserved: Vec<Proposition>,
-    postcondition: Proposition,
-) -> Option<Theorem> {
-    if invariant
-        .iter()
-        .any(|invariant| !assumptions.proves(invariant))
-    {
-        return None;
-    }
-
-    let loop_assumptions = assumptions_with_propositions(&assumptions, &invariant);
-    let step_ok = condition_contexts_for_truthiness(&state, &condition, &loop_assumptions, true)
-        .into_iter()
-        .any(|step_assumptions| {
-            let body_paths = execute_c_statement_paths(
-                &state,
-                &body,
-                &step_assumptions,
-                &CExecutionEnvironment::new(),
-                CExecutionSemantics::EXECUTE_BODIES,
-                &mut ExecutionBudget::default(),
-            );
-            let Ok(body_paths) = body_paths else {
-                return false;
-            };
-            let mut body_paths = body_paths.into_iter();
-            let Some(body_path) = body_paths.next() else {
-                return false;
-            };
-            if body_paths.next().is_some()
-                || !body_path.facts.is_empty()
-                || !body_path.obligations.is_empty()
-                || !matches!(body_path.outcome, CStatementOutcome::Normal(_))
-            {
-                return false;
-            }
-            preserved
-                .iter()
-                .all(|preserved| step_assumptions.proves(preserved))
-        });
-
-    if !step_ok {
-        return None;
-    }
-
-    let exit_ok = condition_contexts_for_truthiness(&state, &condition, &loop_assumptions, false)
-        .into_iter()
-        .any(|exit_assumptions| exit_assumptions.proves(&postcondition));
-
-    if !exit_ok {
-        return None;
-    }
-
-    Some(Theorem::new(wrap_proof_facts(
-        Proposition::CWhileInvariantRule {
-            state,
-            condition,
-            invariant,
-            body,
-            preserved,
-            postcondition: Box::new(postcondition),
-        },
-        &assumptions,
-        &[],
-        &[],
-    )))
 }

@@ -1879,8 +1879,7 @@ pub(in crate::surface) fn simp_proposition(
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
-        | Proposition::CHeapAllocationFreed { .. }
-        | Proposition::CWhileInvariantRule { .. } => {
+        | Proposition::CHeapAllocationFreed { .. } => {
             SimpProposition::Proposition(proposition.clone())
         }
     };

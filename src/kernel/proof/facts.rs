@@ -526,12 +526,17 @@ impl ProofFacts {
     /// composition index. This is target-driven: unrelated resource pairs
     /// remain implicit, while a successful result is an exact fact for the
     /// ordinary `Assumption` checker in the new fixed-state goal.
+    ///
+    /// The goal is already one bare atomic separation, so the route is the
+    /// exact fact index and the retained atomic checkers, never a logical
+    /// search.
     pub(crate) fn with_selected_resource_separation(&self, goal: &Proposition) -> Self {
         if matches!(
             goal,
             Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
         ) && !self.contains(goal)
-            && self.assumptions.proves(goal)
+            && (self.assumptions.proves_exact(goal)
+                || self.assumptions.proves_atomic_memory_or_resource(goal))
         {
             self.with_fact(goal.clone())
         } else {
@@ -550,7 +555,11 @@ impl ProofFacts {
             goal,
             Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
         ) && !self.contains(goal)
-            && self.assumptions.compositions_only().proves(goal)
+            && {
+                let compositions = self.assumptions.compositions_only();
+                compositions.proves_exact(goal)
+                    || compositions.proves_atomic_memory_or_resource(goal)
+            }
         {
             self.with_fact(goal.clone())
         } else {

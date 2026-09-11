@@ -292,51 +292,6 @@ fn expired_nested_reasoning_does_not_poison_resolution_memo() {
     clear_memory_resolution_memos();
 }
 
-/// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.
-/// The production loop path forks the condition through
-/// `assume_condition_truthiness`, which threads facts and obligations rather
-/// than collapsing them into bare `PureFactContext`.
-#[cfg(test)]
-pub(in crate::kernel) fn condition_contexts_for_truthiness(
-    state: &CState,
-    condition: &CExpression,
-    assumptions: &PureFactContext,
-    desired_truthiness: bool,
-) -> Vec<PureFactContext> {
-    let mut contexts = Vec::new();
-    let Ok(condition_paths) = evaluate_c_expression_paths(
-        state,
-        condition,
-        assumptions,
-        &mut ExecutionBudget::default(),
-    ) else {
-        return contexts;
-    };
-    for condition_path in condition_paths {
-        let CExpressionPath {
-            outcome,
-            facts,
-            obligations,
-        } = condition_path;
-        let CExpressionOutcome::Value(value) = outcome else {
-            continue;
-        };
-
-        for truthiness_path in
-            c_truthiness_paths(value, facts.clone(), obligations.clone(), assumptions)
-        {
-            if truthiness_path.is_true == desired_truthiness {
-                contexts.push(assumptions_with_path_context(
-                    assumptions,
-                    &truthiness_path.facts,
-                    &truthiness_path.obligations,
-                ));
-            }
-        }
-    }
-    contexts
-}
-
 /// Alias check used while resolving a symbolic memory load. This deliberately
 /// avoids general equality transport because that transport may itself resolve
 /// memory loads.

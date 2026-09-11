@@ -193,25 +193,6 @@ pub(in crate::kernel) fn collect_proposition_bitvector_variables(
             collect_pointer_bitvector_variables(allocation_base, variables);
             collect_bitvector_variables(bytes, variables);
         }
-        Proposition::CWhileInvariantRule {
-            state,
-            condition,
-            invariant,
-            body,
-            preserved,
-            postcondition,
-        } => {
-            collect_c_state_bitvector_variables(state, variables);
-            collect_c_expression_bitvector_variables(condition, variables);
-            for proposition in invariant {
-                collect_proposition_bitvector_variables(proposition, variables);
-            }
-            collect_c_statement_bitvector_variables(body, variables);
-            for proposition in preserved {
-                collect_proposition_bitvector_variables(proposition, variables);
-            }
-            collect_proposition_bitvector_variables(postcondition, variables);
-        }
         Proposition::And(left, right)
         | Proposition::Or(left, right)
         | Proposition::Implies(left, right) => {

@@ -101,7 +101,7 @@ pub(crate) fn capture_spec_integer_value(
         || path
             .obligations
             .iter()
-            .any(|o| !assumptions.proves(o.proposition()))
+            .any(|o| !required_obligation_is_exactly_discharged(assumptions, o.proposition()))
     {
         return Err("Integer initializer has unproved evaluation obligations".into());
     }

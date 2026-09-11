@@ -2131,20 +2131,32 @@ fn normalized_exact_facts_directly_conflict(left: &Proposition, right: &Proposit
     }
 }
 
+/// Whether `fact` is refuted by the assumptions, by the retained exact
+/// routes only.
+///
+/// The walk is structural over `fact`: a conjunction conflicts when one
+/// conjunct does, and each leaf's negation must be exactly available, decided
+/// by the frozen condition checker on a bare condition, or settled by a
+/// retained atomic memory/resource checker. There is no logical search, so a
+/// contradiction that needs a derivation is reported as "no conflict" and the
+/// fact stays; the consumers all treat this as a suppression or vacuity hint.
 pub(crate) fn fact_conflicts_with_assumptions(
     fact: &Proposition,
     assumptions: &PureFactContext,
 ) -> bool {
+    let refuted = |goal: Proposition| {
+        crate::kernel::prelude::required_obligation_is_exactly_discharged(assumptions, &goal)
+    };
     match fact {
         Proposition::And(left, right) => {
             fact_conflicts_with_assumptions(left, assumptions)
                 || fact_conflicts_with_assumptions(right, assumptions)
         }
         Proposition::ConditionIs(condition, value) => {
-            assumptions.proves(&Proposition::ConditionIs(condition.clone(), !value))
+            refuted(Proposition::ConditionIs(condition.clone(), !value))
         }
-        Proposition::Not(body) => assumptions.proves(body),
-        fact => assumptions.proves(&Proposition::Not(Box::new(fact.clone()))),
+        Proposition::Not(body) => refuted(body.as_ref().clone()),
+        fact => refuted(Proposition::Not(Box::new(fact.clone()))),
     }
 }
 
