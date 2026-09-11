@@ -1693,8 +1693,13 @@ impl CExecutionEnvironment {
                 .pure_facts()
                 .iter()
                 .all(|required| {
-                    assumptions.pure_facts().contains(required)
-                        || assumptions.proves(required)
+                    // A rule's prerequisite must be exactly available here:
+                    // an indexed fact lookup, or the retained memory rule
+                    // below that re-establishes loadability from this state's
+                    // own memory and read authority. Selecting a rule by
+                    // searching the ambient context for a proof of its
+                    // prerequisites is kernel proof planning.
+                    assumptions.proves_exact(required)
                         || match required {
                             Proposition::CMemoryLoadable {
                                 memory,
