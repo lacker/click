@@ -1549,11 +1549,11 @@ fn prepare_verified_function_call<'a>(
                     &requirement_path.facts,
                     &[],
                 );
-                let obligation_is_proven =
-                    super::assumptions::capture_implicit_reasoning_provenance(|| {
-                        requirement_assumptions.proves(&guarded)
-                    });
-                if obligation_is_proven {
+                // Discharge is an exact route or an emitted obligation. A
+                // guard the exact routes do not cover becomes an ordinary
+                // goal at the call step, carrying the head chain recorded
+                // for it, rather than a proof the kernel searches for.
+                if required_obligation_is_exactly_discharged(&requirement_assumptions, &guarded) {
                     super::assumptions::record_reasoning_provenance(
                         &requirement_assumptions,
                         &guarded,
@@ -1616,11 +1616,12 @@ fn prepare_verified_function_call<'a>(
             let mut introductions = guards;
             introductions.extend(requirement_introductions);
             if !requirement_is_proven {
-                let guarded_is_proven =
-                    super::assumptions::capture_implicit_reasoning_provenance(|| {
-                        requirement_assumptions.proves(&guarded_requirement)
-                    });
-                if guarded_is_proven {
+                // Same rule as the guard above: exact routes, then an
+                // emitted goal. The general prover decides no precondition.
+                if required_obligation_is_exactly_discharged(
+                    &requirement_assumptions,
+                    &guarded_requirement,
+                ) {
                     super::assumptions::record_reasoning_provenance(
                         &requirement_assumptions,
                         &guarded_requirement,

@@ -866,6 +866,23 @@ fn bare_condition_is_decided(assumptions: &PureFactContext, proposition: &Propos
         && assumptions.decide(condition) == Some(*value)
 }
 
+/// Whether a required verification condition is already discharged by one of
+/// the routes the kernel retains: the exact fact index, the frozen condition
+/// checker on a proposition that is already one bare condition, or the
+/// retained atomic memory/resource checkers.
+///
+/// This is the complete suppression rule for a required obligation. A
+/// proposition with logical structure is never discharged here; it is emitted
+/// for an ordinary Surface tactic to prove.
+pub(in crate::kernel) fn required_obligation_is_exactly_discharged(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    assumptions.proves_exact(proposition)
+        || bare_condition_is_decided(assumptions, proposition)
+        || assumptions.proves_atomic_memory_or_resource(proposition)
+}
+
 /// Emits one required verification condition, carrying the head chain the
 /// lowering that built `proposition` recorded for it when there is one.
 pub(in crate::kernel) fn add_required_proof_obligation_with_context(
@@ -880,9 +897,7 @@ pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     // memory/resource checkers. A required verification condition with
     // logical structure is emitted for an ordinary Surface tactic to
     // discharge.
-    if assumptions.proves_exact(&proposition)
-        || bare_condition_is_decided(assumptions, &proposition)
-        || assumptions.proves_atomic_memory_or_resource(&proposition)
+    if required_obligation_is_exactly_discharged(assumptions, &proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)
