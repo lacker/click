@@ -57,7 +57,7 @@ fn promote_integer_expression(
     }
 }
 
-fn promote_integer_comparison(
+pub(super) fn promote_integer_comparison(
     surface: &ClickProposition,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     surface_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
@@ -147,22 +147,6 @@ impl<'a> Proof<'a> {
                             .then_some(&goal.integer_values)
                     })
                     .unwrap_or(&context.theorem_context.integer_values);
-                let cache_has_same_bindings =
-                    self.proposition_obligation().is_none_or(|goal| {
-                        goal.surface_bindings.is_empty()
-                            && (!goal.integer_values_initialized
-                                || goal
-                                    .integer_values
-                                    .shares_root_with(&context.theorem_context.integer_values))
-                    }) && !proposition_uses_integer(surface, integer_values);
-                if cache_has_same_bindings
-                    && let Some(recorded) = context
-                        .theorem_context
-                        .surface_requirements
-                        .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
-                {
-                    return Ok(recorded.clone());
-                }
                 let lowered_surface = promote_integer_comparison(
                     surface,
                     integer_values,
@@ -171,6 +155,22 @@ impl<'a> Proof<'a> {
                         .map(|goal| goal.surface_bindings.clone())
                         .unwrap_or_default(),
                 );
+                let cache_has_same_bindings =
+                    self.proposition_obligation().is_none_or(|goal| {
+                        goal.surface_bindings.is_empty()
+                            && (!goal.integer_values_initialized
+                                || goal
+                                    .integer_values
+                                    .shares_root_with(&context.theorem_context.integer_values))
+                    }) && !proposition_uses_integer(&lowered_surface, integer_values);
+                if cache_has_same_bindings
+                    && let Some(recorded) = context
+                        .theorem_context
+                        .surface_requirements
+                        .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
+                {
+                    return Ok(recorded.clone());
+                }
                 let empty_algebraic_values = BTreeMap::new();
                 lower_pure_theorem_proposition_with_algebraic_and_integer_values(
                     context.claim_label,

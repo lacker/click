@@ -569,6 +569,30 @@ impl<'a> Proof<'a> {
                 );
             }
         }
+        // Preserve the focused mathematical binding in the retained Surface
+        // form too.  Source variables are parsed as C fragments, so leaving
+        // this spelling unchanged lets later state-side certificate checks
+        // reinterpret a shadowing Integer binder as a C variable.
+        let proposition = if let Some(goal) = self.proposition_obligation()
+            && goal.integer_values_initialized
+        {
+            crate::surface::proof::surface_lowering::promote_integer_comparison(
+                &proposition,
+                &goal.integer_values,
+                &goal.surface_bindings,
+            )
+        } else if let ProofContext::Pure(context) = self.context.as_ref() {
+            crate::surface::proof::surface_lowering::promote_integer_comparison(
+                &proposition,
+                &context.theorem_context.integer_values,
+                &self
+                    .proposition_obligation()
+                    .map(|goal| goal.surface_bindings.clone())
+                    .unwrap_or_default(),
+            )
+        } else {
+            proposition
+        };
         let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
         // A post-execution unfold lets a predicate-call `have` prove the
         // predicate through its structural body. Pair that body kernel with

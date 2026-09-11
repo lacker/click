@@ -12,5 +12,5 @@ theorem integer_quantifier_shadow(z: Integer) {
 ```
 
 ```expect
-fail: could not lower `have` proposition
+fail: `assumption` requires the current goal
 ```
