@@ -4894,6 +4894,28 @@ pub fn c_function_contract_refinement_context(
     )
 }
 
+/// The explicit refinement theorem a refused concrete formation needs.
+///
+/// Both names are exact map lookups into the same tables the formation check
+/// reads, so the printed skeleton states the obligation that was refused.
+pub fn c_named_contract_refinement_theorem_skeleton(
+    environment: &CExecutionEnvironment,
+    contract_name: &str,
+    target_name: &str,
+) -> Option<String> {
+    let contract = environment.get_function_contract(contract_name)?;
+    let function = if let Some(rule) = environment.get_verified_function_rule(target_name) {
+        &rule.function
+    } else {
+        &environment
+            .get_external_function_rule(target_name)?
+            .function
+    };
+    Some(named_contract_refinement_theorem_skeleton(
+        contract, function,
+    ))
+}
+
 /// Opens one named contract as an implementation of another for the same
 /// exact symbolic function-pointer value.
 ///

@@ -275,6 +275,7 @@ pub(super) fn describe_condition_search_miss(
 pub(super) fn describe_derivation_failure(
     proposition: &Proposition,
     available: &[Proposition],
+    environment: &CExecutionEnvironment,
 ) -> String {
     if matches!(proposition, Proposition::ConditionIs(_, _)) {
         describe_condition_search_miss(proposition, available, &[], &[])
@@ -283,7 +284,10 @@ pub(super) fn describe_derivation_failure(
         Proposition::Predicate { name, .. }
             if crate::kernel::CFunctionContract::surface_name_from_predicate(name).is_some()
     ) {
-        describe_pure_fact(proposition, &[], &[])
+        // A named-contract prerequisite the kernel refused is where the
+        // automatic formation route ends. Print the explicit theorem that
+        // replaces it rather than only the refusal.
+        describe_pure_fact_with_environment(proposition, &[], &[], environment)
     } else {
         bounded_debug(proposition)
     }

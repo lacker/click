@@ -3815,10 +3815,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
     match resource {
         CResourceSpec::Instance {
             identity,
+            binder,
             schema,
             resource,
         } => CResourceSpec::Instance {
             identity: *identity,
+            binder: binder.clone(),
             schema: schema.clone(),
             resource: Box::new(substitute_bitvector_variable_in_resource_spec(
                 resource, from, to,
@@ -6817,10 +6819,12 @@ fn substitute_pointer_variable_in_resource_spec(
     match resource {
         CResourceSpec::Instance {
             identity,
+            binder,
             schema,
             resource,
         } => CResourceSpec::Instance {
             identity: *identity,
+            binder: binder.clone(),
             schema: schema.clone(),
             resource: Box::new(substitute_pointer_variable_in_resource_spec(
                 resource, from, to,

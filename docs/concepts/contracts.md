@@ -130,6 +130,19 @@ ensures incremented: result == x + 1 by auto;
 
 Labels make diagnostics easier to read and make proof scripts more durable.
 
+A guarantee also decides whether a function can be passed where a named
+callback contract is required. Click checks behavioral refinement: the named
+requirements must imply the function's, and the function's guarantees must
+imply the named ones. That check admits scalar comparisons over current and
+function-entry memory, reads of a resource instance's fields on either state,
+algebraic equalities, `match` over an algebraic value, and algebraic arguments
+to a pure function. It excludes `at(...)`, explicit memory snapshots,
+counted-resource populations, and range folds, which need an explicit
+refinement theorem instead. When the contract declares resource proof
+parameters, the pairing between them and the function's binders must be forced
+— one binder per parameter, same resource family, equal arguments — and a
+refusal prints the theorem that states the pairing.
+
 ## Write footprints
 
 Memory-modifying functions declare the memory they own:

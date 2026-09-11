@@ -396,6 +396,7 @@ pub(in crate::surface) fn certified_statement_transitions(
         execution,
         loop_rule,
         &transition_pure_facts,
+        function_environment,
         context_label,
         prerequisite_policy,
         fact_transport_policy,
@@ -504,6 +505,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
         execution,
         loop_rule,
         pure_facts,
+        function_environment,
         context_label,
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
@@ -578,10 +580,12 @@ pub(in crate::surface::proof) fn is_internal_snapshot_frame_witness(fact: &Propo
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn certified_transitions_from_execution(
     execution: SymbolicCExecution,
     loop_rule: Option<CVerifiedLoopRule>,
     pure_facts: &[Proposition],
+    environment: &CExecutionEnvironment,
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
@@ -700,7 +704,7 @@ fn certified_transitions_from_execution(
                             }
                             return Err(ClickError::new(format!(
                                 "{context_label} used an assumption-derived theorem premise without a checkable derivation: {}",
-                                describe_derivation_failure(&premise, &theorem_context),
+                                describe_derivation_failure(&premise, &theorem_context, environment),
                             )));
                         };
                         if !prerequisite_derivations
@@ -744,7 +748,7 @@ fn certified_transitions_from_execution(
                     {
                         return Err(ClickError::new(format!(
                             "{context_label} used an assumption-derived execution fact without a checkable derivation: {}",
-                            describe_derivation_failure(proposition, pure_facts),
+                            describe_derivation_failure(proposition, pure_facts, environment),
                         )));
                     }
                 }
@@ -811,7 +815,7 @@ fn certified_transitions_from_execution(
                                             .context()
                                             .map(|context| format!(" ({context})"))
                                             .unwrap_or_default(),
-                                        describe_derivation_failure(proposition, pure_facts),
+                                        describe_derivation_failure(proposition, pure_facts, environment),
                                     ))
                                 })
                                 .map(Some)?
@@ -823,7 +827,7 @@ fn certified_transitions_from_execution(
                                         .context()
                                         .map(|context| format!(" ({context})"))
                                         .unwrap_or_default(),
-                                    describe_derivation_failure(proposition, pure_facts),
+                                    describe_derivation_failure(proposition, pure_facts, environment),
                                 ),
                                 obligation,
                             ));
@@ -890,7 +894,7 @@ fn certified_transitions_from_execution(
                                         .context()
                                         .map(|context| format!(" ({context})"))
                                         .unwrap_or_default(),
-                                    describe_derivation_failure(proposition, pure_facts),
+                                    describe_derivation_failure(proposition, pure_facts, environment),
                                 ),
                                 obligation,
                             ));
@@ -918,6 +922,7 @@ fn certified_transitions_from_execution(
                                             describe_derivation_failure(
                                                 proposition,
                                                 &derivation_facts,
+                                                environment,
                                             ),
                                         ),
                                         obligation,

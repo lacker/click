@@ -9,6 +9,7 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
     .unwrap();
     let parameter = |identity| CResourceSpec::Instance {
         identity: Variable(identity),
+        binder: format!("cell{identity}"),
         schema: schema.clone(),
         resource: Box::new(CResourceSpec::Composite {
             access: CResourceAccessMode::Own,

@@ -3579,6 +3579,12 @@ pub enum CResourceAccessMode {
 pub enum CResourceSpec {
     Instance {
         identity: Variable,
+        /// The spelling the declaration gave this binder. The identity is the
+        /// semantic key; this is the name a binder or proof-parameter map is
+        /// written with, retained the same way [`CResourceChildSpec::name`]
+        /// retains a child slot's spelling, so diagnostics can print the map
+        /// the user has to write.
+        binder: String,
         schema: ResourceFieldSchema,
         resource: Box<CResourceSpec>,
     },

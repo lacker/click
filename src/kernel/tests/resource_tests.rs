@@ -1192,6 +1192,7 @@ fn resource_instance_contract_selects_current_fields_without_promising_preservat
     let before = field_instance(10, resource_index_variable(&ty, 1), 3);
     let after = field_instance(10, resource_index_variable(&ty, 2), 4);
     let requirement = CResourceSpec::Instance {
+        binder: "cell".into(),
         identity: before.identity(),
         schema: before.schema().clone(),
         resource: Box::new(CResourceSpec::Composite {

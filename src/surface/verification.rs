@@ -4253,6 +4253,7 @@ fn resource_clause_to_resource_spec_with_parameters(
     match resource {
         ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
             identity: binding.identity,
+            binder: binding.name.clone(),
             schema: binding
                 .schema
                 .clone()
@@ -4446,6 +4447,7 @@ pub(in crate::surface) fn resource_clause_to_resource_spec(
     match resource {
         ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
             identity: binding.identity,
+            binder: binding.name.clone(),
             schema: binding
                 .schema
                 .clone()

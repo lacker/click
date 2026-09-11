@@ -525,7 +525,16 @@ impl Names {
     }
     fn resource_spec(&mut self, resource: &mut CResourceSpec) {
         match resource {
-            CResourceSpec::Instance { resource, .. } => self.resource_spec(resource),
+            // A binder's spelling is a name, not part of the interface: the
+            // identity beside it is the semantic key, exactly as a parameter's
+            // type rather than its name is. Erase it so two declarations that
+            // differ only in what they call an instance stay one interface.
+            CResourceSpec::Instance {
+                binder, resource, ..
+            } => {
+                binder.clear();
+                self.resource_spec(resource);
+            }
             CResourceSpec::ViewMemory(s) | CResourceSpec::OwnMemory(s) => self.segment(s),
             CResourceSpec::Quantified { quantity, resource } => {
                 self.c(quantity);

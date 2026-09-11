@@ -1912,6 +1912,178 @@ fn function_contract_requirement_is_proven(
     }
 }
 
+/// Prints the explicit refinement theorem that automatic formation could not
+/// replace, with every slot filled from the two declarations the check read.
+///
+/// The skeleton is the expand affordance of the automatic route. It is built
+/// from the same `CFunctionContract` and `CFunction` interfaces the check
+/// uses — the target's proof parameters, the implementation's binders, and
+/// the implementation's C parameter list — so the printed obligation cannot
+/// drift from the one that was refused. A target with no proof parameters
+/// gets the `unfold(Name)` form, which is the route that already exists.
+pub(super) fn named_contract_refinement_theorem_skeleton(
+    contract: &CFunctionContract,
+    function: &CFunction,
+) -> String {
+    let theorem = format!(
+        "{}_is_{}",
+        function.name(),
+        snake_case_contract_name(contract.name())
+    );
+    let parameters = function
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            format!(
+                "{} {}",
+                c_parameter_type_spelling(parameter),
+                parameter.name()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let target_binders = declared_instance_binder_names(&[contract.proof_parameters()]);
+    if target_binders.is_empty() {
+        return format!(
+            "theorem {theorem}() {{\n    \
+             ensures {contract}(&{function}) by {{\n        \
+             unfold({contract});\n        \
+             simp();\n    \
+             }}\n\
+             }}",
+            contract = contract.name(),
+            function = function.name(),
+        );
+    }
+    let implementation_binders = declared_instance_binder_names(&[
+        function.resource_requires(),
+        function.resource_ensures(),
+    ]);
+    let introduced =
+        introduced_instance_names(target_binders.len().max(implementation_binders.len()));
+    let map = |binders: &[String]| {
+        binders
+            .iter()
+            .zip(&introduced)
+            .map(|(binder, name)| format!("{binder}: {name}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let arguments = function
+        .parameters()
+        .iter()
+        .map(|parameter| parameter.name().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "theorem {theorem}() executes {function}({parameters}) {{\n    \
+         ensures {contract}(&{function}) as {{ {target} }} by {{\n        \
+         step({function}({arguments}), {{ {implementation} }});\n        \
+         simp();\n    \
+         }}\n\
+         }}",
+        contract = contract.name(),
+        function = function.name(),
+        target = map(&target_binders),
+        implementation = map(&implementation_binders),
+    )
+}
+
+/// The binder spellings a declaration introduces, in declaration order, once
+/// per identity.
+fn declared_instance_binder_names(specs: &[&[CResourceSpec]]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut names = Vec::new();
+    for spec in specs.iter().flat_map(|specs| specs.iter()) {
+        let CResourceSpec::Instance {
+            identity, binder, ..
+        } = spec
+        else {
+            continue;
+        };
+        if seen.insert(*identity) {
+            names.push(binder.clone());
+        }
+    }
+    names
+}
+
+/// Fresh names for the instances the theorem introduces. One instance is
+/// `r`; several are numbered so the two maps can name the same instance.
+fn introduced_instance_names(count: usize) -> Vec<String> {
+    if count == 1 {
+        return vec!["r".to_string()];
+    }
+    (1..=count).map(|index| format!("r{index}")).collect()
+}
+
+fn snake_case_contract_name(name: &str) -> String {
+    let mut snake = String::with_capacity(name.len() + 4);
+    for (index, character) in name.char_indices() {
+        if character.is_uppercase() && index != 0 {
+            snake.push('_');
+        }
+        snake.extend(character.to_lowercase());
+    }
+    snake
+}
+
+/// The C0 spelling of a parameter's declared type.
+///
+/// Struct tags are not part of the kernel interface: an aggregate parameter
+/// keeps its layout, not the tag its source wrote, so a pointer to one is
+/// spelled by its pointer type. The skeleton is source the user edits, and
+/// this is the one slot they may have to correct.
+fn c_parameter_type_spelling(parameter: &CParameter) -> String {
+    let base = match parameter.c_type() {
+        CType::Void => "void",
+        CType::Bool => "bool",
+        CType::VoidPointer => "void*",
+        CType::Int16 => "int16",
+        CType::Int32 => "int32",
+        CType::UInt8 => "uint8",
+        CType::UInt16 => "uint16",
+        CType::UInt32 => "uint32",
+        CType::Int64 => "int64",
+        CType::UInt64 => "uint64",
+        CType::Float32 => "float32",
+        CType::Float64 => "float64",
+        CType::Int16Pointer => "int16*",
+        CType::UInt16Pointer => "uint16*",
+        CType::Int32Pointer => "int32*",
+        CType::UInt8Pointer => "uint8*",
+        CType::UInt32Pointer => "uint32*",
+        CType::Int64Pointer => "int64*",
+        CType::UInt64Pointer => "uint64*",
+        CType::Float32Pointer => "float32*",
+        CType::Float64Pointer => "float64*",
+        CType::Int16PointerPointer => "int16**",
+        CType::UInt16PointerPointer => "uint16**",
+        CType::Int32PointerPointer => "int32**",
+        CType::UInt8PointerPointer => "uint8**",
+        CType::UInt32PointerPointer => "uint32**",
+        CType::Int64PointerPointer => "int64**",
+        CType::UInt64PointerPointer => "uint64**",
+        CType::Float32PointerPointer => "float32**",
+        CType::Float64PointerPointer => "float64**",
+        CType::FunctionPointer(_) => "void (*)()",
+        CType::Int16Array(_) => "int16*",
+        CType::Int32Array(_) => "int32*",
+        CType::UInt8Array(_) => "uint8*",
+        CType::UInt16Array(_) => "uint16*",
+        CType::UInt32Array(_) => "uint32*",
+        CType::Int64Array(_) => "int64*",
+        CType::UInt64Array(_) => "uint64*",
+        CType::Float32Array(_) => "float32*",
+        CType::Float64Array(_) => "float64*",
+    };
+    if parameter.pointee_is_constant() {
+        format!("const {base}")
+    } else {
+        base.to_string()
+    }
+}
+
 /// Proves behavioral callback refinement. Exact matching remains the fast
 /// path. The semantic path checks framed memory, abstract-token, and folded
 /// composite resource transitions and effect containment, instantiates both
@@ -1931,7 +2103,7 @@ fn function_refines_named_contract(
     if !contract.has_same_predicate_unfoldings(function) {
         return Ok(false);
     }
-    let Some(context) = prepare_function_contract_refinement_context(contract, function, budget)
+    let Some(context) = prepare_automatic_contract_refinement_context(contract, function, budget)
     else {
         return Ok(false);
     };
@@ -1946,6 +2118,31 @@ pub(super) fn prepare_function_contract_refinement_context(
     if !contract.has_compatible_signature_and_resource_vocabulary(function) {
         return None;
     }
+    contract_refinement_context_for_checked_interfaces(contract, function, budget)
+}
+
+/// The concrete-pointer formation route's context.
+///
+/// It differs from the explicit route only in admitting a target that
+/// declares proof parameters. The instances those parameters stand for are
+/// introduced by [`function_refines_named_contract_in_case`], and only when
+/// the binding between the two declarations is forced.
+fn prepare_automatic_contract_refinement_context(
+    contract: &CFunctionContract,
+    function: &CFunction,
+    budget: &mut ExecutionBudget,
+) -> Option<CFunctionContractRefinementContext> {
+    if !contract.has_compatible_signature_and_composite_vocabulary(function) {
+        return None;
+    }
+    contract_refinement_context_for_checked_interfaces(contract, function, budget)
+}
+
+fn contract_refinement_context_for_checked_interfaces(
+    contract: &CFunctionContract,
+    function: &CFunction,
+    budget: &mut ExecutionBudget,
+) -> Option<CFunctionContractRefinementContext> {
     let mut argument_values = Vec::with_capacity(function.parameters().len());
     for parameter in function.parameters() {
         let variable = Variable(budget.next_kernel_variable);
@@ -2130,6 +2327,251 @@ pub(super) fn prepare_contract_refinement_obligations(
     })
 }
 
+/// One forced pair of resource declarations: a target contract proof
+/// parameter and the implementation binder that must stand for it. Both sides
+/// read the same instance identity, so `root.model` on the named side and
+/// `t.model` on the implementation side lower to the same term.
+struct RefinementInstanceBinding {
+    target_identity: Variable,
+    implementation_identity: Variable,
+    entry: ResourceInstance,
+    post: ResourceInstance,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RefinementSide {
+    Target,
+    Implementation,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RefinementPhase {
+    Entry,
+    Post,
+}
+
+/// One declared instance binder, with its family evaluated at the state that
+/// declares it.
+struct DeclaredResourceInstance {
+    identity: Variable,
+    family: String,
+    schema: ResourceFieldSchema,
+    arguments: ResourceArguments,
+}
+
+/// Collects the instance binders a declaration names, in declaration order,
+/// once per identity. `owns` states the same binder in `requires` and
+/// `ensures`; the pair is one binder, not two.
+fn evaluate_declared_resource_instances(
+    specs: &[&[CResourceSpec]],
+    state: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<DeclaredResourceInstance>>> {
+    let mut seen = BTreeSet::new();
+    let mut declared = Vec::new();
+    for spec in specs.iter().flat_map(|specs| specs.iter()) {
+        let CResourceSpec::Instance {
+            identity,
+            schema,
+            resource,
+            ..
+        } = spec
+        else {
+            continue;
+        };
+        if !seen.insert(*identity) {
+            continue;
+        }
+        let instance = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
+        {
+            Ok(CResourceFact::Own(CResource::Composite { name, arguments }, quantity))
+                if quantity.as_const() == Some(1) =>
+            {
+                DeclaredResourceInstance {
+                    identity: *identity,
+                    family: name,
+                    schema: schema.clone(),
+                    arguments,
+                }
+            }
+            Ok(_) | Err(_) => return Ok(None),
+        };
+        declared.push(instance);
+    }
+    Ok(Some(declared))
+}
+
+/// Indexes declared binders by resource family. A family that appears twice
+/// on one side leaves the binding unforced, so its entry is poisoned rather
+/// than ranked.
+fn index_declared_instances_by_family(
+    declared: &[DeclaredResourceInstance],
+) -> Option<BTreeMap<&str, &DeclaredResourceInstance>> {
+    let mut index = BTreeMap::new();
+    for instance in declared {
+        if index.insert(instance.family.as_str(), instance).is_some() {
+            return None;
+        }
+    }
+    Some(index)
+}
+
+/// Pairs the target contract's proof parameters with the implementation's
+/// binders when exactly one pairing is possible, and instantiates one shared
+/// instance per pair.
+///
+/// The pairing is a map lookup per binder: each side is indexed by resource
+/// family once, a repeated family on either side refuses, and the two indexes
+/// must have the same keys. No candidate is searched, scored, or preferred.
+///
+/// Each pair gets one entry instance with arbitrary fields, shared by both
+/// entry states, and one post instance with fresh arbitrary fields, shared by
+/// both post states. Fresh post fields are the same rule an ordinary call
+/// applies to returned ownership: the identity survives, the field values do
+/// not, and only the implementation's guarantees relate the two.
+fn forced_refinement_instance_bindings(
+    contract: &CFunctionContract,
+    function: &CFunction,
+    contract_entry: &CState,
+    function_entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<RefinementInstanceBinding>>> {
+    let Some(target) = evaluate_declared_resource_instances(
+        &[contract.proof_parameters()],
+        contract_entry,
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(implementation) = evaluate_declared_resource_instances(
+        &[function.resource_requires(), function.resource_ensures()],
+        function_entry,
+        assumptions,
+        budget,
+    )?
+    else {
+        return Ok(None);
+    };
+    if target.is_empty() && implementation.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let (Some(target_index), Some(implementation_index)) = (
+        index_declared_instances_by_family(&target),
+        index_declared_instances_by_family(&implementation),
+    ) else {
+        return Ok(None);
+    };
+    if target_index.len() != implementation_index.len() {
+        return Ok(None);
+    }
+    let mut bindings = Vec::with_capacity(target_index.len());
+    for (family, target) in &target_index {
+        let Some(implementation) = implementation_index.get(family) else {
+            return Ok(None);
+        };
+        if target.schema != implementation.schema
+            || target.arguments.len() != implementation.arguments.len()
+            || !target
+                .arguments
+                .iter()
+                .zip(implementation.arguments.iter())
+                .all(|(left, right)| {
+                    crate::kernel::resource_arguments_proven_equal(left, right, assumptions)
+                })
+        {
+            return Ok(None);
+        }
+        let identity = Variable(budget.next_kernel_variable);
+        budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+        let instance = |budget: &mut ExecutionBudget| {
+            let fields = arbitrary_resource_instance_fields(&target.schema, budget);
+            ResourceInstance::new(
+                identity,
+                target.family.clone(),
+                target.arguments.clone(),
+                target.schema.clone(),
+                fields,
+            )
+            .expect("arbitrary fields have their declared types")
+        };
+        bindings.push(RefinementInstanceBinding {
+            target_identity: target.identity,
+            implementation_identity: implementation.identity,
+            entry: instance(budget),
+            post: instance(budget),
+        });
+    }
+    Ok(Some(bindings))
+}
+
+fn arbitrary_resource_instance_fields(
+    schema: &ResourceFieldSchema,
+    budget: &mut ExecutionBudget,
+) -> ResourceArguments {
+    schema
+        .fields()
+        .iter()
+        .map(|(_, field_type)| {
+            let variable = Variable(budget.next_kernel_variable);
+            budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
+            match field_type {
+                ResourceFieldType::Integer => {
+                    AlgebraicValue::Integer(IntegerTerm::Variable(variable))
+                }
+                ResourceFieldType::C(c_type) => {
+                    AlgebraicValue::C(symbolic_call_result(*c_type, variable))
+                }
+                ResourceFieldType::Algebraic(algebraic_type) => {
+                    AlgebraicValue::Algebraic(AlgebraicTerm {
+                        algebraic_type: algebraic_type.clone(),
+                        node: AlgebraicTermNode::Variable(variable),
+                    })
+                }
+            }
+        })
+        .collect()
+}
+
+/// Installs the shared instances one side reads, under the identities that
+/// side's declaration wrote.
+fn state_with_refinement_instances(
+    state: &CState,
+    bindings: &[RefinementInstanceBinding],
+    side: RefinementSide,
+    phase: RefinementPhase,
+    assumptions: &PureFactContext,
+) -> Option<CState> {
+    if bindings.is_empty() {
+        return Some(state.clone());
+    }
+    let mut state = state.clone();
+    let mut names = BTreeMap::new();
+    let mut facts = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let declared = match side {
+            RefinementSide::Target => binding.target_identity,
+            RefinementSide::Implementation => binding.implementation_identity,
+        };
+        let instance = match phase {
+            RefinementPhase::Entry => &binding.entry,
+            RefinementPhase::Post => &binding.post,
+        };
+        names.insert(declared, instance.identity());
+        facts.push(CResourceFact::own(CResource::Instance(instance.clone())));
+    }
+    state.resource_bindings = Some(std::sync::Arc::new(names));
+    state.resources = state
+        .resources
+        .clone()
+        .try_compose_into_valid_context_delaying_normalization(facts, assumptions)
+        .ok()?;
+    Some(state)
+}
+
 fn function_refines_named_contract_in_case(
     context: &CFunctionContractRefinementContext,
     case_assumptions: &[Proposition],
@@ -2166,13 +2608,44 @@ fn function_refines_named_contract_in_case(
         return Ok(false);
     }
 
-    let contract_entry = with_contract_argument_views(
+    let contract_frame = with_contract_argument_views(
         &CState::new(),
         contract.template(),
         &context.argument_values,
     );
-    let function_entry =
+    let function_frame =
         with_contract_argument_views(&CState::new(), function, &context.argument_values);
+    // Resource arguments are written over the two parameter lists, which the
+    // views above already bind, so the pairing is decided before either
+    // contract's own requirements are assumed.
+    let Some(instances) = forced_refinement_instance_bindings(
+        contract,
+        function,
+        &contract_frame,
+        &function_frame,
+        &PureFactContext::new(),
+        budget,
+    )?
+    else {
+        return Ok(false);
+    };
+    let install = |state: &CState, side, phase| {
+        state_with_refinement_instances(state, &instances, side, phase, &PureFactContext::new())
+    };
+    let (Some(contract_entry), Some(function_entry)) = (
+        install(
+            &contract_frame,
+            RefinementSide::Target,
+            RefinementPhase::Entry,
+        ),
+        install(
+            &function_frame,
+            RefinementSide::Implementation,
+            RefinementPhase::Entry,
+        ),
+    ) else {
+        return Ok(false);
+    };
     let mut preconditions = PureFactContext::new();
     if !assume_contract_propositions(
         &contract_entry,
@@ -2230,8 +2703,23 @@ fn function_refines_named_contract_in_case(
         )
     };
     let result = symbolic_function_result(function, context.result_variable);
-    let mut contract_post = contract_entry.clone().with_memory(post_memory.clone());
-    let mut function_post = function_entry.clone().with_memory(post_memory);
+    // The post states carry the post instances, so a guarantee written over
+    // `t.model` reads the fields the call produced while `old(t.model)` still
+    // reads the entry fields through the entry state passed alongside.
+    let (Some(mut contract_post), Some(mut function_post)) = (
+        install(
+            &contract_frame.clone().with_memory(post_memory.clone()),
+            RefinementSide::Target,
+            RefinementPhase::Post,
+        ),
+        install(
+            &function_frame.clone().with_memory(post_memory),
+            RefinementSide::Implementation,
+            RefinementPhase::Post,
+        ),
+    ) else {
+        return Ok(false);
+    };
     if function.return_type() != CType::Void {
         set_function_result(&mut contract_post, contract.template(), result.clone());
         set_function_result(&mut function_post, function, result);
@@ -2611,7 +3099,13 @@ fn context_contains_only_refinable_resources(resources: &ResourceContext) -> boo
 
 fn resource_spec_supports_framed_refinement(resource: &CResourceSpec) -> bool {
     match resource {
-        CResourceSpec::Instance { .. } => false,
+        // A named instance is refinable once both sides evaluate it to the
+        // same identity, which automatic formation arranges by binding each
+        // forced pair to one shared instance. The declared family underneath
+        // is checked by the same rule as any other resource.
+        CResourceSpec::Instance { resource, .. } => {
+            resource_spec_supports_framed_refinement(resource)
+        }
         CResourceSpec::OwnMemory(_)
         | CResourceSpec::ViewMemory(_)
         | CResourceSpec::Composite { .. }
@@ -3279,11 +3773,19 @@ fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool 
     }
 }
 
-/// The first stateful refinement slice admits ordinary scalar propositions
-/// whose only stateful operation is a C memory access (possibly below
-/// `old`), including finite sequence comparisons and membership. Resource
-/// relations, algebraic values, and explicit memory snapshots remain outside
-/// this rule. The caller separately checks resource and footprint refinement.
+/// The stateful refinement rule admits ordinary scalar propositions whose only
+/// stateful operation is a C memory access (possibly below `old`), including
+/// finite sequence comparisons and membership, plus resource-field reads and
+/// the algebraic values those fields carry. Explicit memory snapshots,
+/// `at(...)`, counted-resource populations, and range folds stay outside it:
+/// their stateful refinement laws are not written down, so they need an
+/// explicit refinement theorem. Mathematical `Integer` comparisons stay
+/// outside it for the same reason. The caller separately checks resource and
+/// footprint refinement.
+///
+/// Every variant is listed. A new specification form is excluded until its
+/// refinement behaviour has been considered, which a wildcard would silently
+/// reverse.
 fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecProposition) -> bool {
     match proposition {
         SpecProposition::SequenceComparison { left, right, .. } => {
@@ -3297,6 +3799,10 @@ fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecPropos
         SpecProposition::Comparison { left, right, .. } => {
             spec_expression_supports_stateful_memory_refinement(left)
                 && spec_expression_supports_stateful_memory_refinement(right)
+        }
+        SpecProposition::AlgebraicComparison { left, right, .. } => {
+            spec_algebraic_expression_supports_stateful_memory_refinement(left)
+                && spec_algebraic_expression_supports_stateful_memory_refinement(right)
         }
         SpecProposition::FloatClassification { expression, .. }
         | SpecProposition::Defined(expression) => {
@@ -3317,7 +3823,11 @@ fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecPropos
         | SpecProposition::ExistsPointer { body, .. } => {
             spec_proposition_supports_stateful_memory_refinement(body)
         }
-        _ => false,
+        SpecProposition::IntegerComparison { .. }
+        | SpecProposition::Predicate { .. }
+        | SpecProposition::ResourceSeparate { .. }
+        | SpecProposition::ResourceContains { .. }
+        | SpecProposition::MemoryLoadable { .. } => false,
     }
 }
 
@@ -3335,7 +3845,11 @@ fn spec_sequence_supports_stateful_memory_refinement(sequence: &SpecSequenceExpr
 
 fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpression) -> bool {
     match expression {
-        SpecExpression::ResourceField { .. } => false,
+        // A field read names an instance the two interfaces share. Both the
+        // current and the entry projection lower through
+        // `resource_instance_at_path` against the state the caller supplies;
+        // a projection the state cannot answer refuses the refinement there.
+        SpecExpression::ResourceField { .. } => true,
         SpecExpression::Value(_) => true,
         SpecExpression::IntegerToMachine { .. } => false,
         SpecExpression::CExpression(expression) => {
@@ -3384,11 +3898,57 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
             pointer,
             ..
         } => spec_expression_supports_stateful_memory_refinement(pointer),
-        SpecExpression::AlgebraicMatch { .. }
-        | SpecExpression::CountedResourceCount { .. }
+        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
+            spec_algebraic_expression_supports_stateful_memory_refinement(scrutinee)
+                && arms
+                    .iter()
+                    .all(|arm| spec_expression_supports_stateful_memory_refinement(&arm.body))
+        }
+        SpecExpression::CountedResourceCount { .. }
         | SpecExpression::RangeFold { .. }
         | SpecExpression::LoopEntrySnapshot(_)
         | SpecExpression::MemoryLoad { .. } => false,
+    }
+}
+
+/// Algebraic values are ordinary terms over instance fields, constructors,
+/// match arms, and opaque pure functions. None of them reads memory except
+/// through the `SpecExpression` nodes below, which are filtered by the same
+/// rule, so an algebraic clause is admitted exactly when its scalar leaves
+/// are.
+fn spec_algebraic_expression_supports_stateful_memory_refinement(
+    expression: &SpecAlgebraicExpression,
+) -> bool {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_)
+        | SpecAlgebraicExpressionNode::Binding(_)
+        | SpecAlgebraicExpressionNode::ResourceField(_) => true,
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => fields
+            .iter()
+            .all(spec_algebraic_value_supports_stateful_memory_refinement),
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            spec_algebraic_expression_supports_stateful_memory_refinement(scrutinee)
+                && arms.iter().all(|arm| {
+                    spec_algebraic_expression_supports_stateful_memory_refinement(&arm.body)
+                })
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => arguments
+            .iter()
+            .all(spec_pure_function_argument_supports_stateful_memory_refinement),
+    }
+}
+
+fn spec_algebraic_value_supports_stateful_memory_refinement(value: &SpecAlgebraicValue) -> bool {
+    match value {
+        SpecAlgebraicValue::C(expression) => {
+            spec_expression_supports_stateful_memory_refinement(expression)
+        }
+        // Mathematical `Integer` values keep the exclusion that
+        // `SpecPureFunctionArgument::Integer` already states.
+        SpecAlgebraicValue::Integer(_) => false,
+        SpecAlgebraicValue::Algebraic(expression) => {
+            spec_algebraic_expression_supports_stateful_memory_refinement(expression)
+        }
     }
 }
 
@@ -3400,9 +3960,12 @@ fn spec_pure_function_argument_supports_stateful_memory_refinement(
             spec_expression_supports_stateful_memory_refinement(expression)
         }
         SpecPureFunctionArgument::Integer(_) => false,
-        // The refinement rule deliberately excludes algebraic values and
-        // array snapshots until their stateful refinement laws are explicit.
-        SpecPureFunctionArgument::Algebraic(_) | SpecPureFunctionArgument::ArrayRef { .. } => false,
+        SpecPureFunctionArgument::Algebraic(expression) => {
+            spec_algebraic_expression_supports_stateful_memory_refinement(expression)
+        }
+        // An array snapshot is an explicit memory image; its stateful
+        // refinement law is not written down.
+        SpecPureFunctionArgument::ArrayRef { .. } => false,
     }
 }
 
@@ -10662,6 +11225,7 @@ pub(super) fn evaluate_function_resource_spec(
             identity,
             schema,
             resource,
+            ..
         } => {
             let required =
                 match evaluate_function_resource_spec(state, resource, assumptions, budget)? {

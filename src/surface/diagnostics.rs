@@ -147,6 +147,51 @@ pub(super) fn describe_unexpressed_pure_facts(
     })
 }
 
+/// Describes one fact, and for a refused concrete named-contract formation
+/// appends the explicit refinement theorem the user has to write.
+///
+/// The prefix is the same sentence [`describe_pure_fact`] prints without an
+/// environment, so a reader (and a fixture) sees one diagnostic either way.
+/// The skeleton itself comes from the kernel, built from the two declarations
+/// the formation check read.
+pub(super) fn describe_pure_fact_with_environment(
+    fact: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    environment: &crate::kernel::CExecutionEnvironment,
+) -> String {
+    let description = describe_pure_fact(fact, parameters, arguments);
+    let Some((contract, target)) = refused_concrete_contract_formation(fact) else {
+        return description;
+    };
+    let Some(skeleton) =
+        crate::kernel::c_named_contract_refinement_theorem_skeleton(environment, contract, target)
+    else {
+        return description;
+    };
+    format!("{description} automatically;\nprove it explicitly:\n{skeleton}")
+}
+
+/// The contract and concrete target of a named-contract fact over an exact
+/// function address, which is the shape automatic formation refuses.
+fn refused_concrete_contract_formation(fact: &Proposition) -> Option<(&str, &str)> {
+    let Proposition::Predicate { name, arguments } = fact else {
+        return None;
+    };
+    let contract = crate::kernel::CFunctionContract::surface_name_from_predicate(name)?;
+    let [_, Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice() else {
+        return None;
+    };
+    let Pointer {
+        block: PointerBlock::Function(target),
+        offset: PointerOffsetTerm::Constant(0),
+    } = pointer.pointer()
+    else {
+        return None;
+    };
+    Some((contract, target))
+}
+
 pub(super) fn describe_pure_fact(
     fact: &Proposition,
     parameters: &[syntax::C0Parameter],

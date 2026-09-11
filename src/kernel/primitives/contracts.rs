@@ -1489,6 +1489,10 @@ impl CFunctionContract {
         &self.function
     }
 
+    pub(crate) fn proof_parameters(&self) -> &[CResourceSpec] {
+        &self.proof_parameters
+    }
+
     /// First-slice formation rule: a concrete target must expose exactly the
     /// same normalized interface. Behavioral refinement is intentionally a
     /// later rule; exact equality is restrictive but sound.
@@ -1521,7 +1525,21 @@ impl CFunctionContract {
         function: &CFunction,
     ) -> bool {
         self.proof_parameters.is_empty()
-            && self.function.return_type == function.return_type
+            && self.has_compatible_signature_and_composite_vocabulary(function)
+    }
+
+    /// The same interface check without the proof-parameter restriction.
+    ///
+    /// Automatic concrete-pointer formation may cross a proof-parameter
+    /// contract, but only after it has separately established that the
+    /// binding between the two declarations is forced. The explicit
+    /// `unfold(Name)` route keeps refusing proof parameters: its proof block
+    /// has no way to introduce the instances.
+    pub(crate) fn has_compatible_signature_and_composite_vocabulary(
+        &self,
+        function: &CFunction,
+    ) -> bool {
+        self.function.return_type == function.return_type
             && self.function.return_pointee_constant == function.return_pointee_constant
             && self.function.return_aggregate_layout == function.return_aggregate_layout
             && self.function.parameters.len() == function.parameters.len()

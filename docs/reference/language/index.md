@@ -669,6 +669,18 @@ demonstrate an exact field increment refined to progress while framing an
 unrelated caller-owned counter. Unmentioned fields of the selected counter are
 not implicitly preserved.
 
+Passing `&f` where a named contract is required does not always need such a
+theorem. Automatic formation admits scalar propositions over current and
+function-entry memory, resource-field reads on either of those states,
+algebraic equalities, `match` over an algebraic value, and algebraic
+pure-function arguments, provided every clause follows by an exact route.
+`at(...)`, explicit memory snapshots, counted-resource populations, and range
+folds stay outside it. When the contract declares proof parameters, formation
+also requires the pairing between its parameters and the implementation's
+binders to be forced: one implementation binder per parameter, same resource
+family, equal arguments, and the reverse. Otherwise Click refuses and prints
+the `executes` theorem that states the pairing.
+
 ## Requirements
 
 Requirements are shared by all guarantees for the function.
