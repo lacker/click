@@ -683,7 +683,12 @@ fn add_path_fact_with_visibility_after_effect(
         );
     }
 
-    if assumptions.proves(&proposition) || facts.iter().any(|fact| fact.proposition == proposition)
+    // Redundant-fact suppression is an exact test only. A general proof that
+    // the path fact already follows is proof search inside lowering; keeping
+    // the fact instead costs one fact-store entry and keeps the path's public
+    // post-state exact.
+    if assumptions.proves_exact(&proposition)
+        || facts.iter().any(|fact| fact.proposition == proposition)
     {
         return Some(());
     }
@@ -819,10 +824,15 @@ pub(in crate::kernel) fn add_proof_obligation_with_context(
         return add_condition_obligation(obligations, assumptions, condition, value, context);
     }
 
+    // Obligation suppression keeps two routes: the exact fact index, and the
+    // retained atomic memory/resource checkers for a proposition that is
+    // already one of those atomic shapes. A proposition with logical
+    // structure is emitted as an obligation instead of being discharged by a
+    // proof search inside lowering.
     let defer_contextual_proof = assumptions.should_defer_non_exact_loadability_obligations()
         && matches!(proposition, Proposition::CMemoryLoadable { .. });
     if assumptions.proves_exact(&proposition)
-        || !defer_contextual_proof && assumptions.proves(&proposition)
+        || !defer_contextual_proof && assumptions.proves_atomic_memory_or_resource(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)
@@ -844,7 +854,18 @@ pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     proposition: Proposition,
     context: Option<&str>,
 ) {
-    if assumptions.proves(&proposition)
+    // The exact and frozen-atomic routes come first so the general prover
+    // answers only what they cannot. The remaining `proves` leg is the one
+    // site of `issues/simplify-kernel.md` package 4 that could not be
+    // restricted yet: it decides the loop-entry invariant goals in
+    // `c_loop_invariants_hold_at_entry`, whose planner
+    // (`c_loop_invariant_obligations_at_entry`) lowers the same invariant
+    // under a different reasoning policy and a different quantifier binder,
+    // so an exact route asks for a proposition the retained initialization
+    // certificate never proved. Packages 6 and 7 own that goal identity.
+    if assumptions.proves_exact(&proposition)
+        || assumptions.proves_atomic_memory_or_resource(&proposition)
+        || assumptions.proves(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)

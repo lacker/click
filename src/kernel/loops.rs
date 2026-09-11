@@ -1275,16 +1275,38 @@ fn condition_path_is_ruled_out(facts: &[ExecutionPureFact], assumptions: &PureFa
     })
 }
 
+/// Decide one bare condition through the exact fact index, the intrinsic
+/// rule, and the frozen condition checker. This is deliberately not the
+/// general proposition prover: a kernel route that prunes an execution path
+/// or a mutable-footprint check must be a theory decision over the named
+/// condition, not a logical proof search over unrelated ambient facts.
+pub(super) fn condition_is_decided(
+    assumptions: &PureFactContext,
+    condition: &ConditionTerm,
+) -> Option<bool> {
+    assumptions
+        .exact_condition_value(condition)
+        .or_else(|| PureFactContext::decide_intrinsically(condition))
+        .or_else(|| {
+            (!assumptions.should_defer_non_exact_condition_reasoning())
+                .then(|| assumptions.decide(condition))
+                .flatten()
+        })
+}
+
+fn condition_is_decided_true(assumptions: &PureFactContext, condition: &ConditionTerm) -> bool {
+    condition_is_decided(assumptions, condition) == Some(true)
+}
+
 fn condition_value_is_proven(
     assumptions: &PureFactContext,
     condition: &ConditionTerm,
     value: bool,
 ) -> bool {
-    assumptions.proves(&Proposition::ConditionIs(condition.clone(), value))
+    condition_is_decided(assumptions, condition) == Some(value)
         || (!value
-            && condition_complement(condition).is_some_and(|complement| {
-                assumptions.proves(&Proposition::ConditionIs(complement, true))
-            }))
+            && condition_complement(condition)
+                .is_some_and(|complement| condition_is_decided_true(assumptions, &complement)))
 }
 
 fn condition_complement(condition: &ConditionTerm) -> Option<ConditionTerm> {
@@ -2724,13 +2746,13 @@ pub(super) fn loop_effect_segment_contains_pointer(
     else {
         return false;
     };
-    assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(segment.start.clone(), index.clone()),
-        true,
-    )) && assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_than(index, segment.end.clone()),
-        true,
-    ))
+    condition_is_decided_true(
+        assumptions,
+        &ConditionTerm::signed_less_equal(segment.start.clone(), index.clone()),
+    ) && condition_is_decided_true(
+        assumptions,
+        &ConditionTerm::signed_less_than(index, segment.end.clone()),
+    )
 }
 
 pub(super) fn loop_effect_segment_contains_range(
@@ -2749,13 +2771,13 @@ pub(super) fn loop_effect_segment_contains_range(
     };
     let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
     let range_end = Bitvector32Term::add(base_index, range.end().clone());
-    assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(segment.start.clone(), range_start),
-        true,
-    )) && assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(range_end, segment.end.clone()),
-        true,
-    ))
+    condition_is_decided_true(
+        assumptions,
+        &ConditionTerm::signed_less_equal(segment.start.clone(), range_start),
+    ) && condition_is_decided_true(
+        assumptions,
+        &ConditionTerm::signed_less_equal(range_end, segment.end.clone()),
+    )
 }
 
 pub(super) fn is_loop_effect_relevant_pointer(pointer: &Pointer) -> bool {
@@ -2823,7 +2845,7 @@ pub(super) fn assume_invariant_checks(
                 // used for that derivation may belong to an earlier snapshot
                 // and are not a substitute for this loop's hypothesis after
                 // havoc.
-                if assumptions.proves(&path.proposition) {
+                if assumptions.proves_exact(&path.proposition) {
                     if !facts
                         .iter()
                         .any(|fact| fact.proposition() == &path.proposition)

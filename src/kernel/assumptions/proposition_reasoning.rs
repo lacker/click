@@ -377,6 +377,64 @@ impl PureFactContext {
         weakened.derive_simp_proposition(proposition)
     }
 
+    /// Decide one *bare* atomic memory or resource proposition with the
+    /// retained theory checkers named in `issues/simplify-kernel.md`.
+    ///
+    /// This is the obligation-suppression route that survives the removal of
+    /// the general prover from lowering and execution. It traverses no
+    /// logical structure, chooses no arm, instantiates no quantifier, and
+    /// answers `false` for every proposition that is not already one of the
+    /// atomic memory or resource shapes. Each arm is exactly the arm
+    /// [`Self::proves`] uses for that shape, so it can only lose answers.
+    pub(in crate::kernel) fn proves_atomic_memory_or_resource(
+        &self,
+        proposition: &Proposition,
+    ) -> bool {
+        match proposition {
+            Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes,
+            } => self.proves_memory_loadable(memory, base, bytes),
+            Proposition::CMemoryCanStore {
+                memory,
+                pointer,
+                byte_width,
+            } => self.proves_memory_access(memory, pointer, *byte_width),
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                self.proves_memory_disjoint(
+                    left_base,
+                    left_start,
+                    left_end,
+                    right_base,
+                    right_start,
+                    right_end,
+                ) || self.proves_memory_disjoint_from_resource_separate(
+                    left_base,
+                    left_start,
+                    left_end,
+                    right_base,
+                    right_start,
+                    right_end,
+                )
+            }
+            Proposition::CResourceSeparate { left, right } => {
+                self.proves_resource_separate(left, right)
+            }
+            Proposition::CResourceContains { parent, child } => {
+                self.proves_resource_contains(parent, child)
+            }
+            _ => false,
+        }
+    }
+
     /// Check one atomic theory consequence against this exact premise set.
     ///
     /// Unlike [`Self::derive_proposition`], this does not introduce logical

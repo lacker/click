@@ -3027,6 +3027,103 @@ fn deferred_obligations_keep_contextual_memory_proofs_explicit() {
     assert_eq!(deferred[0].proposition(), &element);
 }
 
+/// Lowering emits a structured obligation instead of discharging it.
+///
+/// The exact route and the retained atomic memory/resource checkers are the
+/// only suppression routes left in `add_proof_obligation`. A proposition with
+/// logical structure that the general prover could derive from the ambient
+/// context is now an explicit obligation for a Surface tactic to close.
+#[test]
+fn structured_obligations_are_emitted_rather_than_derived() {
+    let guard = ConditionTerm::signed_less_than(
+        Bitvector32Term::Variable(Variable(96_001)),
+        Bitvector32Term::Constant(10),
+    );
+    let conclusion = ConditionTerm::signed_less_than(
+        Bitvector32Term::Variable(Variable(96_002)),
+        Bitvector32Term::Constant(10),
+    );
+    let assumptions = PureFactContext::new().assume_condition(conclusion.clone(), true);
+    let structured = Proposition::Implies(
+        Box::new(Proposition::ConditionIs(guard, true)),
+        Box::new(Proposition::ConditionIs(conclusion.clone(), true)),
+    );
+    assert!(
+        assumptions.proves(&structured),
+        "the general prover derives this implication from its consequent"
+    );
+
+    let mut obligations = Vec::new();
+    assert!(add_proof_obligation(&mut obligations, &assumptions, structured.clone()).is_some());
+    assert_eq!(obligations.len(), 1);
+    assert_eq!(obligations[0].proposition(), &structured);
+
+    // The exactly assumed conjunct is still suppressed: exact availability is
+    // a lookup, not a proof search.
+    let mut exact = Vec::new();
+    assert!(
+        add_proof_obligation(
+            &mut exact,
+            &assumptions,
+            Proposition::ConditionIs(conclusion, true)
+        )
+        .is_some()
+    );
+    assert!(exact.is_empty());
+}
+
+/// Obligation emission is flat in unrelated ambient context.
+///
+/// The migrated route answers from the exact index and the atomic shape
+/// dispatch, so growing the number of unrelated condition facts must not grow
+/// the work of deciding whether to emit one structured obligation.
+#[test]
+fn structured_obligation_emission_scales_flat_in_unrelated_facts() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let mut assumptions = PureFactContext::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Variable(Variable(96_100 + index as u64)),
+                        Bitvector32Term::Constant(1_000),
+                    ),
+                    true,
+                );
+            }
+            let structured = Proposition::Implies(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(96_001)),
+                        Bitvector32Term::Constant(10),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(96_002)),
+                        Bitvector32Term::Constant(10),
+                    ),
+                    true,
+                )),
+            );
+            let mut obligations = Vec::new();
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                add_proof_obligation(&mut obligations, &assumptions, structured).unwrap();
+            });
+            assert_eq!(obligations.len(), 1);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8),
+            "obligation emission grew with unrelated facts: {samples:?}"
+        );
+    }
+}
+
 #[test]
 fn memory_derivation_records_the_selected_range_candidate() {
     let memory = CMemory::new();
