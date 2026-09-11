@@ -2957,3 +2957,15 @@ path = "reference/cli/import.md#validation-and-supported-profile"
 [[item]]
 id = "cli.behavior.import.trust-boundary"
 path = "reference/cli/import.md#locations-and-trust-boundary"
+
+[[item]]
+id = "stdlib.theorem.int32_add_to_integer"
+path = "reference/library/index.md#int32_add_to_integer"
+
+[[item]]
+id = "stdlib.theorem.int32_subtract_to_integer"
+path = "reference/library/index.md#int32_subtract_to_integer"
+
+[[item]]
+id = "stdlib.theorem.int32_add_defined_by_integer_bounds"
+path = "reference/library/index.md#int32_add_defined_by_integer_bounds"

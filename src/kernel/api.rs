@@ -5267,6 +5267,83 @@ pub fn certify_int32_move_one_from_right_to_left_preserves_sum() -> CVerifiedPur
     }
 }
 
+/// Mathematical bounds on the exact sum establish signed C addition safety.
+pub fn prove_int32_add_defined_by_integer_bounds(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> Theorem {
+    let observe = |value| {
+        IntegerTerm::from_machine(MachineIntegerType::Int32, value)
+            .expect("every int32 bit pattern has a mathematical interpretation")
+    };
+    let sum: SharedIntegerTerm =
+        IntegerTerm::Add(observe(left.clone()).into(), observe(right.clone()).into()).into();
+    Theorem::new(Proposition::Implies(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerGreaterEqual(
+                sum.clone(),
+                IntegerTerm::constant_i64(i64::from(i32::MIN)).into(),
+            ),
+            true,
+        )),
+        Box::new(Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerLessEqual(
+                    sum,
+                    IntegerTerm::constant_i64(i64::from(i32::MAX)).into(),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_add_overflows(left, right),
+                false,
+            )),
+        )),
+    ))
+}
+
+/// Exact mathematical observation of a defined signed 32-bit addition.
+/// The overflow premise is essential: the machine term alone is modular.
+pub fn prove_int32_add_to_integer(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    prove_int32_operation_to_integer(left, right, false)
+}
+
+/// Exact mathematical observation of a defined signed 32-bit subtraction.
+pub fn prove_int32_subtract_to_integer(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
+    prove_int32_operation_to_integer(left, right, true)
+}
+
+fn prove_int32_operation_to_integer(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    subtract: bool,
+) -> Theorem {
+    let observe = |value| {
+        IntegerTerm::from_machine(MachineIntegerType::Int32, value)
+            .expect("every int32 bit pattern has a mathematical interpretation")
+    };
+    let (overflow, machine, mathematical) = if subtract {
+        (
+            ConditionTerm::signed_subtract_overflows(left.clone(), right.clone()),
+            Bitvector32Term::Subtract(Box::new(left.clone()), Box::new(right.clone())),
+            IntegerTerm::Subtract(observe(left).into(), observe(right).into()),
+        )
+    } else {
+        (
+            ConditionTerm::signed_add_overflows(left.clone(), right.clone()),
+            Bitvector32Term::Add(Box::new(left.clone()), Box::new(right.clone())),
+            IntegerTerm::Add(observe(left).into(), observe(right).into()),
+        )
+    };
+    Theorem::new(Proposition::Implies(
+        Box::new(Proposition::ConditionIs(overflow, false)),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(observe(machine).into(), mathematical.into()),
+            true,
+        )),
+    ))
+}
+
 /// A defined signed addition with a nonnegative right operand is at least its
 /// left operand.
 pub fn prove_int32_add_nonnegative_right_is_at_least_left(

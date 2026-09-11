@@ -340,6 +340,22 @@ An unchanged C memory read verifies against a field related to memory by
 `to_integer(p[0]) == value`. Variable collection traverses observed machine
 expressions inside deferred Integer arithmetic and algebraic field values.
 
+## Signed addition bridge checkpoint (2026-09-10)
+
+The standard library exposes `int32_add_to_integer` and
+`int32_subtract_to_integer`: defined signed C operations agree exactly with
+Integer addition/subtraction. `int32_add_defined_by_integer_bounds` establishes
+C addition safety from the exact mathematical sum's lower and upper bounds.
+These are explicit kernel arithmetic laws, checked against their precise library
+declarations and applied through ordinary theorem certificates. No unconditional
+conversion distribution rule or new tactic syntax is introduced.
+
+Boundary-model tests evaluate the emitted laws independently, including modular
+machine results and signed overflow. Source tests reject missing definedness or
+either missing mathematical bound; accepted applications expand and reverify.
+The unchanged C summation loop, general folds, and other machine-width operation
+bridges remain to be completed.
+
 ## Implementation and integration sequence
 
 1. Land this design record, then agree on the minimal shared kernel/surface

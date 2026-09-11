@@ -1882,7 +1882,10 @@ fn check_direct_pure_goal_with_proof(
 pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
     matches!(
         name,
-        "int32_increment_upper_bound"
+        "int32_add_defined_by_integer_bounds"
+            | "int32_add_to_integer"
+            | "int32_subtract_to_integer"
+            | "int32_increment_upper_bound"
             | "int32_increment_strictly_increases"
             | "int32_increment_lower_bound"
             | "int32_increment_greater_equal_lower_bound"
@@ -1930,6 +1933,8 @@ fn verify_kernel_standard_theorem_axiom(
     goal: Proposition,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let (parameter_count, requirement_count) = match theorem.name() {
+        "int32_add_defined_by_integer_bounds" => (2, 2),
+        "int32_add_to_integer" | "int32_subtract_to_integer" => (2, 1),
         "int32_increment_upper_bound" | "int32_increment_strictly_increases" => (2, 1),
         "int32_increment_lower_bound"
         | "int32_increment_greater_equal_lower_bound"
@@ -1987,6 +1992,15 @@ fn verify_kernel_standard_theorem_axiom(
     };
     let value = int32_parameter(0)?;
     let axiom = match theorem.name() {
+        "int32_add_defined_by_integer_bounds" => {
+            crate::kernel::prove_int32_add_defined_by_integer_bounds(value, int32_parameter(1)?)
+        }
+        "int32_add_to_integer" => {
+            crate::kernel::prove_int32_add_to_integer(value, int32_parameter(1)?)
+        }
+        "int32_subtract_to_integer" => {
+            crate::kernel::prove_int32_subtract_to_integer(value, int32_parameter(1)?)
+        }
         "int32_increment_upper_bound" => {
             prove_int32_increment_upper_bound(value, int32_parameter(1)?)
         }
