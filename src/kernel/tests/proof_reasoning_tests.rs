@@ -6472,3 +6472,76 @@ fn integer_machine_round_trip_axioms_hold_in_independent_boundary_models() {
         }
     }
 }
+
+/// The discharge rule shared by `add_required_proof_obligation_with_context`
+/// and the call-requirement sites in `prepare_verified_function_call`.
+///
+/// It decides exactly three things: an exactly available fact, one bare
+/// condition the frozen checker decides, and an atomic memory or resource
+/// proposition. A proposition with logical structure is never discharged
+/// here, however easily a general prover would have derived it; it is
+/// emitted for a Surface tactic instead.
+#[test]
+fn required_obligation_discharge_is_exact_and_refuses_logical_structure() {
+    let value = Bitvector32Term::Variable(Variable(97_100));
+    let positive = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), value.clone()),
+        true,
+    );
+    let other = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Variable(Variable(97_101)),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(positive.clone());
+
+    // Exactly available, and the frozen condition checker's own consequence.
+    assert!(required_obligation_is_exactly_discharged(
+        &assumptions,
+        &positive
+    ));
+    assert!(required_obligation_is_exactly_discharged(
+        &assumptions,
+        &nonnegative
+    ));
+
+    // A disjunction with an exactly available arm, a conjunction with an
+    // unavailable conjunct, and an implication with a refuted antecedent are
+    // all derivable by the general prover and none of them is discharged.
+    let disjunction = Proposition::Or(Box::new(positive.clone()), Box::new(other.clone()));
+    assert!(!required_obligation_is_exactly_discharged(
+        &assumptions,
+        &disjunction
+    ));
+    let implication = Proposition::Implies(Box::new(other.clone()), Box::new(nonnegative.clone()));
+    assert!(!required_obligation_is_exactly_discharged(
+        &assumptions,
+        &implication
+    ));
+    assert!(
+        assumptions.proves(&disjunction),
+        "the general prover must still be the thing this route deliberately refuses"
+    );
+    assert!(assumptions.proves(&implication));
+
+    // And the emitted obligation is the required (non-assumable) kind,
+    // carrying its context.
+    let mut obligations = Vec::new();
+    add_required_proof_obligation_with_context(
+        &mut obligations,
+        &assumptions,
+        disjunction.clone(),
+        Some("callee precondition"),
+        None,
+    );
+    assert_eq!(obligations.len(), 1);
+    assert_eq!(obligations[0].proposition(), &disjunction);
+    assert!(!obligations[0].is_assumable());
+    assert_eq!(obligations[0].context(), Some("callee precondition"));
+}

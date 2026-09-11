@@ -791,10 +791,15 @@ fn certified_transitions_from_execution(
                         }
                     }
                     StatementPrerequisitePolicy::Contextual => {
-                        // The whole context proves it, or the exact structural
-                        // rules the explicit law used do (a listed premise
-                        // covering a loadability, a matching separation, an
-                        // atomic derivation over the context).
+                        // A retained checked derivation over the context, or
+                        // the exact structural rules the explicit law used (a
+                        // listed premise covering a loadability, a matching
+                        // separation, an atomic derivation over the context).
+                        // The bare prover verdict is not one of them: a
+                        // required verification condition the kernel emitted
+                        // -- a call precondition, most of them -- is
+                        // discharged by evidence this side can check, never
+                        // by a search whose answer nothing records.
                         // Load names are not preserved across call-havoc and
                         // store edges by path assumptions (see
                         // `CMemoryDerivation`). A prerequisite naming a cell
@@ -809,8 +814,7 @@ fn certified_transitions_from_execution(
                                 &prerequisite_assumptions,
                             );
                         let proposition = resolved.as_ref().unwrap_or(proposition);
-                        if prerequisite_assumptions.proves(proposition)
-                            || exact_fact_is_available(proposition, pure_facts)
+                        if exact_fact_is_available(proposition, pure_facts)
                             || exactly_available_fact(proposition, pure_facts).is_some()
                             // The same rule for a prerequisite the resolution
                             // above leaves symbolic: an earlier fact about the

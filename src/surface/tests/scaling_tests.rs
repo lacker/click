@@ -1207,3 +1207,52 @@ fn smart_ranked_loop_bundle_scales_near_linearly_with_unrelated_inequalities() {
         &samples,
     );
 }
+
+/// A caller with growing unrelated facts calling a callee whose precondition
+/// has logical structure.
+///
+/// The kernel's exact routes do not cover the disjunction, so the call raises
+/// it as a required verification condition on every size. The point of the
+/// measurement is that raising and discharging it costs what the requirement
+/// and the one cited arm cost, not what the caller's fact context costs.
+fn call_with_structured_precondition(fact_count: usize) -> (String, String) {
+    let c_source =
+        "int32 structured_precondition_caller(int32 x, int32 y) {\n    int32 result;\n    result = either_positive(x, y);\n    return result;\n}\n"
+            .to_string();
+    let mut click_source = String::from(
+        "verifying \"structured_precondition_caller.c\";\n\nextern int32 either_positive(int32 x, int32 y) {\n    requires x > 0 or y > 0;\n    ensures result == 0;\n}\n\nint32 structured_precondition_caller(int32 x, int32 y) {\n    requires x > 0;\n",
+    );
+    for index in 0..fact_count {
+        click_source.push_str(&format!("    requires y != {};\n", index + 100));
+    }
+    click_source.push_str("    ensures result == 0;\n}\n");
+    (c_source, click_source)
+}
+
+#[test]
+fn call_requirement_checking_scales_near_linearly_with_unrelated_caller_facts() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = call_with_structured_precondition(size);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(
+                    &click_source,
+                    &[("structured_precondition_caller.c", c_source.as_str())],
+                )
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} call-requirement scaling fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling(
+        "call requirement checking with unrelated caller facts",
+        &samples,
+    );
+}
