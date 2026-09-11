@@ -302,6 +302,91 @@ fn specification_conditional_lowering_ignores_unrelated_ambient_facts() {
     assert_near_linear_scaling("specification conditional ambient facts", &samples);
 }
 
+/// A verified call publishes its callee's ensures. An ensure written as an
+/// implication keeps its premises unless each is exactly available at the
+/// call, so what the caller happens to know elsewhere cannot change what that
+/// publication costs. The premise here is never available, the case that used
+/// to end in the general prover's whole-context fallbacks; the call context
+/// really does grow along this axis (9 to 66 condition facts over the four
+/// sizes), while ensure publication measures 71 units at every one of them.
+#[test]
+fn verified_call_ensure_premises_ignore_unrelated_ambient_facts() {
+    let mut samples = Vec::new();
+    let mut ensure_work = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let unrelated = (0..size)
+            .map(|index| {
+                format!(
+                    "    have {index} <= count + {index} by {{\n        \
+                     arithmetic() using {{\n            0 <= count;\n            \
+                     count <= 1000;\n        }}\n    }}\n"
+                )
+            })
+            .collect::<String>();
+        let click_source = format!(
+            "verifying \"ensure_premise_callee.c\";\n\
+             verifying \"ensure_premise_scaling_caller.c\";\n\
+             \n\
+             int32 ensure_premise_callee(int32 flag, int32* cell) {{\n    \
+                 owns cell[0..1];\n    \
+                 ensures result == 0;\n    \
+                 ensures flag > 0 implies cell[0] == 1;\n\
+             }} by {{\n    \
+                 if flag > 0 {{\n        execute();\n        simp();\n    \
+                 }} else {{\n        execute();\n        simp();\n    }}\n\
+             }}\n\
+             \n\
+             int32 ensure_premise_scaling_caller(int32 count, int32* cell) {{\n    \
+                 requires 0 <= count;\n    \
+                 requires count <= 1000;\n    \
+                 owns cell[0..1];\n    \
+                 ensures result == 0;\n\
+             }} by {{\n{unrelated}    execute();\n    simp();\n}}\n"
+        );
+        let (verified, sample) = scaling_sample(size, || {
+            verify_c0_sources(
+                &click_source,
+                &[
+                    (
+                        "ensure_premise_callee.c",
+                        "int32 ensure_premise_callee(int32 flag, int32* cell) {\n    \
+                         if (flag > 0) {\n        cell[0] = 1;\n    }\n    return 0;\n}\n",
+                    ),
+                    (
+                        "ensure_premise_scaling_caller.c",
+                        "int32 ensure_premise_scaling_caller(int32 count, int32* cell) {\n    \
+                         int32 status = ensure_premise_callee(count, cell);\n    \
+                         return status;\n}\n",
+                    ),
+                ],
+            )
+        });
+        verified.unwrap_or_else(|error| {
+            panic!(
+                "size {size} ensure-premise scaling fixture failed: {}",
+                error.message()
+            )
+        });
+        ensure_work.push(
+            sample
+                .named_work
+                .get("operation `verified call ensure lowering`")
+                .copied()
+                .unwrap_or(0),
+        );
+        samples.push(sample);
+    }
+    assert!(
+        ensure_work[0] > 0,
+        "the callee's ensures were never published at the call site: {ensure_work:?}"
+    );
+    assert!(
+        ensure_work.iter().all(|work| *work == ensure_work[0]),
+        "publishing callee ensures grew with unrelated ambient facts: {ensure_work:?}"
+    );
+    assert_near_linear_scaling("verified call ensure premises", &samples);
+}
+
 fn unrelated_identity_project(function_count: usize) -> (Vec<(String, String)>, String) {
     let mut c_sources = Vec::new();
     let mut click_source = String::new();

@@ -4868,24 +4868,36 @@ fn add_verified_function_ensure_facts_selected<'a>(
                 &ensure_path.facts,
                 &[],
             )));
-            let mut specialized_assumptions = assumptions_with_path_context(
+            let specialized_assumptions = assumptions_with_path_context(
                 &ensure_assumptions,
                 &ensure_path.facts,
                 &ensure_path.obligations,
             );
+            // The callee's ensure holds under its own leading premises. Where
+            // one of those premises is exactly available at this call, the
+            // consequent is available too, and publishing it saves every
+            // caller an `extract`. This is the kernel's modus ponens, so it
+            // walks only the ensure's own implication chain and cites each
+            // discharged premise exactly: an indexed hit in the call context,
+            // or a premise already discharged above it in this chain. A
+            // premise neither route settles ends the walk, and the ensure
+            // stays available as the implication it was written as, for the
+            // proof to discharge with `extract`.
             let mut specialized = ensure_path.proposition.clone();
-            let mut specialized_any_premise = false;
+            let mut discharged_premises: Vec<Proposition> = Vec::new();
             while let Proposition::Implies(premise, body) = specialized {
-                if !specialized_assumptions.proves(&premise) {
+                let available = specialized_assumptions.proves_exact(&premise)
+                    || discharged_premises
+                        .iter()
+                        .any(|discharged| discharged == premise.as_ref());
+                if !available {
                     specialized = Proposition::Implies(premise, body);
                     break;
                 }
-                specialized_assumptions =
-                    specialized_assumptions.assume_proposition((*premise).clone());
+                discharged_premises.push((*premise).clone());
                 specialized = *body;
-                specialized_any_premise = true;
             }
-            if specialized_any_premise {
+            if !discharged_premises.is_empty() {
                 facts.push(ExecutionPureFact::certified(wrap_path_context(
                     specialized,
                     &ensure_path.facts,
