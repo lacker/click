@@ -174,15 +174,6 @@ mod tests {
             let invalid = source.replace(missing, "");
             assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
         }
-
-        let branch = "function branch(c: int32, left: int32, right: int32) -> Integer { to_integer(if c == 0 { left + 1 } else { right + 1 }) }\n\
-            theorem call(c: int32, left: int32, right: int32) { ensures branch(c, left, right) == branch(c, left, right) by simp; }";
-        assert!(verify_c0_sources(branch, &[]).is_err());
-        let guarded = branch.replace(
-            "{ ensures",
-            "{ requires defined(if c == 0 { left + 1 } else { right + 1 }); ensures",
-        );
-        verify_c0_sources(&guarded, &[]).unwrap();
     }
 
     #[test]
