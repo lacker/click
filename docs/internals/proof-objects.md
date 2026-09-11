@@ -333,6 +333,19 @@ produces no path at all for an antecedent no state satisfies. A goal whose
 kernel proposition did not come from a lowering performed for it carries no
 chain and refines its written form structurally.
 
+A body's path facts may mention the variable its quantifier binds, so they
+are placed under that binder, never beside it: hoisting one leaves the same
+variable free in the guard and bound in the body, which is a proposition no
+written proof can state or introduce. The polarity follows the quantifier. A
+guard restricts a universal's domain, so it is the antecedent of the
+implication `wrap_path_context` inserts, and the chain records it after the
+`WrittenUniversal` entry for that binder. A guard restricts an existential's
+witness, so it is a conjunct of the quantified body instead; guarding by
+implication there would make the claim vacuously true of every witness the
+guard excludes. Nothing under an existential binder is reachable before a
+`witness` names its value, so the head chain stops at the binder and the
+proof reaches a guard conjunct with `both`.
+
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A
 recorded `CState` is logically complete, but its memory, facts, and resources

@@ -117,6 +117,32 @@ pub(in crate::kernel) fn wrap_path_context(
     wrap_path_context_with_introductions(proposition, facts, obligations).0
 }
 
+/// Guards an existentially quantified body with the path facts the lowering
+/// of that body established.
+///
+/// A path fact may mention the quantified variable, so it belongs under the
+/// binder that binds it, exactly as [`wrap_path_context`] puts it under a
+/// universal. The polarity is the other one: a guard restricts a universal's
+/// domain, so it is the antecedent of an implication, and it restricts an
+/// existential's witness, so it is a conjunct. Guarding an existential by
+/// implication instead would make the claim vacuously true of any witness the
+/// guard excludes.
+///
+/// Work is one traversal of `facts` under the same filter `wrap_path_context`
+/// uses, so the two cannot disagree about which facts are retained.
+pub(in crate::kernel) fn guard_quantified_witness(
+    proposition: Proposition,
+    facts: &[ExecutionPureFact],
+) -> Proposition {
+    facts
+        .iter()
+        .filter(|fact| !crate::kernel::eval::is_load_variable_defining_fact(fact.proposition()))
+        .rev()
+        .fold(proposition, |body, fact| {
+            Proposition::And(Box::new(fact.proposition().clone()), Box::new(body))
+        })
+}
+
 /// [`wrap_path_context`], also reporting the guard nodes it inserted, in the
 /// order they appear from the outside in. Both results come from one
 /// traversal under one filter, so the record cannot drift from the

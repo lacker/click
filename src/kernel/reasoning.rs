@@ -25,7 +25,7 @@ pub(super) use path_facts::{
     append_required_proof_obligations_without_search, assumptions_with_path_context,
     assumptions_with_propositions, byte_offset_from_pointer_offset,
     common_pointer_offset_element_width, decide_with_facts, disprove_builtin_prop,
-    element_count_from_bytes, element_index_from_offset, forall_int32,
+    element_count_from_bytes, element_index_from_offset, forall_int32, guard_quantified_witness,
     int32_element_count_from_bytes, int32_element_index_from_offset, memory_effect_execution_facts,
     memory_range_still_available, merge_execution_pure_facts_and_obligations, merge_facts,
     merge_obligations, pointer_byte_offset_from_base, public_execution_pure_facts,

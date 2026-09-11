@@ -655,7 +655,12 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                 return Err(ExecutionLimit::UnsupportedIntegerExistentialBody);
             }
             Ok(SpecPropositionPath {
-                introductions: path.introductions,
+                // The body's own chain describes nodes under this binder,
+                // not this path's head; an introduction reaches none of
+                // them before a `witness`. This arm refuses a body with
+                // path facts or obligations outright, so there is no guard
+                // to place.
+                introductions: Vec::new(),
                 proposition: Proposition::Exists {
                     name: name.clone(),
                     var: *variable,
@@ -686,14 +691,23 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             )?
             .into_iter()
             .map(|path| SpecPropositionPath {
+                // The head chain records the nodes an introduction reaches
+                // before any other step. Nothing under this binder is one
+                // of them until a `witness` names the bound value, so the
+                // chain stops at the existential; the guards below belong
+                // to the body, not to this head.
                 introductions: Vec::new(),
                 proposition: Proposition::Exists {
                     name: name.clone(),
                     var: *variable,
                     sort: Sort::CInt32,
-                    body: Box::new(path.proposition),
+                    body: Box::new(guard_quantified_witness(path.proposition, &path.facts)),
                 },
-                facts: path.facts,
+                // Path facts may mention the bound variable, so they are
+                // guards on the quantified body, exactly as under a
+                // universal. Publishing them here would leave the binder's
+                // variable free in the surrounding context.
+                facts: Vec::new(),
                 obligations: path
                     .obligations
                     .into_iter()
@@ -702,7 +716,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                             name: name.clone(),
                             var: *variable,
                             sort: Sort::CInt32,
-                            body: Box::new(proposition),
+                            body: Box::new(guard_quantified_witness(proposition, &path.facts)),
                         })
                     })
                     .collect(),
@@ -732,14 +746,16 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             )?
             .into_iter()
             .map(|path| SpecPropositionPath {
+                // See `ExistsInt32` above: the chain stops at the binder and
+                // the body's guards stay under it.
                 introductions: Vec::new(),
                 proposition: Proposition::Exists {
                     name: name.clone(),
                     var: *variable,
                     sort: Sort::CPointer(*c_type),
-                    body: Box::new(path.proposition),
+                    body: Box::new(guard_quantified_witness(path.proposition, &path.facts)),
                 },
-                facts: path.facts,
+                facts: Vec::new(),
                 obligations: path
                     .obligations
                     .into_iter()
@@ -748,7 +764,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                             name: name.clone(),
                             var: *variable,
                             sort: Sort::CPointer(*c_type),
-                            body: Box::new(proposition),
+                            body: Box::new(guard_quantified_witness(proposition, &path.facts)),
                         })
                     })
                     .collect(),
@@ -6336,5 +6352,69 @@ mod lowering_provenance_tests {
                 LoweringIntroduction::WrittenImplication,
             ]
         );
+    }
+
+    fn existential(body: SpecProposition) -> SpecProposition {
+        SpecProposition::ExistsInt32 {
+            name: "len".to_string(),
+            variable: Variable(41),
+            body: Box::new(body),
+        }
+    }
+
+    /// A definedness guard for an expression over an existentially bound
+    /// name belongs under the binder that binds it. Hoisting it leaves the
+    /// bound variable free in the guard and bound in the body, which is a
+    /// proposition no Surface proof can state or introduce.
+    #[test]
+    fn a_definedness_guard_under_an_existential_stays_under_its_binder() {
+        let incremented = SpecExpression::Add(
+            Box::new(binder("len")),
+            Box::new(SpecExpression::Value(int32(1))),
+        );
+        let (goal, facts, obligations, recorded) =
+            crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+                &CState::new(),
+                &existential(positive(incremented)),
+                None,
+                &PureFactContext::new(),
+            )
+            .expect("the existential lowers on one path");
+
+        let overflows = Proposition::ConditionIs(
+            ConditionTerm::signed_add_overflows(
+                Bitvector32Term::Variable(Variable(41)),
+                Bitvector32Term::Constant(1),
+            ),
+            false,
+        );
+        let Proposition::Exists { var, body, .. } = &goal else {
+            panic!("the lowered goal is an existential, got {goal:?}");
+        };
+        assert_eq!(*var, Variable(41));
+        // A guard restricts an existential's witness, so it is a conjunct of
+        // the quantified body, not an antecedent: an implication would make
+        // the claim vacuously true of every witness the guard excludes.
+        let Proposition::And(guard, _) = body.as_ref() else {
+            panic!("the guard is the head conjunct of the quantified body, got {body:?}");
+        };
+        assert_eq!(guard.as_ref(), &overflows);
+
+        // Nothing the lowering published beside the goal may mention the
+        // bound variable, and every obligation must rebind it itself.
+        assert!(
+            facts.is_empty(),
+            "the binder's path facts escaped: {facts:?}"
+        );
+        for obligation in &obligations {
+            let Proposition::Exists { var, .. } = obligation else {
+                panic!("an obligation escaped its binder: {obligation:?}");
+            };
+            assert_eq!(*var, Variable(41));
+        }
+
+        // The head chain describes what an introduction reaches first. The
+        // guard is not there, so the chain must not claim it is.
+        assert_eq!(recorded, Vec::new());
     }
 }
