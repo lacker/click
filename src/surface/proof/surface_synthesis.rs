@@ -670,6 +670,77 @@ fn named_pointer_bases<'a>(
         }))
 }
 
+/// Synthesize the internal equation emitted when a memory read is assigned a
+/// registered load identity. The variable is not a source-level identifier;
+/// spell both sides through the registered pointer, anchored at the snapshot
+/// named by the load.  Keeping this separate from ordinary bitvector
+/// synthesis is important: the latter may deliberately resolve a load to a
+/// current-state value, while this equation must retain its memory epoch.
+fn synthesize_load_defining_equation(
+    variable: &Variable,
+    memory: &crate::kernel::SharedCMemory,
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    let (registered_memory, registered_pointer) =
+        crate::kernel::registered_load_for_variable(variable)?;
+    // The defining equation carries the canonical snapshot that was recorded
+    // with this variable. A merely equivalent load from another memory would
+    // erase the epoch the equation is required to preserve.
+    if registered_memory != *memory || registered_pointer != *pointer {
+        return None;
+    }
+
+    let synthesize_at = |snapshot: &CState| {
+        let load = registered_load_in_state(variable, snapshot)?;
+        // Let the ordinary load spelling select a qualified source, an exact
+        // local cell, a field, or the pointer/load fallback. It receives the
+        // snapshot-specific load above, so the selected source cannot drift
+        // to another epoch while the defining equation is presented.
+        let left = synthesize_surface_bitvector(
+            &Bitvector32Term::Variable(*variable),
+            parameters,
+            arguments,
+            snapshot,
+            bound_variables,
+        )?;
+        let right =
+            synthesize_surface_bitvector(&load, parameters, arguments, snapshot, bound_variables)?;
+        Some(ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::Equal,
+            right,
+        })
+    };
+
+    if registered_load_in_state(variable, state).is_some() {
+        return synthesize_at(state);
+    }
+    if let Some(entry) = SYNTHESIS_ENTRY_STATE.with(|slot| slot.borrow().clone())
+        && registered_load_in_state(variable, &entry).is_some()
+    {
+        return synthesize_at(&entry).map(|proposition| ClickProposition::At {
+            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Function,
+                kind: ProgramPointKind::Entry,
+            }),
+            proposition: Box::new(proposition),
+        });
+    }
+    SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+        let slot = slot.borrow();
+        let (snapshot, selector) = slot.as_ref()?;
+        registered_load_in_state(variable, snapshot)?;
+        synthesize_at(snapshot).map(|proposition| ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(proposition),
+        })
+    })
+}
+
 // Large leaf temporaries must not occupy every recursive connective frame.
 #[inline(never)]
 fn synthesize_surface_atomic_proposition(
@@ -679,6 +750,22 @@ fn synthesize_surface_atomic_proposition(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
+    if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+        proposition
+        && let (Bitvector32Term::Variable(variable), Bitvector32Term::MemoryLoad(memory, pointer)) =
+            (left.as_ref(), right.as_ref())
+        && crate::kernel::is_load_variable(variable)
+    {
+        return synthesize_load_defining_equation(
+            variable,
+            memory,
+            pointer,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        );
+    }
     if let Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) = proposition {
         fn sequence(
             value: &crate::kernel::SequenceTerm,

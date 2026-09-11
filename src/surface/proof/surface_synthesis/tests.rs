@@ -7,15 +7,24 @@ fn relower_written_proposition(
     surface: &ClickProposition,
     state: &CState,
 ) -> Result<Proposition, String> {
+    relower_written_proposition_with_snapshots(surface, state, state, &RecordedSnapshots::default())
+}
+
+fn relower_written_proposition_with_snapshots(
+    surface: &ClickProposition,
+    pre_state: &CState,
+    state: &CState,
+    recorded_snapshots: &RecordedSnapshots,
+) -> Result<Proposition, String> {
     crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with_opaque_calls(
         surface,
         &PureFactContext::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
-        state,
+        pre_state,
         state,
         None,
-        &RecordedSnapshots::default(),
+        recorded_snapshots,
         &PredicateEnvironment::new(&[]),
         &ClickFunctionEnvironment::new(&[]),
         &std::collections::BTreeSet::new(),
@@ -549,4 +558,366 @@ fn nested_propositions_synthesize_with_small_frames_and_linear_work() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn load_defining_equation_round_trips() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("load-definition".into()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().with_block("load-definition", 4);
+    let state = CState::new().with_memory(memory).with_local(
+        "p",
+        CValue::typed_pointer(pointer.clone(), CType::Int32Pointer),
+    );
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(state.memory()),
+        Box::new(pointer),
+    );
+    let (variable, defining_load) = crate::kernel::load_variable_for_term(&load).unwrap();
+    let requirement = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(variable)),
+            Box::new(defining_load),
+        ),
+        true,
+    );
+    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+        .expect("load-defining equation must be spellable");
+    assert_eq!(
+        relower_written_proposition(&spelled, &state)
+            .map(|fact| crate::kernel::canonical_condition_fact(&fact)),
+        Ok(crate::kernel::canonical_condition_fact(&requirement)),
+    );
+}
+
+#[test]
+fn load_defining_equation_uses_entry_snapshot() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("load-definition-entry".into()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let entry = CState::new()
+        .with_memory(CMemory::new().with_block("load-definition-entry", 4))
+        .with_local(
+            "p",
+            CValue::typed_pointer(pointer.clone(), CType::Int32Pointer),
+        );
+    let post = entry.clone().with_memory(
+        CMemory::new()
+            .with_block("load-definition-entry", 4)
+            .store(pointer.clone(), int32(7)),
+    );
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(entry.memory()),
+        Box::new(pointer),
+    );
+    let (variable, defining_load) = crate::kernel::load_variable_for_term(&load).unwrap();
+    let entry = entry.with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
+    let requirement = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(variable)),
+            Box::new(defining_load),
+        ),
+        true,
+    );
+    let spelled =
+        synthesize_surface_proposition_at_entry_and_post(&requirement, &[], &[], &entry, &post)
+            .expect("entry load-defining equation must be spellable");
+    let ClickProposition::At {
+        selector: SnapshotSelector::ProgramPoint(point),
+        proposition,
+    } = &spelled
+    else {
+        panic!("a changed post-state must retain the entry snapshot: {spelled:?}");
+    };
+    assert_eq!(point.region, CodeRegionRef::Function);
+    assert_eq!(point.kind, ProgramPointKind::Entry);
+    let ClickProposition::Comparison { left, right, .. } = proposition.as_ref() else {
+        panic!("the entry snapshot must contain the defining equality: {spelled:?}");
+    };
+    assert_ne!(left, right, "the entry spelling must not be tautological");
+    let lowered = relower_written_proposition(&spelled, &entry).unwrap();
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&lowered),
+        crate::kernel::proof::proposition_identity_key(&requirement),
+    );
+}
+
+#[test]
+fn load_defining_equation_uses_saved_snapshot() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("load-definition-saved".into()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = CState::new()
+        .with_memory(CMemory::new().with_block("load-definition-saved", 4))
+        .with_local(
+            "p",
+            CValue::typed_pointer(pointer.clone(), CType::Int32Pointer),
+        );
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(base.memory()),
+        Box::new(pointer.clone()),
+    );
+    let (variable, defining_load) = crate::kernel::load_variable_for_term(&load).unwrap();
+    let snapshot = base.with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
+    let entry = snapshot.clone().with_memory(
+        CMemory::new()
+            .with_block("load-definition-saved", 4)
+            .store(pointer.clone(), int32(1)),
+    );
+    let post = snapshot.clone().with_memory(
+        CMemory::new()
+            .with_block("load-definition-saved", 4)
+            .store(pointer, int32(2)),
+    );
+    let requirement = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(variable)),
+            Box::new(defining_load),
+        ),
+        true,
+    );
+    let selector = SnapshotSelector::Mark("saved_load_epoch".into());
+    let spelled = synthesize_surface_proposition_at_entry_post_and_snapshot(
+        &requirement,
+        &[],
+        &[],
+        &entry,
+        &post,
+        Some((&snapshot, &selector)),
+    )
+    .expect("the explicitly saved load snapshot must be spellable");
+    let ClickProposition::At {
+        selector: actual,
+        proposition,
+    } = &spelled
+    else {
+        panic!("a changed entry and post-state must use the saved snapshot: {spelled:?}");
+    };
+    assert_eq!(actual, &selector);
+    let ClickProposition::Comparison { left, right, .. } = proposition.as_ref() else {
+        panic!("the saved snapshot must contain the defining equality: {spelled:?}");
+    };
+    assert_ne!(left, right, "the saved spelling must not be tautological");
+    let mut recorded_snapshots = RecordedSnapshots::new();
+    recorded_snapshots.insert(selector, snapshot);
+    let lowered =
+        relower_written_proposition_with_snapshots(&spelled, &post, &post, &recorded_snapshots)
+            .expect("the saved mark must lower through its recorded snapshot");
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&lowered),
+        crate::kernel::proof::proposition_identity_key(&requirement),
+        "the saved snapshot spelling must retain the shared load identity"
+    );
+}
+
+/// Build the load equation emitted by a call whose contract reads one
+/// structure field.  The bounded-pool and owned-string examples exercise this
+/// shape for `pool->capacity` and `owner->len`, respectively.
+fn example_load_defining_requirement(
+    block: &str,
+    local: &str,
+    offset: i64,
+) -> (CState, Proposition, Variable) {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete(block.into()),
+        offset: PointerOffsetTerm::Constant(offset),
+    };
+    let state = CState::new()
+        .with_memory(CMemory::new().with_block(block, 16))
+        .with_local(
+            local,
+            CValue::typed_pointer(
+                Pointer {
+                    block: PointerBlock::Concrete(block.into()),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                CType::Int32Pointer,
+            ),
+        );
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(state.memory()),
+        Box::new(pointer),
+    );
+    let (variable, defining_load) = crate::kernel::load_variable_for_term(&load).unwrap();
+    (
+        state,
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(variable)),
+                Box::new(defining_load),
+            ),
+            true,
+        ),
+        variable,
+    )
+}
+
+#[test]
+fn bounded_pool_load_equation_round_trips_without_internal_names() {
+    let (state, requirement, variable) =
+        example_load_defining_requirement("bounded-pool:pool", "pool", 4);
+    let state = state.with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
+    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+        .expect("bounded-pool call load equation must be spellable");
+    let ClickProposition::Comparison { left, right, .. } = &spelled else {
+        panic!("load equation must remain an equality: {spelled:?}");
+    };
+    assert_ne!(left, right, "the source spelling must not be tautological");
+    let lowered = relower_written_proposition(&spelled, &state).unwrap();
+    assert_eq!(
+        crate::kernel::canonical_condition_fact(&lowered),
+        crate::kernel::canonical_condition_fact(&requirement)
+    );
+    assert!(!format!("{spelled:?}").contains(&variable.0.to_string()));
+}
+
+#[test]
+fn owned_string_load_equation_round_trips_without_internal_names() {
+    let (state, requirement, variable) =
+        example_load_defining_requirement("owned-string:owner", "owner", 0);
+    let state = state.with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
+    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+        .expect("owned-string call load equation must be spellable");
+    let ClickProposition::Comparison { left, right, .. } = &spelled else {
+        panic!("load equation must remain an equality: {spelled:?}");
+    };
+    assert_ne!(left, right, "the source spelling must not be tautological");
+    let lowered = relower_written_proposition(&spelled, &state).unwrap();
+    assert_eq!(
+        crate::kernel::canonical_condition_fact(&lowered),
+        crate::kernel::canonical_condition_fact(&requirement)
+    );
+    assert!(!format!("{spelled:?}").contains(&variable.0.to_string()));
+}
+
+#[test]
+fn load_equation_rejects_wrong_snapshot_and_unresolvable_variable() {
+    let (state, requirement, variable) =
+        example_load_defining_requirement("owned-string:wrong-snapshot", "owner", 0);
+    let wrong_memory = CMemory::new().with_block("owned-string:other-epoch", 16);
+    let wrong_pointer = Pointer {
+        block: PointerBlock::Concrete("owned-string:wrong-snapshot".into()),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, _), true) = &requirement
+    else {
+        unreachable!()
+    };
+    let wrong_pointer_requirement = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            left.clone(),
+            Box::new(Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(state.memory()),
+                Box::new(wrong_pointer.clone()),
+            )),
+        ),
+        true,
+    );
+    assert!(synthesize_surface_proposition(&wrong_pointer_requirement, &[], &[], &state).is_none());
+
+    let wrong_epoch = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            left.clone(),
+            Box::new(Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(&wrong_memory),
+                Box::new(Pointer {
+                    block: PointerBlock::Concrete("owned-string:wrong-snapshot".into()),
+                    offset: PointerOffsetTerm::Constant(0),
+                }),
+            )),
+        ),
+        true,
+    );
+    assert!(synthesize_surface_proposition(&wrong_epoch, &[], &[], &state).is_none());
+
+    let unresolvable = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(Variable(variable.0 + 1))),
+            left.clone(),
+        ),
+        true,
+    );
+    assert!(synthesize_surface_proposition(&unresolvable, &[], &[], &state).is_none());
+}
+
+fn actual_struct_field_load_equation(
+    c_source: &str,
+    block: &str,
+    field_name: &str,
+    field_offset: i64,
+) {
+    let function = syntax::parse_function(c_source).expect("the example C must parse");
+    let parameter = function
+        .parameters()
+        .first()
+        .expect("the example function has a struct pointer parameter")
+        .clone();
+    let base = Pointer {
+        block: PointerBlock::Concrete(block.into()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let pointer = base.offset_by_bytes(field_offset as u32);
+    let memory = CMemory::new().with_block(block, 16);
+    let load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(pointer.clone()),
+    );
+    let (variable, defining_load) = crate::kernel::load_variable_for_term(&load).unwrap();
+    let requirement = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(variable)),
+            Box::new(defining_load),
+        ),
+        true,
+    );
+    let state = CState::new()
+        .with_memory(memory)
+        .with_local(
+            parameter.name(),
+            CValue::typed_pointer(base.clone(), CType::UInt8Pointer),
+        )
+        .with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
+    let parameters = [parameter];
+    let arguments = [CExpression::Value(CValue::typed_pointer(
+        base,
+        CType::UInt8Pointer,
+    ))];
+    let spelled = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+        .expect("the example-shaped load equation must be spellable");
+    let ClickProposition::Comparison { left, right, .. } = &spelled else {
+        panic!("load equation must remain an equality: {spelled:?}");
+    };
+    assert_ne!(left, right, "the source spelling must not be tautological");
+    assert!(matches!(left, ContractExpression::CBinding(name) if name == "result"));
+    assert!(matches!(right, ContractExpression::Field { field, .. } if field == field_name));
+    let lowered = relower_written_proposition(&spelled, &state).unwrap();
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&lowered),
+        crate::kernel::proof::proposition_identity_key(&requirement),
+        "the field spelling must retain the shared load identity"
+    );
+}
+
+#[test]
+fn bounded_pool_actual_capacity_load_equation_round_trips() {
+    actual_struct_field_load_equation(
+        include_str!("../../../../examples/bounded-pool/pool_checkout.c"),
+        "bounded-pool:actual-pool",
+        "capacity",
+        4,
+    );
+}
+
+#[test]
+fn owned_string_actual_len_load_equation_round_trips() {
+    actual_struct_field_load_equation(
+        include_str!("../../../../examples/owned-string/owned_string_len.c"),
+        "owned-string:actual-owner",
+        "len",
+        0,
+    );
 }
