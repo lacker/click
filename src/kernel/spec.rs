@@ -4297,7 +4297,9 @@ fn integer_constant_to_machine(
     }
 }
 
-fn integer_machine_bounds(destination: MachineIntegerType) -> (IntegerTerm, IntegerTerm) {
+pub(super) fn integer_machine_bounds(
+    destination: MachineIntegerType,
+) -> (IntegerTerm, IntegerTerm) {
     match destination {
         MachineIntegerType::Int16 => (
             IntegerTerm::constant_i64(i16::MIN as i64),

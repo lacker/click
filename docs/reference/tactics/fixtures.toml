@@ -209,7 +209,7 @@ needle = "contradiction(x == x);"
 
 [[form]]
 id = "close-invariants"
-path = "mdtests/c_decreases_count_up.md"
+path = "mdtests/nested_loop_preserve.md"
 needle = "close_invariants();"
 
 [[form]]

@@ -1564,6 +1564,7 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
+                let ranking_measures = self.loop_ranking_measures(loop_index)?;
                 if matches!(statement, syntax::C0Statement::DoWhile { .. }) {
                     c_do_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1572,6 +1573,7 @@ impl AnnotationLowerer<'_> {
                         lowered_body,
                     )
                     .with_loop_resource_specs(resource_specs)
+                    .with_loop_ranking_measures(ranking_measures)
                 } else {
                     c_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1581,6 +1583,7 @@ impl AnnotationLowerer<'_> {
                         lowered_body,
                     )
                     .with_loop_resource_specs(resource_specs)
+                    .with_loop_ranking_measures(ranking_measures)
                 }
             }
             syntax::C0Statement::For {
@@ -1597,6 +1600,7 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
+                let ranking_measures = self.loop_ranking_measures(loop_index)?;
                 c_seq(
                     lowered_initializer,
                     c_while_with_invariant_and_effect_checks(
@@ -1606,7 +1610,8 @@ impl AnnotationLowerer<'_> {
                         effect_checks,
                         crate::kernel::c_for_body_with_step(lowered_body, lowered_step),
                     )
-                    .with_loop_resource_specs(resource_specs),
+                    .with_loop_resource_specs(resource_specs)
+                    .with_loop_ranking_measures(ranking_measures),
                 )
             }
             syntax::C0Statement::If {
@@ -1647,6 +1652,38 @@ impl AnnotationLowerer<'_> {
         let index = self.loop_index;
         self.loop_index += 1;
         index
+    }
+
+    /// The loop's declared `decreases` components, in source order.
+    ///
+    /// The measure travels on the loop head so the back-edge invariant
+    /// bundle, the verified loop rule, and the whole-function termination
+    /// pass all read the one declared clause rather than agreeing by
+    /// coincidence.
+    fn loop_ranking_measures(&self, loop_index: usize) -> Result<Vec<CExpression>, ClickError> {
+        let mut measures: Option<Vec<CExpression>> = None;
+        for clause in self
+            .structural_clauses
+            .iter()
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        {
+            let Some(measure) = clause.decreases() else {
+                continue;
+            };
+            let expressions = crate::surface::verification::termination_measure_expressions(
+                measure,
+                &format!("loop {loop_index} `decreases`"),
+            )?;
+            match &measures {
+                Some(existing) if existing != &expressions => {
+                    return Err(ClickError::new(format!(
+                        "loop {loop_index} has conflicting `decreases` measures"
+                    )));
+                }
+                _ => measures = Some(expressions),
+            }
+        }
+        Ok(measures.unwrap_or_default())
     }
 
     fn loop_invariant_checks(

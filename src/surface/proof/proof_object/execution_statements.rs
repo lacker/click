@@ -2,6 +2,32 @@
 
 use super::*;
 
+/// Names the ranking members a ranked loop's bundle carries, so an explicit
+/// `preserve by` body written before the `decreases` clause existed reports
+/// what it now has to close instead of only that the bundle stayed open.
+fn ranking_member_diagnostic(ranking_measures: &[CExpression]) -> String {
+    if ranking_measures.is_empty() {
+        return String::new();
+    }
+    let members = ranking_measures
+        .iter()
+        .map(|measure| {
+            format!(
+                "`0 <= {}` at the back edge",
+                crate::kernel::c_ranking_measure_source(measure)
+            )
+        })
+        .chain(std::iter::once(format!(
+            "`{}` decreases at the back edge",
+            crate::kernel::c_ranking_measures_source(ranking_measures)
+        )))
+        .collect::<Vec<_>>();
+    format!(
+        "; this loop declares `decreases`, so the bundle also has {}",
+        members.join(", ")
+    )
+}
+
 impl<'a> Proof<'a> {
     pub(super) fn apply_execution_statement_step(
         &self,
@@ -173,7 +199,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`close_invariants by` requires a loop proof"));
         };
-        let Some((loop_entry, checks)) = context.constants.invariant_body_context.as_deref() else {
+        let Some(bundle) = context.constants.invariant_body_context.as_deref() else {
             return Err(self.step_error("`close_invariants by` requires a loop invariant context"));
         };
         let execution = self
@@ -186,18 +212,28 @@ impl<'a> Proof<'a> {
         }
         let (state, scope) = self
             .state
-            .open_invariant_body(loop_entry, checks, |goal| PropositionPresentation {
-                surface: crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_and_post(
+            .open_invariant_body(
+                &bundle.loop_entry_state,
+                &bundle.iteration_entry_state,
+                &bundle.checks,
+                &bundle.ranking_measures,
+                |goal| PropositionPresentation {
+                surface: crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
                     goal,
                     context.parsed_function.parameters(),
                     context.arguments,
                     context.old_reference_state(&execution.core.frontier, &execution.core.state),
                     &execution.core.state,
+                    bundle
+                        .iteration_entry_selector
+                        .as_ref()
+                        .map(|selector| (&bundle.iteration_entry_state, selector)),
                 )
                 .map(Arc::new),
                 surface_bindings: PersistentMap::default(),
                     ..PropositionPresentation::default()
-            })
+            },
+            )
             .map_err(|message| self.step_error(message))?;
         let root = Self {
             site: self.site.clone(),
@@ -211,8 +247,21 @@ impl<'a> Proof<'a> {
             }),
         };
         let checkpoint = root.checkpoint();
-        let Some(completed) = root.try_authoritative_linear_script(body)? else {
-            return Err(self.step_error("closure body did not prove every invariant obligation"));
+        let attempted = root
+            .try_authoritative_linear_script(body)
+            .map_err(|error| {
+                let detail = ranking_member_diagnostic(&bundle.ranking_measures);
+                if detail.is_empty() {
+                    error
+                } else {
+                    ClickError::new(format!("{}{detail}", error.message()))
+                }
+            })?;
+        let Some(completed) = attempted else {
+            return Err(self.step_error(format!(
+                "closure body did not prove every invariant obligation{}",
+                ranking_member_diagnostic(&bundle.ranking_measures)
+            )));
         };
         let certificate = completed.certificate_since(&checkpoint)?;
         let state = self
@@ -335,6 +384,7 @@ impl<'a> Proof<'a> {
         loop_head_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
+        ranking_measures: &[CExpression],
         invariant_surfaces: &[ClickProposition],
         composite_resource_definitions: &[CCompositeResourceDefinition],
         do_while: bool,
@@ -391,7 +441,7 @@ impl<'a> Proof<'a> {
         } else {
             self.apply_close_invariants_body(&[ProofTactic::Simp])?
         };
-        proof.validate_loop_invariant_bundle(invariant_checks)?;
+        proof.validate_loop_invariant_bundle(invariant_checks, ranking_measures)?;
         Ok(Some(proof))
     }
 
@@ -399,9 +449,10 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn validate_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
+        ranking_measures: &[CExpression],
     ) -> Result<(), ClickError> {
         self.state
-            .validate_checked_invariant_lowerings(invariant_checks)
+            .validate_checked_invariant_lowerings(invariant_checks, ranking_measures)
             .map_err(|message| self.step_error(message))
     }
 
@@ -416,8 +467,9 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn certify_loop_invariant_bundle(
         &self,
         invariant_checks: &[CLoopInvariantCheck],
+        ranking_measures: &[CExpression],
     ) -> Result<Self, ClickError> {
-        self.validate_loop_invariant_bundle(invariant_checks)?;
+        self.validate_loop_invariant_bundle(invariant_checks, ranking_measures)?;
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;

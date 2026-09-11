@@ -44,7 +44,20 @@ int32 nest(int32 n) {
                         apply(int32_increment_upper_bound(n, 100)) using { n < 100; }
                     }
                     step();
-                    close_invariants by { simp(); }
+                    close_invariants by {
+                        both {
+                            arithmetic() using {
+                                at(statement(2).entry, n) >= 0;
+                                at(statement(2).entry, n) < 10;
+                            }
+                        }
+                        and {
+                            arithmetic() using {
+                                at(statement(2).entry, n) >= 0;
+                                at(statement(2).entry, n) < 10;
+                            }
+                        }
+                    }
                 }
             }
             step();
@@ -57,5 +70,5 @@ int32 nest(int32 n) {
 ```
 
 ```expect
-fail: loop 0 does not decrease `n` to a nonnegative value
+fail: `n` decreases at the back edge
 ```

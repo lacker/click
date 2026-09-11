@@ -780,3 +780,45 @@ theorem int32_add_defined_by_integer_bounds(left: int32, right: int32) {
     requires to_integer(left) + to_integer(right) <= 2147483647;
     ensures defined(left + right);
 }
+
+theorem integer_to_int16_round_trip(z: Integer) {
+    requires z >= -32768;
+    requires z <= 32767;
+    ensures to_integer(to_int16(z)) == z;
+}
+
+theorem integer_to_int32_round_trip(z: Integer) {
+    requires z >= -2147483648;
+    requires z <= 2147483647;
+    ensures to_integer(to_int32(z)) == z;
+}
+
+theorem integer_to_uint8_round_trip(z: Integer) {
+    requires z >= 0;
+    requires z <= 255;
+    ensures to_integer(to_uint8(z)) == z;
+}
+
+theorem integer_to_uint16_round_trip(z: Integer) {
+    requires z >= 0;
+    requires z <= 65535;
+    ensures to_integer(to_uint16(z)) == z;
+}
+
+theorem integer_to_uint32_round_trip(z: Integer) {
+    requires z >= 0;
+    requires z <= 4294967295;
+    ensures to_integer(to_uint32(z)) == z;
+}
+
+theorem integer_to_int64_round_trip(z: Integer) {
+    requires z >= -9223372036854775808;
+    requires z <= 9223372036854775807;
+    ensures to_integer(to_int64(z)) == z;
+}
+
+theorem integer_to_uint64_round_trip(z: Integer) {
+    requires z >= 0;
+    requires z <= 18446744073709551615;
+    ensures to_integer(to_uint64(z)) == z;
+}

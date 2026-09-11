@@ -6167,3 +6167,111 @@ fn integer_machine_operation_axioms_agree_with_boundary_models() {
         assert!(defined > 0 && excluded > 0);
     }
 }
+
+#[test]
+fn integer_machine_round_trip_axioms_hold_in_independent_boundary_models() {
+    use num_bigint::BigInt;
+    use num_traits::One;
+
+    fn shape(destination: MachineIntegerType) -> (usize, bool) {
+        match destination {
+            MachineIntegerType::Int16 => (16, true),
+            MachineIntegerType::Int32 => (32, true),
+            MachineIntegerType::UInt8 => (8, false),
+            MachineIntegerType::UInt16 => (16, false),
+            MachineIntegerType::UInt32 => (32, false),
+            MachineIntegerType::Int64 => (64, true),
+            MachineIntegerType::UInt64 => (64, false),
+        }
+    }
+    fn integer(term: &IntegerTerm, input: &BigInt) -> BigInt {
+        match term {
+            IntegerTerm::Constant(value) => value.clone(),
+            IntegerTerm::Variable(Variable(971)) => input.clone(),
+            IntegerTerm::Machine(observation) => {
+                let Bitvector32Term::IntegerToMachine { value, destination } = observation.value()
+                else {
+                    panic!("expected the emitted reverse conversion");
+                };
+                assert_eq!(observation.ty(), *destination);
+                let (width, signed) = shape(*destination);
+                let modulus = BigInt::one() << width;
+                let bits = ((integer(value, input) % &modulus) + &modulus) % &modulus;
+                if signed && bits >= (&modulus >> 1usize) {
+                    bits - modulus
+                } else {
+                    bits
+                }
+            }
+            _ => panic!("unexpected term in round-trip axiom"),
+        }
+    }
+    fn evaluate(proposition: &Proposition, input: &BigInt) -> bool {
+        match proposition {
+            Proposition::Implies(premise, conclusion) => {
+                !evaluate(premise, input) || evaluate(conclusion, input)
+            }
+            Proposition::ConditionIs(condition, expected) => {
+                let result = match condition {
+                    ConditionTerm::IntegerGreaterEqual(left, right) => {
+                        integer(left, input) >= integer(right, input)
+                    }
+                    ConditionTerm::IntegerLessEqual(left, right) => {
+                        integer(left, input) <= integer(right, input)
+                    }
+                    ConditionTerm::IntegerEqual(left, right) => {
+                        integer(left, input) == integer(right, input)
+                    }
+                    _ => panic!("unexpected condition in round-trip axiom"),
+                };
+                result == *expected
+            }
+            _ => panic!("unexpected proposition in round-trip axiom"),
+        }
+    }
+    for destination in [
+        MachineIntegerType::Int16,
+        MachineIntegerType::Int32,
+        MachineIntegerType::UInt8,
+        MachineIntegerType::UInt16,
+        MachineIntegerType::UInt32,
+        MachineIntegerType::Int64,
+        MachineIntegerType::UInt64,
+    ] {
+        let (width, signed) = shape(destination);
+        let span = BigInt::one() << if signed { width - 1 } else { width };
+        let lower = if signed { -&span } else { BigInt::from(0) };
+        let upper: BigInt = &span - 1;
+        let axiom =
+            prove_integer_machine_round_trip(IntegerTerm::Variable(Variable(971)), destination);
+        let Proposition::Implies(_, rest) = axiom.proposition() else {
+            panic!()
+        };
+        let Proposition::Implies(_, conclusion) = rest.as_ref() else {
+            panic!()
+        };
+        for input in [
+            &lower - 1,
+            lower.clone(),
+            &lower + 1,
+            BigInt::from(-1),
+            BigInt::from(0),
+            BigInt::from(1),
+            &upper - 1,
+            upper.clone(),
+            &upper + 1,
+            -(BigInt::one() << 128usize),
+            BigInt::one() << 128usize,
+        ] {
+            assert!(
+                evaluate(axiom.proposition(), &input),
+                "{destination:?}: {input}"
+            );
+            assert_eq!(
+                evaluate(conclusion, &input),
+                input >= lower && input <= upper,
+                "{destination:?}: {input}"
+            );
+        }
+    }
+}

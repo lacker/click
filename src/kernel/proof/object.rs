@@ -1172,7 +1172,9 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
     pub(crate) fn open_invariant_body(
         &self,
         loop_entry: &crate::kernel::CState,
+        iteration_entry: &crate::kernel::CState,
         checks: &[crate::kernel::CLoopInvariantCheck],
+        ranking_measures: &[crate::kernel::CExpression],
         presentation: impl FnOnce(&Proposition) -> P,
     ) -> Result<
         (
@@ -1201,13 +1203,24 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         for fact in crate::kernel::certified_store_equations(&execution.core.effect_facts) {
             facts = facts.with_fact(fact);
         }
-        let obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+        let mut obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
             &execution.core.state,
             loop_entry,
             checks,
             facts.assumptions(),
         )
         .map_err(|_| "could not lower explicit invariant obligations")?;
+        // The ranking members follow the invariants in declaration order, so
+        // the bundle a retained certificate closed is the same list at every
+        // site that rechecks it.
+        obligations.extend(
+            crate::kernel::c_loop_ranking_obligations_at_back_edge(
+                &execution.core.state,
+                iteration_entry,
+                ranking_measures,
+            )
+            .map_err(|_| "could not read the loop's declared ranking measure")?,
+        );
         let goal = obligations
             .iter()
             .rev()
@@ -1234,6 +1247,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
             binding: super::execution::CheckedLoopInvariantLowerings {
                 snapshot: execution.core.state.clone(),
                 checks: checks.to_vec(),
+                ranking_measures: ranking_measures.to_vec(),
                 facts: branch.state.facts.clone(),
                 effects: execution.core.effect_facts.clone(),
                 body: None,
@@ -1431,6 +1445,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
     pub(crate) fn validate_checked_invariant_lowerings(
         &self,
         checks: &[crate::kernel::CLoopInvariantCheck],
+        ranking_measures: &[crate::kernel::CExpression],
     ) -> Result<(), String> {
         let (branch, execution) = self
             .focused_frontier_execution()
@@ -1454,6 +1469,11 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         if evidence.checks != checks {
             return Err(
                 "invariant closure evidence belongs to a different invariant bundle".into(),
+            );
+        }
+        if evidence.ranking_measures != ranking_measures {
+            return Err(
+                "invariant closure evidence closed a different loop ranking measure".into(),
             );
         }
         if !evidence.body.as_ref().is_some_and(|body| body.recheck()) {
@@ -2061,7 +2081,7 @@ mod tests {
             let ((body, scope), opening_work) =
                 crate::instrumentation::measure_deterministic_work(|| {
                     frontier
-                        .open_invariant_body(&entry, &checks, |_| ())
+                        .open_invariant_body(&entry, &entry, &checks, &[], |_| ())
                         .unwrap()
                 });
             assert!(
@@ -2085,13 +2105,13 @@ mod tests {
                     .retain_invariant_body(scope.clone(), &complete)
                     .unwrap();
                 closed
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .unwrap();
                 closed
             });
             assert!(
                 closed
-                    .validate_checked_invariant_lowerings(&checks[..1])
+                    .validate_checked_invariant_lowerings(&checks[..1], &[])
                     .is_err()
             );
             let core = closed.execution_view().unwrap().execution().core.clone();
@@ -2113,7 +2133,11 @@ mod tests {
                     }
                 }
                 let stale = root(changed_facts, changed);
-                assert!(stale.validate_checked_invariant_lowerings(&checks).is_err());
+                assert!(
+                    stale
+                        .validate_checked_invariant_lowerings(&checks, &[])
+                        .is_err()
+                );
                 if variant < 3 {
                     assert!(
                         stale
@@ -2131,7 +2155,7 @@ mod tests {
                 Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true);
             assert!(
                 root(facts, wrong)
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             opening_work + closing_work
@@ -2204,7 +2228,7 @@ mod tests {
             ),
         );
         let (body, scope) = frontier
-            .open_invariant_body(&CState::new(), &checks, |_| ())
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| ())
             .unwrap();
         assert!(body.apply_normalize().is_err());
         assert!(
@@ -2300,7 +2324,7 @@ mod tests {
             let unprepared = root(facts.clone(), core);
             assert!(
                 unprepared
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             let requested = unprepared
@@ -2309,20 +2333,24 @@ mod tests {
                 .unwrap();
             assert!(
                 requested
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             let (body, scope) = unprepared
-                .open_invariant_body(&CState::new(), &checks, |_| ())
+                .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| ())
                 .unwrap();
             let completed = body.apply_normalize().ok().unwrap();
             let prepared = unprepared.retain_invariant_body(scope, &completed).unwrap();
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
-                prepared.validate_checked_invariant_lowerings(&checks)
+                prepared.validate_checked_invariant_lowerings(&checks, &[])
             });
             result.unwrap();
             samples.push(work);
-            assert!(prepared.validate_checked_invariant_lowerings(&[]).is_err());
+            assert!(
+                prepared
+                    .validate_checked_invariant_lowerings(&[], &[])
+                    .is_err()
+            );
             let changed_checks = vec![CLoopInvariantCheck::new(
                 SpecProposition::Comparison {
                     left: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
@@ -2334,7 +2362,7 @@ mod tests {
             )];
             assert!(
                 prepared
-                    .validate_checked_invariant_lowerings(&changed_checks)
+                    .validate_checked_invariant_lowerings(&changed_checks, &[])
                     .is_err()
             );
             let core = prepared.execution_view().unwrap().execution().core.clone();
@@ -2342,7 +2370,7 @@ mod tests {
             stale_effects.effect_facts = Vec::new().into();
             assert!(
                 root(facts.clone(), stale_effects)
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             let mut stale = core.clone();
@@ -2350,7 +2378,7 @@ mod tests {
             stale.state = CState::new().into();
             assert!(
                 root(facts.clone(), stale)
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             let other_facts = facts.with_fact(Proposition::Predicate {
@@ -2359,14 +2387,14 @@ mod tests {
             });
             assert!(
                 root(other_facts, core.clone())
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             let mut incomplete = core.clone();
             Arc::make_mut(incomplete.checked_invariant_lowerings.as_mut().unwrap()).body = None;
             assert!(
                 root(facts.clone(), incomplete)
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             // A body for another judgment cannot certify this bundle.
@@ -2379,11 +2407,11 @@ mod tests {
                 Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true);
             assert!(
                 root(facts.clone(), incomplete)
-                    .validate_checked_invariant_lowerings(&checks)
+                    .validate_checked_invariant_lowerings(&checks, &[])
                     .is_err()
             );
             prepared
-                .validate_checked_invariant_lowerings(&checks)
+                .validate_checked_invariant_lowerings(&checks, &[])
                 .unwrap();
         }
         for pair in samples.windows(2) {

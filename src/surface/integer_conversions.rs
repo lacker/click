@@ -68,6 +68,34 @@ mod tests {
     }
 
     #[test]
+    fn integer_machine_round_trip_laws_require_both_bounds_and_expand() {
+        for (target, lower, upper) in [
+            ("int16", "-32768", "32767"),
+            ("int32", "-2147483648", "2147483647"),
+            ("uint8", "0", "255"),
+            ("uint16", "0", "65535"),
+            ("uint32", "0", "4294967295"),
+            ("int64", "-9223372036854775808", "9223372036854775807"),
+            ("uint64", "0", "18446744073709551615"),
+        ] {
+            let source = format!(
+                "theorem round_trip(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_integer(to_{target}(z)) == z by {{ apply(integer_to_{target}_round_trip(z)); }} }}"
+            );
+            verify_c0_sources(&source, &[]).unwrap_or_else(|e| panic!("{}\n{source}", e.message()));
+            let expanded =
+                expand_c0_claim_source_by_label(&source, &[], "round_trip.ensures_0").unwrap();
+            verify_c0_sources(&expanded, &[]).unwrap();
+            for missing in [
+                format!("requires z >= {lower};"),
+                format!("requires z <= {upper};"),
+            ] {
+                let invalid = source.replace(&missing, "");
+                assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+            }
+        }
+    }
+
+    #[test]
     fn conversion_obligations_survive_right_operand_composition() {
         for expression in [
             "1 + to_integer(x + 1)",
