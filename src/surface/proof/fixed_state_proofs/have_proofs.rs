@@ -735,16 +735,16 @@ fn refuse_unproved_conversion_bounds(
 /// each: the entry state and the current state, each binding the proof's
 /// parameter and proof-local values where the state does not bind the name,
 /// and `result` bound on the current state.
-struct FixedStateLowering {
-    entry_state: CState,
-    lowering_state: CState,
-    element_types: BTreeMap<String, CType>,
-    entry_values: BTreeMap<String, CValue>,
-    current_values: BTreeMap<String, CValue>,
+pub(in crate::surface::proof) struct FixedStateLowering {
+    pub(in crate::surface::proof) entry_state: CState,
+    pub(in crate::surface::proof) lowering_state: CState,
+    pub(in crate::surface::proof) element_types: BTreeMap<String, CType>,
+    pub(in crate::surface::proof) entry_values: BTreeMap<String, CValue>,
+    pub(in crate::surface::proof) current_values: BTreeMap<String, CValue>,
 }
 
 impl FixedStateLowering {
-    fn new(
+    pub(in crate::surface::proof) fn new(
         values: &BTreeMap<String, CValue>,
         array_refs: &ClickArrayRefs,
         pre_state: &CState,

@@ -53,6 +53,29 @@ pub(super) fn promote_integer_expression(
                 surface_bindings,
             )),
         ),
+        ContractExpression::Call { name, arguments } => ContractExpression::Call {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    promote_integer_expression(argument, integer_values, surface_bindings)
+                })
+                .collect(),
+        },
+        ContractExpression::Old(inner) => ContractExpression::Old(Box::new(
+            promote_integer_expression(inner, integer_values, surface_bindings),
+        )),
+        ContractExpression::At {
+            selector,
+            expression,
+        } => ContractExpression::At {
+            selector: selector.clone(),
+            expression: Box::new(promote_integer_expression(
+                expression,
+                integer_values,
+                surface_bindings,
+            )),
+        },
         _ => expression.clone(),
     }
 }

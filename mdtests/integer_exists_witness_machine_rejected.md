@@ -9,5 +9,5 @@ theorem integer_exists_witness_machine(c: int32) {
 ```
 
 ```expect
-fail: could not lower Integer witness
+fail: witness must be an Integer expression
 ```

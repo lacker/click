@@ -6,9 +6,15 @@ use crate::kernel::{
     AlgebraicBitvectorMatchArm, AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode,
     AlgebraicValue, PureFunctionArgument,
 };
-#[cfg(test)]
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+
+struct IntegerVariableRewrite<'a> {
+    from: Variable,
+    to: &'a IntegerTerm,
+    shadowed: bool,
+    renamings: &'a BTreeMap<Variable, Variable>,
+}
 
 pub(crate) struct TermRewrite<'a> {
     algebraic: Option<(&'a AlgebraicTerm, &'a AlgebraicTerm)>,
@@ -17,6 +23,9 @@ pub(crate) struct TermRewrite<'a> {
     conditions: Option<&'a HashMap<ConditionTerm, bool>>,
     collected_conditions: Option<Vec<ConditionTerm>>,
     integer_cache: HashMap<u64, IntegerTerm>,
+    integer_variables: Option<IntegerVariableRewrite<'a>>,
+    pub(crate) unsupported_integer_scope: bool,
+    pub(crate) integer_work_exhausted: bool,
     pub(crate) changed: bool,
     #[cfg(test)]
     pub(crate) visits: usize,
@@ -30,6 +39,9 @@ impl<'a> TermRewrite<'a> {
             bitvector: None,
             changed: false,
             integer_cache: HashMap::new(),
+            integer_variables: None,
+            unsupported_integer_scope: false,
+            integer_work_exhausted: false,
             pointer_variable: None,
             #[cfg(test)]
             visits: 0,
@@ -43,6 +55,9 @@ impl<'a> TermRewrite<'a> {
             bitvector: Some((from, to)),
             changed: false,
             integer_cache: HashMap::new(),
+            integer_variables: None,
+            unsupported_integer_scope: false,
+            integer_work_exhausted: false,
             pointer_variable: None,
             #[cfg(test)]
             visits: 0,
@@ -56,6 +71,9 @@ impl<'a> TermRewrite<'a> {
             collected_conditions: None,
             changed: false,
             integer_cache: HashMap::new(),
+            integer_variables: None,
+            unsupported_integer_scope: false,
+            integer_work_exhausted: false,
             pointer_variable: None,
             #[cfg(test)]
             visits: 0,
@@ -69,10 +87,45 @@ impl<'a> TermRewrite<'a> {
             conditions: None,
             collected_conditions: None,
             integer_cache: HashMap::new(),
+            integer_variables: None,
+            unsupported_integer_scope: false,
+            integer_work_exhausted: false,
             changed: false,
             #[cfg(test)]
             visits: 0,
         }
+    }
+
+    /// Maps Integer variables in one binder-free atomic proposition. The
+    /// caller handles logical binders and reserves the replacement's variables.
+    /// Unsupported internal scopes are reported, never silently copied.
+    pub(crate) fn for_integer_variables(
+        from: Variable,
+        to: &'a IntegerTerm,
+        shadowed: bool,
+        renamings: &'a BTreeMap<Variable, Variable>,
+    ) -> Self {
+        let mut walker = Self {
+            algebraic: None,
+            bitvector: None,
+            pointer_variable: None,
+            conditions: None,
+            collected_conditions: None,
+            integer_cache: HashMap::new(),
+            integer_variables: None,
+            unsupported_integer_scope: false,
+            integer_work_exhausted: false,
+            changed: false,
+            #[cfg(test)]
+            visits: 0,
+        };
+        walker.integer_variables = Some(IntegerVariableRewrite {
+            from,
+            to,
+            shadowed,
+            renamings,
+        });
+        walker
     }
 
     pub(crate) fn conditional_guards(proposition: &Proposition) -> Vec<ConditionTerm> {
@@ -95,7 +148,11 @@ impl<'a> TermRewrite<'a> {
         }
     }
     fn visit(&mut self) {
-        crate::instrumentation::record_deterministic_work(1);
+        if self.integer_variables.is_some() {
+            self.integer_work_exhausted |= crate::instrumentation::deadline_exceeded_with_work(1);
+        } else {
+            crate::instrumentation::record_deterministic_work(1);
+        }
         #[cfg(test)]
         {
             self.visits += 1;
@@ -120,6 +177,11 @@ impl<'a> TermRewrite<'a> {
         {
             self.changed = true;
             return to.clone();
+        }
+        if self.integer_variables.is_some() && matches!(term.node, AlgebraicTermNode::Match { .. })
+        {
+            self.unsupported_integer_scope = true;
+            return term.clone();
         }
         let node = match &term.node {
             AlgebraicTermNode::Variable(v) => AlgebraicTermNode::Variable(*v),
@@ -157,11 +219,15 @@ impl<'a> TermRewrite<'a> {
     fn field(&mut self, v: &AlgebraicValue) -> AlgebraicValue {
         match v {
             AlgebraicValue::C(v) => AlgebraicValue::C(self.value(v)),
-            AlgebraicValue::Integer(v) => AlgebraicValue::Integer(v.clone()),
+            AlgebraicValue::Integer(v) => AlgebraicValue::Integer(self.integer(v)),
             AlgebraicValue::Algebraic(v) => AlgebraicValue::Algebraic(self.algebraic(v)),
         }
     }
     fn argument(&mut self, a: &PureFunctionArgument) -> PureFunctionArgument {
+        if self.integer_variables.is_some() && matches!(a, PureFunctionArgument::ArrayRef { .. }) {
+            self.unsupported_integer_scope = true;
+            return a.clone();
+        }
         match a {
             PureFunctionArgument::Value(v) => PureFunctionArgument::Value(self.value(v)),
             PureFunctionArgument::Integer(v) => {
@@ -211,7 +277,38 @@ impl<'a> TermRewrite<'a> {
         }
         self.visit();
         let result = match shared.as_ref() {
-            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => shared.as_ref().clone(),
+            IntegerTerm::Constant(value) => {
+                if self.integer_variables.is_some() {
+                    self.integer_work_exhausted |=
+                        crate::instrumentation::deadline_exceeded_with_work(
+                            value.bits() as usize + 1,
+                        );
+                    if self.integer_work_exhausted {
+                        return IntegerTerm::constant_i64(0);
+                    }
+                }
+                shared.as_ref().clone()
+            }
+            IntegerTerm::Variable(variable) => {
+                if let Some(mapping) = &self.integer_variables {
+                    if let Some(renamed) = mapping.renamings.get(variable) {
+                        return IntegerTerm::Variable(*renamed);
+                    }
+                    if !mapping.shadowed && *variable == mapping.from {
+                        let work = match mapping.to {
+                            IntegerTerm::Constant(value) => value.bits() as usize + 1,
+                            _ => 1,
+                        };
+                        self.integer_work_exhausted |=
+                            crate::instrumentation::deadline_exceeded_with_work(work);
+                        if self.integer_work_exhausted {
+                            return IntegerTerm::constant_i64(0);
+                        }
+                        return mapping.to.clone();
+                    }
+                }
+                shared.as_ref().clone()
+            }
             IntegerTerm::PureFunctionApplication(application) => {
                 let arguments = application
                     .arguments()
@@ -451,27 +548,68 @@ impl<'a> TermRewrite<'a> {
                 Box::new(self.offset(b)),
             ),
             ConditionTerm::IntegerLessThan(a, b) => {
-                ConditionTerm::integer_less_than(self.integer(a), self.integer(b))
+                if self.integer_variables.is_some() {
+                    ConditionTerm::IntegerLessThan(self.integer(a).into(), self.integer(b).into())
+                } else {
+                    ConditionTerm::integer_less_than(self.integer(a), self.integer(b))
+                }
             }
             ConditionTerm::IntegerLessEqual(a, b) => {
-                ConditionTerm::integer_less_equal(self.integer(a), self.integer(b))
+                if self.integer_variables.is_some() {
+                    ConditionTerm::IntegerLessEqual(self.integer(a).into(), self.integer(b).into())
+                } else {
+                    ConditionTerm::integer_less_equal(self.integer(a), self.integer(b))
+                }
             }
             ConditionTerm::IntegerGreaterThan(a, b) => {
-                ConditionTerm::integer_greater_than(self.integer(a), self.integer(b))
+                if self.integer_variables.is_some() {
+                    ConditionTerm::IntegerGreaterThan(
+                        self.integer(a).into(),
+                        self.integer(b).into(),
+                    )
+                } else {
+                    ConditionTerm::integer_greater_than(self.integer(a), self.integer(b))
+                }
             }
             ConditionTerm::IntegerGreaterEqual(a, b) => {
-                ConditionTerm::integer_greater_equal(self.integer(a), self.integer(b))
+                if self.integer_variables.is_some() {
+                    ConditionTerm::IntegerGreaterEqual(
+                        self.integer(a).into(),
+                        self.integer(b).into(),
+                    )
+                } else {
+                    ConditionTerm::integer_greater_equal(self.integer(a), self.integer(b))
+                }
             }
             ConditionTerm::IntegerEqual(a, b) => {
-                ConditionTerm::integer_equal(self.integer(a), self.integer(b))
+                if self.integer_variables.is_some() {
+                    ConditionTerm::IntegerEqual(self.integer(a).into(), self.integer(b).into())
+                } else {
+                    ConditionTerm::integer_equal(self.integer(a), self.integer(b))
+                }
             }
             ConditionTerm::IntegerNotEqual(a, b) => {
-                ConditionTerm::integer_not_equal(self.integer(a), self.integer(b))
+                if self.integer_variables.is_some() {
+                    ConditionTerm::IntegerNotEqual(self.integer(a).into(), self.integer(b).into())
+                } else {
+                    ConditionTerm::integer_not_equal(self.integer(a), self.integer(b))
+                }
             }
         }
     }
     pub(crate) fn bits(&mut self, v: &Bitvector32Term) -> Bitvector32Term {
         self.visit();
+        if self.integer_variables.is_some()
+            && matches!(
+                v,
+                Bitvector32Term::RangeFold { .. }
+                    | Bitvector32Term::AlgebraicMatch { .. }
+                    | Bitvector32Term::MemoryLoad(..)
+            )
+        {
+            self.unsupported_integer_scope = true;
+            return v.clone();
+        }
         if let Some((from, to)) = self.bitvector
             && v == from
         {

@@ -11,8 +11,9 @@ pub(super) use fact_transport::{
     proposition_outer_load_memory,
 };
 pub(super) use have_proofs::{
-    capture_fixed_state_algebraic_expression, capture_fixed_state_algebraic_value,
-    capture_resource_field_initializer, finish_ordered_proof_units, lower_fixed_state_proposition,
+    FixedStateLowering, capture_fixed_state_algebraic_expression,
+    capture_fixed_state_algebraic_value, capture_resource_field_initializer,
+    finish_ordered_proof_units, lower_fixed_state_proposition,
     lower_fixed_state_proposition_through_kernel_with_algebraic_values,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_integer_values,

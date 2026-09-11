@@ -663,28 +663,7 @@ impl<'a> Proof<'a> {
                 witness.name
             )));
         }
-        let mut integer_values = match self.context.as_ref() {
-            ProofContext::Pure(context) => context.theorem_context.integer_values.clone(),
-            _ => crate::persistent::PersistentMap::default(),
-        };
-        for (name, value) in self.state().locals().integer_values.iter() {
-            integer_values = integer_values.with_inserted(name.clone(), value.clone());
-        }
-        let promoted = crate::surface::proof::surface_lowering::promote_integer_expression(
-            &witness.value,
-            &integer_values,
-            &crate::persistent::PersistentMap::default(),
-        );
-        let value =
-            crate::surface::lowering::lower_contract_integer_to_spec(&promoted, &integer_values)
-                .map_err(|message| {
-                    self.step_error(format!("could not lower Integer witness: {message}"))
-                })?;
-        let crate::kernel::SpecIntegerExpression::Term(value) = value else {
-            return Err(
-                self.step_error("pure `witness` currently supports only lowered Integer terms")
-            );
-        };
+        let value = self.capture_pure_integer_witness(&witness.value)?;
         let proposition =
             crate::kernel::substitute_integer_variable_in_pure_proposition(&body, var, &value)
                 .map_err(|error| {
@@ -710,6 +689,84 @@ impl<'a> Proof<'a> {
             Vec::new(),
             Vec::new(),
         ))
+    }
+
+    fn capture_pure_integer_witness(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<crate::kernel::IntegerTerm, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            unreachable!()
+        };
+        let mut names = BTreeSet::new();
+        collect_contract_expression_referenced_names(expression, &mut names);
+        let mut integers = context.theorem_context.integer_values.clone();
+        for name in &names {
+            if let Some(value) = self.state().locals().integer_values.get(name) {
+                integers = integers.with_inserted(name.clone(), value.clone());
+            }
+        }
+        let promoted = crate::surface::proof::surface_lowering::promote_integer_expression(
+            expression,
+            &integers,
+            &crate::persistent::PersistentMap::default(),
+        );
+        if let Ok(crate::kernel::SpecIntegerExpression::Term(value)) =
+            crate::surface::lowering::lower_contract_integer_to_spec(&promoted, &integers)
+        {
+            return Ok(value);
+        }
+        let values: BTreeMap<_, _> = names
+            .iter()
+            .filter_map(|name| {
+                context
+                    .theorem_context
+                    .values
+                    .get(name)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
+        let algebraic = names
+            .iter()
+            .filter_map(|name| {
+                context
+                    .structural_induction_setup
+                    .as_ref()?
+                    .algebraic_values
+                    .get(name)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
+        let arrays: BTreeMap<_, _> = names
+            .iter()
+            .filter_map(|name| {
+                context
+                    .theorem_context
+                    .array_refs
+                    .get(name)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
+        let state = CState::new().with_memory(context.theorem_context.memory.clone());
+        let states = crate::surface::proof::fixed_state_proofs::FixedStateLowering::new(
+            &values, &arrays, &state, &state, None,
+        );
+        let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
+            &ClickProposition::Comparison { left: promoted, operator: ComparisonOperator::Equal, right: ContractExpression::IntegerLiteral("0".into()) },
+            states.element_types, &states.entry_state, states.entry_values, states.current_values,
+            algebraic, &integers, None, &RecordedSnapshots::new(), &PureFactContext::new(),
+            context.predicate_environment, context.click_function_environment, BTreeSet::new(),
+        ).map_err(|message| self.step_error(format!("could not lower Integer witness: {message}")))?;
+        let crate::kernel::SpecProposition::IntegerComparison { left, .. } = spec else {
+            return Err(self.step_error("witness must be an Integer expression"));
+        };
+        crate::kernel::capture_spec_integer_value(
+            &states.lowering_state,
+            &left,
+            Some(&states.entry_state),
+            self.facts().assumptions(),
+        )
+        .map_err(|message| self.step_error(format!("could not capture Integer witness: {message}")))
     }
 
     pub(super) fn apply_fixed_state_instantiate_using(

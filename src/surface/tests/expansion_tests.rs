@@ -12488,3 +12488,37 @@ int32 select_when_positive(int32 limit, int32 left, int32 right) {
     verify_c0_sources(&wrong_branch, &sources)
         .expect_err("the arm the ambient fact selects is checked, not assumed");
 }
+
+#[test]
+fn integer_quantifiers_substitute_checked_mixed_atoms_and_expand() {
+    let source = r#"
+function combine(n: Nat, z: Integer) -> Integer { to_integer(n) + z }
+theorem mixed_integer_atoms(x: int32, n: Nat) {
+    ensures function_atom: forall (z: Integer) { combine(n, z) + 1 > combine(n, z) } by { simp(); }
+    ensures machine_atom: forall (z: Integer) { z + to_integer(x) == to_integer(x) + z } by { simp(); }
+    ensures mixed_clause: forall (z: Integer) { x == x and combine(n, z) == combine(n, z) } by { simp(); }
+    ensures witnessed: exists (z: Integer) { z == to_integer(x) } by {
+        witness(z = to_integer(x));
+        normalize();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("mixed Integer atoms should verify");
+    for label in ["function_atom", "machine_atom", "mixed_clause", "witnessed"] {
+        let expanded =
+            expand_c0_claim_source_by_label(source, &[], &format!("mixed_integer_atoms.{label}"))
+                .expect("mixed Integer atom should expand");
+        verify_c0_sources(&expanded, &[])
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+    }
+    for invalid in [
+        "function f(z: Integer) -> Integer { z } theorem bad() { ensures forall(z: Integer) { f(z) == 0 } by { simp(); } }",
+        "theorem bad(x: int32) { ensures exists(z: Integer) { z == to_integer(x + 1) } by { witness(z = to_integer(x + 1)); simp(); } }",
+        "theorem bad(x: int32) { ensures forall(z: Integer) { to_integer(x + 1) == to_integer(x + 1) } by { simp(); } }",
+    ] {
+        assert!(
+            verify_c0_sources(invalid, &[]).is_err(),
+            "invalid quantified domain or opaque equality verified: {invalid}"
+        );
+    }
+}

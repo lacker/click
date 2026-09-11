@@ -1,5 +1,4 @@
 use super::*;
-use std::collections::HashMap;
 
 /// Rewrites kernel-minted load variables back to their defining load terms,
 /// using the certified defining equations the canonicalizing loader pushed
@@ -1525,45 +1524,8 @@ fn substitute_bitvector_variable_in_shared_integer(
 }
 
 fn collect_integer_bound_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
-    let mut seen = BTreeSet::new();
-    collect_integer_bound_variables_seen(term, variables, &mut seen);
-}
-
-fn collect_integer_bound_variables_seen(
-    term: &IntegerTerm,
-    variables: &mut BTreeSet<Variable>,
-    seen: &mut BTreeSet<u64>,
-) {
-    match term {
-        IntegerTerm::Constant(_) | IntegerTerm::Machine(_) => {}
-        IntegerTerm::PureFunctionApplication(application) => {
-            for argument in application.arguments() {
-                if let PureFunctionArgument::Integer(value) = argument
-                    && seen.insert(value.id())
-                {
-                    collect_integer_bound_variables_seen(value, variables, seen);
-                }
-            }
-        }
-        IntegerTerm::Variable(variable) => {
-            variables.insert(*variable);
-        }
-        IntegerTerm::Negate(value) => {
-            if seen.insert(value.id()) {
-                collect_integer_bound_variables_seen(value, variables, seen);
-            }
-        }
-        IntegerTerm::Add(left, right)
-        | IntegerTerm::Subtract(left, right)
-        | IntegerTerm::Multiply(left, right) => {
-            if seen.insert(left.id()) {
-                collect_integer_bound_variables_seen(left, variables, seen);
-            }
-            if seen.insert(right.id()) {
-                collect_integer_bound_variables_seen(right, variables, seen);
-            }
-        }
-    }
+    // Carrier identities share a namespace; reserve nested observations too.
+    crate::kernel::prelude::collect_integer_variables(term, variables);
 }
 
 /// The proposition fragment accepted by checked mathematical-integer
@@ -1639,7 +1601,11 @@ fn validate_integer_pure_proposition(
             validate_integer_pure_term(right, variables)?;
             Ok(())
         }
-        Proposition::Equal(_, _) => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+        Proposition::Equal(left, right)
+            if integer_atomic_term_supported(left) && integer_atomic_term_supported(right) =>
+        {
+            validate_integer_atomic_proposition(proposition, variables)
+        }
         Proposition::ConditionIs(condition, _) => {
             validate_integer_pure_condition(condition, variables)
         }
@@ -1674,64 +1640,60 @@ fn validate_integer_pure_condition(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
 ) -> Result<(), IntegerPureSubstitutionError> {
-    if let ConditionTerm::Constant(_) = condition {
-        return integer_work(1);
-    }
-    let (left, right) = match condition {
-        ConditionTerm::IntegerLessThan(left, right)
-        | ConditionTerm::IntegerLessEqual(left, right)
-        | ConditionTerm::IntegerGreaterThan(left, right)
-        | ConditionTerm::IntegerGreaterEqual(left, right)
-        | ConditionTerm::IntegerEqual(left, right)
-        | ConditionTerm::IntegerNotEqual(left, right) => (left, right),
-        _ => return Err(IntegerPureSubstitutionError::UnsupportedCarrier),
-    };
-    validate_integer_pure_term(left, variables)?;
-    validate_integer_pure_term(right, variables)
+    validate_integer_atomic_proposition(
+        &Proposition::ConditionIs(condition.clone(), true),
+        variables,
+    )
 }
 
 fn validate_integer_pure_term(
     term: &IntegerTerm,
     variables: &mut BTreeSet<Variable>,
 ) -> Result<(), IntegerPureSubstitutionError> {
-    let mut seen = BTreeSet::new();
-    validate_integer_pure_term_seen(term, variables, &mut seen)
+    validate_integer_atomic_proposition(
+        &Proposition::Equal(
+            Term::Integer(term.clone()),
+            Term::Integer(IntegerTerm::constant_i64(0)),
+        ),
+        variables,
+    )
 }
 
-fn validate_integer_pure_term_seen(
-    term: &IntegerTerm,
+fn validate_integer_atomic_proposition(
+    proposition: &Proposition,
     variables: &mut BTreeSet<Variable>,
-    seen: &mut BTreeSet<u64>,
 ) -> Result<(), IntegerPureSubstitutionError> {
+    rewrite_integer_atomic_proposition(
+        proposition,
+        Variable(0),
+        &IntegerTerm::constant_i64(0),
+        true,
+        &BTreeMap::new(),
+    )?;
+    collect_proposition_bitvector_variables(proposition, variables);
+    Ok(())
+}
+
+fn rewrite_integer_atomic_proposition(
+    proposition: &Proposition,
+    from: Variable,
+    to: &IntegerTerm,
+    shadowed: bool,
+    renamings: &BTreeMap<Variable, Variable>,
+) -> Result<Proposition, IntegerPureSubstitutionError> {
     integer_work(1)?;
-    match term {
-        IntegerTerm::Constant(value) => integer_work(value.bits() as usize + 1),
-        IntegerTerm::Machine(_) | IntegerTerm::PureFunctionApplication(_) => {
-            Err(IntegerPureSubstitutionError::UnsupportedCarrier)
-        }
-        IntegerTerm::Variable(variable) => {
-            variables.insert(*variable);
-            Ok(())
-        }
-        IntegerTerm::Negate(value) => {
-            if seen.insert(value.id()) {
-                validate_integer_pure_term_seen(value, variables, seen)
-            } else {
-                Ok(())
-            }
-        }
-        IntegerTerm::Add(left, right)
-        | IntegerTerm::Subtract(left, right)
-        | IntegerTerm::Multiply(left, right) => {
-            if seen.insert(left.id()) {
-                validate_integer_pure_term_seen(left, variables, seen)?;
-            }
-            if seen.insert(right.id()) {
-                validate_integer_pure_term_seen(right, variables, seen)?;
-            }
-            Ok(())
-        }
+    let mut walker = crate::kernel::proof::term_rewrite::TermRewrite::for_integer_variables(
+        from, to, shadowed, renamings,
+    );
+    let result = walker.proposition(proposition);
+    if walker.integer_work_exhausted {
+        return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
     }
+    if walker.unsupported_integer_scope {
+        return Err(IntegerPureSubstitutionError::UnsupportedCarrier);
+    }
+    integer_work(0)?;
+    Ok(result)
 }
 
 fn fresh_integer_variable(
@@ -1783,6 +1745,11 @@ fn substitute_integer_pure_proposition(
                 replacement_work,
             )?),
         )),
+        Proposition::Equal(left, right)
+            if integer_atomic_term_supported(left) && integer_atomic_term_supported(right) =>
+        {
+            rewrite_integer_atomic_proposition(proposition, from, to, shadowed, renamings)
+        }
         Proposition::ConditionIs(condition, value) => Ok(Proposition::ConditionIs(
             substitute_integer_pure_condition(
                 condition,
@@ -1980,35 +1947,37 @@ fn substitute_integer_quantifier(
     }
 }
 
+fn integer_atomic_term_supported(term: &Term) -> bool {
+    matches!(
+        term,
+        Term::Integer(_)
+            | Term::Bitvector32(_)
+            | Term::CValue(_)
+            | Term::Algebraic(_)
+            | Term::Condition(_)
+            | Term::PointerOffset(_)
+    )
+}
+
 fn substitute_integer_pure_condition(
     condition: &ConditionTerm,
     from: Variable,
     to: &IntegerTerm,
     shadowed: bool,
     renamings: &BTreeMap<Variable, Variable>,
-    replacement_work: usize,
+    _replacement_work: usize,
 ) -> Result<ConditionTerm, IntegerPureSubstitutionError> {
-    let (operator, left, right) = match condition {
-        ConditionTerm::IntegerLessThan(left, right) => (0, left, right),
-        ConditionTerm::IntegerLessEqual(left, right) => (1, left, right),
-        ConditionTerm::IntegerGreaterThan(left, right) => (2, left, right),
-        ConditionTerm::IntegerGreaterEqual(left, right) => (3, left, right),
-        ConditionTerm::IntegerEqual(left, right) => (4, left, right),
-        ConditionTerm::IntegerNotEqual(left, right) => (5, left, right),
-        ConditionTerm::Constant(value) => return Ok(ConditionTerm::Constant(*value)),
-        _ => unreachable!("pure Integer validation precedes substitution"),
+    let Proposition::ConditionIs(result, _) = rewrite_integer_atomic_proposition(
+        &Proposition::ConditionIs(condition.clone(), true),
+        from,
+        to,
+        shadowed,
+        renamings,
+    )?
+    else {
+        unreachable!()
     };
-    let left = substitute_integer_pure_term(left, from, to, shadowed, renamings, replacement_work)?;
-    let right =
-        substitute_integer_pure_term(right, from, to, shadowed, renamings, replacement_work)?;
-    Ok(match operator {
-        0 => ConditionTerm::IntegerLessThan(left.into(), right.into()),
-        1 => ConditionTerm::IntegerLessEqual(left.into(), right.into()),
-        2 => ConditionTerm::IntegerGreaterThan(left.into(), right.into()),
-        3 => ConditionTerm::IntegerGreaterEqual(left.into(), right.into()),
-        4 => ConditionTerm::IntegerEqual(left.into(), right.into()),
-        _ => ConditionTerm::IntegerNotEqual(left.into(), right.into()),
-    })
+    Ok(result)
 }
 
 fn substitute_integer_pure_term(
@@ -2017,144 +1986,21 @@ fn substitute_integer_pure_term(
     to: &IntegerTerm,
     shadowed: bool,
     renamings: &BTreeMap<Variable, Variable>,
-    replacement_work: usize,
+    _replacement_work: usize,
 ) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
-    let mut memo = HashMap::new();
-    substitute_integer_pure_term_dag(
-        term,
+    let Proposition::Equal(Term::Integer(result), _) = rewrite_integer_atomic_proposition(
+        &Proposition::Equal(
+            Term::Integer(term.clone()),
+            Term::Integer(IntegerTerm::constant_i64(0)),
+        ),
         from,
         to,
         shadowed,
         renamings,
-        replacement_work,
-        &mut memo,
-    )
-}
-
-fn substitute_integer_pure_term_dag(
-    term: &IntegerTerm,
-    from: Variable,
-    to: &IntegerTerm,
-    shadowed: bool,
-    renamings: &BTreeMap<Variable, Variable>,
-    replacement_work: usize,
-    memo: &mut HashMap<(u64, u64, u8), IntegerTerm>,
-) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
-    integer_work(1)?;
-    match term {
-        IntegerTerm::Constant(value) => {
-            integer_work(value.bits() as usize + 1)?;
-            Ok(IntegerTerm::Constant(value.clone()))
-        }
-        IntegerTerm::Machine(value) => Ok(IntegerTerm::Machine(value.clone())),
-        IntegerTerm::PureFunctionApplication(_) => Ok(term.clone()),
-        IntegerTerm::Variable(variable) => {
-            if let Some(renamed) = renamings.get(variable) {
-                Ok(IntegerTerm::Variable(*renamed))
-            } else if !shadowed && *variable == from {
-                integer_work(replacement_work)?;
-                Ok(to.clone())
-            } else {
-                Ok(IntegerTerm::Variable(*variable))
-            }
-        }
-        IntegerTerm::Negate(value) => {
-            let key = (value.id(), 0, 3);
-            if let Some(result) = memo.get(&key) {
-                return Ok(result.clone());
-            }
-            let result = IntegerTerm::Negate(
-                substitute_integer_pure_term_dag(
-                    value,
-                    from,
-                    to,
-                    shadowed,
-                    renamings,
-                    replacement_work,
-                    memo,
-                )?
-                .into(),
-            );
-            memo.insert(key, result.clone());
-            Ok(result)
-        }
-        IntegerTerm::Add(left, right) => substitute_integer_binary_dag(
-            left,
-            right,
-            from,
-            to,
-            shadowed,
-            renamings,
-            replacement_work,
-            memo,
-            0,
-        ),
-        IntegerTerm::Subtract(left, right) => substitute_integer_binary_dag(
-            left,
-            right,
-            from,
-            to,
-            shadowed,
-            renamings,
-            replacement_work,
-            memo,
-            1,
-        ),
-        IntegerTerm::Multiply(left, right) => substitute_integer_binary_dag(
-            left,
-            right,
-            from,
-            to,
-            shadowed,
-            renamings,
-            replacement_work,
-            memo,
-            2,
-        ),
-    }
-}
-
-fn substitute_integer_binary_dag(
-    left: &SharedIntegerTerm,
-    right: &SharedIntegerTerm,
-    from: Variable,
-    to: &IntegerTerm,
-    shadowed: bool,
-    renamings: &BTreeMap<Variable, Variable>,
-    replacement_work: usize,
-    memo: &mut HashMap<(u64, u64, u8), IntegerTerm>,
-    operation: u8,
-) -> Result<IntegerTerm, IntegerPureSubstitutionError> {
-    let key = (left.id(), right.id(), operation);
-    if let Some(result) = memo.get(&key) {
-        return Ok(result.clone());
-    }
-    let left = substitute_integer_pure_term_dag(
-        left,
-        from,
-        to,
-        shadowed,
-        renamings,
-        replacement_work,
-        memo,
-    )?;
-    let right = substitute_integer_pure_term_dag(
-        right,
-        from,
-        to,
-        shadowed,
-        renamings,
-        replacement_work,
-        memo,
-    )?;
-    // Substitution is structural. Evaluating newly constant arithmetic here
-    // could turn a small repeated-squaring DAG into an unbounded allocation.
-    let result = match operation {
-        0 => IntegerTerm::Add(left.into(), right.into()),
-        1 => IntegerTerm::Subtract(left.into(), right.into()),
-        _ => IntegerTerm::Multiply(left.into(), right.into()),
+    )?
+    else {
+        unreachable!()
     };
-    memo.insert(key, result.clone());
     Ok(result)
 }
 
@@ -7125,6 +6971,146 @@ mod integer_function_traversal_tests {
                 pair[1] <= pair[0] * 3,
                 "application substitution expanded the DAG: {samples:?}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod integer_mixed_quantifier_tests {
+    use super::*;
+
+    fn application(integer: IntegerTerm, machine: Bitvector32Term) -> IntegerTerm {
+        IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+            "opaque".into(),
+            vec![
+                PureFunctionArgument::Integer(integer.into()),
+                PureFunctionArgument::Value(CValue::Int32(machine)),
+            ],
+        ))
+    }
+
+    #[test]
+    fn integer_substitution_descends_function_and_reverse_conversion_arguments() {
+        let from = Variable(87);
+        let converted = Bitvector32Term::IntegerToMachine {
+            value: IntegerTerm::var(from).into(),
+            destination: MachineIntegerType::Int32,
+        };
+        let source = Proposition::Equal(
+            Term::Integer(application(IntegerTerm::var(from), converted)),
+            Term::Integer(IntegerTerm::var(from)),
+        );
+        let result = substitute_integer_variable_in_pure_proposition(
+            &source,
+            from,
+            &IntegerTerm::constant_i64(9),
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Proposition::Equal(
+                Term::Integer(application(
+                    IntegerTerm::constant_i64(9),
+                    Bitvector32Term::IntegerToMachine {
+                        value: IntegerTerm::constant_i64(9).into(),
+                        destination: MachineIntegerType::Int32,
+                    }
+                )),
+                Term::Integer(IntegerTerm::constant_i64(9)),
+            )
+        );
+    }
+
+    #[test]
+    fn integer_atom_capture_avoidance_preserves_c_variable_carrier() {
+        let from = Variable(88);
+        let bound = Variable(89);
+        let source = Proposition::ForAll {
+            var: bound,
+            sort: Sort::Integer,
+            body: Box::new(Proposition::Equal(
+                Term::Integer(application(
+                    IntegerTerm::var(from),
+                    Bitvector32Term::Variable(bound),
+                )),
+                Term::Integer(IntegerTerm::var(bound)),
+            )),
+        };
+        let result = substitute_integer_variable_in_pure_proposition(
+            &source,
+            from,
+            &IntegerTerm::var(bound),
+        )
+        .unwrap();
+        let Proposition::ForAll {
+            var: fresh, body, ..
+        } = result
+        else {
+            panic!("quantifier lost")
+        };
+        assert_ne!(fresh, bound);
+        assert_eq!(
+            *body,
+            Proposition::Equal(
+                Term::Integer(application(
+                    IntegerTerm::var(bound),
+                    Bitvector32Term::Variable(bound)
+                )),
+                Term::Integer(IntegerTerm::var(fresh)),
+            )
+        );
+    }
+
+    #[test]
+    fn integer_function_quantifier_substitution_preserves_shared_dags() {
+        let from = Variable(90);
+        let mut work = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let mut value = IntegerTerm::var(from);
+            for _ in 0..depth {
+                let child: SharedIntegerTerm = value.into();
+                value = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                    "pair".into(),
+                    vec![
+                        PureFunctionArgument::Integer(child.clone()),
+                        PureFunctionArgument::Integer(child),
+                    ],
+                ));
+            }
+            let source = Proposition::Equal(
+                Term::Integer(value),
+                Term::Integer(IntegerTerm::constant_i64(0)),
+            );
+            let (result, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                substitute_integer_variable_in_pure_proposition(
+                    &source,
+                    from,
+                    &IntegerTerm::constant_i64(2),
+                )
+                .unwrap()
+            });
+            let Proposition::Equal(Term::Integer(mut value), _) = result else {
+                panic!("equality lost")
+            };
+            for _ in 0..depth {
+                let IntegerTerm::PureFunctionApplication(application) = value else {
+                    panic!("application lost")
+                };
+                let [
+                    PureFunctionArgument::Integer(left),
+                    PureFunctionArgument::Integer(right),
+                ] = application.arguments()
+                else {
+                    panic!("arguments lost")
+                };
+                assert_eq!(left.id(), right.id());
+                value = left.as_ref().clone();
+            }
+            assert_eq!(value, IntegerTerm::constant_i64(2));
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(pair[1] <= pair[0] * 3, "{work:?}");
         }
     }
 }

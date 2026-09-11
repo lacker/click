@@ -1,4 +1,4 @@
-# Integer quantifiers reject mixed C clauses in the pure Integer intro path
+# Integer quantifiers retain independent C clauses
 
 ```click
 theorem integer_quantifier_mixed(x: Integer, c: int32) {
@@ -10,5 +10,5 @@ theorem integer_quantifier_mixed(x: Integer, c: int32) {
 ```
 
 ```expect
-fail: `intro` requires
+pass
 ```

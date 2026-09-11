@@ -488,3 +488,36 @@ observations and pure Integer function applications as atoms. It retains the
 scalar path and selects only referenced bindings for mixed atoms, preserving
 mandatory definedness checks. A deterministic 8/16/32/64 regression grows both
 unrelated C parameters and explicit certificate nodes together.
+
+## Quantified mixed atoms checkpoint (2026-09-10)
+
+Integer quantifier substitution traverses opaque function arguments and checked
+machine-conversion payloads, including reverse conversions. It keeps variable
+carriers distinct, freshens nested Integer binders, preserves arithmetic DAG
+sharing, and does not evaluate newly constant arithmetic during substitution.
+Ordinary C atomic comparisons may accompany Integer clauses. Integer witnesses
+use checked expression capture and retain conversion definedness obligations.
+Expanded function applications promote introduced Integer names inside arguments;
+their generated certificates independently reverify.
+
+This checkpoint still rejects internal match/fold scopes and array snapshots in
+this substitution path, and nested quantifiers of other sorts. Those paths must
+use reviewed scoped traversal before this issue can claim complete coverage.
+
+## Memory incident during isolated match review (2026-09-10)
+
+The host kernel recorded an out-of-memory kill of a Click unit-test process at
+19:34 local time (about 11.3 GiB resident, 30.5 GiB virtual). An isolated nested
+match regression duplicated each previous expression into two owned arm bodies,
+causing exponential construction and copying. A capped reproduction reached
+roughly 442 MiB before its five-second CPU limit stopped it.
+
+Match arms now hold shared Integer bodies; keys, substitution, variable collection,
+and diagnostics preserve that sharing. The same depth-8/16/32/64 regression
+finishes in about 0.02 seconds at 19 MiB. This is an experimental-branch fix;
+these match changes have not been integrated into the primary branch.
+
+For the remainder of this implementation, the coordinator runs only one build
+or verification job at a time, with one build job and one test worker. Unreviewed
+scaling experiments run under a hard memory and CPU limit before any full gate.
+The interrupted combined gate is not a passing result and must be rerun.

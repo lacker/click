@@ -4485,7 +4485,7 @@ fn forall_integer_application_rejects_unsupported_carriers_and_nested_sorts() {
         )),
     };
     assert!(
-        prove_forall_integer_application(&unsupported, IntegerTerm::constant_i64(1), &[]).is_none()
+        prove_forall_integer_application(&unsupported, IntegerTerm::constant_i64(1), &[]).is_some()
     );
     let nested_machine_sort = Proposition::ForAll {
         var: binder,
