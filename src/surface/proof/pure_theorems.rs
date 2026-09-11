@@ -4175,9 +4175,10 @@ fn prove_pure_theorem_goal(
     if use_simp {
         match simp_proposition(&goal, &assumptions) {
             SimpProposition::True => return Ok(()),
-            simplified => {
+            _ => {
                 return Err(ClickError::new(format!(
-                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  {}",
+                    "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {}\n  {}",
+                    describe_pure_fact(&goal, &[], &[]),
                     describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
                 )));
             }
