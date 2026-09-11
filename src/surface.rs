@@ -95,6 +95,7 @@ mod lowering;
 mod parser;
 pub(crate) mod planning;
 pub(crate) mod proof_diagnostics;
+mod source_registry;
 use integer_conversions::*;
 mod printing;
 mod proof;
@@ -117,6 +118,7 @@ use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_certificate, format_proof_tactics};
 use proof::*;
+use source_registry::*;
 #[cfg(test)]
 use validation::combined_theorem_definitions;
 use validation::{

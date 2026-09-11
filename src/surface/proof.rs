@@ -2,6 +2,7 @@ use super::diagnostics::*;
 use super::validation::{collect_called_predicates, collect_resource_count_families, tactic_name};
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
+use std::sync::Arc;
 
 mod attempt;
 mod claim_proofs;
@@ -1324,6 +1325,7 @@ mod certificate_tests {
                 &click_function_environment,
                 None,
                 &ResourceEnvironment::new(&[]),
+                std::sync::Arc::new(FunctionSourceRegistry::default()),
             )
         });
         let verified = verified.expect("direct checked pure proofs should verify");
@@ -2517,6 +2519,7 @@ pub(super) fn prove_claim_by_auto(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let mut loop_verification_error = None;
     for tactics in auto_loop_verification_tactic_candidates(function_block, claim) {
@@ -2532,6 +2535,7 @@ pub(super) fn prove_claim_by_auto(
             click_function_environment,
             resource_environment,
             theorem_environment,
+            function_source_registry.clone(),
             &tactics,
             ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
@@ -2559,6 +2563,7 @@ pub(super) fn prove_claim_by_auto(
             click_function_environment,
             resource_environment,
             theorem_environment,
+            function_source_registry.clone(),
             &tactics,
             ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
@@ -2587,6 +2592,7 @@ pub(super) fn prove_claim_by_simp(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
@@ -2607,6 +2613,7 @@ pub(super) fn prove_claim_by_simp(
         click_function_environment,
         resource_environment,
         theorem_environment,
+        function_source_registry,
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
@@ -2631,6 +2638,7 @@ pub(super) fn prove_claim_by_script(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
     tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let theorems = prove_claim_by_tactics(
@@ -2645,6 +2653,7 @@ pub(super) fn prove_claim_by_script(
         click_function_environment,
         resource_environment,
         theorem_environment,
+        function_source_registry,
         tactics,
         ProofTacticSource::SourceSyntax,
     )?;

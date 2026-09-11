@@ -27,6 +27,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
     click_function_environment: &ClickFunctionEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
     resource_environment: &ResourceEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let mut verified = Vec::new();
     let mut theorem_environment = TheoremEnvironment::new(dependencies);
@@ -41,6 +42,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
                 &theorem_environment,
                 function_environment,
                 resource_environment,
+                function_source_registry.clone(),
             )?);
             theorem_environment.insert(theorem.clone());
             continue;

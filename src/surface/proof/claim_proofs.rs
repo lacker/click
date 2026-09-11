@@ -220,6 +220,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
     tactics: &[ProofTactic],
     tactic_source: ProofTacticSource,
 ) -> Result<ClaimProofResult, ClickError> {
@@ -271,6 +272,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
+        function_source_registry,
         grouped_contract: false,
         invariant_body_context: None,
     };
@@ -389,6 +391,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
     tactics: &[ProofTactic],
     tactic_source: ProofTacticSource,
 ) -> Result<ClaimProofResult, ClickError> {
@@ -445,6 +448,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
+        function_source_registry,
         grouped_contract: true,
         invariant_body_context: None,
     };
@@ -561,6 +565,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_auto(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let mut tactics = vec![ProofTactic::SmartExecute];
     if claims
@@ -581,6 +586,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_auto(
         click_function_environment,
         resource_environment,
         theorem_environment,
+        function_source_registry,
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
@@ -601,6 +607,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_script(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
     tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let verified = prove_claims_by_grouped_tactics(
@@ -614,6 +621,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_script(
         click_function_environment,
         resource_environment,
         theorem_environment,
+        function_source_registry,
         tactics,
         ProofTacticSource::SourceSyntax,
     )?;

@@ -291,6 +291,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         arguments,
         surface_propositions: &execution.presentation.surface_propositions,
         source_layout: &source_layout,
+        function_source_registry: proof_context.function_source_registry(),
         frontier_loop_certificates: Some(&loop_certificates),
         frontier_loop_source: Some(&loop_source),
     };

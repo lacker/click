@@ -33,6 +33,7 @@ pub(super) fn verify_execution_theorem(
     theorems: &TheoremEnvironment,
     environment: Option<&CExecutionEnvironment>,
     resources: &ResourceEnvironment,
+    function_source_registry: std::sync::Arc<FunctionSourceRegistry>,
 ) -> Result<VerifiedPureTheorem, ClickError> {
     let execution = theorem.executes.as_ref().expect("execution declaration");
     let error = |message: &str| {
@@ -301,6 +302,7 @@ pub(super) fn verify_execution_theorem(
         functions,
         resources,
         theorems,
+        function_source_registry,
         tactics,
     )?;
     let (state, arguments, facts, _) = initial_claim_context(

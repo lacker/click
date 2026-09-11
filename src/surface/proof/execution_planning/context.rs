@@ -10,6 +10,7 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<CVerifiedLoopRule>, ClickError> {
     let has_structural_proofs = function_block
         .structural_clauses()
@@ -60,6 +61,7 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         arguments: &arguments,
         surface_propositions: &surface_propositions,
         source_layout: &source_layout,
+        function_source_registry,
         frontier_loop_certificates: None,
         frontier_loop_source: None,
     };
@@ -157,6 +159,7 @@ pub(in crate::surface::proof) struct ExecutionProofEnvironment<'a> {
     pub(in crate::surface::proof) arguments: &'a [CExpression],
     pub(in crate::surface::proof) surface_propositions: &'a SurfacePropositionMap,
     pub(in crate::surface::proof) source_layout: &'a SourceExecutionLayout,
+    pub(in crate::surface::proof) function_source_registry: Arc<FunctionSourceRegistry>,
     pub(in crate::surface::proof) frontier_loop_certificates:
         Option<&'a std::cell::RefCell<LoopProofCertificates>>,
     pub(in crate::surface::proof) frontier_loop_source: Option<&'a FrontierLoopProofSource>,

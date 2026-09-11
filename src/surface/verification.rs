@@ -319,6 +319,9 @@ fn verify_click_file_theorems_with_environment(
         &click_function_definitions,
         &combined_algebraic_type_definitions(file)?,
     );
+    let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
+        &combined_external_function_blocks(file)?,
+    )?);
     verify_theorem_definitions(
         standard_library_theorem_definitions()?,
         file.theorem_definitions(),
@@ -326,6 +329,7 @@ fn verify_click_file_theorems_with_environment(
         &click_function_environment,
         function_environment,
         &ResourceEnvironment::new(&combined_resource_definitions(file)?),
+        function_source_registry,
     )
 }
 
@@ -344,6 +348,9 @@ pub fn verify_standard_library() -> Result<Vec<VerifiedPureTheorem>, ClickError>
         &click_function_definitions,
         &combined_algebraic_type_definitions(&empty)?,
     );
+    let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
+        &combined_external_function_blocks(&empty)?,
+    )?);
     verify_theorem_definitions(
         &[],
         standard_library_theorem_definitions()?,
@@ -351,6 +358,7 @@ pub fn verify_standard_library() -> Result<Vec<VerifiedPureTheorem>, ClickError>
         &click_function_environment,
         None,
         &ResourceEnvironment::new(&combined_resource_definitions(&empty)?),
+        function_source_registry,
     )
 }
 
@@ -1157,6 +1165,10 @@ fn verify_c0_sources_with_context(
         (file, parsed_sources, selected_functions)
     };
     check_verification_deadline()?;
+    let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
+    let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
+        &external_and_user_function_blocks,
+    )?);
     let (mut termination_plans, mut requested_termination) =
         c_function_termination_plans(&file, selected_functions.as_ref())?;
     let standard_library_theorems = standard_library_theorem_definitions()?;
@@ -1191,7 +1203,6 @@ fn verify_c0_sources_with_context(
         // are file-global, so one guard covers this verification; nothing is
         // published, so nested composites still require `observe(...)` before
         // a user's `separate(...)` goal can cite them.
-        let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
         let built_function_environment = build_function_environment(
             &parsed_sources,
             &external_and_user_function_blocks,
@@ -1232,6 +1243,7 @@ fn verify_c0_sources_with_context(
             &click_function_environment,
             Some(&function_environment),
             &resource_environment,
+            function_source_registry.clone(),
         )?;
         let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
         let mut theorem_certification_authorities =
@@ -1320,6 +1332,7 @@ fn verify_c0_sources_with_context(
             &click_function_environment,
             &resource_environment,
             &theorem_environment,
+            function_source_registry.clone(),
         )?;
         let verification_function_environment = function_environment
             .clone()
@@ -1353,6 +1366,7 @@ fn verify_c0_sources_with_context(
                     &click_function_environment,
                     &resource_environment,
                     &theorem_environment,
+                    function_source_registry.clone(),
                 )?,
                 SourceProof::Script(tactics) => prove_claims_by_grouped_script(
                     expansion_capture.as_deref_mut(),
@@ -1365,6 +1379,7 @@ fn verify_c0_sources_with_context(
                     &click_function_environment,
                     &resource_environment,
                     &theorem_environment,
+                    function_source_registry.clone(),
                     tactics,
                 )?,
                 SourceProof::Default | SourceProof::Tactic(SmartTactic::Simp) => {
@@ -1397,6 +1412,7 @@ fn verify_c0_sources_with_context(
                             &click_function_environment,
                             &resource_environment,
                             &theorem_environment,
+                            function_source_registry.clone(),
                         )?
                     }
                     SourceProof::Tactic(SmartTactic::Simp) => prove_claim_by_simp(
@@ -1411,6 +1427,7 @@ fn verify_c0_sources_with_context(
                         &click_function_environment,
                         &resource_environment,
                         &theorem_environment,
+                        function_source_registry.clone(),
                     )?,
                     SourceProof::Script(tactics) => prove_claim_by_script(
                         expansion_capture.as_deref_mut(),
@@ -1424,6 +1441,7 @@ fn verify_c0_sources_with_context(
                         &click_function_environment,
                         &resource_environment,
                         &theorem_environment,
+                        function_source_registry.clone(),
                         tactics,
                     )?,
                 };
@@ -1499,6 +1517,7 @@ fn verify_c0_sources_with_context(
                     &click_function_environment,
                     None,
                     &resource_environment,
+                    function_source_registry.clone(),
                 )?;
                 record_theorem_certification_authority(
                     &verified_dependency,

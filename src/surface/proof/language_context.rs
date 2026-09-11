@@ -82,7 +82,7 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
 /// The per-proof constants of an execution proof: which claim is being
 /// proved, the source layout it executes, and the entry facts and state
 /// that `old(...)` and requirement premises resolve against.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(in crate::surface::proof) struct ExecutionProofConstants {
     /// The exact loop context whose obligations an explicit closure body proves.
     pub(in crate::surface::proof) invariant_body_context: Option<Arc<InvariantBodyContext>>,
@@ -90,7 +90,25 @@ pub(in crate::surface::proof) struct ExecutionProofConstants {
     pub(in crate::surface::proof) source_layout: SourceExecutionLayout,
     pub(in crate::surface::proof) execution_start_facts: Arc<Vec<Proposition>>,
     pub(in crate::surface::proof) function_entry_state: Option<CState>,
+    /// Immutable file-scoped lookup for exact ordinary callee source
+    /// requirements. Descendant proof contexts share this Arc.
+    #[allow(dead_code)]
+    pub(in crate::surface::proof) function_source_registry: Arc<FunctionSourceRegistry>,
     pub(in crate::surface::proof) grouped_contract: bool,
+}
+
+impl Default for ExecutionProofConstants {
+    fn default() -> Self {
+        Self {
+            invariant_body_context: None,
+            proof_site: None,
+            source_layout: SourceExecutionLayout::default(),
+            execution_start_facts: Arc::new(Vec::new()),
+            function_entry_state: None,
+            function_source_registry: Arc::new(FunctionSourceRegistry::default()),
+            grouped_contract: false,
+        }
+    }
 }
 
 pub(in crate::surface::proof) struct ExecutionProofContext<'a> {
@@ -111,6 +129,15 @@ pub(in crate::surface::proof) struct ExecutionProofContext<'a> {
 }
 
 impl<'a> ExecutionProofContext<'a> {
+    /// The immutable ordinary-callee source registry shared by this proof and
+    /// all of its derived tactic contexts.
+    #[allow(dead_code)]
+    pub(in crate::surface::proof) fn function_source_registry(
+        &self,
+    ) -> Arc<FunctionSourceRegistry> {
+        self.constants.function_source_registry.clone()
+    }
+
     /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
     /// a contract clause is lowered at `frontier`.
     pub(in crate::surface::proof) fn old_reference_state<'s>(
@@ -161,5 +188,27 @@ impl ProofContext<'_> {
             Self::FixedState(context) => context.claim_label,
             Self::Execution(context) => context.claim_label,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loop_and_theorem_root_constants_share_source_registry_identity() {
+        let registry = Arc::new(FunctionSourceRegistry::default());
+        let loop_root = ExecutionProofConstants {
+            function_source_registry: registry.clone(),
+            ..ExecutionProofConstants::default()
+        };
+        let theorem_root = ExecutionProofConstants {
+            function_source_registry: registry.clone(),
+            ..ExecutionProofConstants::default()
+        };
+        assert!(Arc::ptr_eq(
+            &loop_root.function_source_registry,
+            &theorem_root.function_source_registry
+        ));
     }
 }

@@ -528,6 +528,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
             .and_then(|source| source.proof_site.clone()),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
+        function_source_registry: environment.function_source_registry.clone(),
         ..ExecutionProofConstants::default()
     };
     record_statement_program_snapshot_state(
@@ -739,6 +740,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         })),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
+        function_source_registry: environment.function_source_registry.clone(),
         ..ExecutionProofConstants::default()
     };
     let mut surface_propositions = environment.surface_propositions.clone();
