@@ -49,14 +49,29 @@ pub(in crate::surface::proof) struct FixedStateProofContext<'a> {
     pub(in crate::surface::proof) requirement_facts: &'a [Proposition],
 }
 
+/// The exact loop context whose back-edge obligations an explicit closure
+/// body proves: where `old(...)` and loop-entry references resolve, where the
+/// ranking measure's `pre` values are read, the declared invariants, and the
+/// declared `decreases` components whose members follow those invariants.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(in crate::surface::proof) struct InvariantBodyContext {
+    pub(in crate::surface::proof) loop_entry_state: CState,
+    pub(in crate::surface::proof) iteration_entry_state: CState,
+    /// The recorded snapshot that names `iteration_entry_state` in source.
+    /// Ranking members read their `pre` values there, so their synthesized
+    /// surface spells them `at(<selector>, name)`.
+    pub(in crate::surface::proof) iteration_entry_selector: Option<SnapshotSelector>,
+    pub(in crate::surface::proof) checks: Vec<CLoopInvariantCheck>,
+    pub(in crate::surface::proof) ranking_measures: Vec<CExpression>,
+}
+
 /// The per-proof constants of an execution proof: which claim is being
 /// proved, the source layout it executes, and the entry facts and state
 /// that `old(...)` and requirement premises resolve against.
 #[derive(Clone, Default)]
 pub(in crate::surface::proof) struct ExecutionProofConstants {
     /// The exact loop context whose obligations an explicit closure body proves.
-    pub(in crate::surface::proof) invariant_body_context:
-        Option<Arc<(CState, Vec<CLoopInvariantCheck>)>>,
+    pub(in crate::surface::proof) invariant_body_context: Option<Arc<InvariantBodyContext>>,
     pub(in crate::surface::proof) proof_site: Option<ProofSite>,
     pub(in crate::surface::proof) source_layout: SourceExecutionLayout,
     pub(in crate::surface::proof) execution_start_facts: Arc<Vec<Proposition>>,

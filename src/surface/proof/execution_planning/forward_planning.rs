@@ -83,6 +83,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             invariant_checks,
             effect_checks,
             resource_specs,
+            ranking_measures,
             body,
             do_while,
             ..
@@ -104,6 +105,12 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     "execution proof traversal source statement({statement_index}) does not match loop({loop_index})"
                 )));
             }
+            crate::kernel::c_reject_address_escaped_loop_measures(
+                environment.function_block.signature().name(),
+                ranking_measures,
+                environment.function.source_body(),
+            )
+            .map_err(ClickError::new)?;
             let loop_clause = environment
                 .function_block
                 .structural_clauses()
@@ -215,6 +222,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             &preservation,
                             &pure_facts,
                             invariant_checks,
+                            ranking_measures,
                             condition,
                             body,
                             *do_while,

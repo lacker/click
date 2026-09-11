@@ -505,6 +505,12 @@ fn c_expression_mentions_variable(expression: &CExpression, variable: &str) -> b
 /// Assumes one evaluation path's facts. Loadability obligations are the
 /// uninterpreted reads the structural comparison already relies on; every
 /// other obligation must already be decided.
+///
+/// "Decided" is an exact route only: the frozen condition checker for a bare
+/// condition, and exact fact lookup for anything else. This helper has no
+/// proof site to emit an undischarged obligation to, so an obligation the
+/// exact routes do not settle refuses the witness match rather than being
+/// discharged by a general proof search.
 fn assume_structural_path(
     assumptions: &mut PureFactContext,
     facts: &[ExecutionPureFact],
@@ -517,7 +523,7 @@ fn assume_structural_path(
             Proposition::ConditionIs(condition, value) => {
                 assumptions.decide(condition) == Some(*value)
             }
-            proposition => assumptions.proves(proposition),
+            proposition => assumptions.proves_exact(proposition),
         };
         if !decided {
             return None;
@@ -906,49 +912,6 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
     }
 }
 
-fn collect_pointer_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
-    match statement {
-        CStatement::Declare { name, c_type, .. } if c_type.is_pointer() => {
-            names.insert(name.clone());
-        }
-        CStatement::ContinueWithStep { step } => collect_pointer_variables(step, names),
-        CStatement::Seq(first, second) => {
-            collect_pointer_variables(first, names);
-            collect_pointer_variables(second, names);
-        }
-        CStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_pointer_variables(then_branch, names);
-            collect_pointer_variables(else_branch, names);
-        }
-        CStatement::While { body, .. } => collect_pointer_variables(body, names),
-        CStatement::Switch { cases, .. } => {
-            for case in cases {
-                collect_pointer_variables(&case.body, names);
-            }
-        }
-        CStatement::Skip
-        | CStatement::Break
-        | CStatement::Continue
-        | CStatement::Declare { .. }
-        | CStatement::DeclareAggregate { .. }
-        | CStatement::Assign { .. }
-        | CStatement::CallAssign { .. }
-        | CStatement::Call { .. }
-        | CStatement::HeapAllocate { .. }
-        | CStatement::HeapFree { .. }
-        | CStatement::Assert { .. }
-        | CStatement::Return(_)
-        | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::CopyAggregate { .. }
-        | CStatement::Update { .. } => {}
-    }
-}
-
 /// Whether any expression in `statement` takes the address of the local
 /// `name`. A local's cell can be written through a pointer only if its
 /// address was taken somewhere in the function, so this is the complete
@@ -1020,6 +983,22 @@ fn reject_address_escaped_measure(
     Ok(())
 }
 
+/// Rejects a loop `decreases` component naming a variable whose address
+/// escapes, before the back-edge bundle is built. A store through that
+/// pointer, here or inside a callee, could change the component without a
+/// ranked update, so the declaration is refused rather than proved.
+pub(super) fn c_reject_address_escaped_loop_measures(
+    function_name: &str,
+    measures: &[CExpression],
+    body: &CStatement,
+) -> Result<(), String> {
+    for measure in measures {
+        reject_address_escaped_expression_measure(function_name, measure, body)
+            .map_err(|error| error.message)?;
+    }
+    Ok(())
+}
+
 fn reject_address_escaped_expression_measure(
     function_name: &str,
     measure: &CExpression,
@@ -1031,52 +1010,6 @@ fn reject_address_escaped_expression_measure(
         reject_address_escaped_measure(function_name, &variable, body)?;
     }
     Ok(())
-}
-
-fn statement_assigned_variables(statement: &CStatement, names: &mut BTreeSet<String>) {
-    match statement {
-        CStatement::Assign { name, .. }
-        | CStatement::CallAssign { target: name, .. }
-        | CStatement::HeapAllocate { target: name, .. } => {
-            names.insert(name.clone());
-        }
-        CStatement::Update { target, .. } => {
-            if let CExpression::Variable(name) = target {
-                names.insert(name.clone());
-            }
-        }
-        CStatement::Seq(first, second) => {
-            statement_assigned_variables(first, names);
-            statement_assigned_variables(second, names);
-        }
-        CStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            statement_assigned_variables(then_branch, names);
-            statement_assigned_variables(else_branch, names);
-        }
-        CStatement::While { body, .. } => statement_assigned_variables(body, names),
-        CStatement::Switch { cases, .. } => {
-            for case in cases {
-                statement_assigned_variables(&case.body, names);
-            }
-        }
-        CStatement::ContinueWithStep { step } => statement_assigned_variables(step, names),
-        CStatement::Skip
-        | CStatement::Break
-        | CStatement::Continue
-        | CStatement::Declare { .. }
-        | CStatement::DeclareAggregate { .. }
-        | CStatement::Call { .. }
-        | CStatement::HeapFree { .. }
-        | CStatement::Assert { .. }
-        | CStatement::Return(_)
-        | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::CopyAggregate { .. } => {}
-    }
 }
 
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
@@ -1332,288 +1265,89 @@ fn recursion_paths(
     }
 }
 
-#[derive(Clone)]
-struct LoopRankingPath {
-    aliases: BTreeMap<String, CExpression>,
-    conditions: Vec<(CExpression, bool)>,
-}
-
-fn updated_c_expression(
-    current: CExpression,
-    operator: CUpdateOperator,
-    operand: CExpression,
-) -> CExpression {
-    let current = Box::new(current);
-    let operand = Box::new(operand);
-    match operator {
-        CUpdateOperator::Add => CExpression::Add(current, operand),
-        CUpdateOperator::Subtract => CExpression::Subtract(current, operand),
-        CUpdateOperator::Multiply => CExpression::Multiply(current, operand),
-        CUpdateOperator::Divide => CExpression::Divide(current, operand),
-        CUpdateOperator::Remainder => CExpression::Remainder(current, operand),
-        CUpdateOperator::ShiftLeft => CExpression::ShiftLeft(current, operand),
-        CUpdateOperator::ShiftRight => CExpression::ShiftRight(current, operand),
-        CUpdateOperator::BitwiseAnd => CExpression::BitwiseAnd(current, operand),
-        CUpdateOperator::BitwiseOr => CExpression::BitwiseOr(current, operand),
-        CUpdateOperator::BitwiseXor => CExpression::BitwiseXor(current, operand),
+fn termination_measure_display(measure: &CExpression) -> String {
+    use CExpression::*;
+    let binary = |left: &CExpression, right: &CExpression, operator: &str| {
+        format!(
+            "{} {operator} {}",
+            termination_measure_display(left),
+            termination_measure_display(right)
+        )
+    };
+    match measure {
+        Variable(name) => name.clone(),
+        Value(CValue::Int32(term)) | Value(CValue::UInt8(term)) => match term.as_const() {
+            Some(value) => format!("{}", value as i32),
+            None => format!("{measure:?}"),
+        },
+        Add(left, right) => binary(left, right, "+"),
+        Subtract(left, right) => binary(left, right, "-"),
+        Multiply(left, right) => binary(left, right, "*"),
+        Divide(left, right) => binary(left, right, "/"),
+        Remainder(left, right) => binary(left, right, "%"),
+        _ => format!("{measure:?}"),
     }
 }
 
-fn loop_paths(
-    statement: &CStatement,
-    measure_variables: &BTreeSet<String>,
-    paths: Vec<LoopRankingPath>,
-    nested_loops: &mut u32,
-) -> Result<Vec<LoopRankingPath>, CTerminationError> {
-    match statement {
-        CStatement::Skip
-        | CStatement::Continue
-        | CStatement::DeclareAggregate { .. }
-        | CStatement::Assert { .. }
-        | CStatement::HeapFree { .. }
-        | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::CopyAggregate { .. }
-        | CStatement::Call { .. } => Ok(paths),
-        CStatement::ContinueWithStep { step } => {
-            loop_paths(step, measure_variables, paths, nested_loops)
-        }
-        CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
-        CStatement::Declare { name, .. } => Ok(paths
-            .into_iter()
-            .map(|mut path| {
-                path.aliases.remove(name);
-                path
-            })
-            .collect()),
-        CStatement::Assign { name, expression } => Ok(paths
-            .into_iter()
-            .map(|mut path| {
-                let expression = substitute_c_expression_variables(expression, &path.aliases);
-                path.aliases.insert(name.clone(), expression);
-                path
-            })
-            .collect()),
-        CStatement::Update {
-            target,
-            operator,
-            operand,
-        } => {
-            let CExpression::Variable(name) = target else {
-                return Ok(paths);
-            };
-            Ok(paths
-                .into_iter()
-                .map(|mut path| {
-                    let current = path
-                        .aliases
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| CExpression::Variable(name.clone()));
-                    let operand = substitute_c_expression_variables(operand, &path.aliases);
-                    path.aliases.insert(
-                        name.clone(),
-                        updated_c_expression(current, *operator, operand),
-                    );
-                    path
-                })
-                .collect())
-        }
-        CStatement::HeapAllocate { target, .. } => {
-            if measure_variables.contains(target) {
-                return Err(error(format!(
-                    "loop termination measure variable `{target}` is overwritten by an allocation result"
-                )));
-            }
-            Ok(paths
-                .into_iter()
-                .map(|mut path| {
-                    path.aliases.remove(target);
-                    path
-                })
-                .collect())
-        }
-        CStatement::CallAssign { target, .. } => {
-            if measure_variables.contains(target) {
-                return Err(error(format!(
-                    "loop termination measure variable `{target}` is overwritten by a call result"
-                )));
-            }
-            Ok(paths
-                .into_iter()
-                .map(|mut path| {
-                    path.aliases.remove(target);
-                    path
-                })
-                .collect())
-        }
-        CStatement::Seq(first, second) => {
-            let first = loop_paths(first, measure_variables, paths, nested_loops)?;
-            loop_paths(second, measure_variables, first, nested_loops)
-        }
-        CStatement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            let mut then_paths = Vec::new();
-            let mut else_paths = Vec::new();
-            for path in paths {
-                let condition = substitute_c_expression_variables(condition, &path.aliases);
-                let mut then_path = path.clone();
-                then_path.conditions.push((condition.clone(), true));
-                then_paths.push(then_path);
-                let mut else_path = path;
-                else_path.conditions.push((condition, false));
-                else_paths.push(else_path);
-            }
-            let mut paths = loop_paths(then_branch, measure_variables, then_paths, nested_loops)?;
-            paths.extend(loop_paths(
-                else_branch,
-                measure_variables,
-                else_paths,
-                nested_loops,
-            )?);
-            Ok(paths)
-        }
-        CStatement::While { body, .. } => {
-            let mut nested_writes = BTreeSet::new();
-            statement_assigned_variables(body, &mut nested_writes);
-            let changed_measure_variables = nested_writes
-                .intersection(measure_variables)
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            // An independently ranked inner loop is a terminating phase of the
-            // enclosing iteration, but its exact final values are not known
-            // here. A variable the inner loop assigns therefore becomes a
-            // fresh unconstrained value on the way out. Dropping the alias
-            // instead would silently restore the enclosing loop-head value,
-            // which is how a nested loop that raises the enclosing measure was
-            // ranked as if it had left the measure alone.
-            *nested_loops = nested_loops.saturating_add(1);
-            let renamings = changed_measure_variables
-                .iter()
-                .map(|name| {
-                    (
-                        name.clone(),
-                        CExpression::Variable(format!("{name}#nested{nested_loops}")),
-                    )
-                })
-                .collect::<Vec<_>>();
-            Ok(paths
-                .into_iter()
-                .map(|mut path| {
-                    for (name, value) in &renamings {
-                        path.aliases.insert(name.clone(), value.clone());
-                    }
-                    path
-                })
-                .collect())
-        }
-        CStatement::Switch { cases, .. } => {
-            let incoming = paths;
-            let mut paths = Vec::new();
-            for case in cases {
-                paths.extend(loop_paths(
-                    &case.body,
-                    measure_variables,
-                    incoming.clone(),
-                    nested_loops,
-                )?);
-            }
-            Ok(paths)
-        }
-    }
-}
-
-fn resolve_loop_c_expression_aliases(
+/// The kernel term for one `decreases` component at one C state.
+///
+/// A ranking component is a scalar int32 expression over the loop's own
+/// unaddressed variables, so its value at a state is the state's own value
+/// for each named variable. The walk is structural over the named measure
+/// and consults no ambient fact: it is the exact reading of the declared
+/// measure at that state, which is what makes the back-edge bundle member
+/// and the declared clause the same object.
+pub(super) fn c_ranking_measure_term(
     expression: &CExpression,
-    aliases: &BTreeMap<String, CExpression>,
-) -> CExpression {
-    let mut resolved = expression.clone();
-    let mut blocked = BTreeSet::new();
-    let mut seen = BTreeSet::new();
-    seen.insert(resolved.clone());
-    for _ in 0..=aliases.len() {
-        let substitutions = aliases
-            .iter()
-            .filter(|(name, _)| !blocked.contains(*name))
-            .map(|(name, expression)| (name.clone(), expression.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let next = substitute_c_expression_variables(&resolved, &substitutions);
-        if next == resolved || !seen.insert(next.clone()) {
-            break;
-        }
-        for (name, replacement) in aliases {
-            let mut variables = BTreeSet::new();
-            collect_c_expression_variables(replacement, &mut variables);
-            if variables.contains(name) {
-                blocked.insert(name.clone());
-            }
-        }
-        resolved = next;
-    }
-    resolved
+    state: &CState,
+) -> Result<Bitvector32Term, String> {
+    // The declared measure is read as one affine form over the state's own
+    // values. Folding it keeps `n - (i + 1)` from carrying an intermediate
+    // `i + 1` whose definedness would need a bound the measure never claims,
+    // and makes the member a stable function of the declaration rather than
+    // of the assignment order that produced the state.
+    c_ranking_measure_term_unfolded(expression, state).map(|term| canonical_ranking_term(&term))
 }
 
-fn ranking_variable_map(names: &BTreeSet<String>) -> BTreeMap<String, Variable> {
-    names
-        .iter()
-        .enumerate()
-        .map(|(index, name)| (name.clone(), Variable(index as u64)))
-        .collect()
-}
-
-fn ranking_term(
+fn c_ranking_measure_term_unfolded(
     expression: &CExpression,
-    variables: &BTreeMap<String, Variable>,
-) -> Result<Bitvector32Term, CTerminationError> {
+    state: &CState,
+) -> Result<Bitvector32Term, String> {
     use CExpression::*;
     let binary = |left: &CExpression,
                   right: &CExpression,
                   operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term|
-     -> Result<Bitvector32Term, CTerminationError> {
+     -> Result<Bitvector32Term, String> {
         Ok(operation(
-            ranking_term(left, variables)?,
-            ranking_term(right, variables)?,
+            c_ranking_measure_term_unfolded(left, state)?,
+            c_ranking_measure_term_unfolded(right, state)?,
         ))
     };
     match expression {
         Value(CValue::Int32(value)) | Value(CValue::UInt8(value)) => Ok(value.clone()),
-        Value(_) => Err(error("termination measures must be int32 expressions")),
-        Variable(name) => variables
-            .get(name)
-            .copied()
-            .map(Bitvector32Term::Variable)
-            .ok_or_else(|| {
-                error(format!(
-                    "termination measure references unknown variable `{name}`"
-                ))
-            }),
+        Value(_) => Err("termination measures must be int32 expressions".into()),
+        Variable(name) => match state.locals().get(name) {
+            Some(CValue::Int32(value)) | Some(CValue::UInt8(value)) => Ok(value.clone()),
+            Some(_) => Err(format!(
+                "termination measure variable `{name}` does not hold an int32 value"
+            )),
+            None => Err(format!(
+                "termination measure references unknown variable `{name}`"
+            )),
+        },
         Cast {
             expression,
             target_type: CType::Int32 | CType::UInt8,
             ..
-        } => ranking_term(expression, variables),
-        Cast { .. }
-        | FloatNegate(_)
-        | FloatClassification { .. }
-        | FunctionAddress(_)
-        | AddressOf(_)
-        | PointerOffsetBytes { .. }
-        | Load(_)
-        | TypedLoad { .. }
-        | Index(_, _) => Err(error(
-            "termination measures may only use scalar int32 expressions",
-        )),
+        } => c_ranking_measure_term_unfolded(expression, state),
         Conditional {
             condition,
             then_branch,
             else_branch,
         } => {
-            let (condition, value) = ranking_condition_term(condition, variables)?;
-            let then_term = ranking_term(then_branch, variables)?;
-            let else_term = ranking_term(else_branch, variables)?;
+            let (condition, value) = c_ranking_measure_condition_term(condition, state)?;
+            let then_term = c_ranking_measure_term_unfolded(then_branch, state)?;
+            let else_term = c_ranking_measure_term_unfolded(else_branch, state)?;
             let (then_term, else_term) = if value {
                 (then_term, else_term)
             } else {
@@ -1635,9 +1369,20 @@ fn ranking_term(
         BitwiseAnd(left, right) => binary(left, right, Bitvector32Term::bitwise_and),
         BitwiseOr(left, right) => binary(left, right, Bitvector32Term::bitwise_or),
         BitwiseXor(left, right) => binary(left, right, Bitvector32Term::bitwise_xor),
-        BitwiseNot(value) => Ok(Bitvector32Term::bitwise_not(ranking_term(
-            value, variables,
-        )?)),
+        BitwiseNot(value) => Ok(Bitvector32Term::bitwise_not(
+            c_ranking_measure_term_unfolded(value, state)?,
+        )),
+        Cast { .. }
+        | FloatNegate(_)
+        | FloatClassification { .. }
+        | FunctionAddress(_)
+        | AddressOf(_)
+        | PointerOffsetBytes { .. }
+        | Load(_)
+        | TypedLoad { .. }
+        | Index(_, _) => {
+            Err("termination measures may only use scalar int32 expressions".into())
+        }
         LessThan(_, _)
         | LessEqual(_, _)
         | GreaterThan(_, _)
@@ -1646,23 +1391,23 @@ fn ranking_term(
         | NotEqual(_, _)
         | Not(_)
         | And(_, _)
-        | Or(_, _) => Err(error("termination measures must have an int32 value")),
+        | Or(_, _) => Err("termination measures must have an int32 value".into()),
     }
 }
 
-fn ranking_condition_term(
+fn c_ranking_measure_condition_term(
     expression: &CExpression,
-    variables: &BTreeMap<String, Variable>,
-) -> Result<(ConditionTerm, bool), CTerminationError> {
+    state: &CState,
+) -> Result<(ConditionTerm, bool), String> {
     use CExpression::*;
     let binary = |left: &CExpression,
                   right: &CExpression,
                   operation: fn(Bitvector32Term, Bitvector32Term) -> ConditionTerm|
-     -> Result<(ConditionTerm, bool), CTerminationError> {
+     -> Result<(ConditionTerm, bool), String> {
         Ok((
             operation(
-                ranking_term(left, variables)?,
-                ranking_term(right, variables)?,
+                c_ranking_measure_term_unfolded(left, state)?,
+                c_ranking_measure_term_unfolded(right, state)?,
             ),
             true,
         ))
@@ -1678,15 +1423,15 @@ fn ranking_condition_term(
             Ok((condition, false))
         }
         Not(inner) => {
-            let (condition, value) = ranking_condition_term(inner, variables)?;
+            let (condition, value) = c_ranking_measure_condition_term(inner, state)?;
             Ok((condition, !value))
         }
-        And(_, _) | Or(_, _) => Err(error(
-            "compound boolean conditions are not atomic ranking assumptions",
-        )),
+        And(_, _) | Or(_, _) => Err(
+            "compound boolean conditions are not atomic ranking measure conditions".into(),
+        ),
         _ => Ok((
             ConditionTerm::equal(
-                ranking_term(expression, variables)?,
+                c_ranking_measure_term_unfolded(expression, state)?,
                 Bitvector32Term::Constant(0),
             ),
             false,
@@ -1694,106 +1439,14 @@ fn ranking_condition_term(
     }
 }
 
-// A branch condition can carry facts that are irrelevant to a scalar loop
-// ranking. In particular, a structural recursive call commonly sits under a
-// pointer guard such as `node->next != 0`. The ranking prover cannot encode
-// pointer comparisons as arithmetic facts, but it is still sound to check the
-// scalar ranking on that path without importing the pointer fact: every path
-// must satisfy the same nonnegativity and decrease obligations.
-fn contains_known_pointer_expression(
-    expression: &CExpression,
-    pointer_variables: &BTreeSet<String>,
-) -> bool {
-    use CExpression::*;
-    match expression {
-        Value(value) => value.c_type().is_pointer(),
-        Variable(name) => pointer_variables.contains(name),
-        FunctionAddress(_) | AddressOf(_) | PointerOffsetBytes { .. } => true,
-        Cast {
-            expression,
-            target_type,
-            ..
-        } => {
-            target_type.is_pointer()
-                || contains_known_pointer_expression(expression, pointer_variables)
-        }
-        TypedLoad {
-            pointer: _,
-            value_type,
-            ..
-        } => value_type.is_pointer(),
-        Load(_) | Index(_, _) => false,
-        FloatNegate(expression) | FloatClassification { expression, .. } => {
-            contains_known_pointer_expression(expression, pointer_variables)
-        }
-        LessThan(left, right)
-        | LessEqual(left, right)
-        | GreaterThan(left, right)
-        | GreaterEqual(left, right)
-        | Equal(left, right)
-        | NotEqual(left, right)
-        | And(left, right)
-        | Or(left, right)
-        | Add(left, right)
-        | Subtract(left, right)
-        | Multiply(left, right)
-        | Divide(left, right)
-        | Remainder(left, right)
-        | ShiftLeft(left, right)
-        | ShiftRight(left, right)
-        | BitwiseAnd(left, right)
-        | BitwiseOr(left, right)
-        | BitwiseXor(left, right) => {
-            contains_known_pointer_expression(left, pointer_variables)
-                || contains_known_pointer_expression(right, pointer_variables)
-        }
-        Not(value) | BitwiseNot(value) => {
-            contains_known_pointer_expression(value, pointer_variables)
-        }
-        Conditional {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            contains_known_pointer_expression(condition, pointer_variables)
-                || contains_known_pointer_expression(then_branch, pointer_variables)
-                || contains_known_pointer_expression(else_branch, pointer_variables)
-        }
-    }
+/// The display form of one `decreases` component, for bundle member contexts.
+pub(super) fn c_ranking_measure_display(measure: &CExpression) -> String {
+    termination_measure_display(measure)
 }
 
-fn assume_ranking_condition(
-    context: PureFactContext,
-    expression: &CExpression,
-    value: bool,
-    variables: &BTreeMap<String, Variable>,
-) -> Result<PureFactContext, CTerminationError> {
-    match expression {
-        CExpression::And(left, right) if value => Ok(assume_ranking_condition(
-            assume_ranking_condition(context, left, true, variables)?,
-            right,
-            true,
-            variables,
-        )?),
-        CExpression::Or(left, right) if !value => Ok(assume_ranking_condition(
-            assume_ranking_condition(context, left, false, variables)?,
-            right,
-            false,
-            variables,
-        )?),
-        CExpression::And(_, _) | CExpression::Or(_, _) => Ok(context),
-        _ => {
-            let (condition, condition_value) = ranking_condition_term(expression, variables)?;
-            Ok(context.assume_condition(condition, value == condition_value))
-        }
-    }
-}
-
-fn termination_measure_display(measure: &CExpression) -> String {
-    match measure {
-        CExpression::Variable(name) => name.clone(),
-        _ => format!("{measure:?}"),
-    }
+/// The display form of a whole `decreases` clause.
+pub(super) fn c_ranking_measures_display(measures: &[CExpression]) -> String {
+    termination_measures_display(measures)
 }
 
 fn termination_measures_display(measures: &[CExpression]) -> String {
@@ -1805,158 +1458,6 @@ fn termination_measures_display(measures: &[CExpression]) -> String {
         components[0].clone()
     } else {
         format!("({})", components.join(", "))
-    }
-}
-
-fn spec_expression_to_c_expression(expression: &SpecExpression) -> Option<CExpression> {
-    match expression {
-        SpecExpression::Value(value) => Some(CExpression::Value(value.clone())),
-        SpecExpression::CExpression(expression) => Some(expression.clone()),
-        SpecExpression::Add(left, right) => Some(CExpression::Add(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::Subtract(left, right) => Some(CExpression::Subtract(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::Multiply(left, right) => Some(CExpression::Multiply(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::Divide(left, right) => Some(CExpression::Divide(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::Remainder(left, right) => Some(CExpression::Remainder(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::ShiftLeft(left, right) => Some(CExpression::ShiftLeft(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::ShiftRight(left, right) => Some(CExpression::ShiftRight(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::BitwiseAnd(left, right) => Some(CExpression::BitwiseAnd(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::BitwiseOr(left, right) => Some(CExpression::BitwiseOr(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::BitwiseXor(left, right) => Some(CExpression::BitwiseXor(
-            Box::new(spec_expression_to_c_expression(left)?),
-            Box::new(spec_expression_to_c_expression(right)?),
-        )),
-        SpecExpression::BitwiseNot(value) => Some(CExpression::BitwiseNot(Box::new(
-            spec_expression_to_c_expression(value)?,
-        ))),
-        SpecExpression::Cast(value, target_type) => Some(CExpression::Cast {
-            expression: Box::new(spec_expression_to_c_expression(value)?),
-            target_type: *target_type,
-            pointee_volatile: false,
-            pointee_constant: false,
-        }),
-        _ => None,
-    }
-}
-
-fn spec_proposition_to_c_expression(proposition: &SpecProposition) -> Option<CExpression> {
-    match proposition {
-        SpecProposition::SequenceComparison { .. } => None,
-        SpecProposition::Comparison {
-            left,
-            operator,
-            right,
-        } => {
-            let left = Box::new(spec_expression_to_c_expression(left)?);
-            let right = Box::new(spec_expression_to_c_expression(right)?);
-            Some(match operator {
-                CComparisonOperator::Equal => CExpression::Equal(left, right),
-                CComparisonOperator::NotEqual => CExpression::NotEqual(left, right),
-                CComparisonOperator::LessThan => CExpression::LessThan(left, right),
-                CComparisonOperator::LessEqual => CExpression::LessEqual(left, right),
-                CComparisonOperator::GreaterThan => CExpression::GreaterThan(left, right),
-                CComparisonOperator::GreaterEqual => CExpression::GreaterEqual(left, right),
-            })
-        }
-        SpecProposition::And(left, right) => Some(CExpression::And(
-            Box::new(spec_proposition_to_c_expression(left)?),
-            Box::new(spec_proposition_to_c_expression(right)?),
-        )),
-        SpecProposition::Or(left, right) => Some(CExpression::Or(
-            Box::new(spec_proposition_to_c_expression(left)?),
-            Box::new(spec_proposition_to_c_expression(right)?),
-        )),
-        SpecProposition::Not(body) => Some(CExpression::Not(Box::new(
-            spec_proposition_to_c_expression(body)?,
-        ))),
-        _ => None,
-    }
-}
-
-fn collect_loop_invariants(
-    statement: &CStatement,
-    next_index: &mut usize,
-    invariants: &mut BTreeMap<usize, Vec<CExpression>>,
-) {
-    match statement {
-        CStatement::While {
-            invariant_checks,
-            body,
-            ..
-        } => {
-            let index = *next_index;
-            *next_index += 1;
-            let conditions = invariant_checks
-                .iter()
-                .filter_map(|check| spec_proposition_to_c_expression(check.proposition()))
-                .collect::<Vec<_>>();
-            if !conditions.is_empty() {
-                invariants.insert(index, conditions);
-            }
-            collect_loop_invariants(body, next_index, invariants);
-        }
-        CStatement::Seq(first, second) => {
-            collect_loop_invariants(first, next_index, invariants);
-            collect_loop_invariants(second, next_index, invariants);
-        }
-        CStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_loop_invariants(then_branch, next_index, invariants);
-            collect_loop_invariants(else_branch, next_index, invariants);
-        }
-        CStatement::Switch { cases, .. } => {
-            for case in cases {
-                collect_loop_invariants(&case.body, next_index, invariants);
-            }
-        }
-        CStatement::ContinueWithStep { step } => {
-            collect_loop_invariants(step, next_index, invariants)
-        }
-        CStatement::Skip
-        | CStatement::Break
-        | CStatement::Continue
-        | CStatement::Declare { .. }
-        | CStatement::DeclareAggregate { .. }
-        | CStatement::Assign { .. }
-        | CStatement::CallAssign { .. }
-        | CStatement::Call { .. }
-        | CStatement::HeapAllocate { .. }
-        | CStatement::HeapFree { .. }
-        | CStatement::Assert { .. }
-        | CStatement::Return(_)
-        | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::CopyAggregate { .. }
-        | CStatement::Update { .. } => {}
     }
 }
 
@@ -2059,12 +1560,17 @@ fn same_statement_shape(left: &CStatement, right: &CStatement) -> bool {
     }
 }
 
-fn merge_verified_loop_invariants(
+/// The declared `decreases` measure each verified loop rule certified.
+///
+/// A rule's loop head carries the measure whose back-edge members its bundle
+/// closed. Matching the rule to the source loop by index and executable shape
+/// is what binds that certification to this function's loop.
+fn verified_loop_ranking_measures(
     function_name: &str,
     source_body: &CStatement,
     rules: &[CVerifiedLoopRule],
-    invariants: &mut BTreeMap<usize, Vec<CExpression>>,
-) -> Result<(), CTerminationError> {
+) -> Result<BTreeMap<usize, Vec<CExpression>>, CTerminationError> {
+    let mut certified: BTreeMap<usize, Vec<CExpression>> = BTreeMap::new();
     for rule in rules {
         let Some(index) = rule.loop_index else {
             continue;
@@ -2081,73 +1587,27 @@ fn merge_verified_loop_invariants(
             )));
         }
         let CStatement::While {
-            invariant_checks, ..
+            ranking_measures, ..
         } = &rule.loop_statement
         else {
             return Err(error(format!(
                 "verified loop rule for `{function_name}` is not a while loop"
             )));
         };
-        let conditions = invariant_checks
-            .iter()
-            .filter_map(|check| spec_proposition_to_c_expression(check.proposition()))
-            .collect::<Vec<_>>();
-        if conditions.is_empty() {
+        if ranking_measures.is_empty() {
             continue;
         }
-        if let Some(existing) = invariants.get(&index) {
-            if existing != &conditions {
+        if let Some(existing) = certified.get(&index) {
+            if existing != ranking_measures {
                 return Err(error(format!(
-                    "verified loop rules for `{function_name}` disagree on loop {index} invariants"
+                    "verified loop rules for `{function_name}` disagree on loop {index} `decreases`"
                 )));
             }
         } else {
-            invariants.insert(index, conditions);
+            certified.insert(index, ranking_measures.clone());
         }
     }
-    Ok(())
-}
-
-fn ranking_proves(context: &PureFactContext, proposition: &Proposition) -> bool {
-    if context.proves(proposition) {
-        return true;
-    }
-    let premises = context
-        .condition_facts
-        .iter()
-        .map(|(condition, value)| Proposition::ConditionIs(condition.clone(), *value))
-        .collect::<Vec<_>>();
-    crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(proposition, &premises)
-        .is_ok()
-}
-
-fn ranking_proves_lexicographic_decrease(
-    context: &PureFactContext,
-    pre_terms: &[Bitvector32Term],
-    post_terms: &[Bitvector32Term],
-) -> bool {
-    if pre_terms.is_empty() || pre_terms.len() != post_terms.len() {
-        return false;
-    }
-    (0..pre_terms.len()).any(|pivot| {
-        let mut pivot_context = context.clone();
-        for index in 0..pivot {
-            pivot_context = pivot_context.assume_condition(
-                ConditionTerm::equal(post_terms[index].clone(), pre_terms[index].clone()),
-                true,
-            );
-        }
-        ranking_proves(
-            &pivot_context,
-            &Proposition::ConditionIs(
-                ConditionTerm::signed_less_than(
-                    post_terms[pivot].clone(),
-                    pre_terms[pivot].clone(),
-                ),
-                true,
-            ),
-        )
-    })
+    Ok(certified)
 }
 
 fn ranking_affine_form(term: &Bitvector32Term) -> (BTreeMap<Bitvector32Term, i64>, i64) {
@@ -2252,28 +1712,34 @@ fn canonical_ranking_term(term: &Bitvector32Term) -> Bitvector32Term {
     }
 }
 
+/// Confirms that every loop the plan ranks has a checked back-edge bundle
+/// for exactly that measure, and reports whether every loop in the statement
+/// is ranked at all.
+///
+/// This pass proves nothing. A loop's nonnegativity and lexicographic
+/// decrease obligations are members of its `close_invariants` bundle, which
+/// the loop's own verified rule already certified; the rule carries the
+/// declared measure on its loop head, so matching it against the plan is the
+/// whole of the check here.
 fn check_loops(
     statement: &CStatement,
     supplied: &BTreeMap<usize, Vec<CExpression>>,
-    entry_conditions: &[CExpression],
-    invariants: &BTreeMap<usize, Vec<CExpression>>,
-    pointer_variables: &BTreeSet<String>,
+    certified: &BTreeMap<usize, Vec<CExpression>>,
+    function_name: &str,
     next_index: &mut usize,
 ) -> Result<bool, CTerminationError> {
     match statement {
         CStatement::Seq(first, second) => Ok(check_loops(
             first,
             supplied,
-            entry_conditions,
-            invariants,
-            pointer_variables,
+            certified,
+            function_name,
             next_index,
         )? && check_loops(
             second,
             supplied,
-            entry_conditions,
-            invariants,
-            pointer_variables,
+            certified,
+            function_name,
             next_index,
         )?),
         CStatement::If {
@@ -2283,31 +1749,21 @@ fn check_loops(
         } => Ok(check_loops(
             then_branch,
             supplied,
-            entry_conditions,
-            invariants,
-            pointer_variables,
+            certified,
+            function_name,
             next_index,
         )? && check_loops(
             else_branch,
             supplied,
-            entry_conditions,
-            invariants,
-            pointer_variables,
+            certified,
+            function_name,
             next_index,
         )?),
-        CStatement::While {
-            condition, body, ..
-        } => {
+        CStatement::While { body, .. } => {
             let index = *next_index;
             *next_index += 1;
-            let nested_terminate = check_loops(
-                body,
-                supplied,
-                entry_conditions,
-                invariants,
-                pointer_variables,
-                next_index,
-            )?;
+            let nested_terminate =
+                check_loops(body, supplied, certified, function_name, next_index)?;
             let Some(measures) = supplied.get(&index) else {
                 return Ok(false);
             };
@@ -2316,170 +1772,30 @@ fn check_loops(
                     "loop {index} has an empty termination measure"
                 )));
             }
-            let mut measure_variables = BTreeSet::new();
-            for measure in measures {
-                collect_c_expression_variables(measure, &mut measure_variables);
+            match certified.get(&index) {
+                Some(checked) if checked == measures => Ok(nested_terminate),
+                Some(checked) => Err(error(format!(
+                    "loop {index} in `{function_name}` was certified for `{}`, not the planned `{}`",
+                    termination_measures_display(checked),
+                    termination_measures_display(measures)
+                ))),
+                None => Err(error(format!(
+                    "loop {index} in `{function_name}` has no verified loop rule carrying its \
+                     `decreases` measure, so its back-edge ranking obligations were never checked"
+                ))),
             }
-            let mut nested_loops = 0;
-            let paths = loop_paths(
-                body,
-                &measure_variables,
-                vec![LoopRankingPath {
-                    aliases: BTreeMap::new(),
-                    conditions: Vec::new(),
-                }],
-                &mut nested_loops,
-            )?;
-            if paths.is_empty() {
-                return Ok(nested_terminate);
-            }
-            for path in paths {
-                let post_measures = measures
-                    .iter()
-                    .map(|measure| resolve_loop_c_expression_aliases(measure, &path.aliases))
-                    .collect::<Vec<_>>();
-                let mut names = measure_variables.clone();
-                for entry_condition in entry_conditions {
-                    collect_c_expression_variables(entry_condition, &mut names);
-                }
-                if let Some(loop_invariants) = invariants.get(&index) {
-                    for invariant in loop_invariants {
-                        collect_c_expression_variables(invariant, &mut names);
-                    }
-                }
-                // The verified loop rule certifies the invariant bundle at the
-                // back edge, so each invariant also holds of this path's
-                // post-state values. That is what bounds a variable a nested
-                // loop left unconstrained; without it the ranking check would
-                // have to guess the inner loop's final state.
-                let post_invariants = invariants
-                    .get(&index)
-                    .map(|loop_invariants| {
-                        loop_invariants
-                            .iter()
-                            .map(|invariant| {
-                                resolve_loop_c_expression_aliases(invariant, &path.aliases)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                for post_invariant in &post_invariants {
-                    collect_c_expression_variables(post_invariant, &mut names);
-                }
-                collect_c_expression_variables(condition, &mut names);
-                for post_measure in &post_measures {
-                    collect_c_expression_variables(post_measure, &mut names);
-                }
-                for (path_condition, _) in &path.conditions {
-                    collect_c_expression_variables(path_condition, &mut names);
-                }
-                let variables = ranking_variable_map(&names);
-                let pre_terms = measures
-                    .iter()
-                    .map(|measure| {
-                        ranking_term(measure, &variables).map(|term| canonical_ranking_term(&term))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let post_terms = post_measures
-                    .iter()
-                    .map(|measure| {
-                        ranking_term(measure, &variables).map(|term| canonical_ranking_term(&term))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut context = PureFactContext::new();
-                for entry_condition in entry_conditions {
-                    context = assume_ranking_condition(context, entry_condition, true, &variables)?;
-                }
-                if let Some(loop_invariants) = invariants.get(&index) {
-                    for invariant in loop_invariants {
-                        context = assume_ranking_condition(context, invariant, true, &variables)?;
-                    }
-                }
-                for post_invariant in &post_invariants {
-                    context = assume_ranking_condition(context, post_invariant, true, &variables)?;
-                }
-                context = assume_ranking_condition(context, condition, true, &variables)?;
-                for (path_condition, value) in &path.conditions {
-                    if !contains_known_pointer_expression(path_condition, pointer_variables) {
-                        context =
-                            assume_ranking_condition(context, path_condition, *value, &variables)?;
-                    }
-                }
-                for pre_term in &pre_terms {
-                    let pre_positive = Proposition::ConditionIs(
-                        ConditionTerm::signed_less_than(
-                            Bitvector32Term::Constant(0),
-                            pre_term.clone(),
-                        ),
-                        true,
-                    );
-                    if ranking_proves(&context, &pre_positive) {
-                        context = context.assume_condition(
-                            ConditionTerm::signed_less_than(
-                                Bitvector32Term::Constant(0),
-                                pre_term.clone(),
-                            ),
-                            true,
-                        );
-                    }
-                }
-                let pre_proved = pre_terms.iter().all(|pre_term| {
-                    ranking_proves(
-                        &context,
-                        &Proposition::ConditionIs(
-                            ConditionTerm::signed_less_equal(
-                                Bitvector32Term::Constant(0),
-                                pre_term.clone(),
-                            ),
-                            true,
-                        ),
-                    )
-                });
-                let post_proved = post_terms.iter().all(|post_term| {
-                    ranking_proves(
-                        &context,
-                        &Proposition::ConditionIs(
-                            ConditionTerm::signed_less_equal(
-                                Bitvector32Term::Constant(0),
-                                post_term.clone(),
-                            ),
-                            true,
-                        ),
-                    )
-                });
-                let decreases_proved =
-                    ranking_proves_lexicographic_decrease(&context, &pre_terms, &post_terms);
-                if !pre_proved || !post_proved || !decreases_proved {
-                    let display = termination_measures_display(measures);
-                    return Err(error(format!(
-                        "loop {index} does not decrease `{display}` to a nonnegative value on every back edge"
-                    )));
-                }
-            }
-            Ok(nested_terminate)
         }
         CStatement::Switch { cases, .. } => {
             let mut nested_terminate = true;
             for case in cases {
-                nested_terminate &= check_loops(
-                    &case.body,
-                    supplied,
-                    entry_conditions,
-                    invariants,
-                    pointer_variables,
-                    next_index,
-                )?;
+                nested_terminate &=
+                    check_loops(&case.body, supplied, certified, function_name, next_index)?;
             }
             Ok(nested_terminate)
         }
-        CStatement::ContinueWithStep { step } => check_loops(
-            step,
-            supplied,
-            entry_conditions,
-            invariants,
-            pointer_variables,
-            next_index,
-        ),
+        CStatement::ContinueWithStep { step } => {
+            check_loops(step, supplied, certified, function_name, next_index)
+        }
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
@@ -2662,36 +1978,16 @@ pub fn c_verified_function_termination_rules(
                     )?;
                 }
             }
-            let entry_conditions = function
-                .contract_requires()
-                .iter()
-                .filter_map(spec_proposition_to_c_expression)
-                .collect::<Vec<_>>();
-            let mut invariant_index = 0;
-            let mut invariants = BTreeMap::new();
-            collect_loop_invariants(&function.body, &mut invariant_index, &mut invariants);
-            if let Some(rules) = verified_loop_rules.get(name) {
-                merge_verified_loop_invariants(
-                    name,
-                    &function.source_body,
-                    rules,
-                    &mut invariants,
-                )?;
-            }
+            let certified = match verified_loop_rules.get(name) {
+                Some(rules) => verified_loop_ranking_measures(name, &function.source_body, rules)?,
+                None => BTreeMap::new(),
+            };
             let mut next_loop = 0;
-            let mut pointer_variables = function
-                .parameters()
-                .iter()
-                .filter(|parameter| parameter.c_type().is_pointer())
-                .map(|parameter| parameter.name().to_string())
-                .collect::<BTreeSet<_>>();
-            collect_pointer_variables(&function.source_body, &mut pointer_variables);
             component_ok &= check_loops(
                 &function.source_body,
                 loop_measures,
-                &entry_conditions,
-                &invariants,
-                &pointer_variables,
+                &certified,
+                name,
                 &mut next_loop,
             )?;
             if loop_measures.keys().any(|index| *index >= next_loop) {
@@ -2816,6 +2112,7 @@ mod address_escape_tests {
             else_branch: Box::new(escape),
         };
         let body = CStatement::While {
+            ranking_measures: Vec::new(),
             condition: variable("c"),
             invariant: Vec::new(),
             invariant_checks: Vec::new(),

@@ -1044,9 +1044,13 @@ pub(super) fn execute_c_statement_verification_paths(
             invariant_checks,
             effect_checks,
             resource_specs,
+            ranking_measures,
             body,
             do_while,
-        } if !invariant_checks.is_empty() || !effect_checks.is_empty() => {
+        } if !invariant_checks.is_empty()
+            || !effect_checks.is_empty()
+            || !ranking_measures.is_empty() =>
+        {
             execute_c_while_verification_paths(
                 state,
                 condition,
@@ -1054,6 +1058,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 invariant_checks,
                 effect_checks,
                 resource_specs,
+                ranking_measures,
                 body,
                 assumptions,
                 environment,
@@ -1166,6 +1171,7 @@ pub(super) fn execute_c_while_verification_paths(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    ranking_measures: &[CExpression],
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1181,6 +1187,7 @@ pub(super) fn execute_c_while_verification_paths(
         invariant_checks,
         effect_checks,
         resource_specs,
+        ranking_measures,
         body,
         assumptions,
         Some(environment),
@@ -1343,6 +1350,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    ranking_measures: &[CExpression],
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1361,6 +1369,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         invariant_checks,
         effect_checks,
         resource_specs,
+        ranking_measures,
         body,
         assumptions,
         (!preservation_proven).then_some(environment),
@@ -1381,6 +1390,7 @@ fn execute_c_while_exit_paths(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    ranking_measures: &[CExpression],
     body: &CStatement,
     assumptions: &PureFactContext,
     preservation_environment: Option<&CExecutionEnvironment>,
@@ -1429,6 +1439,7 @@ fn execute_c_while_exit_paths(
                 condition,
                 invariant_checks,
                 effect_checks,
+                ranking_measures,
                 &whole_loop_effect_summaries,
                 body,
                 assumptions,
@@ -1718,6 +1729,100 @@ fn collect_invariant_check_obligations_with_mode(
     Ok(all_obligations)
 }
 
+/// The back-edge ranking members of a ranked loop's invariant bundle.
+///
+/// Membership order is fixed so a retained certificate is stable across runs
+/// and sites: one `0 <= component` obligation per declared component at the
+/// back edge, in declaration order, then exactly one decrease obligation.
+/// The decrease obligation is `post < pre` for a single component; for a
+/// tuple it is the right-nested disjunction over pivots
+/// `(post0 < pre0) or ((post0 == pre0) and (post1 < pre1)) or ...`, so the
+/// pivot is an ordinary arm choice a proof makes with `left` and `right` and
+/// expansion prints, rather than a kernel search over pivot indices.
+///
+/// `pre` reads each component at the iteration entry and `post` at the back
+/// edge. Work is linear in the declared measure; no ambient fact is scanned.
+pub(super) fn collect_loop_ranking_obligations(
+    state: &CState,
+    iteration_entry_state: &CState,
+    ranking_measures: &[CExpression],
+) -> Result<Vec<ProofObligation>, String> {
+    if ranking_measures.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut pre = Vec::with_capacity(ranking_measures.len());
+    let mut post = Vec::with_capacity(ranking_measures.len());
+    for measure in ranking_measures {
+        pre.push(crate::kernel::termination::c_ranking_measure_term(
+            measure,
+            iteration_entry_state,
+        )?);
+        post.push(crate::kernel::termination::c_ranking_measure_term(
+            measure, state,
+        )?);
+    }
+    let mut obligations = Vec::with_capacity(ranking_measures.len() + 1);
+    for (measure, post) in ranking_measures.iter().zip(post.iter()) {
+        obligations.push(
+            ProofObligation::verification_condition(Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), post.clone()),
+                true,
+            ))
+            .with_context(format!(
+                "loop ranking component `{}` is nonnegative at the back edge",
+                crate::kernel::termination::c_ranking_measure_display(measure)
+            )),
+        );
+    }
+    let arm = |pivot: usize| {
+        let strict = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(post[pivot].clone(), pre[pivot].clone()),
+            true,
+        );
+        (0..pivot).rev().fold(strict, |rest, index| {
+            Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(post[index].clone(), pre[index].clone()),
+                    true,
+                )),
+                Box::new(rest),
+            )
+        })
+    };
+    let decrease = (0..ranking_measures.len())
+        .rev()
+        .fold(None, |rest: Option<Proposition>, pivot| match rest {
+            None => Some(arm(pivot)),
+            Some(rest) => Some(Proposition::Or(Box::new(arm(pivot)), Box::new(rest))),
+        })
+        .expect("a ranked loop declares at least one component");
+    obligations.push(
+        ProofObligation::verification_condition(decrease).with_context(format!(
+            "loop ranking measure `{}` decreases at the back edge",
+            crate::kernel::termination::c_ranking_measures_display(ranking_measures)
+        )),
+    );
+    Ok(obligations)
+}
+
+/// The ranking members, or one refusal obligation naming why the declared
+/// measure has no value at this state. A measure that does not read as a
+/// scalar int32 expression is a proof failure at the loop, never a silently
+/// dropped ranking obligation.
+pub(super) fn loop_ranking_obligations_or_refusal(
+    state: &CState,
+    iteration_entry_state: &CState,
+    ranking_measures: &[CExpression],
+) -> Vec<ProofObligation> {
+    match collect_loop_ranking_obligations(state, iteration_entry_state, ranking_measures) {
+        Ok(obligations) => obligations,
+        Err(message) => vec![
+            ProofObligation::verification_condition(false_equals_true_proposition())
+                .with_context(message),
+        ],
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LoopPreservationSummary {
     pub(super) obligations: Vec<ProofObligation>,
@@ -1730,6 +1835,7 @@ pub(super) fn collect_loop_preservation_summary(
     condition: &CExpression,
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    ranking_measures: &[CExpression],
     whole_loop_effect_summaries: &[Proposition],
     body: &CStatement,
     assumptions: &PureFactContext,
@@ -1837,7 +1943,7 @@ pub(super) fn collect_loop_preservation_summary(
                                     assumptions,
                                     budget,
                                 )?;
-                                let path_obligations = if do_while && !may_continue {
+                                let mut path_obligations = if do_while && !may_continue {
                                     Vec::new()
                                 } else {
                                     collect_invariant_check_obligations(
@@ -1849,6 +1955,18 @@ pub(super) fn collect_loop_preservation_summary(
                                         budget,
                                     )?
                                 };
+                                // A ranked loop's back edge carries the same
+                                // ranking members the surface bundle spells.
+                                // Only a continuing edge is a back edge.
+                                if may_continue {
+                                    path_obligations.extend(
+                                        loop_ranking_obligations_or_refusal(
+                                            &next_state,
+                                            top_state,
+                                            ranking_measures,
+                                        ),
+                                    );
+                                }
                                 let mut state_obligations = condition_obligations.clone();
                                 if may_continue
                                     && let Err(message) =

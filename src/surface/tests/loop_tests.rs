@@ -116,7 +116,7 @@ fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
         let error = verify_c0_sources(fixture.click_source.as_deref().unwrap(), &sources)
             .expect_err("invalid ranking must reject");
         assert!(
-            error.message().contains("does not decrease"),
+            error.message().contains("decreases at the back edge"),
             "{filename}: {}",
             error.message()
         );
@@ -1159,7 +1159,13 @@ fn frontier_local_loop_checks_an_optional_decreases_measure() {
                             apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
                         }
                         step();
-                        close_invariants by { arithmetic() using { 0 <= n; } }
+                        close_invariants by {
+                            both { arithmetic() using { 0 <= n; } }
+                            and {
+                                both { arithmetic() using { 0 <= n; } }
+                                and { arithmetic() using { 0 <= n; } }
+                            }
+                        }
                     }
                 }
                 step();
@@ -1461,7 +1467,13 @@ fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate()
                             apply(int32_positive_predecessor_is_nonnegative(n)) using { n > 0; }
                         }
                         step();
-                        close_invariants by { arithmetic() using { 0 <= n; } }
+                        close_invariants by {
+                            both { arithmetic() using { 0 <= n; } }
+                            and {
+                                both { arithmetic() using { 0 <= n; } }
+                                and { arithmetic() using { 0 <= n; } }
+                            }
+                        }
                     }
                 }
                 step();
