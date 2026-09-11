@@ -764,3 +764,19 @@ extern int32 strlen(uint8 bytes[]) {
     ensures cstr_readable_len(bytes, result);
     ensures old(bytes[0]) == '\0' implies result == 0;
 }
+
+theorem int32_add_to_integer(left: int32, right: int32) {
+    requires defined(left + right);
+    ensures to_integer(left + right) == to_integer(left) + to_integer(right);
+}
+
+theorem int32_subtract_to_integer(left: int32, right: int32) {
+    requires defined(left - right);
+    ensures to_integer(left - right) == to_integer(left) - to_integer(right);
+}
+
+theorem int32_add_defined_by_integer_bounds(left: int32, right: int32) {
+    requires to_integer(left) + to_integer(right) >= -2147483648;
+    requires to_integer(left) + to_integer(right) <= 2147483647;
+    ensures defined(left + right);
+}

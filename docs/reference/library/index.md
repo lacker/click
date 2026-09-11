@@ -829,6 +829,49 @@ theorem int32_subtract_equal_sum_right_cancels(value: int32, left: int32, amount
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
+### `int32_add_defined_by_integer_bounds`
+
+```click
+theorem int32_add_defined_by_integer_bounds(left: int32, right: int32) {
+    requires to_integer(left) + to_integer(right) >= -2147483648;
+    requires to_integer(left) + to_integer(right) <= 2147483647;
+    ensures defined(left + right);
+}
+```
+
+Bounds on the mathematical sum establish that signed C addition does not overflow.
+Both bounds are required, including when the final program result is in range.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+### `int32_add_to_integer`
+
+```click
+theorem int32_add_to_integer(left: int32, right: int32) {
+    requires defined(left + right);
+    ensures to_integer(left + right) == to_integer(left) + to_integer(right);
+}
+```
+
+A defined signed C addition has the same value as mathematical Integer addition.
+The definedness premise excludes overflow; the equality is not unconditional.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+### `int32_subtract_to_integer`
+
+```click
+theorem int32_subtract_to_integer(left: int32, right: int32) {
+    requires defined(left - right);
+    ensures to_integer(left - right) == to_integer(left) - to_integer(right);
+}
+```
+
+A defined signed C subtraction has the same value as mathematical Integer subtraction.
+The definedness premise excludes overflow; the equality is not unconditional.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
+
 ### `int32_add_nonnegative_right_is_at_least_left`
 
 ```click
