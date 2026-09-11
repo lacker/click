@@ -554,6 +554,25 @@ instead of `FunctionSymbolic`.
 
 ## Chunk 7: widen the refinement proposition filter
 
+**Status: landed** as `7ff56487`, before chunk 6, so the printed theorem
+skeleton does not yet parse until chunk 6 lands. Three caveats for later
+chunks:
+
+- Forced binding is keyed by resource family only: two binders of one family
+  on either side refuse even when their arguments would disambiguate. That is
+  stricter than the name-plus-arguments rule above and is fine until a
+  fixture needs otherwise.
+- Post instance fields are always fresh, including for a binder the
+  implementation returns unchanged, matching the ordinary call rule; a
+  contract promising field preservation is refined only by an implementation
+  that states it.
+- The skeleton spells an aggregate-pointer parameter by its pointer type,
+  since the kernel interface keeps a layout, not a struct tag. Chunk 8's
+  rbtree fixtures will print `struct node*` imprecisely; fix the spelling
+  there if the fixture asserts it.
+- `CResourceSpec::Instance` now carries `binder: String`; chunk 5 should
+  reuse it for its call map rather than add a second spelling field.
+
 Independent of chunks 4 through 6 in code, but write its fixtures after
 chunk 6 so the explicit route exists for the failing cases.
 
