@@ -1,5 +1,41 @@
 use super::*;
 
+/// The only specification-conditional branch lowering decides is the one a
+/// literally constant condition folds away. Folding stays exact in both
+/// directions; a condition that needs an ambient fact is not decided here,
+/// so both branches are lowered and a proof step picks the arm.
+#[test]
+fn a_specification_condition_folds_only_when_it_is_constant() {
+    let flag = Bitvector32Term::Variable(Variable(4241));
+    let constant_true =
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(1), Bitvector32Term::Constant(2));
+    let constant_false =
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(2), Bitvector32Term::Constant(1));
+    let ambient = ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), flag.clone());
+
+    for (condition, expected) in [(constant_true, true), (constant_false, false)] {
+        assert_eq!(
+            constant_spec_condition_value(&Proposition::ConditionIs(condition.clone(), true)),
+            Some(expected)
+        );
+        assert_eq!(
+            constant_spec_condition_value(&Proposition::ConditionIs(condition, false)),
+            Some(!expected)
+        );
+    }
+
+    // Ambient facts are exactly what lowering must not consult: the same
+    // condition stays undecided however much the surrounding context knows.
+    let knows_the_condition = PureFactContext::new().assume_condition(ambient.clone(), true);
+    assert_eq!(knows_the_condition.decide(&ambient), Some(true));
+    for value in [true, false] {
+        assert_eq!(
+            constant_spec_condition_value(&Proposition::ConditionIs(ambient.clone(), value)),
+            None
+        );
+    }
+}
+
 #[test]
 fn wide_to_int_narrowing_requires_each_representability_bound() {
     let value = Bitvector32Term::Variable(Variable(912));
