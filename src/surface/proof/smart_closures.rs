@@ -4123,6 +4123,18 @@ impl<'a> Proof<'a> {
                     let Some(execution) = proof.execution() else {
                         return Err(error);
                     };
+                    // Qualified static/file-scope loads are only spellable
+                    // through the caller's recorded surface map.  Keep the
+                    // retry on the same checked presentation path as
+                    // ordinary surface construction; otherwise a real call
+                    // requirement over a foreign static array is reported as
+                    // unsynthesizable even when the caller explicitly stated
+                    // every indexed cell.
+                    let execution_view = execution.view(context);
+                    let _qualified_sources =
+                        super::surface_synthesis::QualifiedSynthesisScope::enter(
+                            execution_view.surface_propositions,
+                        );
                     let Some(surface) = synthesize_surface_proposition(
                         &requirement.proposition,
                         context.parsed_function.parameters(),

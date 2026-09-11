@@ -3429,6 +3429,175 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
     );
 }
 
+/// A retained-have retry must use the caller's recorded qualified spelling
+/// when the requirement reads a callee-owned static object.  This helper uses
+/// the same indexed surface map that ordinary checked construction receives;
+/// keeping the requirement in the root facts makes the closure independently
+/// checkable while still forcing retry to synthesize its surface spelling.
+fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &str, cells: usize) {
+    let click_file = crate::surface::parse(
+        r#"
+            int32 identity(int32 x) {
+                ensures result == 0;
+            }
+        "#,
+    )
+    .expect("test function should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let parsed_function =
+        syntax::parse_function("int32 identity(int32 x) { int32 y = x; return y; }")
+            .expect("test C function should parse");
+    let function = parsed_function.to_kernel_function();
+    let function_environment = CExecutionEnvironment::new();
+    let resource_environment = ResourceEnvironment::new(&[]);
+    let arguments = [CExpression::Value(CValue::Int32(
+        Bitvector32Term::Constant(7),
+    ))];
+    let state = CState::new().with_memory(CMemory::new().with_block(
+        block,
+        4 * u32::try_from(cells).expect("test array size should fit in a block"),
+    ));
+    let base = CValue::typed_pointer(
+        Pointer {
+            block: PointerBlock::Concrete(block.into()),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        CType::Int32Pointer,
+    );
+    let mut surface_propositions = SurfacePropositionMap::default();
+    let mut lowered_clauses = Vec::new();
+    for index in 0..cells {
+        // The caller's explicit contract records the qualified load through
+        // an equality, while the callee's requirement uses the same load in
+        // its bound.  Record that source first, just as checked construction
+        // does when it lowers the caller contract.
+        let source_surface = ClickProposition::Comparison {
+            left: ContractExpression::Index(
+                Box::new(ContractExpression::QualifiedC {
+                    name: name.to_string(),
+                    lowered: CExpression::Value(base.clone()),
+                }),
+                Box::new(ContractExpression::IntegerLiteral(index.to_string())),
+            ),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(5),
+            ))),
+        };
+        let source_lowered = lower_fixed_state_proposition_with_assumptions(
+            &source_surface,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &RecordedSnapshots::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("qualified static source cell should lower");
+        surface_propositions
+            .record_lowering(&source_surface, &source_lowered)
+            .expect("qualified static source lowering should be recorded");
+
+        for (operator, bound) in [
+            (ComparisonOperator::GreaterThan, -1000i32),
+            (ComparisonOperator::LessThan, 1000i32),
+        ] {
+            let surface = ClickProposition::Comparison {
+                left: ContractExpression::Index(
+                    Box::new(ContractExpression::QualifiedC {
+                        name: name.to_string(),
+                        lowered: CExpression::Value(base.clone()),
+                    }),
+                    Box::new(ContractExpression::IntegerLiteral(index.to_string())),
+                ),
+                operator,
+                right: ContractExpression::CFragment(CExpression::Value(int32(bound as u32))),
+            };
+            lowered_clauses.push(
+                lower_fixed_state_proposition_with_assumptions(
+                    &surface,
+                    &PureFactContext::new(),
+                    parsed_function.parameters(),
+                    &arguments,
+                    &state,
+                    &state,
+                    None,
+                    &RecordedSnapshots::new(),
+                    &predicate_environment,
+                    &click_function_environment,
+                )
+                .expect("qualified static bound should lower"),
+            );
+        }
+    }
+    let lowered = lowered_clauses
+        .into_iter()
+        .reduce(|left, right| Proposition::And(Box::new(left), Box::new(right)))
+        .expect("test array should have at least one cell");
+    let root = Proof::for_execution_frontier(
+        "static retry",
+        0,
+        ExecutionProofState::at_entry(
+            state,
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            surface_propositions,
+            PersistentSequence::default(),
+        ),
+        vec![lowered.clone()],
+        ExecutionProofConstants {
+            source_layout: SourceExecutionLayout::new(parsed_function.body()),
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let refusal = ClickError::new("injected static-array requirement")
+        .with_unresolved_requirement(&ProofObligation::verification_condition(lowered));
+    let retried = root
+        .retry_statement_after_refusal(ProofStep::Step, &mut BTreeSet::new(), Err(refusal))
+        .expect("recorded qualified static cell should synthesize during retry");
+    let certificate = retried.certificate();
+    let [ProofStep::Have { proposition, .. }, ProofStep::Step] = certificate.steps() else {
+        panic!("retry should retain one checked Have before the exact Step");
+    };
+    let cold = root
+        .begin_have(proposition.clone())
+        .expect("retained qualified Have should reopen cold");
+    assert!(cold.try_simp_closure().unwrap().is_some());
+}
+
+#[test]
+fn smart_retry_uses_file_scope_static_array_qualified_source() {
+    assert_static_array_retry_uses_recorded_qualified_source(
+        "global:values#file-static:alpha.c",
+        "alpha_file::values",
+        2,
+    );
+}
+
+#[test]
+fn smart_retry_uses_static_local_array_qualified_source() {
+    assert_static_array_retry_uses_recorded_qualified_source(
+        "static:increment_twice:values#static0",
+        "static_local::increment_twice::values",
+        3,
+    );
+}
+
 #[test]
 fn nested_have_accepts_trailing_assumption_after_closure() {
     let click_file = crate::surface::parse(
