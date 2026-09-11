@@ -18,7 +18,7 @@ mod primitives;
 pub(crate) mod proof;
 mod reasoning;
 mod spec;
-pub(crate) use spec::capture_spec_algebraic_value;
+pub(crate) use spec::{capture_spec_algebraic_value, capture_spec_integer_value};
 mod termination;
 
 pub use api::*;
@@ -62,6 +62,7 @@ pub(crate) use reasoning::resolve_load_variables_from_registry;
 pub(crate) use reasoning::resolve_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
 pub(crate) use reasoning::substitute_pointer_variable_in_proposition;
+pub use reasoning::{LoweringIntroduction, LoweringIntroductions};
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

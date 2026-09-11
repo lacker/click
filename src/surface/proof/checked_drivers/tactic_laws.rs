@@ -580,6 +580,6 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
     let certificate = ProofCertificate::from_steps(vec![ProofStep::Have {
         proposition: have.proposition.clone(),
         proof: Box::new(body),
-    }]);
+    }])?;
     Ok(Some((goal, Some(certificate))))
 }

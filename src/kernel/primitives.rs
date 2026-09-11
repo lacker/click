@@ -874,6 +874,7 @@ pub struct SpecAlgebraicExpression {
 /// no lookup in `CState.locals` and no C representation.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecIntegerExpression {
+    ResourceField(ResourceFieldProjection),
     /// A pure mathematical value. Shared children preserve specification
     /// abbreviations without copying their expanded expression trees.
     Term(IntegerTerm),
@@ -975,6 +976,7 @@ pub enum AlgebraicValueType {
 /// A resource field has a logical type, never a C storage location.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ResourceFieldType {
+    Integer,
     C(CType),
     Algebraic(AlgebraicType),
 }
@@ -1008,6 +1010,7 @@ impl ResourceFieldSchema {
                         | CType::Float32Array(_)
                         | CType::Float64Array(_)
                 ),
+                ResourceFieldType::Integer => true,
                 ResourceFieldType::Algebraic(ty) => ty.has_consistent_root_schema(),
             };
             if !valid {
@@ -3352,6 +3355,7 @@ impl ResourceInstance {
         }
         for ((_, ty), value) in schema.fields().iter().zip(fields.iter()) {
             let valid = match (ty, value) {
+                (ResourceFieldType::Integer, AlgebraicValue::Integer(_)) => true,
                 (ResourceFieldType::C(ty), AlgebraicValue::C(value)) => *ty == value.c_type(),
                 (ResourceFieldType::Algebraic(ty), AlgebraicValue::Algebraic(value)) => {
                     *ty == value.algebraic_type && value.is_well_formed()

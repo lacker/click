@@ -1263,12 +1263,13 @@ fn verify_theorem_ensure(
     )? {
         return Ok(verified);
     }
-    let goal = lower_pure_theorem_proposition_with_integer_values(
+    let (goal, goal_introductions) = lower_pure_theorem_proposition_recording_introductions(
         theorem.name(),
         surface_goal,
         &context.values,
-        &context.integer_values,
         &context.array_refs,
+        &BTreeMap::new(),
+        &context.integer_values,
         &context.memory,
         predicate_environment,
         click_function_environment,
@@ -1299,10 +1300,12 @@ fn verify_theorem_ensure(
                 context,
                 surface_goal,
                 &goal,
+                &goal_introductions,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-            )?;
+            )?
+            .map(|(certificate, completion)| (certificate, Some(completion)));
             if checked_certificate.is_none() {
                 prove_pure_theorem_goal(
                     claim_label,
@@ -1326,10 +1329,12 @@ fn verify_theorem_ensure(
                 context,
                 surface_goal,
                 &goal,
+                &goal_introductions,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-            )?;
+            )?
+            .map(|(certificate, completion)| (certificate, Some(completion)));
             if checked_certificate.is_none() {
                 prove_pure_theorem_goal(
                     claim_label,
@@ -1354,16 +1359,22 @@ fn verify_theorem_ensure(
                 )));
             }
             if matches!(tactics.first(), Some(ProofTactic::StructuralInduct { .. })) {
-                checked_certificate = Some(check_pure_structural_induction(
-                    theorem,
-                    claim_label,
-                    context,
-                    surface_goal,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    tactics,
-                )?);
+                // Structural induction binds an algebraic parameter, which is
+                // outside the int32 binder shape kernel authority accepts, so
+                // no completion is retained for it.
+                checked_certificate = Some((
+                    check_pure_structural_induction(
+                        theorem,
+                        claim_label,
+                        context,
+                        surface_goal,
+                        predicate_environment,
+                        click_function_environment,
+                        theorem_environment,
+                        tactics,
+                    )?,
+                    None,
+                ));
                 (ProofKind::TacticScript, None, None)
             } else {
                 let (tactics, induction_setup) =
@@ -1374,11 +1385,13 @@ fn verify_theorem_ensure(
                         context,
                         surface_goal,
                         &goal,
+                        &goal_introductions,
                         &tactics,
                         predicate_environment,
                         click_function_environment,
                         theorem_environment,
                     )?
+                    .map(|(certificate, completion)| (certificate, Some(completion)))
                 } else {
                     None
                 };
@@ -1412,8 +1425,8 @@ fn verify_theorem_ensure(
         }
     };
 
-    let certificate = match checked_certificate {
-        Some(certificate) => certificate,
+    let (certificate, checked_completion) = match checked_certificate {
+        Some(checked) => checked,
         None => {
             let gateway = pure_goal_proof_certificate_gateway(
                 claim_label,
@@ -1444,14 +1457,13 @@ fn verify_theorem_ensure(
                     )
                 },
             );
-            let (certificate, ()) = match gateway {
+            match gateway {
                 Ok(result) => result,
                 Err(error) => match legacy_induction_diagnostic {
                     Some(diagnostic) => return Err(diagnostic),
                     None => return Err(error),
                 },
-            };
-            certificate
+            }
         }
     };
     let kernel_variables = theorem
@@ -1462,42 +1474,39 @@ fn verify_theorem_ensure(
             _ => None,
         })
         .collect::<Option<Vec<_>>>();
-    let kernel_authority = kernel_variables.and_then(|variables| {
-        prove_universally_quantified_pure_implication(
-            context.requires.clone(),
-            goal.clone(),
-            variables.clone(),
+    // Kernel authority now comes from the completion the checked proof already
+    // issued, never from a second proof of the same conclusion. A certificate
+    // whose only steps are cited rewrites and a normalizing closer offers that
+    // rewrite chain to the kernel as well, so the retained certificate's own
+    // citations are validated; the plain constructor remains the route for
+    // every other shape, and for a rewrite chain the kernel rejects.
+    let kernel_authority = match (kernel_variables, checked_completion) {
+        (Some(variables), Some(completion)) => certificate_int32_rewrites(
+            &certificate,
+            claim_label,
+            context,
+            predicate_environment,
+            click_function_environment,
         )
-        .or_else(|| {
-            let steps = certificate.steps();
-            let (rewrite_steps, closer) = steps.split_at(steps.len().saturating_sub(1));
-            if !matches!(closer, [ProofStep::Normalize]) {
-                return None;
-            }
-            let rewrites = rewrite_steps
-                .iter()
-                .map(|step| match step {
-                    ProofStep::Rewrite(surface) => lower_pure_theorem_proposition(
-                        claim_label,
-                        surface,
-                        &context.values,
-                        &context.array_refs,
-                        &context.memory,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .ok(),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()?;
+        .and_then(|rewrites| {
             prove_universally_quantified_pure_implication_by_int32_rewrites(
                 context.requires.clone(),
                 goal.clone(),
-                variables,
+                variables.clone(),
                 rewrites,
+                &completion,
             )
         })
-    });
+        .or_else(|| {
+            prove_universally_quantified_pure_implication(
+                context.requires.clone(),
+                goal.clone(),
+                variables,
+                &completion,
+            )
+        }),
+        _ => None,
+    };
     Ok(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
         ensure_index,
@@ -1785,7 +1794,7 @@ fn verify_contract_refinement_theorem(
             .steps()
             .to_vec();
     certificate_steps.extend_from_slice(proof.completed_certificate()?.steps());
-    let certificate = ProofCertificate::from_steps(certificate_steps);
+    let certificate = ProofCertificate::from_steps(certificate_steps)?;
     Ok(Some(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
         ensure_index,
@@ -1805,15 +1814,50 @@ fn verify_contract_refinement_theorem(
 /// produced it, so ordinary operation does not reconstruct and check that
 /// certificate through the legacy gateway.
 #[allow(clippy::too_many_arguments)]
+/// The ordered int32 equalities a `rewrite ...; normalize` certificate cites.
+///
+/// Returns `None` for any other certificate shape, or when a cited surface
+/// proposition does not lower.
+fn certificate_int32_rewrites(
+    certificate: &ProofCertificate,
+    claim_label: &str,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Option<Vec<Proposition>> {
+    let steps = certificate.steps();
+    let (rewrite_steps, closer) = steps.split_at(steps.len().saturating_sub(1));
+    if !matches!(closer, [ProofStep::Normalize]) || rewrite_steps.is_empty() {
+        return None;
+    }
+    rewrite_steps
+        .iter()
+        .map(|step| match step {
+            ProofStep::Rewrite(surface) => lower_pure_theorem_proposition(
+                claim_label,
+                surface,
+                &context.values,
+                &context.array_refs,
+                &context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .ok(),
+            _ => None,
+        })
+        .collect()
+}
+
 fn check_direct_pure_goal_with_proof(
     claim_label: &str,
     context: &PureTheoremContext,
     surface_goal: &ClickProposition,
     goal: &Proposition,
+    goal_introductions: &crate::kernel::LoweringIntroductions,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
-) -> Result<Option<ProofCertificate>, ClickError> {
+) -> Result<Option<(ProofCertificate, crate::kernel::proof::CheckedProposition)>, ClickError> {
     let root = Proof::for_pure_surface_goal(
         claim_label,
         &context.requires,
@@ -1823,11 +1867,15 @@ fn check_direct_pure_goal_with_proof(
         predicate_environment,
         click_function_environment,
         theorem_environment,
-    );
+    )
+    .with_recorded_goal_introductions(Some(goal_introductions.clone()));
     let Some(proof) = root.try_simp_closure()? else {
         return Ok(None);
     };
-    Ok(Some(proof.completed_certificate()?))
+    Ok(Some((
+        proof.completed_certificate()?,
+        proof.completed_proposition()?,
+    )))
 }
 
 /// Names whose declarations are checked directly against kernel arithmetic axioms.
@@ -2139,11 +2187,12 @@ fn check_pure_script_with_proof(
     context: &PureTheoremContext,
     surface_goal: &ClickProposition,
     goal: &Proposition,
+    goal_introductions: &crate::kernel::LoweringIntroductions,
     tactics: &[ProofTactic],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
-) -> Result<Option<ProofCertificate>, ClickError> {
+) -> Result<Option<(ProofCertificate, crate::kernel::proof::CheckedProposition)>, ClickError> {
     let root = Proof::for_pure_surface_goal(
         claim_label,
         &context.requires,
@@ -2153,18 +2202,19 @@ fn check_pure_script_with_proof(
         predicate_environment,
         click_function_environment,
         theorem_environment,
-    );
+    )
+    .with_recorded_goal_introductions(Some(goal_introductions.clone()));
 
     if let [ProofTactic::SimpUsing(simp)] = tactics
         && let Some(proof) = root.try_restricted_simp_closure(&simp.premises)
     {
-        return Ok(Some(proof.certificate()));
+        return Ok(Some((proof.certificate(), proof.completed_proposition()?)));
     }
 
     if matches!(tactics, [ProofTactic::Simp])
         && let Some(proof) = root.try_simp_closure()?
     {
-        return Ok(Some(proof.certificate()));
+        return Ok(Some((proof.certificate(), proof.completed_proposition()?)));
     }
 
     // The checked Proof object currently owns the fixed-state and execution
@@ -2191,7 +2241,7 @@ fn check_pure_script_with_proof(
         root.try_linear_script(tactics)?
     };
     if let Some(proof) = checked {
-        return Ok(Some(proof.certificate()));
+        return Ok(Some((proof.certificate(), proof.completed_proposition()?)));
     }
 
     Ok(None)
@@ -3486,7 +3536,7 @@ pub(super) fn validate_pure_theorem_certificate(
     context: &PureTheoremContext,
     certificate: &ProofCertificate,
     induction_setup: Option<&PureInductionSetup>,
-) -> Result<(), ClickError> {
+) -> Result<Option<crate::kernel::proof::CheckedProposition>, ClickError> {
     if proof_supports_pure_certificate(certificate) {
         let root = match induction_setup {
             Some(setup) => Proof::for_pure_surface_goal_with_induction(
@@ -3517,13 +3567,16 @@ pub(super) fn validate_pure_theorem_certificate(
             )));
         };
         debug_assert!(proof.is_complete());
-        return Ok(());
+        return Ok(Some(proof.completed_proposition()?));
     }
     if induction_setup.is_some() {
         return Err(ClickError::new(format!(
             "pure induction certificate for `{claim_label}` contains a step not supported by the checked Proof object"
         )));
     }
+    // The legacy pure driver checks the script without building a kernel
+    // proof object, so it issues no completion and the theorem contributes no
+    // whole-contract authority.
     prove_pure_theorem_script(
         claim_label,
         requires,
@@ -3535,7 +3588,8 @@ pub(super) fn validate_pure_theorem_certificate(
         context,
         &certificate.to_proof_tactics(),
         induction_setup,
-    )
+    )?;
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3625,8 +3679,37 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
+    lower_pure_theorem_proposition_recording_introductions(
+        theorem_name,
+        proposition,
+        values,
+        array_refs,
+        algebraic_values,
+        integer_values,
+        memory,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map(|(proposition, _)| proposition)
+}
+
+/// The pure-theorem lowering, also returning the head chain the kernel
+/// recorded. A pure goal keeps that record so its introductions read the
+/// exact binder the lowering chose rather than reconstructing one.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_pure_theorem_proposition_recording_introductions(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+    lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         &PureFactContext::new(),
         values,

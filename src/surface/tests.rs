@@ -1918,3 +1918,75 @@ mod project_tests;
 mod scaling_tests;
 mod surface_syntax;
 mod tactic_tests;
+
+#[test]
+fn integer_resource_fields_enforce_types_facts_and_snapshots() {
+    let c_source = "void change() { }";
+    let source = r#"
+        verifying "change.c";
+        resource account() { field total: Integer; fact total >= 0; }
+        void change() {
+            owns model: account();
+            requires model.total == 18446744073709551616;
+            ensures model.total == 18446744073709551617;
+            ensures old(model.total) == 18446744073709551616;
+        } by {
+            unfold(model);
+            execute();
+            let model = fold(account(), { total: 18446744073709551617 });
+            simp();
+        }
+    "#;
+    verify_c0_sources(source, &[("change.c", c_source)]).unwrap();
+    for invalid in [
+        source.replace("total: 18446744073709551617", "total: -1"),
+        source.replace("total: 18446744073709551617", "total: 1u32"),
+        source.replace(
+            "ensures old(model.total) == 18446744073709551616",
+            "ensures old(model.total) == 18446744073709551617",
+        ),
+        source.replace(
+            "ensures model.total == 18446744073709551617",
+            "ensures model.total == 18446744073709551616",
+        ),
+    ] {
+        assert!(
+            verify_c0_sources(&invalid, &[("change.c", c_source)]).is_err(),
+            "{invalid}"
+        );
+    }
+    // Prove that the resource fact itself rejects a negative initializer,
+    // independently of the postcondition's exact value.
+    let negative = source
+        .replace("total: 18446744073709551617", "total: -1")
+        .replace("ensures model.total == 18446744073709551617;", "");
+    assert!(verify_c0_sources(&negative, &[("change.c", c_source)]).is_err());
+    let expanded =
+        expand_c0_claim_source_by_label(source, &[("change.c", c_source)], "change.contract")
+            .unwrap();
+    verify_c0_sources(&expanded, &[("change.c", c_source)]).unwrap();
+}
+
+#[test]
+fn integer_resource_field_observes_unchanged_c_memory_read() {
+    let c_source = "int32 read(int32* p) { return *p; }";
+    let source = r#"
+        verifying "read.c";
+        resource cell(p: int32*) {
+            field value: Integer;
+            owns p[0..1];
+            fact to_integer(p[0]) == value;
+        }
+        int32 read(int32* p) {
+            owns model: cell(p);
+            ensures to_integer(result) == model.value;
+            ensures model.value == old(model.value);
+        } by {
+            unfold(model);
+            execute();
+            fold(model);
+            simp();
+        }
+    "#;
+    verify_c0_sources(source, &[("read.c", c_source)]).unwrap();
+}

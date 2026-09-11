@@ -1,6 +1,57 @@
 use super::*;
 use std::sync::Arc;
 
+/// The goal one loop-entry invariant certificate must discharge.
+///
+/// The entry obligation lowering hands back may be wrapped in leading
+/// implications: path guards and lowering-inserted loadability or definedness
+/// guards. An antecedent that is exactly one of the available facts is already
+/// discharged, so it is stripped. Every other antecedent stays in the goal and
+/// the certificate must introduce it explicitly.
+///
+/// Planning and independent validation both derive their goal here, so a
+/// retained certificate is always checked against the goal it was built for.
+/// Deciding "already known" with a prover on one side and exact containment on
+/// the other is what this function replaces.
+pub(in crate::surface::proof) fn loop_entry_checked_goal(
+    obligation: &Proposition,
+    available: &[Proposition],
+) -> Proposition {
+    let facts = crate::kernel::proof::ProofFacts::from_ordered(available);
+    let mut goal = obligation.clone();
+    while let Proposition::Implies(antecedent, body) = &goal {
+        if !facts.contains(antecedent) {
+            break;
+        }
+        let stripped = body.as_ref().clone();
+        goal = stripped;
+    }
+    goal
+}
+
+/// The kernel form the surface invariant itself denotes inside a checked goal
+/// that still carries leading guards.
+///
+/// Lowering wraps an entry obligation in implications that have no Surface
+/// connective: path guards and loadability or definedness premises. The
+/// certificate introduces those with `intro`, which keeps the written Surface
+/// goal focused, and the surface proposition map records the same pairing. A
+/// Surface goal that does write an implication keeps its antecedent, so a
+/// written antecedent is never paired away.
+fn invariant_lowering_under_guards<'a>(
+    surface: &ClickProposition,
+    goal: &'a Proposition,
+) -> &'a Proposition {
+    if matches!(surface, ClickProposition::Implies(_, _)) {
+        return goal;
+    }
+    let mut goal = goal;
+    while let Proposition::Implies(_, body) = goal {
+        goal = body;
+    }
+    goal
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -119,27 +170,9 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     .iter()
                     .find(|obligation| obligation.context() == Some(&obligation_context))
                     .map(|obligation| obligation.proposition().clone());
-                let planning_assumptions = assumptions_from_propositions(&planning_available);
-                let expected_goal = exact_expected_goal.clone().map(|mut expected_goal| {
-                    while let Proposition::Implies(antecedent, body) = &expected_goal {
-                        if !planning_assumptions.proves(antecedent) {
-                            break;
-                        }
-                        expected_goal = body.as_ref().clone();
-                    }
-                    expected_goal
-                });
-                let planning_facts =
-                    crate::kernel::proof::ProofFacts::from_ordered(&planning_available);
-                let proof_goal = exact_expected_goal.map(|mut proof_goal| {
-                    while let Proposition::Implies(antecedent, body) = &proof_goal {
-                        if !planning_facts.contains(antecedent) {
-                            break;
-                        }
-                        proof_goal = body.as_ref().clone();
-                    }
-                    proof_goal
-                });
+                let checked_goal = exact_expected_goal
+                    .as_ref()
+                    .map(|obligation| loop_entry_checked_goal(obligation, &planning_available));
                 // Planning an invariant's entry proof is proof search, not
                 // check. Classify it by the `by` clause the search is
                 // discharging, exactly as if it were written as a `have`.
@@ -176,8 +209,8 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         environment.predicate_environment,
                         environment.click_function_environment,
                         &context.surface_propositions,
-                        expected_goal.as_ref(),
-                        proof_goal.as_ref(),
+                        checked_goal.as_ref(),
+                        checked_goal.as_ref(),
                         environment.theorem_environment,
                     )
                 };
@@ -199,7 +232,10 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 all_invariants_checked &= certificate_already_checked;
                 initialization_surface_propositions
                     .borrow_mut()
-                    .record_lowering(proposition, &planned_fact)?;
+                    .record_lowering(
+                        proposition,
+                        invariant_lowering_under_guards(proposition, &planned_fact),
+                    )?;
                 tactics.push(ProofTactic::Have(ProofHave {
                     proposition: proposition.clone(),
                     proof: SourceProof::Script(planned_certificate.to_proof_tactics().to_vec()),
@@ -293,17 +329,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                             .find(|obligation| obligation.context() == Some(&obligation_context))
                             .map(|obligation| obligation.proposition().clone())
                     })
-                    .map(|mut goal| {
-                        let facts =
-                            crate::kernel::proof::ProofFacts::from_ordered(&certificate_available);
-                        while let Proposition::Implies(antecedent, body) = &goal {
-                            if !facts.contains(antecedent) {
-                                break;
-                            }
-                            goal = body.as_ref().clone();
-                        }
-                        goal
-                    });
+                    .map(|obligation| loop_entry_checked_goal(&obligation, &certificate_available));
                 let fact = exact_entry_goal
                     .or_else(|| {
                         surface_propositions
@@ -503,7 +529,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let surface_tactics = leaf.path_certificate().to_proof_tactics();
+        let surface_tactics = leaf.path_certificate()?.to_proof_tactics();
         let (certificate, selected_offsets) =
             certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
         let case_offsets = selected_offsets
@@ -746,7 +772,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let source_tactics = leaf.path_certificate().to_proof_tactics();
+        let source_tactics = leaf.path_certificate()?.to_proof_tactics();
         let region_simp = context_execution.presentation.region_simp;
         let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
         let invariants_close_requested = context_execution.core.region_invariants_close_requested;
@@ -957,4 +983,49 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         final_exit_candidates,
         nested_loop_rules,
     })
+}
+
+#[cfg(test)]
+mod loop_entry_goal_tests {
+    use super::*;
+
+    fn variable_is_zero(variable: u64) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(variable))),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        )
+    }
+
+    #[test]
+    fn only_exactly_available_leading_antecedents_are_stripped() {
+        let first = variable_is_zero(1);
+        let second = variable_is_zero(2);
+        let conclusion = variable_is_zero(3);
+        let obligation = Proposition::Implies(
+            Box::new(first.clone()),
+            Box::new(Proposition::Implies(
+                Box::new(second.clone()),
+                Box::new(conclusion.clone()),
+            )),
+        );
+
+        assert_eq!(loop_entry_checked_goal(&obligation, &[]), obligation);
+        // A second antecedent is only reachable once the first one is gone:
+        // stripping stops at the first antecedent that is not exactly available.
+        assert_eq!(
+            loop_entry_checked_goal(&obligation, std::slice::from_ref(&second)),
+            obligation
+        );
+        assert_eq!(
+            loop_entry_checked_goal(&obligation, std::slice::from_ref(&first)),
+            Proposition::Implies(Box::new(second.clone()), Box::new(conclusion.clone()))
+        );
+        assert_eq!(
+            loop_entry_checked_goal(&obligation, &[first, second]),
+            conclusion
+        );
+    }
 }

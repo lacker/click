@@ -46,20 +46,53 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
-    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
-    lower_fixed_state_proposition_with_values_and_assumptions(
+    lower_fixed_state_proposition_with_assumptions_recording_introductions(
         proposition,
         assumptions,
-        values,
-        &array_refs,
+        parameters,
+        arguments,
         pre_state,
         state,
         result,
         recorded_snapshots,
         predicate_environment,
         click_function_environment,
+    )
+    .map(|(proposition, _)| proposition)
+}
+
+/// [`lower_fixed_state_proposition_with_assumptions`], also returning the
+/// head chain the kernel recorded for the lowered proposition.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions_recording_introductions(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
+    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    lower_fixed_state_proposition_through_kernel_recording_introductions(
+        proposition,
+        assumptions,
+        &values,
+        &array_refs,
+        &BTreeMap::new(),
+        &crate::persistent::PersistentMap::default(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        &std::collections::BTreeSet::new(),
     )
 }
 
@@ -142,6 +175,44 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<Proposition, String> {
+    lower_fixed_state_proposition_through_kernel_recording_introductions(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        algebraic_values,
+        integer_values,
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    )
+    .map(|(proposition, _)| proposition)
+}
+
+/// The same lowering, also returning the head chain the kernel recorded for
+/// the proposition it produced. A newly stated goal keeps that record so an
+/// introduction knows which of its outermost nodes lowering inserted and
+/// which written binder each universal bound.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording_introductions(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let mut click_function_calls = BTreeSet::new();
     crate::surface::validation::collect_click_function_calls_in_proposition(
         proposition,
@@ -166,14 +237,15 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         click_function_environment,
         opaque_click_functions.clone(),
     )?;
-    let (lowered, _, obligations) = crate::kernel::c_lower_spec_proposition_at_state(
-        &states.lowering_state,
-        &spec,
-        Some(&states.entry_state),
-        assumptions,
-    )?;
+    let (lowered, _, obligations, introductions) =
+        crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+            &states.lowering_state,
+            &spec,
+            Some(&states.entry_state),
+            assumptions,
+        )?;
     refuse_impossible_loads(&obligations)?;
-    Ok(lowered)
+    Ok((lowered, introductions))
 }
 
 /// The kernel lowering of a proof-side proposition whose calls named in
@@ -398,6 +470,28 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 return Err("fold initializer has the wrong type".into());
             }
             Ok(crate::kernel::AlgebraicValue::C(value))
+        }
+        crate::kernel::ResourceFieldType::Integer => {
+            let spec = crate::surface::lowering::elaborate_fixed_state_integer_expression(
+                expression,
+                states.element_types,
+                &states.entry_state,
+                states.entry_values,
+                states.current_values,
+                None,
+                snapshots,
+                assumptions,
+                predicates,
+                functions,
+                BTreeSet::new(),
+            )?;
+            crate::kernel::capture_spec_integer_value(
+                &states.lowering_state,
+                &spec,
+                Some(&states.entry_state),
+                assumptions,
+            )
+            .map(crate::kernel::AlgebraicValue::Integer)
         }
         crate::kernel::ResourceFieldType::Algebraic(_) => {
             let spec = crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
@@ -667,32 +761,6 @@ impl FixedStateLowering {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_fixed_state_proposition_with_values_and_assumptions(
-    proposition: &ClickProposition,
-    assumptions: &PureFactContext,
-    values: BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
-    pre_state: &CState,
-    state: &CState,
-    result: Option<&CValue>,
-    recorded_snapshots: &RecordedSnapshots,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<Proposition, String> {
-    lower_fixed_state_proposition_through_kernel(
-        proposition,
-        assumptions,
-        &values,
-        array_refs,
-        pre_state,
-        state,
-        result,
-        recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
-    )
-}
-
 pub(in crate::surface::proof) fn reverse_surface_equality(
     proposition: &ClickProposition,
 ) -> Option<ClickProposition> {
@@ -1147,11 +1215,18 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
                             continue;
                         }
                         match &merged {
-                            Ok(steps) => {
-                                theorem.expanded_proof =
-                                    Some(ProofCertificate::from_steps(steps.clone()));
-                                theorem.expansion_blocker = None;
-                            }
+                            // A merged record that is not a certificate blocks
+                            // this claim's expansion; it never becomes one.
+                            Ok(steps) => match ProofCertificate::from_steps(steps.clone()) {
+                                Ok(certificate) => {
+                                    theorem.expanded_proof = Some(certificate);
+                                    theorem.expansion_blocker = None;
+                                }
+                                Err(error) => {
+                                    theorem.expanded_proof = None;
+                                    theorem.expansion_blocker = Some(error.message().to_string());
+                                }
+                            },
                             Err(message) => {
                                 theorem.expanded_proof = None;
                                 theorem.expansion_blocker = Some(format!(

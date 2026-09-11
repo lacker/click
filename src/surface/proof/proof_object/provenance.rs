@@ -153,7 +153,9 @@ impl<'a> Proof<'a> {
     /// belong to other lineages. A step-less marker node records the goal
     /// that was live before it (the split's parent), so walking back
     /// through markers follows the lineage to the root.
-    pub(in crate::surface::proof) fn path_certificate(&self) -> ProofCertificate {
+    pub(in crate::surface::proof) fn path_certificate(
+        &self,
+    ) -> Result<ProofCertificate, ClickError> {
         let mut steps = Vec::new();
         let mut goal = self.focused_branch_id();
         let mut node = Some(self.node.clone());
@@ -179,7 +181,7 @@ impl<'a> Proof<'a> {
         while let Some(current) = node {
             if ancestor.is_some_and(|ancestor| Arc::ptr_eq(ancestor, &current)) {
                 steps.reverse();
-                return Ok(ProofCertificate::from_steps(steps));
+                return ProofCertificate::from_steps(steps);
             }
             if let Some(step) = &current.step {
                 steps.push(step.as_ref().clone());
@@ -192,6 +194,6 @@ impl<'a> Proof<'a> {
             );
         }
         steps.reverse();
-        Ok(ProofCertificate::from_steps(steps))
+        ProofCertificate::from_steps(steps)
     }
 }

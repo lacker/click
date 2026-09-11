@@ -3177,6 +3177,7 @@ fn substitute_bitvector_variable_in_spec_integer(
     to: &Bitvector32Term,
 ) -> SpecIntegerExpression {
     match expression {
+        SpecIntegerExpression::ResourceField(_) => expression.clone(),
         SpecIntegerExpression::Term(term) => {
             SpecIntegerExpression::Term(substitute_bitvector_variable_in_integer(term, from, to))
         }
@@ -6275,6 +6276,7 @@ fn substitute_pointer_variable_in_spec_integer(
     to: &Pointer,
 ) -> SpecIntegerExpression {
     match expression {
+        SpecIntegerExpression::ResourceField(_) => expression.clone(),
         SpecIntegerExpression::Term(term) => {
             let Term::Integer(term) =
                 crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)

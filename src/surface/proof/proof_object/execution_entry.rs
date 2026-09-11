@@ -182,9 +182,11 @@ impl<'a> Proof<'a> {
                 self.step_error("post-execution tactics can be scheduled only at function exit")
             );
         }
-        let branch_skeleton = || {
-            ProofCertificate::from_steps(surface_branch_skeleton(self.certificate().steps()))
-                .to_proof_tactics()
+        let branch_skeleton = || -> Result<Vec<ProofTactic>, ClickError> {
+            Ok(
+                ProofCertificate::from_steps(surface_branch_skeleton(self.certificate().steps()))?
+                    .to_proof_tactics(),
+            )
         };
         // A tactic nested in a deferred `if` arm is drained at a flattened
         // position no deferral can know; its capture matches by tactic
@@ -206,7 +208,7 @@ impl<'a> Proof<'a> {
                         tactic_index: nested_tactic_index,
                         source_index: nested_source_index,
                         post_execution_index: DeferredTacticCapture::NESTED,
-                        branch_skeleton: branch_skeleton(),
+                        branch_skeleton: branch_skeleton()?,
                     })
                 } else {
                     None
@@ -221,7 +223,7 @@ impl<'a> Proof<'a> {
                     tactic_index,
                     source_index,
                     post_execution_index: execution.presentation.post_execution_tactics.len(),
-                    branch_skeleton: branch_skeleton(),
+                    branch_skeleton: branch_skeleton()?,
                 })
             } else {
                 None

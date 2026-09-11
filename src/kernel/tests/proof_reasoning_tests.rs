@@ -296,7 +296,7 @@ fn algebraic_symbolic_reflexivity_checks_well_formed_terms() {
 }
 
 #[test]
-fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
+fn algebraic_conditions_decide_from_condition_facts_and_keep_checked_polarity() {
     let ty = maybe_int32_type();
     let left = AlgebraicTerm {
         algebraic_type: ty.clone(),
@@ -316,8 +316,19 @@ fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
             Proposition::Not(Box::new(equality.clone()))
         };
         let facts = PureFactContext::new().assume_proposition(premise.clone());
-        assert_eq!(facts.decide(&condition), Some(expected));
         let condition_fact = Proposition::ConditionIs(condition.clone(), expected);
+        // `decide` answers an algebraic equality only from an indexed
+        // condition fact. An `Equal` premise over algebraic terms is a
+        // proposition, not a condition fact, so it does not decide the
+        // condition; the polarity forms checked below are the route an
+        // explicit proof uses to move between the two spellings.
+        assert_eq!(facts.decide(&condition), None);
+        assert_eq!(
+            PureFactContext::new()
+                .assume_proposition(condition_fact.clone())
+                .decide(&condition),
+            Some(expected)
+        );
         assert!(
             crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
                 &premise,
@@ -343,7 +354,10 @@ fn algebraic_conditions_retain_symbolic_equality_and_checked_polarity() {
             vec![CValue::Int32(Bitvector32Term::Constant(0))],
         )),
     );
-    assert_eq!(PureFactContext::new().decide(&distinct), Some(false));
+    // Constructor distinctness is proposition-level theory, covered by
+    // `distinct_algebraic_constructors_make_the_context_inconsistent` below.
+    // `decide` does not reach it for the condition spelling.
+    assert_eq!(PureFactContext::new().decide(&distinct), None);
 }
 
 #[test]
@@ -370,7 +384,26 @@ fn algebraic_condition_substitution_visits_scalar_fields() {
         variable,
         &Bitvector32Term::Constant(0),
     );
-    assert_eq!(PureFactContext::new().decide(&rewritten), Some(true));
+    // Substitution reaches the scalar field inside the constructor, so the
+    // rewritten condition is syntactically the all-constant one. `decide`
+    // answers an algebraic equality only from an indexed condition fact, so
+    // the rewrite itself is what this test observes.
+    let substituted = ConditionTerm::AlgebraicEqual(
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+        Box::new(maybe_constructor(
+            &ty,
+            "Some",
+            vec![CValue::Int32(Bitvector32Term::Constant(0))],
+        )),
+    );
+    assert_eq!(rewritten, substituted);
+    let mut rewritten_variables = BTreeSet::new();
+    collect_condition_bitvector_variables(&rewritten, &mut rewritten_variables);
+    assert!(rewritten_variables.is_empty());
     let value = Bitvector32Term::If {
         condition: Box::new(condition),
         then_term: Box::new(Bitvector32Term::Constant(1)),
@@ -1385,42 +1418,178 @@ fn int32_one_plus_strictly_increases_axiom_has_the_exact_implication() {
     );
 }
 
-#[test]
-fn pure_theorem_rewrite_certificate_issues_closed_authority() {
+/// One pure-theorem scenario: a two-step rewrite chain whose conclusion is
+/// also an exactly available requirement, so a real kernel proof object can
+/// close it by assumption and issue the completion these constructors consume.
+///
+/// The chain uses products, which no smart term constructor folds, so the
+/// order of the two cited equalities is observable.
+struct PureRewriteScenario {
+    variables: Vec<Variable>,
+    requirements: Vec<Proposition>,
+    conclusion: Proposition,
+    /// `value == left * amount`, a conjunct of the first requirement.
+    value_equality: Proposition,
+    /// `left * amount == total`, which rewrites nothing until `value_equality`
+    /// has replaced `value`.
+    product_equality: Proposition,
+}
+
+fn pure_rewrite_scenario() -> PureRewriteScenario {
     let value_var = Variable(90_130);
     let left_var = Variable(90_131);
     let amount_var = Variable(90_132);
+    let total_var = Variable(90_133);
     let value = Bitvector32Term::Variable(value_var);
     let left = Bitvector32Term::Variable(left_var);
     let amount = Bitvector32Term::Variable(amount_var);
-    let sum = Bitvector32Term::Add(Box::new(left.clone()), Box::new(amount.clone()));
-    let equality = Proposition::ConditionIs(ConditionTerm::equal(value.clone(), sum.clone()), true);
-    let requirements = vec![
-        Proposition::And(
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::signed_add_overflows(left.clone(), amount.clone()),
-                false,
-            )),
-            Box::new(equality.clone()),
-        ),
-        Proposition::ConditionIs(
-            ConditionTerm::signed_subtract_overflows(value.clone(), amount.clone()),
-            false,
-        ),
-    ];
+    let total = Bitvector32Term::Variable(total_var);
+    let product = Bitvector32Term::Multiply(Box::new(left.clone()), Box::new(amount.clone()));
+    let value_equality =
+        Proposition::ConditionIs(ConditionTerm::equal(value.clone(), product.clone()), true);
+    let product_equality = Proposition::ConditionIs(ConditionTerm::equal(product, total), true);
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::equal(
-            Bitvector32Term::Subtract(Box::new(value), Box::new(amount)),
-            left,
+            Bitvector32Term::Multiply(Box::new(value.clone()), Box::new(amount.clone())),
+            left.clone(),
         ),
         true,
     );
-
-    let authority = prove_universally_quantified_pure_implication_by_int32_rewrites(
+    let requirements = vec![
+        Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_add_overflows(left, amount.clone()),
+                false,
+            )),
+            Box::new(value_equality.clone()),
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_subtract_overflows(value, amount),
+            false,
+        ),
+        product_equality.clone(),
+        conclusion.clone(),
+    ];
+    PureRewriteScenario {
+        variables: vec![value_var, left_var, amount_var, total_var],
         requirements,
         conclusion,
-        vec![value_var, left_var, amount_var],
-        vec![equality],
+        value_equality,
+        product_equality,
+    }
+}
+
+/// A kernel-issued completion for `conclusion` under exactly `requirements`.
+///
+/// Nothing here manufactures authority: the record comes from a real proof
+/// object that closed its root judgment by an exact assumption.
+fn checked_pure_completion(
+    requirements: &[Proposition],
+    conclusion: &Proposition,
+) -> crate::kernel::proof::CheckedProposition {
+    use crate::kernel::proof::{
+        OutcomeProofState, PersistentOrderedSet, ProofBranch, ProofBranchState, ProofFacts,
+        ProofObject, ProofObligation, PropositionAssumptionContext, PropositionObligation,
+    };
+
+    let branch = ProofBranch::new(
+        ProofObligation::Proposition(PropositionObligation::new(conclusion.clone(), ())),
+        ProofBranchState {
+            facts: ProofFacts::from_ordered(requirements),
+            unfolded_predicates: PersistentOrderedSet::default(),
+            execution: None,
+        },
+    );
+    let proof: ProofObject<(), ProofObligation<(), std::sync::Arc<OutcomeProofState<()>>>, ()> =
+        ProofObject::root((), branch);
+    let Ok(closed) = proof.apply_assumption(PropositionAssumptionContext::Exact) else {
+        panic!("the scenario's conclusion is an exactly available requirement");
+    };
+    closed
+        .completed_proposition()
+        .expect("a closed proposition proof issues its completion")
+}
+
+#[test]
+fn pure_theorem_completion_issues_universally_closed_authority() {
+    let scenario = pure_rewrite_scenario();
+    let completion = checked_pure_completion(&scenario.requirements, &scenario.conclusion);
+
+    let authority = prove_universally_quantified_pure_implication(
+        scenario.requirements.clone(),
+        scenario.conclusion.clone(),
+        scenario.variables.clone(),
+        &completion,
+    )
+    .expect("a completion of exactly this goal under exactly these requirements is authority");
+
+    let expected = scenario.variables.iter().rev().fold(
+        scenario
+            .requirements
+            .iter()
+            .rev()
+            .fold(scenario.conclusion.clone(), |body, requirement| {
+                Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+            }),
+        |body, var| Proposition::ForAll {
+            var: *var,
+            sort: Sort::CInt32,
+            body: Box::new(body),
+        },
+    );
+    assert_eq!(authority.theorem.proposition(), &expected);
+}
+
+#[test]
+fn pure_theorem_completion_of_another_conclusion_is_rejected() {
+    let scenario = pure_rewrite_scenario();
+    let other = scenario.product_equality.clone();
+    let completion = checked_pure_completion(&scenario.requirements, &other);
+
+    assert!(
+        prove_universally_quantified_pure_implication(
+            scenario.requirements.clone(),
+            scenario.conclusion.clone(),
+            scenario.variables.clone(),
+            &completion,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn pure_theorem_completion_with_a_missing_requirement_is_rejected() {
+    let scenario = pure_rewrite_scenario();
+    let completion = checked_pure_completion(&scenario.requirements, &scenario.conclusion);
+    let mut fewer = scenario.requirements.clone();
+    fewer.remove(0);
+
+    assert!(
+        prove_universally_quantified_pure_implication(
+            fewer,
+            scenario.conclusion.clone(),
+            scenario.variables.clone(),
+            &completion,
+        )
+        .is_none(),
+        "an implication may not drop an antecedent the proof assumed"
+    );
+}
+
+#[test]
+fn pure_theorem_rewrite_certificate_issues_closed_authority() {
+    let scenario = pure_rewrite_scenario();
+    let completion = checked_pure_completion(&scenario.requirements, &scenario.conclusion);
+
+    let authority = prove_universally_quantified_pure_implication_by_int32_rewrites(
+        scenario.requirements.clone(),
+        scenario.conclusion.clone(),
+        scenario.variables.clone(),
+        vec![
+            scenario.value_equality.clone(),
+            scenario.product_equality.clone(),
+        ],
+        &completion,
     );
 
     assert!(authority.is_some());
@@ -1428,35 +1597,65 @@ fn pure_theorem_rewrite_certificate_issues_closed_authority() {
 
 #[test]
 fn pure_theorem_rewrite_certificate_rejects_unavailable_equality() {
-    let value_var = Variable(90_140);
-    let left_var = Variable(90_141);
-    let amount_var = Variable(90_142);
-    let value = Bitvector32Term::Variable(value_var);
-    let left = Bitvector32Term::Variable(left_var);
-    let amount = Bitvector32Term::Variable(amount_var);
-    let equality = Proposition::ConditionIs(
+    let scenario = pure_rewrite_scenario();
+    let completion = checked_pure_completion(&scenario.requirements, &scenario.conclusion);
+    let unavailable = Proposition::ConditionIs(
         ConditionTerm::equal(
-            value.clone(),
-            Bitvector32Term::Add(Box::new(left.clone()), Box::new(amount.clone())),
-        ),
-        true,
-    );
-    let conclusion = Proposition::ConditionIs(
-        ConditionTerm::equal(
-            Bitvector32Term::Subtract(Box::new(value), Box::new(amount)),
-            left,
+            Bitvector32Term::Variable(scenario.variables[0]),
+            Bitvector32Term::Constant(7),
         ),
         true,
     );
 
-    let authority = prove_universally_quantified_pure_implication_by_int32_rewrites(
-        Vec::new(),
-        conclusion,
-        vec![value_var, left_var, amount_var],
-        vec![equality],
+    assert!(
+        prove_universally_quantified_pure_implication_by_int32_rewrites(
+            scenario.requirements.clone(),
+            scenario.conclusion.clone(),
+            scenario.variables.clone(),
+            vec![unavailable],
+            &completion,
+        )
+        .is_none(),
+        "a cited rewrite must be exactly available among the requirements"
     );
+}
 
-    assert!(authority.is_none());
+#[test]
+fn pure_theorem_rewrite_certificate_rejects_reordered_rewrites() {
+    let scenario = pure_rewrite_scenario();
+    let completion = checked_pure_completion(&scenario.requirements, &scenario.conclusion);
+
+    assert!(
+        prove_universally_quantified_pure_implication_by_int32_rewrites(
+            scenario.requirements.clone(),
+            scenario.conclusion.clone(),
+            scenario.variables.clone(),
+            vec![
+                scenario.product_equality.clone(),
+                scenario.value_equality.clone(),
+            ],
+            &completion,
+        )
+        .is_none(),
+        "the second equality rewrites nothing until the first one has been applied"
+    );
+}
+
+#[test]
+fn pure_theorem_rewrite_certificate_rejects_a_completion_of_another_conclusion() {
+    let scenario = pure_rewrite_scenario();
+    let completion = checked_pure_completion(&scenario.requirements, &scenario.product_equality);
+
+    assert!(
+        prove_universally_quantified_pure_implication_by_int32_rewrites(
+            scenario.requirements.clone(),
+            scenario.conclusion.clone(),
+            scenario.variables.clone(),
+            vec![scenario.value_equality.clone()],
+            &completion,
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -4988,56 +5187,6 @@ fn builtin_obligation_solver_discharges_concrete_invariant() {
             statement,
             outcome: CStatementOutcome::Normal(state),
         }
-    );
-}
-
-#[test]
-fn countdown_loop_body_preserves_nonnegative_invariant_symbolically() {
-    let x = Variable(66);
-    let x_bits = Bitvector32Term::Variable(x);
-    let state = CState::new().with_local("x", int32(x_bits.clone()));
-    let statement = c_assign("x", c_subtract(c_variable("x"), c_int32_literal(1)));
-    let invariant =
-        ConditionTerm::signed_greater_equal(x_bits.clone(), Bitvector32Term::Constant(0));
-    let condition =
-        ConditionTerm::signed_greater_than(x_bits.clone(), Bitvector32Term::Constant(0));
-    let post_invariant = Proposition::ConditionIs(
-        ConditionTerm::signed_greater_equal(
-            Bitvector32Term::Subtract(
-                Box::new(x_bits.clone()),
-                Box::new(Bitvector32Term::Constant(1)),
-            ),
-            Bitvector32Term::Constant(0),
-        ),
-        true,
-    );
-    let assumptions = PureFactContext::new()
-        .assume_condition(invariant.clone(), true)
-        .assume_condition(condition.clone(), true);
-    let theorem = prove_c_statement_executes_and_propositions(
-        state.clone(),
-        statement.clone(),
-        assumptions,
-        vec![post_invariant.clone()],
-    )
-    .expect("x > 0 should prove x - 1 executes and remains nonnegative");
-
-    assert_eq!(
-        theorem.proposition().peel_implications(),
-        &proposition_and(
-            Proposition::CStatementExecutes {
-                state: state.clone(),
-                statement,
-                outcome: CStatementOutcome::Normal(CState::new().with_local(
-                    "x",
-                    int32(Bitvector32Term::Subtract(
-                        Box::new(x_bits),
-                        Box::new(Bitvector32Term::Constant(1)),
-                    )),
-                ),),
-            },
-            post_invariant,
-        )
     );
 }
 

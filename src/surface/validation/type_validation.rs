@@ -155,10 +155,8 @@ pub(super) fn validate_theorem_proposition_expression_types(
             right,
         } => {
             let mut locals = BTreeSet::new();
-            let left_kind =
-                integer_expression_kind(left, integer_bindings, click_functions, &mut locals);
-            let right_kind =
-                integer_expression_kind(right, integer_bindings, click_functions, &mut locals);
+            let left_kind = integer_expression_kind(left, integer_bindings, &mut locals);
+            let right_kind = integer_expression_kind(right, integer_bindings, &mut locals);
             if left_kind == Some(true) || right_kind == Some(true) {
                 if left_kind.is_none() || right_kind.is_none() {
                     return Err(ClickError::new(format!(
@@ -222,7 +220,6 @@ pub(super) fn validate_theorem_proposition_expression_types(
 fn integer_expression_kind(
     expression: &ContractExpression,
     integer_bindings: &BTreeSet<String>,
-    click_functions: &BTreeMap<String, ClickFunctionType>,
     locals: &mut BTreeSet<String>,
 ) -> Option<bool> {
     match expression {
@@ -230,17 +227,24 @@ fn integer_expression_kind(
         ContractExpression::Call { name, arguments } if name == "to_integer" => {
             (arguments.len() == 1).then_some(true)
         }
+        ContractExpression::ResourceField(access)
+            if access.click_type == Some(ClickType::Integer) =>
+        {
+            Some(true)
+        }
         ContractExpression::Binding(name) => {
             (locals.contains(name) || integer_bindings.contains(name)).then_some(true)
         }
-        ContractExpression::Negate(inner) => {
-            integer_expression_kind(inner, integer_bindings, click_functions, locals)
-        }
+        ContractExpression::Negate(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        } => integer_expression_kind(inner, integer_bindings, locals),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right) => {
-            let left = integer_expression_kind(left, integer_bindings, click_functions, locals)?;
-            let right = integer_expression_kind(right, integer_bindings, click_functions, locals)?;
+            let left = integer_expression_kind(left, integer_bindings, locals)?;
+            let right = integer_expression_kind(right, integer_bindings, locals)?;
             Some(left || right)
         }
         ContractExpression::Let {
@@ -249,10 +253,9 @@ fn integer_expression_kind(
             value,
             body,
         } => {
-            integer_expression_kind(value, integer_bindings, click_functions, locals)?;
+            integer_expression_kind(value, integer_bindings, locals)?;
             let inserted = locals.insert(name.clone());
-            let body_kind =
-                integer_expression_kind(body, integer_bindings, click_functions, locals);
+            let body_kind = integer_expression_kind(body, integer_bindings, locals);
             if inserted {
                 locals.remove(name);
             }
@@ -261,9 +264,6 @@ fn integer_expression_kind(
         ContractExpression::AlgebraicMatch { arms, .. } => arms
             .first()
             .and_then(|arm| matches!(arm.body, ContractExpression::Binding(_)).then_some(true)),
-        ContractExpression::Call { name, .. } => click_functions
-            .get(name)
-            .and_then(|function| (function.return_type == ClickType::Integer).then_some(true)),
         _ => None,
     }
 }
@@ -310,10 +310,8 @@ fn validate_comparison_expression_types(
 ) -> Result<(), ClickError> {
     let mut locals = BTreeSet::new();
     let no_integer_parameters = BTreeSet::new();
-    let left_kind =
-        integer_expression_kind(left, &no_integer_parameters, &BTreeMap::new(), &mut locals);
-    let right_kind =
-        integer_expression_kind(right, &no_integer_parameters, &BTreeMap::new(), &mut locals);
+    let left_kind = integer_expression_kind(left, &no_integer_parameters, &mut locals);
+    let right_kind = integer_expression_kind(right, &no_integer_parameters, &mut locals);
     if left_kind == Some(true) || right_kind == Some(true) {
         if left_kind.is_none() || right_kind.is_none() {
             return Err(ClickError::new(format!(
@@ -406,6 +404,11 @@ fn infer_spec_value_type(
     context: &str,
 ) -> Result<SpecValueType, ClickError> {
     match expression {
+        ContractExpression::ResourceField(access)
+            if access.click_type == Some(ClickType::Integer) =>
+        {
+            Ok(SpecValueType::Integer)
+        }
         ContractExpression::ResourceField(access)
             if matches!(access.click_type, Some(ClickType::Algebraic(_))) =>
         {
@@ -1038,9 +1041,7 @@ pub(super) fn infer_contract_expression_type(
     match expression {
         ContractExpression::ResourceField(access) => match &access.click_type {
             Some(ClickType::C(ty)) => Ok(Some(*ty)),
-            Some(ClickType::Integer) => Err(ClickError::new(
-                "Integer resource fields are not available in this slice",
-            )),
+            Some(ClickType::Integer) => Ok(None),
             _ => Err(ClickError::new("expected a scalar resource field")),
         },
         ContractExpression::IntegerLiteral(value) => {

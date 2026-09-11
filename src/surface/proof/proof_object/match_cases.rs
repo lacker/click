@@ -243,7 +243,7 @@ impl<'a> Proof<'a> {
                     .ok_or_else(|| self.step_error("constructor-arm `contradiction` requires an exact fact and its negation in that arm"))?;
                 plan.excluded[index] = Some(ProofCertificate::from_steps(vec![
                     ProofStep::Contradiction(surface.clone()),
-                ]));
+                ])?);
             }
         }
         if plan.excluded.iter().all(Option::is_some) {
