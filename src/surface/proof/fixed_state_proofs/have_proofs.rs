@@ -82,6 +82,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions_
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         assumptions,
+        assumptions,
         &values,
         &array_refs,
         &BTreeMap::new(),
@@ -178,6 +179,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         assumptions,
+        assumptions,
         values,
         array_refs,
         algebraic_values,
@@ -201,6 +203,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
 pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording_introductions(
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
+    obligation_assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
@@ -245,7 +248,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
             assumptions,
         )?;
     refuse_impossible_loads(&obligations)?;
-    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    refuse_unproved_conversion_bounds(&obligations, obligation_assumptions)?;
     Ok((lowered, introductions))
 }
 

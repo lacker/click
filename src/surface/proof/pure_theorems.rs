@@ -1263,14 +1263,7 @@ fn verify_theorem_ensure(
     )? {
         return Ok(verified);
     }
-    let empty_lowering_assumptions = PureFactContext::new();
-    let lowering_assumptions = if format!("{surface_goal:?}").contains("to_int")
-        || format!("{surface_goal:?}").contains("to_uint")
-    {
-        assumptions_from_propositions(&context.requires)
-    } else {
-        empty_lowering_assumptions
-    };
+    let lowering_assumptions = assumptions_from_propositions(&context.requires);
     let (goal, goal_introductions) = lower_pure_theorem_proposition_recording_introductions(
         theorem.name(),
         surface_goal,
@@ -3722,6 +3715,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
     let state = CState::new().with_memory(memory.clone());
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
+        assumptions,
         assumptions,
         values,
         array_refs,
