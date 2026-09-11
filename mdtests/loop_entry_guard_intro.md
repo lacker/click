@@ -48,7 +48,7 @@ int32 loop_entry_guard_intro(int32 p[3]) {
             }
             have forall (k: int32) { 0 <= k and k < i implies p[k] == k } by {
                 intro();
-                normalize();
+                enumerate();
             }
         }
         preserve by simp;

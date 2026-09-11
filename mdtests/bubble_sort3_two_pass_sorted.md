@@ -76,7 +76,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
             }
             have all_le_range(p, 0, j, p[j]) by {
                 unfold(all_le_range);
-                normalize();
+                enumerate();
             }
         }
         preserve by {
@@ -380,7 +380,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
             }
             have all_le_range(p, 0, j, p[j]) by {
                 unfold(all_le_range);
-                normalize();
+                enumerate();
             }
         }
         preserve by {

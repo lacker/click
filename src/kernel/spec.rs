@@ -70,7 +70,7 @@ pub(crate) fn capture_spec_algebraic_value(
         || path
             .obligations
             .iter()
-            .any(|o| !assumptions.proves(o.proposition()))
+            .any(|o| !assumptions.proves_exact(o.proposition()))
     {
         return Err("algebraic initializer has unproved evaluation obligations".into());
     }
@@ -3772,8 +3772,17 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                                 current.clone(),
                                 population.count.clone(),
                             );
+                            // A bare condition: the exact fact index, the
+                            // intrinsic rule, and the frozen condition checker
+                            // may still discharge it. Nothing else does; the
+                            // remainder becomes an explicit obligation.
+                            let discharged = path_assumptions
+                                .proves_exact(&Proposition::ConditionIs(overflow.clone(), false))
+                                || PureFactContext::decide_intrinsically(&overflow) == Some(false)
+                                || !path_assumptions.should_defer_non_exact_condition_reasoning()
+                                    && path_assumptions.decide(&overflow) == Some(false);
                             let no_overflow = Proposition::ConditionIs(overflow, false);
-                            if !path_assumptions.proves(&no_overflow) {
+                            if !discharged {
                                 obligations.push(
                                     ProofObligation::verification_condition(no_overflow)
                                         .with_context("resource pattern count fits in int32"),

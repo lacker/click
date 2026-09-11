@@ -1004,11 +1004,73 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
 pub(crate) fn normalizes_context_free_leaf(goal: &Proposition) -> bool {
     if matches!(
         goal,
-        Proposition::And(_, _) | Proposition::Or(_, _) | Proposition::Implies(_, _)
+        Proposition::And(_, _)
+            | Proposition::Or(_, _)
+            | Proposition::Implies(_, _)
+            | Proposition::ForAll { .. }
+            | Proposition::Exists { .. }
     ) {
         return false;
     }
     normalizes_context_free(goal)
+}
+
+/// Whether one enumerated instance of a finite universal is discharged
+/// without a proof search.
+///
+/// `enumerate` names its instances, so checking them is structural: a
+/// conjunction splits, an instance guard that folds to true is consumed, and
+/// every leaf must be an exactly available fact or close through the
+/// normalization leaf. A leaf that is itself a quantifier is a further proof
+/// step, not something this enumeration discharges.
+pub(crate) fn enumerated_instance_is_discharged(
+    instance: &Proposition,
+    facts: &super::ProofFacts,
+) -> bool {
+    if facts.contains(instance) {
+        return true;
+    }
+    match instance {
+        Proposition::And(left, right) => {
+            enumerated_instance_is_discharged(left, facts)
+                && enumerated_instance_is_discharged(right, facts)
+        }
+        Proposition::Implies(guard, conclusion) => {
+            // A guard this instantiation folds to false makes the instance
+            // vacuous; one that folds to true leaves the conclusion.
+            instance_guard_folds_to_false(guard)
+                || instance_guard_folds_to_true(guard)
+                    && enumerated_instance_is_discharged(conclusion, facts)
+        }
+        _ => normalizes_context_free_leaf(instance),
+    }
+}
+
+/// Whether an instance guard folds to true with no ambient fact and no
+/// logical search: conjunction splits structurally and each conjunct closes
+/// through the normalization leaf.
+fn instance_guard_folds_to_true(guard: &Proposition) -> bool {
+    match guard {
+        Proposition::And(left, right) => {
+            instance_guard_folds_to_true(left) && instance_guard_folds_to_true(right)
+        }
+        _ => normalizes_context_free_leaf(guard),
+    }
+}
+
+/// Whether an instance guard folds to false the same way: one false conjunct
+/// refutes a conjunction, and a disjunction needs both sides refuted. Each
+/// leaf is refuted through the normalization leaf on its negation.
+fn instance_guard_folds_to_false(guard: &Proposition) -> bool {
+    match guard {
+        Proposition::And(left, right) => {
+            instance_guard_folds_to_false(left) || instance_guard_folds_to_false(right)
+        }
+        Proposition::Or(left, right) => {
+            instance_guard_folds_to_false(left) && instance_guard_folds_to_false(right)
+        }
+        _ => normalizes_context_free_leaf(&Proposition::Not(Box::new(guard.clone()))),
+    }
 }
 
 pub(crate) fn is_single_normalization_condition(proposition: &Proposition) -> bool {

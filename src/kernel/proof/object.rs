@@ -946,20 +946,11 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             return Err(PropositionCloseError::ExpectedFiniteUniversal);
         };
         for (_, instance) in instances {
-            if super::fact_reasoning::normalizes_context_free(&instance)
-                || facts.contains(&instance)
-            {
-                continue;
+            // The structural instance check, not the general prover: an
+            // instance that is itself quantified is a further proof step.
+            if !super::fact_reasoning::enumerated_instance_is_discharged(&instance, facts) {
+                return Err(PropositionCloseError::MissingFiniteInstance);
             }
-            // An instance whose guard is constant true is held as its
-            // conclusion, the form a proof states it in.
-            if let Proposition::Implies(guard, conclusion) = &instance
-                && super::fact_reasoning::normalizes_context_free(guard)
-                && facts.contains(conclusion)
-            {
-                continue;
-            }
-            return Err(PropositionCloseError::MissingFiniteInstance);
         }
         Ok(self.closed_focused())
     }

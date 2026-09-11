@@ -2,8 +2,9 @@
 
 This checks the first existential proposition slice. Click can parse explicit
 `exists`, lower symbolic `(lo..hi).any(...)` to a kernel existential, and reuse
-matching assumptions. Existential goal introduction is covered separately by the
-explicit `witness` tactic.
+matching assumptions. An existential goal that no assumption already states is
+introduced by the explicit `witness` tactic: the concrete range below names the
+member that satisfies it rather than letting the kernel search the range.
 
 ```c filename=exists_and_symbolic_any.c
 int32 exists_and_symbolic_any(int32 x, int32 n) {
@@ -19,7 +20,11 @@ int32 exists_and_symbolic_any(int32 x, int32 n) {
     requires (0..n).any(|k| { k == x });
     ensures same_exists: exists (k: int32) { k == x } by auto;
     ensures same_any: (0..n).any(|k| { k == x }) by auto;
-    ensures concrete_any_still_unrolls: (0..3).any(|k| { k == 1 }) by auto;
+    ensures concrete_any_still_unrolls: (0..3).any(|k| { k == 1 }) by {
+        execute();
+        witness(k = 1);
+        simp();
+    }
 }
 ```
 

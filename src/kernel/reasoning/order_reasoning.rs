@@ -90,6 +90,22 @@ pub(in crate::kernel) fn finite_forall_ranges(
     variables: &[Variable],
     body: &Proposition,
 ) -> Option<Vec<FiniteForAllRange>> {
+    finite_forall_ranges_allowing_empty(variables, body, false)
+}
+
+/// [`finite_forall_ranges`], optionally admitting a guard that no integer
+/// satisfies.
+///
+/// An empty hull is a range with zero members. Callers that ask a question
+/// about the instances — `enumerate` checks each one — may take it, because
+/// checking zero instances is exactly what the guard licenses. Callers that
+/// harvest facts from instances gain nothing from it and keep rejecting it,
+/// so this stays an opt-in.
+pub(in crate::kernel) fn finite_forall_ranges_allowing_empty(
+    variables: &[Variable],
+    body: &Proposition,
+    allow_empty: bool,
+) -> Option<Vec<FiniteForAllRange>> {
     let variable_set = variables.iter().copied().collect::<BTreeSet<_>>();
     let mut leaves = Vec::new();
     if !collect_guarded_leaves(body, &mut leaves) || leaves.is_empty() {
@@ -128,7 +144,7 @@ pub(in crate::kernel) fn finite_forall_ranges(
         .iter()
         .map(|variable| {
             let (lower, upper) = *hull.get(variable)?;
-            if lower > upper {
+            if lower > upper && !allow_empty {
                 return None;
             }
             Some(FiniteForAllRange { lower, upper })

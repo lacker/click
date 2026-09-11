@@ -159,12 +159,16 @@ pub(crate) fn finite_forall_goal_instances(
     if variables.is_empty() {
         return None;
     }
-    let ranges = finite_forall_ranges(&variables, body)?;
+    // A guard that no integer satisfies names a range with zero members;
+    // `enumerate` then checks zero instances, which is exactly the evidence
+    // a vacuous universal has.
+    let ranges =
+        crate::kernel::reasoning::finite_forall_ranges_allowing_empty(&variables, body, true)?;
     // The instances are the quantifier's own finite domain: one unit of
     // deterministic work each, so a wide domain is charged to the tactic
     // that asked, never cut by a count.
     let instance_count = ranges.iter().try_fold(1usize, |count, range| {
-        usize::try_from(range.upper - range.lower + 1)
+        usize::try_from((range.upper - range.lower + 1).max(0))
             .ok()
             .and_then(|width| count.checked_mul(width))
     })?;
@@ -375,6 +379,64 @@ impl PureFactContext {
             _ => weakened.remove_proposition_fact(proposition),
         }
         weakened.derive_simp_proposition(proposition)
+    }
+
+    /// Decide one *bare* atomic memory or resource proposition with the
+    /// retained theory checkers named in `issues/simplify-kernel.md`.
+    ///
+    /// This is the obligation-suppression route that survives the removal of
+    /// the general prover from lowering and execution. It traverses no
+    /// logical structure, chooses no arm, instantiates no quantifier, and
+    /// answers `false` for every proposition that is not already one of the
+    /// atomic memory or resource shapes. Each arm is exactly the arm
+    /// [`Self::proves`] uses for that shape, so it can only lose answers.
+    pub(in crate::kernel) fn proves_atomic_memory_or_resource(
+        &self,
+        proposition: &Proposition,
+    ) -> bool {
+        match proposition {
+            Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes,
+            } => self.proves_memory_loadable(memory, base, bytes),
+            Proposition::CMemoryCanStore {
+                memory,
+                pointer,
+                byte_width,
+            } => self.proves_memory_access(memory, pointer, *byte_width),
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                self.proves_memory_disjoint(
+                    left_base,
+                    left_start,
+                    left_end,
+                    right_base,
+                    right_start,
+                    right_end,
+                ) || self.proves_memory_disjoint_from_resource_separate(
+                    left_base,
+                    left_start,
+                    left_end,
+                    right_base,
+                    right_start,
+                    right_end,
+                )
+            }
+            Proposition::CResourceSeparate { left, right } => {
+                self.proves_resource_separate(left, right)
+            }
+            Proposition::CResourceContains { parent, child } => {
+                self.proves_resource_contains(parent, child)
+            }
+            _ => false,
+        }
     }
 
     /// Check one atomic theory consequence against this exact premise set.
@@ -3124,9 +3186,13 @@ impl PureFactContext {
         let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
             return false;
         };
-        let mut order_facts = self.condition_order_facts().as_ref().clone();
-        self.collect_derived_order_facts(&mut order_facts);
-        self.collect_quantified_order_facts_for_condition(condition, &mut order_facts);
+        // Order facts come from `condition_facts` only. A bound that lives
+        // inside a guarded implication or a finite universal reaches this
+        // theory through an explicit `intro`, `extract`, or `enumerate` step,
+        // or through the exact conjunction split `assume_proposition`
+        // performs; deriving it here meant discharging antecedents with the
+        // general prover and instantiating quantifiers inside a theory query.
+        let order_facts = self.condition_order_facts();
         self.has_order_path_in_facts(&left, &right, strict, &order_facts)
     }
 

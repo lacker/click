@@ -684,7 +684,12 @@ fn add_path_fact_with_visibility_after_effect(
         );
     }
 
-    if assumptions.proves(&proposition) || facts.iter().any(|fact| fact.proposition == proposition)
+    // Redundant-fact suppression is an exact test only. A general proof that
+    // the path fact already follows is proof search inside lowering; keeping
+    // the fact instead costs one fact-store entry and keeps the path's public
+    // post-state exact.
+    if assumptions.proves_exact(&proposition)
+        || facts.iter().any(|fact| fact.proposition == proposition)
     {
         return Some(());
     }
@@ -820,10 +825,15 @@ pub(in crate::kernel) fn add_proof_obligation_with_context(
         return add_condition_obligation(obligations, assumptions, condition, value, context);
     }
 
+    // Obligation suppression keeps two routes: the exact fact index, and the
+    // retained atomic memory/resource checkers for a proposition that is
+    // already one of those atomic shapes. A proposition with logical
+    // structure is emitted as an obligation instead of being discharged by a
+    // proof search inside lowering.
     let defer_contextual_proof = assumptions.should_defer_non_exact_loadability_obligations()
         && matches!(proposition, Proposition::CMemoryLoadable { .. });
     if assumptions.proves_exact(&proposition)
-        || !defer_contextual_proof && assumptions.proves(&proposition)
+        || !defer_contextual_proof && assumptions.proves_atomic_memory_or_resource(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)
@@ -839,13 +849,37 @@ pub(in crate::kernel) fn add_proof_obligation_with_context(
     Some(())
 }
 
+/// Whether `proposition` is one bare condition that the frozen condition
+/// checker already decides with the value it asserts.
+///
+/// This is the migration's sanctioned replacement for a general prover call
+/// on a bare `ConditionIs`: it adds no theory, traverses no logical
+/// structure, and answers nothing about a proposition of any other shape.
+fn bare_condition_is_decided(assumptions: &PureFactContext, proposition: &Proposition) -> bool {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return false;
+    };
+    if PureFactContext::decide_intrinsically(condition) == Some(*value) {
+        return true;
+    }
+    !assumptions.should_defer_non_exact_condition_reasoning()
+        && assumptions.decide(condition) == Some(*value)
+}
+
 pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
 ) {
-    if assumptions.proves(&proposition)
+    // Suppression is the exact index, the frozen condition checker for a
+    // proposition that is already one bare condition, or the retained atomic
+    // memory/resource checkers. A required verification condition with
+    // logical structure is emitted for an ordinary Surface tactic to
+    // discharge.
+    if assumptions.proves_exact(&proposition)
+        || bare_condition_is_decided(assumptions, &proposition)
+        || assumptions.proves_atomic_memory_or_resource(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)
