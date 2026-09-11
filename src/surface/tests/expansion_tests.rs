@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn integer_sum_range_fold_expands_and_reverifies() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/integer_sum_range_fold.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("summation mdtest should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources).unwrap_or_else(|error| {
+        panic!(
+            "summation ordinary verification failed: {}",
+            error.message()
+        )
+    });
+    let expanded = expand_c0_claim_source(click_source, &c_sources, "sum", CProofClaim::Grouped)
+        .expect("the summation grouped proof should expand");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded summation proof should reverify independently");
+}
+
+#[test]
 fn integer_quantifier_smart_proofs_expand_and_recheck() {
     let source = r#"
 theorem integer_forall_simp() {

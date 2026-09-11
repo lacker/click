@@ -606,7 +606,10 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 PropositionAssumptionContext::Exact => facts.contains(proposition),
                 PropositionAssumptionContext::Pure => facts.pure_assumption_available(proposition),
                 PropositionAssumptionContext::Materialized => {
-                    facts.materialization_available(proposition)
+                    // Alpha-equivalent quantified and Integer facts remain
+                    // materialized when their exact snapshot-aware keys match.
+                    // This does not admit cross-effect transport.
+                    facts.pure_assumption_available(proposition)
                 }
             }
         };
@@ -2151,6 +2154,154 @@ mod tests {
             Err(_) => panic!("the kernel should retain ambient reservations across subgoals"),
         };
         assert_ne!(witness, ambient);
+    }
+
+    #[test]
+    fn materialized_assumption_accepts_same_snapshot_alpha_facts_only() {
+        use crate::kernel::proof::{
+            ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
+        };
+        use crate::kernel::{
+            CMemory, CState, CValue, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm,
+            MachineIntegerType, Pointer, PointerOffsetTerm, SharedIntegerRangeEndpoint,
+        };
+        type TestProof = ProofObject<
+            (),
+            ProofObligation<(), Arc<OutcomeProofState<()>>>,
+            ProofExecutionState<()>,
+        >;
+        let root = |facts: ProofFacts, goal: Proposition| {
+            TestProof::root(
+                (),
+                ProofBranch::new(
+                    ProofObligation::Proposition(PropositionObligation::new(goal, ())),
+                    ProofBranchState {
+                        facts,
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: Some(Arc::new(ProofExecutionState::new(
+                            ExecutionProofCore::at_entry(
+                                CState::new(),
+                                ExecutionFrontier {
+                                    region: ExecutionRegionKind::LoopBody,
+                                    position: FrontierPosition::RegionBoundary,
+                                    ..Default::default()
+                                },
+                            ),
+                            (),
+                        ))),
+                    },
+                ),
+            )
+        };
+        let before = CMemory::new().with_block("alpha", 16);
+        let loadable = |memory: CMemory, variable| Proposition::ForAll {
+            var: variable,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Implies(
+                Box::new(Proposition::And(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedLessEqual(
+                            Box::new(Bitvector32Term::Constant(0)),
+                            Box::new(Bitvector32Term::Variable(variable)),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedLessEqual(
+                            Box::new(Bitvector32Term::Variable(variable)),
+                            Box::new(Bitvector32Term::Constant(16)),
+                        ),
+                        true,
+                    )),
+                )),
+                Box::new(Proposition::CMemoryLoadable {
+                    memory,
+                    base: Pointer {
+                        block: "alpha".into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    bytes: Bitvector32Term::Variable(variable),
+                }),
+            )),
+        };
+        let quantified_source = loadable(before.clone(), Variable(41));
+        let quantified_goal = loadable(before.clone(), Variable(42));
+        assert!(
+            root(
+                ProofFacts::from_ordered(std::slice::from_ref(&quantified_source)),
+                quantified_goal.clone(),
+            )
+            .apply_assumption(PropositionAssumptionContext::Materialized)
+            .is_ok()
+        );
+        assert!(
+            root(ProofFacts::default(), quantified_goal)
+                .apply_assumption(PropositionAssumptionContext::Materialized)
+                .is_err()
+        );
+
+        let fold = |accumulator, item| {
+            IntegerTerm::range_fold(
+                IntegerRangeFoldIndex::Int32 {
+                    start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+                    end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(2)),
+                },
+                IntegerTerm::constant_i64(0),
+                accumulator,
+                item,
+                IntegerTerm::add(
+                    IntegerTerm::var(accumulator),
+                    IntegerTerm::from_machine(
+                        MachineIntegerType::Int32,
+                        Bitvector32Term::Variable(item),
+                    )
+                    .unwrap(),
+                ),
+            )
+        };
+        let fold_fact = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(
+                IntegerTerm::var(Variable(50)).into(),
+                fold(Variable(51), Variable(52)).into(),
+            ),
+            true,
+        );
+        let fold_goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(
+                IntegerTerm::var(Variable(50)).into(),
+                fold(Variable(61), Variable(62)).into(),
+            ),
+            true,
+        );
+        assert!(
+            root(
+                ProofFacts::from_ordered(std::slice::from_ref(&fold_fact)),
+                fold_goal.clone(),
+            )
+            .apply_assumption(PropositionAssumptionContext::Materialized)
+            .is_ok()
+        );
+        assert!(
+            root(ProofFacts::default(), fold_goal.clone())
+                .apply_assumption(PropositionAssumptionContext::Materialized)
+                .is_err()
+        );
+
+        let changed = before.clone().store(
+            Pointer {
+                block: "alpha".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            CValue::Int32(Bitvector32Term::Constant(7)),
+        );
+        assert!(
+            root(
+                ProofFacts::from_ordered(&[loadable(before, Variable(70))]),
+                loadable(changed, Variable(71)),
+            )
+            .apply_assumption(PropositionAssumptionContext::Materialized)
+            .is_err()
+        );
     }
 
     #[test]

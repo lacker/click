@@ -1,7 +1,8 @@
 use super::*;
 use crate::kernel::{
-    AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, IntegerTerm,
-    PureFunctionArgument, SharedIntegerTerm, SharedMachineIntegerTerm,
+    AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue,
+    IntegerRangeFoldIndex, IntegerTerm, PureFunctionArgument, SharedIntegerRangeEndpoint,
+    SharedIntegerTerm, SharedMachineIntegerTerm,
 };
 use crate::surface::planning::proposition_search::PropositionSearch;
 
@@ -1292,28 +1293,54 @@ fn rewrite_atomic_proposition_by_exact_equality(
 
     // A mathematical observation of a machine value is still congruent under
     // a checked equality for that machine value.  Keep this bridge narrow:
-    // only the root machine observation is exposed, so arbitrary Integer
-    // arithmetic does not acquire a new rewrite/search path.  Re-interning
-    // through `from_machine` also folds a rewritten constant to the ordinary
-    // mathematical constant while retaining the carrier when it remains
-    // symbolic.
+    // only the root machine observation and Int32 range-fold endpoints are
+    // exposed, so arbitrary Integer arithmetic does not acquire a new
+    // rewrite/search path. Re-interning through `from_machine` also folds a
+    // rewritten constant to the ordinary mathematical constant while
+    // retaining the carrier when it remains symbolic.
     fn rewrite_integer_observation(
         term: &SharedIntegerTerm,
         from: &Bitvector32Term,
         to: &Bitvector32Term,
     ) -> SharedIntegerTerm {
-        let IntegerTerm::Machine(machine) = term.as_ref() else {
-            return term.clone();
-        };
-        let value = rewrite_term(machine.value(), from, to);
-        if value == *machine.value() {
-            return term.clone();
+        match term.as_ref() {
+            IntegerTerm::Machine(machine) => {
+                let value = rewrite_term(machine.value(), from, to);
+                if value == *machine.value() {
+                    return term.clone();
+                }
+                IntegerTerm::from_machine(machine.ty(), value.clone())
+                    .unwrap_or_else(|| {
+                        IntegerTerm::Machine(SharedMachineIntegerTerm::intern(machine.ty(), value))
+                    })
+                    .into()
+            }
+            IntegerTerm::RangeFold {
+                index: IntegerRangeFoldIndex::Int32 { start, end },
+                initial,
+                accumulator,
+                item,
+                body,
+            } => {
+                let rewritten_start = rewrite_term(start.value(), from, to);
+                let rewritten_end = rewrite_term(end.value(), from, to);
+                if rewritten_start == *start.value() && rewritten_end == *end.value() {
+                    return term.clone();
+                }
+                IntegerTerm::RangeFold {
+                    index: IntegerRangeFoldIndex::Int32 {
+                        start: SharedIntegerRangeEndpoint::intern(rewritten_start),
+                        end: SharedIntegerRangeEndpoint::intern(rewritten_end),
+                    },
+                    initial: initial.clone(),
+                    accumulator: *accumulator,
+                    item: *item,
+                    body: body.clone(),
+                }
+                .into()
+            }
+            _ => term.clone(),
         }
-        IntegerTerm::from_machine(machine.ty(), value.clone())
-            .unwrap_or_else(|| {
-                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(machine.ty(), value))
-            })
-            .into()
     }
 
     let rewrite_resource_term = |resource: &CResource| match resource {
@@ -2404,7 +2431,9 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::{IntegerTerm, MachineIntegerType};
+    use crate::kernel::{
+        IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType, SharedIntegerRangeEndpoint,
+    };
 
     #[test]
     fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
@@ -2583,6 +2612,101 @@ mod tests {
         let error = rewrite_proposition_by_exact_equality(&goal, &equality, &[])
             .expect_err("an equality absent from the checked facts must be rejected");
         assert!(error.contains("exact available fact"), "{error}");
+    }
+
+    #[test]
+    fn integer_range_fold_rewrite_changes_only_int32_endpoints() {
+        let from = Bitvector32Term::Variable(Variable(71));
+        let to = Bitvector32Term::Variable(Variable(72));
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("fold", 4));
+        let body = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+            MachineIntegerType::Int32,
+            Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(Pointer {
+                    block: "fold".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                }),
+            ),
+        ));
+        let fold = IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Int32 {
+                start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+                end: SharedIntegerRangeEndpoint::intern(from.clone()),
+            },
+            IntegerTerm::constant_i64(0),
+            Variable(73),
+            Variable(74),
+            body.clone(),
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(fold.clone().into(), IntegerTerm::constant_i64(0).into()),
+            true,
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(from), Box::new(to.clone())),
+            true,
+        );
+        let rewritten = rewrite_proposition_by_exact_equality(
+            &goal,
+            &equality,
+            std::slice::from_ref(&equality),
+        )
+        .expect("a checked endpoint equality should rewrite the Int32 fold bound");
+        let expected = IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Int32 {
+                start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+                end: SharedIntegerRangeEndpoint::intern(to),
+            },
+            IntegerTerm::constant_i64(0),
+            Variable(73),
+            Variable(74),
+            body,
+        );
+        assert_eq!(
+            rewritten,
+            Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(expected.into(), IntegerTerm::constant_i64(0).into()),
+                true,
+            )
+        );
+    }
+
+    #[test]
+    fn integer_range_fold_rewrite_rejects_missing_or_integer_bound_equalities() {
+        let from = Bitvector32Term::Variable(Variable(81));
+        let to = Bitvector32Term::Variable(Variable(82));
+        let fold = IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Integer {
+                start: IntegerTerm::constant_i64(0).into(),
+                end: IntegerTerm::var(Variable(81)).into(),
+            },
+            IntegerTerm::constant_i64(0),
+            Variable(83),
+            Variable(84),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(83)),
+                IntegerTerm::var(Variable(84)),
+            ),
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(fold.into(), IntegerTerm::constant_i64(0).into()),
+            true,
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(from), Box::new(to)),
+            true,
+        );
+        let missing = rewrite_proposition_by_exact_equality(&goal, &equality, &[])
+            .expect_err("an absent endpoint equality must be rejected");
+        assert!(missing.contains("exact available fact"), "{missing}");
+        let unchanged = rewrite_proposition_by_exact_equality(
+            &goal,
+            &equality,
+            std::slice::from_ref(&equality),
+        )
+        .expect_err("machine equality must not rewrite an Integer range bound");
+        assert!(unchanged.contains("does not occur"), "{unchanged}");
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub(super) enum SearchFailureKind {
     Rejected,
     Unsupported,
     Exhausted,
+    UnclosedGoal,
 }
 
 struct SearchFailureFrame {
@@ -199,6 +200,36 @@ pub(super) fn record_search_note(strategy: impl Into<String>, reason: impl Into<
     });
 }
 
+/// Retains a checked proof-state diagnostic for a structurally reached leaf.
+/// Unlike a plain note, this candidate carries the lazy goal renderer so the
+/// terminal report can expose the actual proposition without formatting it
+/// during search.
+pub(super) fn record_unclosed_goal(
+    strategy: impl Into<String>,
+    error: &crate::surface::ClickError,
+) {
+    if crate::instrumentation::deadline_exceeded() {
+        return;
+    }
+    SEARCH_SCOPES.with(|scopes| {
+        let mut scopes = scopes.borrow_mut();
+        let Some(scope) = scopes.last_mut() else {
+            return;
+        };
+        let mut reason = error.raw_summary().to_owned();
+        truncate_reason(&mut reason);
+        push_failure(
+            scope,
+            SearchFailure {
+                strategy: strategy.into(),
+                reason,
+                diagnostic: error.diagnostic().cloned(),
+                kind: SearchFailureKind::UnclosedGoal,
+            },
+        );
+    });
+}
+
 fn push_failure(scope: &mut SearchFailureFrame, failure: SearchFailure) {
     if scope.failures.iter().any(|existing| {
         existing.strategy == failure.strategy
@@ -211,7 +242,9 @@ fn push_failure(scope: &mut SearchFailureFrame, failure: SearchFailure) {
         scope.failures.push(failure);
     } else if matches!(
         failure.kind,
-        SearchFailureKind::Unsupported | SearchFailureKind::Exhausted
+        SearchFailureKind::Unsupported
+            | SearchFailureKind::Exhausted
+            | SearchFailureKind::UnclosedGoal
     ) && let Some(index) = scope.failures.iter().position(|existing| {
         matches!(
             existing.kind,
@@ -428,6 +461,24 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_goal_survives_saturated_search_frame() {
+        let scope = search_scope("priority");
+        for index in 0..MAX_SEARCH_FAILURES {
+            let _ =
+                candidate_outcome::<()>(Err(ClickError::new(format!("routine rejection {index}"))))
+                    .unwrap();
+        }
+        record_unclosed_goal("leaf", &ClickError::new("leaf remained open"));
+        let failures = scope.finish();
+        assert_eq!(failures.len(), MAX_SEARCH_FAILURES);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.kind == "UnclosedGoal")
+        );
+    }
+
+    #[test]
     fn nested_unsupported_failure_survives_parent_capacity() {
         let outer = search_scope("outer");
         for index in 0..MAX_SEARCH_FAILURES {
@@ -440,5 +491,29 @@ mod tests {
         drop(inner);
         let failures = outer.finish();
         assert!(failures.iter().any(|failure| failure.kind == "Unsupported"));
+    }
+
+    #[test]
+    fn nested_unclosed_goal_survives_parent_capacity() {
+        let outer = search_scope("outer");
+        for index in 0..MAX_SEARCH_FAILURES {
+            let _ =
+                candidate_outcome::<()>(Err(ClickError::new(format!("routine rejection {index}"))))
+                    .unwrap();
+        }
+        let inner = search_scope("inner");
+        record_unclosed_goal("inner leaf", &ClickError::new("leaf remained open"));
+        drop(inner);
+        let failures = outer.finish();
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.kind == "UnclosedGoal")
+        );
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.strategy == "inner leaf")
+        );
     }
 }

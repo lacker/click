@@ -132,6 +132,15 @@ pub(crate) fn render_terminal_message(
             rendered.push_str(&failure.kind);
             rendered.push_str("]: ");
             rendered.push_str(&failure.reason);
+            if failure.kind == "UnclosedGoal"
+                && let Some(goal) = failure
+                    .diagnostic
+                    .as_ref()
+                    .and_then(|diagnostic| diagnostic.kernel_goal())
+            {
+                rendered.push_str("; goal: ");
+                rendered.push_str(&render::render_proposition(goal));
+            }
         }
         if search_failures.len() > 8 {
             rendered.push_str("\n    … <additional search candidates omitted>");
@@ -269,5 +278,42 @@ mod tests {
         assert!(report.len() <= 64 * 1024);
         assert!(report.contains("proof diagnostic truncated"));
         assert!(report.is_char_boundary(report.len()));
+    }
+
+    #[test]
+    fn terminal_search_report_renders_unclosed_goal_lazily() {
+        let state = Arc::new(CountingState {
+            goal: Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true),
+            calls: AtomicUsize::new(0),
+        });
+        let diagnostic = Arc::new(ProofFailureDiagnostic {
+            origin: ProofDiagnosticOrigin {
+                stage: "proof step".into(),
+                location: "loop closure".into(),
+            },
+            claim_label: "claim".into(),
+            reason: "leaf remained open".into(),
+            state: Some(state),
+        });
+        let report = render_terminal_message(
+            "closure failed",
+            &ProofFailureDiagnostic {
+                origin: ProofDiagnosticOrigin {
+                    stage: "proof step".into(),
+                    location: "loop closure".into(),
+                },
+                claim_label: "claim".into(),
+                reason: "closure failed".into(),
+                state: None,
+            },
+            &[ProofSearchFailure {
+                strategy: "loop invariant bundle leaf".into(),
+                reason: "leaf remained open".into(),
+                kind: "UnclosedGoal".into(),
+                diagnostic: Some(diagnostic),
+            }],
+        );
+        assert!(report.contains("[UnclosedGoal]"));
+        assert!(report.contains("goal: true"));
     }
 }

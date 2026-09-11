@@ -1,3 +1,26 @@
+# Integer range fold summation
+
+The loop invariant tracks the exact prefix sum and bounds it using the element
+range, which proves the intermediate machine addition stays within `int32`.
+At loop exit, `i <= n` together with `not i < n` establishes `i == n`; the
+final proof rewrites that endpoint explicitly before returning so the exact
+prefix invariant matches the full range in the postcondition.
+
+```c filename=integer_sum_range_fold.c
+int32 sum(int32 a[], int32 n) {
+    int32 total;
+    int32 i;
+    total = 0;
+    i = 0;
+    while (i < n) {
+        total = total + a[i];
+        i = i + 1;
+    }
+    return total;
+}
+```
+
+```click
 verifying "integer_sum_range_fold.c";
 
 int32 sum(int32 a[], int32 n) {
@@ -318,6 +341,27 @@ int32 sum(int32 a[], int32 n) {
             close_invariants by { simp(); }
         }
     }
+    have i == n by {
+        apply(int32_le_and_not_lt_implies_eq(i, n)) using {
+            i <= n;
+            not i < n;
+        }
+    }
+    have n == i by {
+        simp() using {
+            i == n;
+        }
+    }
+    have to_integer(total) ==
+        (0..n).fold(0, |acc, k| { acc + to_integer(a[k]) }) by {
+        rewrite(n == i);
+        assumption();
+    }
     step();
     simp();
 }
+```
+
+```expect
+pass
+```

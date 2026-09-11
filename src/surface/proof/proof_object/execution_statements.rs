@@ -109,33 +109,26 @@ impl<'a> Proof<'a> {
     ///
     /// The bundle is a right-nested conjunction of members, and a tuple
     /// measure's decrease member is a right-nested disjunction over pivots.
-    /// This planner therefore tries only three checked operations: `both`
-    /// over a conjunction, `left`/`right` over a pivot disjunction, and at a
-    /// member one `arithmetic() using` step over the named premises above or
-    /// the ordinary smart closer. Every candidate advances this same `Proof`,
-    /// so the retained certificate is the explicit proof `click expand`
-    /// prints and re-verifies.
+    /// This planner therefore tries only checked structural operations over
+    /// the bundle's fixed shape (`both` and `intro`), `left`/`right` over a
+    /// pivot disjunction, and at a member one `arithmetic() using` step over
+    /// the named premises above or the ordinary smart closer. Every
+    /// candidate advances this same `Proof`, so the retained certificate is
+    /// the explicit proof `click expand` prints and re-verifies.
     pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
         &self,
         premises: &[NamedArithmeticPremise],
     ) -> Result<Option<Self>, ClickError> {
         let mut scope = attempt::search_scope("loop invariant bundle closure");
         check_verification_deadline()?;
-        let (Some(goal), Some(surface_goal)) = (self.goal().cloned(), self.surface_goal().cloned())
-        else {
-            attempt::record_search_note(
-                "loop invariant bundle closure",
-                "unsupported: no surface presentation is available for the loop invariant bundle goal",
-            );
+        let Some(goal) = self.goal() else {
             return Ok(None);
         };
-        if matches!(goal, Proposition::And(_, _))
-            && crate::surface::proof::surface_certificates::surface_logical_children(
-                &surface_goal,
-                true,
-            )
-            .is_some()
-        {
+        // The generated invariant bundle can have no Surface spelling. Its
+        // conjunction and implication structure is nevertheless checked by
+        // the kernel, so descend that structure directly and retain the
+        // ordinary Both/Intro certificate nodes.
+        if matches!(goal, Proposition::And(_, _)) {
             let (split_proof, split, ids) = self.split_focused_both()?;
             let marker = split_proof.checkpoint();
             let Some(left) = split_proof
@@ -156,16 +149,23 @@ impl<'a> Proof<'a> {
             }
             return result;
         }
-        if matches!(goal, Proposition::And(_, _)) {
-            attempt::record_search_note(
-                "loop invariant bundle closure",
-                "unsupported: the loop invariant bundle has no matching surface conjunction presentation",
-            );
+        if matches!(goal, Proposition::Implies(_, _)) {
+            let Some(introduced) = attempt::candidate_outcome(self.apply_step(ProofStep::Intro))?
+            else {
+                return Ok(None);
+            };
+            let result = introduced.plan_invariant_bundle_closure(premises)?;
+            if result.is_some() {
+                scope.succeed();
+            }
+            return Ok(result);
         }
+        let surface_goal = self.surface_goal().cloned();
         if matches!(goal, Proposition::Or(_, _))
+            && let Some(surface_goal) = surface_goal.as_ref()
             && let Some((surface_left, surface_right)) =
                 crate::surface::proof::surface_certificates::surface_logical_children(
-                    &surface_goal,
+                    surface_goal,
                     false,
                 )
         {
@@ -193,6 +193,14 @@ impl<'a> Proof<'a> {
             return Ok(None);
         }
         let result = self.close_bundle_member(premises)?;
+        if result.is_none() {
+            // Keep one bounded, lazy diagnostic for the actual kernel leaf.
+            // The enclosing closure may try several ordinary candidates, so
+            // this is recorded only after every checked leaf operation has
+            // declined; it does not turn a miss into an error.
+            let diagnostic = self.step_error("checked loop invariant bundle leaf remained open");
+            attempt::record_unclosed_goal("loop invariant bundle leaf", &diagnostic);
+        }
         if result.is_some() {
             scope.succeed();
         }

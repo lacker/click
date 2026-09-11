@@ -515,24 +515,6 @@ fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
 }
 
 #[test]
-fn integer_sum_range_fold_reproduction_fixture_is_kept_unchanged() {
-    let c = include_str!("../../../tests/fixtures/proof_diagnostics/integer_sum_range_fold.c");
-    let click =
-        include_str!("../../../tests/fixtures/proof_diagnostics/integer_sum_range_fold.click");
-    let error = verify_c0_sources(click, &[("integer_sum_range_fold.c", c)])
-        .expect_err("the preserved reproduction should fail at its known unsupported step");
-    let message = error.message();
-    assert!(message.contains("source tactic 44"), "{message}");
-    assert!(message.contains("kernel goal"), "{message}");
-    assert!(
-        message.contains("unsupported") || message.contains("no surface"),
-        "{message}"
-    );
-    assert!(message.contains("recent premises"), "{message}");
-    assert!(!message.contains("CMemory {"), "{message}");
-}
-
-#[test]
 fn negative_mdtest_failures_include_structured_kernel_context() {
     for name in [
         "max_bad_ensure",

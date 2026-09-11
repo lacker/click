@@ -2,6 +2,7 @@
 // `src/surface/planning/proposition_search.rs`. The kernel itself never
 // calls it, so the tests import the planner explicitly.
 use super::*;
+use crate::kernel::{IntegerRangeFoldIndex, IntegerTerm, SharedIntegerTerm};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 fn indexed_fact(index: u32) -> Proposition {
@@ -37,6 +38,144 @@ fn pure_identity_fixture() -> PureTheoremContext {
         requires: Vec::new(),
         surface_requirements: SurfacePropositionMap::default(),
     }
+}
+
+fn invariant_bundle_leaf_fixture() -> (Proposition, Proposition) {
+    let pointer = Pointer {
+        block: "sum".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let loadable = Proposition::ForAll {
+        var: Variable(30),
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessEqual(
+                        Box::new(Bitvector32Term::Constant(0)),
+                        Box::new(Bitvector32Term::Variable(Variable(30))),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessEqual(
+                        Box::new(Bitvector32Term::Variable(Variable(30))),
+                        Box::new(Bitvector32Term::Constant(16)),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::CMemoryLoadable {
+                memory: CMemory::new().with_block("sum", 16),
+                base: pointer,
+                bytes: Bitvector32Term::Variable(Variable(30)),
+            }),
+        )),
+    };
+    let fold = IntegerTerm::range_fold(
+        IntegerRangeFoldIndex::Integer {
+            start: SharedIntegerTerm::from(IntegerTerm::constant_i64(0)),
+            end: SharedIntegerTerm::from(IntegerTerm::Variable(Variable(40))),
+        },
+        IntegerTerm::constant_i64(0),
+        Variable(41),
+        Variable(42),
+        IntegerTerm::Add(
+            SharedIntegerTerm::from(IntegerTerm::Variable(Variable(41))),
+            SharedIntegerTerm::from(IntegerTerm::Variable(Variable(42))),
+        ),
+    );
+    let fold_equality = Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(
+            SharedIntegerTerm::from(fold),
+            SharedIntegerTerm::from(IntegerTerm::Variable(Variable(43))),
+        ),
+        true,
+    );
+    (loadable, fold_equality)
+}
+
+#[test]
+fn invariant_bundle_closure_descends_surface_free_both_and_intro_and_rechecks() {
+    let (loadable, fold_equality) = invariant_bundle_leaf_fixture();
+    let goal = Proposition::And(
+        Box::new(loadable.clone()),
+        Box::new(Proposition::Implies(
+            Box::new(loadable.clone()),
+            Box::new(Proposition::Implies(
+                Box::new(loadable.clone()),
+                Box::new(fold_equality.clone()),
+            )),
+        )),
+    );
+    let context = pure_identity_fixture();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let root = Proof::for_pure_goal(
+        "surface-free invariant bundle",
+        &[loadable, fold_equality],
+        goal,
+        &context,
+        &predicates,
+        &functions,
+        &theorems,
+    );
+    assert!(root.surface_goal().is_none());
+    let checked = root
+        .plan_invariant_bundle_closure(&[])
+        .expect("bundle planning should remain a checked operation")
+        .expect("explicit leaf facts should close the generated bundle");
+    assert!(checked.is_complete());
+    let certificate = checked.certificate();
+    assert!(matches!(
+        certificate.steps(),
+        [ProofStep::Both { left_proof, right_proof }]
+            if left_proof.steps() == [ProofStep::Assumption]
+                && right_proof.steps() == [
+                    ProofStep::Intro,
+                    ProofStep::Intro,
+                    ProofStep::Assumption,
+                ]
+    ));
+    let rechecked = root
+        .try_planned_linear_script(&certificate.to_proof_tactics())
+        .expect("the generated structural certificate should recheck")
+        .expect("rechecking the generated certificate should close");
+    assert_eq!(rechecked.certificate(), certificate);
+}
+
+#[test]
+fn invariant_bundle_closure_rejects_surface_free_bundle_without_fold_equality() {
+    let (loadable, fold_equality) = invariant_bundle_leaf_fixture();
+    let goal = Proposition::And(
+        Box::new(loadable.clone()),
+        Box::new(Proposition::Implies(
+            Box::new(loadable.clone()),
+            Box::new(Proposition::Implies(
+                Box::new(loadable.clone()),
+                Box::new(fold_equality),
+            )),
+        )),
+    );
+    let context = pure_identity_fixture();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let root = Proof::for_pure_goal(
+        "missing invariant bundle leaf",
+        &[loadable],
+        goal,
+        &context,
+        &predicates,
+        &functions,
+        &theorems,
+    );
+    assert!(
+        root.plan_invariant_bundle_closure(&[])
+            .expect("missing leaf should be a bounded rejection")
+            .is_none()
+    );
 }
 
 #[test]
