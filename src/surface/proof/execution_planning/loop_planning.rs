@@ -387,38 +387,49 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 let surface_propositions = initialization_surface_propositions.borrow();
                 // Check structured initialization through the same checked
                 // proof object that emitted it, including both/and children.
-                let exact_entry_goal = invariant_index
-                    .and_then(|index| {
-                        let obligation_context =
-                            format!("loop {loop_index} invariant {index} entry");
-                        entry_obligations
-                            .iter()
-                            .find(|obligation| obligation.context() == Some(&obligation_context))
-                            .map(|obligation| obligation.proposition().clone())
-                    })
-                    .map(|obligation| loop_entry_checked_goal(&obligation, &certificate_available));
-                let fact = exact_entry_goal
-                    .or_else(|| {
-                        surface_propositions
-                            .unique_kernel(&have.proposition)
-                            .cloned()
-                    })
-                    .map(Ok)
-                    .unwrap_or_else(|| {
-                        lower_fixed_state_proposition(
-                            &have.proposition,
-                            &certificate_available,
-                            environment.parsed_function.parameters(),
-                            environment.arguments,
-                            environment.initial_state,
-                            &context.state,
-                            None,
-                            &recorded_snapshots,
-                            environment.predicate_environment,
-                            environment.click_function_environment,
-                        )
-                    })
-                    .map_err(ClickError::new)?;
+                // Validation reads the same obligation, the same checked
+                // goal, and the same lowering record the planner read, so
+                // the certificate is rechecked against the goal it was
+                // built for and its introductions reach the same nodes.
+                let exact_entry_obligation = invariant_index.and_then(|index| {
+                    let obligation_context = format!("loop {loop_index} invariant {index} entry");
+                    entry_obligations
+                        .iter()
+                        .find(|obligation| obligation.context() == Some(&obligation_context))
+                });
+                let exact_entry_goal = exact_entry_obligation.map(|obligation| {
+                    let (goal, stripped) = loop_entry_checked_goal_with_stripped(
+                        obligation.proposition(),
+                        &certificate_available,
+                    );
+                    let introductions = obligation.introductions().map(|recorded| {
+                        recorded.get(stripped..).unwrap_or_default().to_vec()
+                    });
+                    (goal, introductions)
+                });
+                let (fact, goal_introductions) = match exact_entry_goal {
+                    Some(checked) => checked,
+                    None => match surface_propositions.unique_kernel(&have.proposition).cloned() {
+                        Some(fact) => (fact, None),
+                        None => {
+                            let (fact, recorded) =
+                                lower_fixed_state_proposition_with_assumptions_recording_introductions(
+                                    &have.proposition,
+                                    &assumptions_from_propositions(&certificate_available),
+                                    environment.parsed_function.parameters(),
+                                    environment.arguments,
+                                    environment.initial_state,
+                                    &context.state,
+                                    None,
+                                    &recorded_snapshots,
+                                    environment.predicate_environment,
+                                    environment.click_function_environment,
+                                )
+                                .map_err(ClickError::new)?;
+                            (fact, Some(recorded))
+                        }
+                    },
+                };
                 let root = Proof::for_fixed_state_surface_goal(
                     &step_claim_label,
                     certificate_index,
@@ -436,7 +447,8 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     environment.theorem_environment,
                     &[],
                     &[],
-                );
+                )
+                .with_recorded_goal_introductions(goal_introductions);
                 let SourceProof::Script(tactics) = &have.proof else {
                     return Err(ClickError::new(
                         "invariant initialization requires an explicit proof body",
