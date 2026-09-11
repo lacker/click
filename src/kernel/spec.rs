@@ -10,6 +10,12 @@ pub(super) struct SpecPropositionPath {
     pub(super) proposition: Proposition,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
+    /// The head chain of `proposition`, outermost first, recorded by the
+    /// lowering step that built each node. A consumer that introduces the
+    /// head of this proposition reads which nodes lowering inserted and
+    /// which kernel variable each written universal was bound to, instead of
+    /// guessing from the shape the written syntax happens to share.
+    pub(super) introductions: LoweringIntroductions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -230,6 +236,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                         }
                     };
                     result.push(SpecPropositionPath {
+                        introductions: Vec::new(),
                         proposition: Proposition::ConditionIs(condition, true),
                         facts,
                         obligations,
@@ -330,6 +337,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                         assumptions,
                     ) {
                         paths.push(SpecPropositionPath {
+                            introductions: Vec::new(),
                             proposition: Proposition::And(
                                 Box::new(left_path.proposition.clone()),
                                 Box::new(right_path.proposition),
@@ -361,17 +369,26 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             budget,
         )?
         .into_iter()
-        .map(|path| SpecPropositionPath {
+        .map(|path| {
             // A negated condition is the condition with the other value,
-            // as an execution spells the branch it did not take.
-            proposition: match path.proposition {
-                Proposition::ConditionIs(condition, value) => {
-                    Proposition::ConditionIs(condition, !value)
-                }
-                proposition => Proposition::Not(Box::new(proposition)),
-            },
-            facts: path.facts,
-            obligations: path.obligations,
+            // as an execution spells the branch it did not take. Only the
+            // remaining shape keeps a `Not` node an introduction can reach.
+            let (proposition, introductions) = match path.proposition {
+                Proposition::ConditionIs(condition, value) => (
+                    Proposition::ConditionIs(condition, !value),
+                    LoweringIntroductions::new(),
+                ),
+                proposition => (
+                    Proposition::Not(Box::new(proposition)),
+                    vec![LoweringIntroduction::WrittenNegation],
+                ),
+            };
+            SpecPropositionPath {
+                proposition,
+                facts: path.facts,
+                obligations: path.obligations,
+                introductions,
+            }
         })
         .collect()),
         SpecProposition::Implies(left, right) => {
@@ -416,6 +433,8 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                         &guarded_right_obligations,
                         assumptions,
                     ) {
+                        let mut introductions = vec![LoweringIntroduction::WrittenImplication];
+                        introductions.extend(right_path.introductions);
                         paths.push(SpecPropositionPath {
                             proposition: Proposition::Implies(
                                 Box::new(left_path.proposition.clone()),
@@ -423,6 +442,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                             ),
                             facts,
                             obligations,
+                            introductions,
                         });
                     }
                 }
@@ -447,27 +467,39 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                 budget,
             )?
             .into_iter()
-            .map(|path| SpecPropositionPath {
-                proposition: Proposition::ForAll {
-                    var: *variable,
-                    sort: Sort::CInt32,
-                    body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
-                },
-                // Path facts may mention the bound variable. They are guards
-                // on this quantified path, not facts in the surrounding
-                // context.
-                facts: Vec::new(),
-                obligations: path
-                    .obligations
-                    .into_iter()
-                    .map(|obligation| {
-                        obligation.map_proposition(|proposition| Proposition::ForAll {
-                            var: *variable,
-                            sort: Sort::CInt32,
-                            body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+            .map(|path| {
+                let (body, guards) =
+                    wrap_path_context_with_introductions(path.proposition, &path.facts, &[]);
+                let mut introductions = vec![LoweringIntroduction::WrittenUniversal {
+                    name: name.clone(),
+                    variable: *variable,
+                    pointer: false,
+                }];
+                introductions.extend(guards);
+                introductions.extend(path.introductions);
+                SpecPropositionPath {
+                    proposition: Proposition::ForAll {
+                        var: *variable,
+                        sort: Sort::CInt32,
+                        body: Box::new(body),
+                    },
+                    // Path facts may mention the bound variable. They are
+                    // guards on this quantified path, not facts in the
+                    // surrounding context.
+                    facts: Vec::new(),
+                    obligations: path
+                        .obligations
+                        .into_iter()
+                        .map(|obligation| {
+                            obligation.map_proposition(|proposition| Proposition::ForAll {
+                                var: *variable,
+                                sort: Sort::CInt32,
+                                body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                            })
                         })
-                    })
-                    .collect(),
+                        .collect(),
+                    introductions,
+                }
             })
             .collect())
         }
@@ -493,24 +525,36 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                 budget,
             )?
             .into_iter()
-            .map(|path| SpecPropositionPath {
-                proposition: Proposition::ForAll {
-                    var: *variable,
-                    sort: Sort::CPointer(*c_type),
-                    body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
-                },
-                facts: Vec::new(),
-                obligations: path
-                    .obligations
-                    .into_iter()
-                    .map(|obligation| {
-                        obligation.map_proposition(|proposition| Proposition::ForAll {
-                            var: *variable,
-                            sort: Sort::CPointer(*c_type),
-                            body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+            .map(|path| {
+                let (body, guards) =
+                    wrap_path_context_with_introductions(path.proposition, &path.facts, &[]);
+                let mut introductions = vec![LoweringIntroduction::WrittenUniversal {
+                    name: name.clone(),
+                    variable: *variable,
+                    pointer: true,
+                }];
+                introductions.extend(guards);
+                introductions.extend(path.introductions);
+                SpecPropositionPath {
+                    proposition: Proposition::ForAll {
+                        var: *variable,
+                        sort: Sort::CPointer(*c_type),
+                        body: Box::new(body),
+                    },
+                    facts: Vec::new(),
+                    obligations: path
+                        .obligations
+                        .into_iter()
+                        .map(|obligation| {
+                            obligation.map_proposition(|proposition| Proposition::ForAll {
+                                var: *variable,
+                                sort: Sort::CPointer(*c_type),
+                                body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                            })
                         })
-                    })
-                    .collect(),
+                        .collect(),
+                    introductions,
+                }
             })
             .collect())
         }
@@ -533,6 +577,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             )?
             .into_iter()
             .map(|path| SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition: Proposition::Exists {
                     name: name.clone(),
                     var: *variable,
@@ -578,6 +623,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             )?
             .into_iter()
             .map(|path| SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition: Proposition::Exists {
                     name: name.clone(),
                     var: *variable,
@@ -683,6 +729,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                 },
             );
             Ok(vec![SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition,
                 facts: Vec::new(),
                 obligations: Vec::new(),
@@ -891,6 +938,7 @@ fn lower_spec_algebraic_comparison_at_state(
             || algebraic_match_reconstructs(right, left))
     {
         return Ok(vec![SpecPropositionPath {
+            introductions: Vec::new(),
             proposition: Proposition::ConditionIs(ConditionTerm::Constant(equal), true),
             facts: Vec::new(),
             obligations: Vec::new(),
@@ -938,6 +986,7 @@ fn lower_spec_algebraic_comparison_at_state(
                 )
             };
             paths.push(SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition: if equal {
                     equality
                 } else {
@@ -1630,6 +1679,7 @@ fn lower_spec_sequence_membership_at_state(
                     ))
             };
             paths.push(SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition,
                 facts,
                 obligations,
@@ -1720,6 +1770,7 @@ fn lower_spec_sequence_comparison_at_state(
             };
             let equality = finite_sequence_equality(&left_path.value, &right_path.value);
             paths.push(SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition: if equal {
                     equality
                 } else {
@@ -2549,6 +2600,7 @@ fn lower_spec_float_classification_proposition_at_state(
             _ => return None,
         };
         Some(SpecPropositionPath {
+            introductions: Vec::new(),
             proposition: Proposition::ConditionIs(condition, true),
             facts: path.facts,
             obligations: path.obligations,
@@ -2723,6 +2775,7 @@ fn lower_spec_resource_relation_at_state(
                 continue;
             };
             paths.push(SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition: relation(left.clone(), right),
                 facts,
                 obligations,
@@ -2794,6 +2847,7 @@ fn lower_spec_memory_loadable_at_state(
                 }
             }
             Some(SpecPropositionPath {
+                introductions: Vec::new(),
                 proposition: Proposition::CMemoryLoadable {
                     memory: memory.clone(),
                     base,
@@ -2874,6 +2928,7 @@ pub(super) fn lower_spec_binary_proposition_at_state(
                 assumptions,
             ) {
                 paths.push(SpecPropositionPath {
+                    introductions: Vec::new(),
                     proposition: combine(left_path.proposition.clone(), right_path.proposition),
                     facts,
                     obligations,
@@ -2902,6 +2957,7 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
         )
     {
         return Ok(vec![SpecPropositionPath {
+            introductions: Vec::new(),
             proposition: Proposition::ConditionIs(
                 ConditionTerm::Constant(operator == CComparisonOperator::Equal),
                 true,
@@ -2949,6 +3005,7 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
                 c_value_comparison_proposition(&left_path.value, operator, &right_path.value)
             {
                 paths.push(SpecPropositionPath {
+                    introductions: Vec::new(),
                     proposition,
                     facts,
                     obligations,
@@ -2985,6 +3042,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
         state.resource_state_snapshot()
     };
     let mut paths = vec![SpecPropositionPath {
+        introductions: Vec::new(),
         proposition: Proposition::Predicate {
             name: name.to_string(),
             arguments: vec![Term::CState(predicate_state)],
@@ -3045,6 +3103,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
                 }
                 arguments.push(Term::CValue(argument_path.value.clone()));
                 next_paths.push(SpecPropositionPath {
+                    introductions: Vec::new(),
                     proposition: Proposition::Predicate { name, arguments },
                     facts,
                     obligations,
@@ -5292,5 +5351,92 @@ mod integer_budget_tests {
             false,
         )));
         assert_eq!(paths[0].obligations.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod lowering_provenance_tests {
+    use super::*;
+
+    fn binder(name: &str) -> SpecExpression {
+        SpecExpression::CExpression(CExpression::Variable(name.to_string()))
+    }
+
+    fn positive(expression: SpecExpression) -> SpecProposition {
+        SpecProposition::Comparison {
+            left: expression,
+            operator: CComparisonOperator::GreaterThan,
+            right: SpecExpression::Value(int32(0)),
+        }
+    }
+
+    fn universal(body: SpecProposition) -> SpecProposition {
+        SpecProposition::ForAllInt32 {
+            name: "k".to_string(),
+            variable: Variable(41),
+            body: Box::new(body),
+        }
+    }
+
+    fn introductions(proposition: &SpecProposition) -> LoweringIntroductions {
+        let (_, _, _, introductions) =
+            crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+                &CState::new(),
+                proposition,
+                None,
+                &PureFactContext::new(),
+            )
+            .expect("the test proposition lowers on one path");
+        introductions
+    }
+
+    #[test]
+    fn a_written_universal_over_a_written_implication_records_both() {
+        let recorded = introductions(&universal(SpecProposition::Implies(
+            Box::new(positive(binder("k"))),
+            Box::new(positive(binder("k"))),
+        )));
+
+        assert_eq!(
+            recorded,
+            vec![
+                LoweringIntroduction::WrittenUniversal {
+                    name: "k".to_string(),
+                    variable: Variable(41),
+                    pointer: false,
+                },
+                LoweringIntroduction::WrittenImplication,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_definedness_guard_is_recorded_before_the_written_implication() {
+        // `k + 1` may overflow for an unconstrained `k`, so lowering keeps
+        // the defined path and folds its no-overflow fact into an implication
+        // that no spec, and therefore no Surface, connective wrote.
+        let incremented = || {
+            SpecExpression::Add(
+                Box::new(binder("k")),
+                Box::new(SpecExpression::Value(int32(1))),
+            )
+        };
+        let recorded = introductions(&universal(SpecProposition::Implies(
+            Box::new(positive(incremented())),
+            Box::new(positive(incremented())),
+        )));
+
+        assert_eq!(
+            recorded,
+            vec![
+                LoweringIntroduction::WrittenUniversal {
+                    name: "k".to_string(),
+                    variable: Variable(41),
+                    pointer: false,
+                },
+                LoweringIntroduction::PathFactGuard,
+                LoweringIntroduction::WrittenImplication,
+            ]
+        );
     }
 }

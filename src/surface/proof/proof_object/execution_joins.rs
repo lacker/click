@@ -430,7 +430,7 @@ impl<'a> Proof<'a> {
             }
         }
         let selected = arm.certificate.clone();
-        let empty = ProofCertificate::from_steps(Vec::new());
+        let empty = ProofCertificate::from_steps(Vec::new())?;
         let (then_proof, else_proof) = if take_then {
             (selected, empty)
         } else {
@@ -525,8 +525,8 @@ impl<'a> Proof<'a> {
         selected_steps.push(ProofStep::Step);
         selected_steps.resize_with(entry_steps, || ProofStep::Step);
         selected_steps.extend_from_slice(arm.certificate.steps());
-        let selected = ProofCertificate::from_steps(selected_steps);
-        let empty = ProofCertificate::from_steps(Vec::new());
+        let selected = ProofCertificate::from_steps(selected_steps)?;
+        let empty = ProofCertificate::from_steps(Vec::new())?;
         let (then_proof, else_proof) = if take_then {
             (selected, empty)
         } else {
@@ -1129,12 +1129,12 @@ impl<'a> Proof<'a> {
         let then_proof = if proof_case_split {
             arms[0].certificate.clone()
         } else {
-            terminal_certificate(&arms[0].certificate, empty_source_arms[0])
+            terminal_certificate(&arms[0].certificate, empty_source_arms[0])?
         };
         let else_proof = if proof_case_split {
             arms[1].certificate.clone()
         } else {
-            terminal_certificate(&arms[1].certificate, empty_source_arms[1])
+            terminal_certificate(&arms[1].certificate, empty_source_arms[1])?
         };
         let then_expansion = &arms[0].execution.presentation.expansion;
         let else_expansion = &arms[1].execution.presentation.expansion;
@@ -1881,7 +1881,7 @@ impl<'a> Proof<'a> {
             .ok_or_else(not_descended)?
             .to_vec();
         Ok(CheckedExecutionJoinArm {
-            certificate: ProofCertificate::from_steps(steps),
+            certificate: ProofCertificate::from_steps(steps)?,
             facts: &branch.state.facts,
             execution,
             condition_theorem,
