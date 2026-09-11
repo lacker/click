@@ -69,6 +69,141 @@ Existing positive witnesses include:
 - `mdtests/c_contract_executes_counter_forward.md`: transport a chosen
   exclusive instance while preserving another instance in the frame.
 
+## W0 baseline and handoff (2026-09-11)
+
+W0 started from `188a594b` (`Plan P1 memory and resource contract
+unification`). The checkout was clean. No source, C, budget, quarantine, or
+unrelated changes were made. The positive witnesses on this base pass under
+the ordinary bounded mdtest runner:
+
+```text
+MDTEST_FILTER=rb_augment_callbacks_helper cargo nextest run --test mdtests --no-capture
+  PASS (1/1, 0.091s)
+MDTEST_FILTER=augment_rotate_callback.md cargo nextest run --test mdtests --no-capture
+  PASS (1/1, 1.231s)
+MDTEST_FILTER=augment_rotate_model_callback.md cargo nextest run --test mdtests --no-capture
+  PASS (1/1, 0.295s)
+```
+
+The following are fresh, temporary reductions in the W0 worktree; they were
+removed and are not tests or acceptance substitutes. They preserve the C
+source and use the normal `cargo nextest` deterministic-work bounds.
+
+- **G1:** changing the three callback contract footprints in
+  `rb_augment_callbacks_helper.md` from `views` to `owns` while leaving the
+  caller's `views parent->left/right` gives status 100 and
+  `step() produced runtime error: missing resource fact owns node[...]`.
+  Giving the caller `owns parent->left/right` makes the failure the callback
+  lookup itself: with `Propagate` still `views` and `Copy`/`Rotate` changed to
+  `owns`, the exact command
+  `MDTEST_FILTER=rb_augment_callbacks_helper cargo nextest run --test mdtests --no-capture`
+  gives status 100 at the second indirect call, through
+  ``__click_call_result2``: `no matching named contract is available for this
+  value`. Changing all three callbacks to `owns` fails earlier at
+  ``__click_call_result1``. Thus the current base confirms the G1 family, but
+  the exact failing call number depends on which footprints are made owned;
+  the issue's three-call target remains unimplemented.
+- **G2:** a temporary two-clause function with
+  `owns pair(node)` followed by `owns node->right->augmented` (where `pair`
+  owns `node->left` and `node->right`) was run with
+  `MDTEST_FILTER=_mvr_g2 cargo nextest run --test mdtests --no-capture`.
+  Status 100 was the certification diagnostic
+  `could not certify contract for f: could not evaluate the contract entry
+  resources: could not evaluate an owned memory resource segment (resource
+  clause 2 of 2)`. This is an independent reduction of the dependent-base
+  failure, not a claim that the existing rotation workaround passes the
+  natural contract.
+- **G3:** adding `requires old->left != 0; views old->left->augmented` to the
+  named `AugmentRotate` contract in the rotation fixture, then running
+  `MDTEST_FILTER=augment_rotate_callback.md cargo nextest run --test mdtests --no-capture`,
+  gave status 100 while preparing the contract:
+  `could not prepare named contract AugmentRotate: missing pure fact:
+  loadable(base=old, bytes=8)`, with no pure or resource facts available.
+
+During this investigation `origin/master` advanced through
+`16fe83e4` (`Name a retained cell's load by the value it already holds`),
+which directly fixes G1. Its three new real-footprint witnesses are green on
+the integrated latest checkout (`0a613c3d`, a merge containing that commit):
+
+```text
+MDTEST_FILTER=rb_augment_callbacks_helper_owns cargo nextest run --test mdtests --no-capture
+  PASS (1/1, 0.163s)
+```
+
+The paired cell-level separation witness also passes, while
+`rb_augment_callbacks_helper_owns_rejects_unseparated.md` still rejects the
+same proof at the second call. The commit's rationale identifies the changed
+load naming across call havoc: retained table cells now resolve to the value
+they already hold, so the opened callback fact remains tied to the reloaded
+pointer. Therefore G1 is **fixed upstream and must not be reimplemented**;
+W5 should preserve these witnesses and focus on R3's permitted-mutation and
+support-provenance cases. G2 and G3 were not touched by `16fe83e4` and remain
+open pending a recheck from the manager's latest integrated base.
+
+The starting-base G1 reductions showed a verified failure, not a performance
+or search-budget issue; the upstream fix is now independently green as noted
+above. G2 is a verified certification/evaluation failure. G3 is a verified
+named-contract lowering failure. No root cause beyond those observed
+boundaries is assumed here: in particular, callback-fact provenance loss is a
+W5 hypothesis until R3 is reduced with an actual permitted mutation.
+
+### W0 ownership map for R1-R6
+
+| Regression | Reusable positive witnesses and next minimal case | Paired rejection/preservation case | Owning chunk |
+| --- | --- | --- | --- |
+| R1 | Start from the existing folded-composite/frame witnesses. Add the smallest direct function whose `owns pair(node)` supplies a guarded link load for a separate `owns node->right->augmented`; then use the natural rotation only after this passes. | Omit the link-read authority or nonnull guard; overlapping owned pieces must not be accepted. | W3 |
+| R2 | Reuse `c_named_function_contract_*` callback fixtures, `c_contract_executes_*` theorem fixtures, and the direct R1 reduction. Run the same authorized dependent clause through named callback application, explicit execution, automatic formation, and certification. | Missing access/guard remains an obligation; automatic formation stays bounded and exact. | W3, with W2 interface coverage |
+| R3 | Begin with `rb_augment_callbacks_helper.md`: one scoped open, three callback fields, owned `node->left` footprints, and unchanged guarantees. Add one bounded helper where one callback performs an allowed mutation. | A changed supporting table cell or consumed support invalidates the old callback fact; unrelated framed support survives. | W5 |
+| R4 | `c_contract_executes_buffer.md` is the raw/one-layer `Buffer` unfold/call/fold witness. Frame an unrelated cell and token, then compare raw and wrapped checked effects. | Out-of-authority write and view-to-own conversion fail. | W4 |
+| R5 | Use the existing return-indexed and counter-forward fixtures for entry-selected borrowed ranges and exclusive identity. Add a pointer-field change with an owned range and a returned instance whose fields are constrained only by its guarantees. | No retargeting of an `owns` range, invented field preservation, or aliasing of two instance identities. | W4 (memory), W6 (instances/binders) |
+| R6 | `c_named_function_contract_borrows_abstract_token.md`, `c_named_function_contract_borrows_folded_composite.md`, and the frame theorem cover scoped callback borrows and unrelated frames. | Double token consumption fails; persistent aliases retain current deallocation restrictions and scoped views do not escape. | W5 |
+
+### W0 path trace and proposed internal boundaries
+
+The current implementation has one useful family boundary but several
+contract/transition entry paths around it. `ResourceFamilyAlgebra` in
+`src/kernel/primitives.rs` and `resource_algebra.rs` is the real common
+boundary: memory supplies range splitting/read authority, composites and
+tokens use exact quantities, and instances enforce identity/exclusivity.
+W1 should preserve that specialization while normalizing the surface
+specification above it.
+
+| Path | Current entry and duplicated preparation | Narrow boundary for W1-W6 |
+| --- | --- | --- |
+| Direct verified C call | `execute_c_function_call_paths` dispatches a verified rule or body; `prepare_verified_function_call` separately binds arguments, evaluates `resource_requires`, calls `prepare_function_resource_transfer`, lowers contract requirements, and later evaluates returns. | W2 supplies one body-independent contract interface; W3 supplies a dependency-aware clause elaboration result (term plus checked load/guard obligations); W4 consumes one transition record for transfer, effects, and return. |
+| Named callback call | `execute_c_function_contracts_paths` selects a `CFunctionContract`, optionally builds `ResourceCallApplication`, then re-enters `execute_verified_function_templates` and the same `prepare_verified_function_call`; exact pointer `Contract(p)` facts are checked by `function_contract_requirement_is_proven`. | W1's normalized resource terms and W2's interface are shared with direct calls. The callback fact remains an exact-pointer evidence input; W5 owns support/provenance invalidation, not a global retention list. |
+| Explicit execution theorem | `surface/proof/pure_theorems/execution_theorems.rs::verify_execution_theorem` rewrites the target clauses and builds a one-call block, then uses grouped checked execution and `prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems`; concrete targets use ordinary C, abstract targets use source contracts. | W2/W6 provide the same contract/binder instantiation; W4 receives the same checked transition. The theorem's closed checked artifact remains distinct authority from a verified body or external assumption. |
+| Automatic formation | `function_refines_named_contract` calls `prepare_automatic_contract_refinement_context`, then `function_refines_named_contract_in_case`; concrete pointer formation is accepted only for a verified/external exact target and compatible vocabulary/effects. | W2 owns the body-independent relation; W3 supplies checked entry/post clause obligations; W6 supplies identity-based binder maps. Keep bounded candidate applicability and exact/forced pairing. |
+| Contract certification | `verification.rs::build_function_environment` prepares named contracts through `initial_claim_context` and `annotated_function`. Function certification constructs a fresh entry context, invokes checked artifacts through `prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems`, then claims are finalized in `kernel/api/contract_certification/contract_claims.rs`. | W1/W3 must make named and ordinary entry lowering agree. W4's transition/effect projection is the sole checked footprint source. Certification may reuse checked artifacts, but must not rerun a concrete body or turn pending obligations into authority. |
+
+The resource/effect duplication to remove or make read-only is now pinned:
+`function_contract_summary` in `annotations.rs` separately traverses owned
+resource definitions through `collect_owned_resource_memory_segments`, while
+the kernel separately evaluates `CResourceSpec` through
+`evaluate_function_resource_context` and computes transfer/return effects in
+`prepare_function_resource_transfer`, `evaluate_function_return_resource_context`,
+and `evaluate_contract_mutable_ranges`. `initial_claim_context` additionally
+materializes/project resources and facts before `annotated_function` installs
+the resource and contract summaries. W4 should make its transition projection
+authoritative and leave any retained surface traversal as a checked,
+read-only artifact consumer.
+
+Authority and obligations should cross the proposed boundaries as follows:
+W1 lowers syntax to a resource term plus explicit access/role/snapshot metadata
+and delegates family validity to the existing algebra; W2 instantiates one
+contract interface without conflating body evidence, external assumptions, or
+pointer-specific callback facts; W3 returns symbolic terms together with
+load/bounds/guard obligations and never assumes a contract's own postcondition
+at entry; W4 consumes those checked obligations to produce one transition
+record (borrowed entry resources, consumed residuals, frame, post outputs, and
+effect projection); W5 attaches observations to support/version/scope and
+invalidates them on support changes; W6 transports semantic instance identity
+separately from spelling and snapshot state. This keeps unresolved obligations
+as obligations at both ordinary and callback calls.
+
+W0 changed only this issue document. The resulting checkpoint is ready for
+manager integration; no old implementation path or adapter was removed.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different
