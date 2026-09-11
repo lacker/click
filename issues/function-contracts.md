@@ -41,25 +41,23 @@ Commits, in landing order: `bdcab487`, `fd679912`, `5400cf07`, `d38cf746`,
 
 A call through an abstract function pointer must be checked against an
 explicit contract carried by that pointer, and the Linux augmented rbtree's
-callback sites must be verifiable in their real shape. The gaps below are
-what still stands between the landed mechanism and that shape.
+callback sites must be verifiable in their real shape. G1 is fixed; G2 and
+G3 are what still stand between the landed mechanism and that shape.
 
 ## Gaps that block the rbtree callback sites
 
-**G1. Two indirect calls through one opened callback-suite resource.** With
-`owns` footprints on the callback contracts, the second indirect call in a
-helper that has done `open(suite(augment)) { ... }` fails with ``cannot verify
-call through function pointer `__click_call_result3`: no matching named
-contract is available for this value``. One call per opened resource works;
-any two of three fields reproduce it; re-opening per call fails at the close
-(`the rewritten composite is absent from both resource representations`); and
-`views` footprints work for any number of calls, which is why
-`mdtests/rb_augment_callbacks_helper.md` ships with no-op footprints. The
-Linux erase helper calls `propagate`, `copy`, and `rotate` through one
-`const struct rb_augment_callbacks *` with real footprints, so this is the
-first thing to fix. Intended regression: the helper fixture with `owns
-node->left` on each contract and `ensures node->left == old(node->left)`,
-three calls, passing.
+**G1. Two indirect calls through one opened callback-suite resource.**
+**Fixed** as `16fe83e4`. The cell for the second callback's field was
+retained across the first call's havoc (the `separate` premise already fed
+`ranges_proven_disjoint_from_pointer`), but the reload was named by an
+assumption-free epoch walk that cannot cross a call-havoc edge, so it minted
+a second load variable and the exact-pointer contract index found nothing.
+`load_variable_for_term_uncached` now names a load by the load variable the
+retained cell holds. Regressions: `mdtests/rb_augment_callbacks_helper_owns.md`,
+`..._owns_cell_separate.md`, and `..._owns_rejects_unseparated.md` (the
+premise is load-bearing; without it the cell is forgotten and the call
+fails). The `4` in the `CMemoryDisjoint` arm is the range's element stride,
+not the cell width, and is correct.
 
 **G2. A contract cannot own a segment whose base is loaded through a field
 another owned or consumed composite owns.** `requires node->right != 0; owns
@@ -135,7 +133,6 @@ the general case is untouched because an existing unit test parses
 
 ## Acceptance criteria
 
-- G1 fixed with the three-call helper fixture passing under `owns` footprints.
 - G2 and G3 fixed with the rotation fixtures rewritten to their natural
   contracts and the child-read form passing.
 - The two diagnostic wording defects fixed with fixtures asserting the text.
