@@ -1240,7 +1240,11 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             then_branch,
             else_branch,
         } => format!(
-            "if {} then {} else {}",
+            // This describer also prints expanded proof text, so a
+            // conditional must come back as the syntax that wrote it. The
+            // parentheses are what let the result sit where a term is
+            // expected, as in `result == (if c { a } else { b })`.
+            "(if {} {{ {} }} else {{ {} }})",
             describe_click_proposition(condition),
             describe_contract_expression(then_branch),
             describe_contract_expression(else_branch)

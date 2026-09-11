@@ -236,6 +236,72 @@ fn bounded_statement_successor_exclusion_ignores_unrelated_ambient_facts() {
     assert_near_linear_scaling("bounded statement-successor ambient facts", &samples);
 }
 
+/// Lowering a specification `if` folds a literally constant condition and
+/// otherwise lowers both branches. It reads no ambient fact, so checking a
+/// requirement that contains one must cost the same whatever else the caller
+/// happens to know. The requirement here is a conditional the caller cannot
+/// settle, which is the case a branch-deciding lowering would have searched
+/// for.
+#[test]
+fn specification_conditional_lowering_ignores_unrelated_ambient_facts() {
+    let mut samples = Vec::new();
+    let mut requirement_work = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let unrelated = (0..size)
+            .map(|index| format!("    have 0 <= {index} by {{\n        normalize();\n    }}\n"))
+            .collect::<String>();
+        let click_source = format!(
+            "verifying \"conditional_callee.c\";\n\
+             verifying \"conditional_caller.c\";\n\
+             \n\
+             int32 conditional_callee(int32 flag, int32 left, int32 right) {{\n    \
+                 requires (if flag != 0 {{ left }} else {{ right }}) == 7;\n    \
+                 ensures result == 0;\n\
+             }} by auto;\n\
+             \n\
+             int32 conditional_caller(int32 flag, int32 left, int32 right) {{\n    \
+                 requires (if flag != 0 {{ left }} else {{ right }}) == 7;\n    \
+                 ensures result == 0;\n\
+             }} by {{\n{unrelated}    execute();\n    simp();\n}}\n"
+        );
+        let (verified, sample) = scaling_sample(size, || {
+            verify_c0_sources(
+                &click_source,
+                &[
+                    (
+                        "conditional_callee.c",
+                        "int32 conditional_callee(int32 flag, int32 left, int32 right) {\n    return 0;\n}\n",
+                    ),
+                    (
+                        "conditional_caller.c",
+                        "int32 conditional_caller(int32 flag, int32 left, int32 right) {\n    return conditional_callee(flag, left, right);\n}\n",
+                    ),
+                ],
+            )
+        });
+        verified.expect("a conditional requirement should check under unrelated ambient facts");
+        requirement_work.push(
+            sample
+                .named_work
+                .get("operation `verified call requirement checking`")
+                .copied()
+                .unwrap_or(0),
+        );
+        samples.push(sample);
+    }
+    assert!(
+        requirement_work[0] > 0,
+        "the conditional requirement was never checked at the call site: {requirement_work:?}"
+    );
+    assert!(
+        requirement_work
+            .iter()
+            .all(|work| *work == requirement_work[0]),
+        "conditional requirement checking grew with unrelated ambient facts: {requirement_work:?}"
+    );
+    assert_near_linear_scaling("specification conditional ambient facts", &samples);
+}
+
 fn unrelated_identity_project(function_count: usize) -> (Vec<(String, String)>, String) {
     let mut c_sources = Vec::new();
     let mut click_source = String::new();
