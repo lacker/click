@@ -2125,3 +2125,144 @@ mod address_escape_tests {
         assert!(!statement_takes_address_of(&body, "c"));
     }
 }
+
+#[cfg(test)]
+mod ranking_member_tests {
+    use super::*;
+
+    fn scalar_state(bindings: &[(&str, Bitvector32Term)]) -> CState {
+        let mut state = CState::new();
+        for (name, value) in bindings {
+            state.locals.set_typed(
+                (*name).to_string(),
+                CValue::Int32(value.clone()),
+                CType::Int32,
+            );
+        }
+        state
+    }
+
+    /// Bundle membership is a fixed function of the declaration: one
+    /// nonnegativity obligation per component in declaration order, then one
+    /// decrease obligation that is the right-nested disjunction over pivots.
+    /// A retained certificate is only stable across runs and sites because
+    /// this order never depends on the state or the ambient facts.
+    #[test]
+    fn ranking_members_are_ordered_and_right_nested() {
+        let outer = Bitvector32Term::Variable(Variable(1));
+        let inner = Bitvector32Term::Variable(Variable(2));
+        let entry = scalar_state(&[("i", outer.clone()), ("j", inner.clone())]);
+        let post_outer = Bitvector32Term::subtract(outer.clone(), Bitvector32Term::Constant(1));
+        let post_inner = Bitvector32Term::add(inner.clone(), Bitvector32Term::Constant(1));
+        let back_edge = scalar_state(&[("i", post_outer.clone()), ("j", post_inner.clone())]);
+        let measures = vec![
+            CExpression::Variable("i".to_string()),
+            CExpression::Variable("j".to_string()),
+        ];
+        let obligations = collect_loop_ranking_obligations(&back_edge, &entry, &measures)
+            .expect("scalar measures read at both ends");
+        assert_eq!(obligations.len(), 3);
+
+        for (obligation, (component, post)) in obligations
+            .iter()
+            .zip([("i", post_outer.clone()), ("j", post_inner.clone())])
+        {
+            assert_eq!(
+                obligation.proposition(),
+                &Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), post),
+                    true,
+                )
+            );
+            assert!(
+                obligation
+                    .context()
+                    .is_some_and(|context| context.contains(&format!("`{component}`"))),
+                "member names its component: {:?}",
+                obligation.context()
+            );
+        }
+
+        let pivot_first = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(post_outer.clone(), outer.clone()),
+            true,
+        );
+        let pivot_second = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(post_outer, outer),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(post_inner, inner),
+                true,
+            )),
+        );
+        assert_eq!(
+            obligations[2].proposition(),
+            &Proposition::Or(Box::new(pivot_first), Box::new(pivot_second))
+        );
+    }
+
+    /// A single component takes the bare strict decrease, with no disjunction
+    /// and no equality prefix to choose between.
+    #[test]
+    fn one_component_takes_a_bare_decrease_member() {
+        let value = Bitvector32Term::Variable(Variable(7));
+        let entry = scalar_state(&[("n", value.clone())]);
+        let post = Bitvector32Term::subtract(value.clone(), Bitvector32Term::Constant(1));
+        let back_edge = scalar_state(&[("n", post.clone())]);
+        let measures = vec![CExpression::Variable("n".to_string())];
+        let obligations = collect_loop_ranking_obligations(&back_edge, &entry, &measures)
+            .expect("a scalar measure reads at both ends");
+        assert_eq!(obligations.len(), 2);
+        assert_eq!(
+            obligations[1].proposition(),
+            &Proposition::ConditionIs(ConditionTerm::signed_less_than(post, value), true)
+        );
+    }
+
+    /// The structural-path helper has no proof site to emit an undischarged
+    /// obligation to, so it settles one only by an exact route. A disjunction
+    /// with one available arm is exactly the shape the deleted general prover
+    /// used to accept here by selecting the arm.
+    #[test]
+    fn structural_path_refuses_an_obligation_no_exact_route_settles() {
+        let left = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(1)),
+            ),
+            true,
+        );
+        let right = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(2)),
+            ),
+            true,
+        );
+        let mut assumptions = PureFactContext::new()
+            .assume_proposition(left.clone())
+            .assume_proposition(right.clone());
+        let disjunction = Proposition::Or(Box::new(left), Box::new(right));
+        assert!(
+            assume_structural_path(
+                &mut assumptions,
+                &[],
+                &[ProofObligation::verification_condition(disjunction.clone())],
+            )
+            .is_none(),
+            "an arm choice is not an exact route, so the path is refused"
+        );
+        let mut exact = PureFactContext::new().assume_proposition(disjunction.clone());
+        assert!(
+            assume_structural_path(
+                &mut exact,
+                &[],
+                &[ProofObligation::verification_condition(disjunction)],
+            )
+            .is_some(),
+            "the exact fact still settles its own obligation"
+        );
+    }
+}

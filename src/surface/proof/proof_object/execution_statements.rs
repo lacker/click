@@ -247,7 +247,15 @@ impl<'a> Proof<'a> {
             }),
         };
         let checkpoint = root.checkpoint();
-        let Some(completed) = root.try_authoritative_linear_script(body)? else {
+        let attempted = root.try_authoritative_linear_script(body).map_err(|error| {
+            let detail = ranking_member_diagnostic(&bundle.ranking_measures);
+            if detail.is_empty() {
+                error
+            } else {
+                ClickError::new(format!("{}{detail}", error.message()))
+            }
+        })?;
+        let Some(completed) = attempted else {
             return Err(self.step_error(format!(
                 "closure body did not prove every invariant obligation{}",
                 ranking_member_diagnostic(&bundle.ranking_measures)
