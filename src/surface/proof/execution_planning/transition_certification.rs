@@ -2,6 +2,18 @@ use super::*;
 use crate::kernel::proof::{CheckedBranchSplit, CheckedBranchSplitError};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+fn missing_prerequisite_error(
+    message: impl Into<String>,
+    obligation: &ProofObligation,
+) -> ClickError {
+    let error = ClickError::new(message);
+    if obligation.is_assumable() {
+        error
+    } else {
+        error.with_unresolved_requirement(obligation)
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::surface::proof) struct CertifiedProofConditionTransition {
     pub(in crate::surface::proof) is_true: bool,
@@ -81,14 +93,17 @@ pub(in crate::surface::proof) fn certified_proof_condition_split(
                     .assumptions()
                     .proves(obligation.proposition())
                 {
-                    return Err(ClickError::new(format!(
-                        "{context_label} is missing condition prerequisite{}: {:?}",
-                        obligation
-                            .context()
-                            .map(|context| format!(" ({context})"))
-                            .unwrap_or_default(),
-                        obligation.proposition()
-                    )));
+                    return Err(missing_prerequisite_error(
+                        format!(
+                            "{context_label} is missing condition prerequisite{}: {:?}",
+                            obligation
+                                .context()
+                                .map(|context| format!(" ({context})"))
+                                .unwrap_or_default(),
+                            obligation.proposition()
+                        ),
+                        obligation,
+                    ));
                 }
             }
             match path.outcome() {
@@ -186,28 +201,34 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                             )
                         {
                         } else {
-                            return Err(ClickError::new(format!(
-                                "{context_label} is missing condition prerequisite{}: {:?}",
-                                obligation
-                                    .context()
-                                    .map(|context| format!(" ({context})"))
-                                    .unwrap_or_default(),
-                                obligation.proposition()
-                            )));
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing condition prerequisite{}: {:?}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    obligation.proposition()
+                                ),
+                                obligation,
+                            ));
                         }
                     }
                     StatementPrerequisitePolicy::Explicit
                     | StatementPrerequisitePolicy::Contextual => {
                         if prerequisite_assumptions.proves(obligation.proposition()) {
                         } else {
-                            return Err(ClickError::new(format!(
-                                "{context_label} is missing condition prerequisite{}: {:?}",
-                                obligation
-                                    .context()
-                                    .map(|context| format!(" ({context})"))
-                                    .unwrap_or_default(),
-                                obligation.proposition()
-                            )));
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing condition prerequisite{}: {:?}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    obligation.proposition()
+                                ),
+                                obligation,
+                            ));
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
@@ -225,14 +246,17 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                                 derivation.check(&prerequisite_assumptions)
                             })
                             .ok_or_else(|| {
-                                ClickError::new(format!(
-                                    "{context_label} is missing condition prerequisite{}: {:?}",
-                                    obligation
-                                        .context()
-                                        .map(|context| format!(" ({context})"))
-                                        .unwrap_or_default(),
-                                    obligation.proposition()
-                                ))
+                                missing_prerequisite_error(
+                                    format!(
+                                        "{context_label} is missing condition prerequisite{}: {:?}",
+                                        obligation
+                                            .context()
+                                            .map(|context| format!(" ({context})"))
+                                            .unwrap_or_default(),
+                                        obligation.proposition()
+                                    ),
+                                    obligation,
+                                )
                             })?;
                     }
                 }
@@ -792,14 +816,17 @@ fn certified_transitions_from_execution(
                                 })
                                 .map(Some)?
                         } else {
-                            return Err(ClickError::new(format!(
-                                "{context_label} is missing certified prerequisite{}: {}",
-                                obligation
-                                    .context()
-                                    .map(|context| format!(" ({context})"))
-                                    .unwrap_or_default(),
-                                describe_derivation_failure(proposition, pure_facts),
-                            )));
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing certified prerequisite{}: {}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    describe_derivation_failure(proposition, pure_facts),
+                                ),
+                                obligation,
+                            ));
                         }
                     }
                     StatementPrerequisitePolicy::Contextual => {
@@ -856,14 +883,17 @@ fn certified_transitions_from_execution(
                         {
                             None
                         } else {
-                            return Err(ClickError::new(format!(
-                                "{context_label} is missing prerequisite{}: {}",
-                                obligation
-                                    .context()
-                                    .map(|context| format!(" ({context})"))
-                                    .unwrap_or_default(),
-                                describe_derivation_failure(proposition, pure_facts),
-                            )));
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing prerequisite{}: {}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    describe_derivation_failure(proposition, pure_facts),
+                                ),
+                                obligation,
+                            ));
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
@@ -878,17 +908,20 @@ fn certified_transitions_from_execution(
                             Some(
                                 minimal_proposition_derivation(proposition, &derivation_facts)?
                                     .ok_or_else(|| {
-                                    ClickError::new(format!(
-                                        "{context_label} is missing prerequisite{}: {}",
-                                        obligation
-                                            .context()
-                                            .map(|context| format!(" ({context})"))
-                                            .unwrap_or_default(),
-                                        describe_derivation_failure(
-                                            proposition,
-                                            &derivation_facts,
+                                    missing_prerequisite_error(
+                                        format!(
+                                            "{context_label} is missing prerequisite{}: {}",
+                                            obligation
+                                                .context()
+                                                .map(|context| format!(" ({context})"))
+                                                .unwrap_or_default(),
+                                            describe_derivation_failure(
+                                                proposition,
+                                                &derivation_facts,
+                                            ),
                                         ),
-                                    ))
+                                        obligation,
+                                    )
                                 })?,
                             )
                         }

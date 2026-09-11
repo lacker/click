@@ -337,6 +337,49 @@ fn step_executes_with_the_whole_proof_context() {
 }
 
 #[test]
+fn failed_call_step_reports_its_unresolved_required_precondition() {
+    let c_source = r#"
+            int32 caller(int32 x, int32 y) {
+                int32 result;
+                result = either_positive(x, y);
+                return result;
+            }
+        "#;
+    let click_source = r#"
+            verifying "caller.c";
+
+            extern int32 either_positive(int32 x, int32 y) {
+                requires x > 0 or y > 0;
+                ensures result == 0;
+            }
+
+            int32 caller(int32 x, int32 y) {
+                ensures result == 0;
+            } by {
+                step();
+                step();
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("caller.c", c_source)])
+        .expect_err("the caller establishes neither arm of the call requirement");
+    let requirement = error
+        .unresolved_requirement()
+        .expect("the refused call requirement should survive proof error wrapping");
+    assert_eq!(
+        requirement.context.as_deref(),
+        Some("either_positive precondition")
+    );
+    assert!(matches!(requirement.proposition, Proposition::Or(_, _)));
+
+    let wrapped = error
+        .clone()
+        .with_context("outer context")
+        .with_prefix("branch: ");
+    assert_eq!(wrapped.unresolved_requirement(), Some(requirement));
+}
+
+#[test]
 fn execute_step_records_a_state_checked_surface_expansion() {
     let c_source = r#"
             int32 increment(int32 x) {

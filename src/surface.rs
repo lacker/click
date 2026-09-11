@@ -4092,7 +4092,21 @@ pub struct ClickError {
     rendered: std::sync::OnceLock<String>,
     diagnostic: Option<std::sync::Arc<proof_diagnostics::ProofFailureDiagnostic>>,
     search_failures: Option<std::sync::Arc<Vec<proof_diagnostics::ProofSearchFailure>>>,
+    unresolved_requirement: Option<std::sync::Arc<UnresolvedRequirement>>,
     timing_tactic: Option<Box<TimingTacticContext>>,
+}
+
+/// A required kernel verification condition that a checked execution step
+/// could not discharge through its exact routes.
+///
+/// This is planning input, not proof evidence.  It stays attached to the
+/// ordinary error while that error gains diagnostic context, so a smart
+/// caller can construct an explicit proof at the exact refused frontier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) struct UnresolvedRequirement {
+    pub(in crate::surface) proposition: Proposition,
+    pub(in crate::surface) context: Option<String>,
+    pub(in crate::surface) introductions: crate::kernel::LoweringIntroductions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4801,6 +4815,7 @@ impl ClickError {
             rendered: std::sync::OnceLock::new(),
             diagnostic: None,
             search_failures: None,
+            unresolved_requirement: None,
             timing_tactic: current_timing_tactic().map(Box::new),
         }
     }
@@ -4821,6 +4836,7 @@ impl ClickError {
             rendered: std::sync::OnceLock::new(),
             diagnostic: Some(std::sync::Arc::new(diagnostic)),
             search_failures: None,
+            unresolved_requirement: None,
             timing_tactic: current_timing_tactic().map(Box::new),
         }
     }
@@ -4856,6 +4872,23 @@ impl ClickError {
         self.diagnostic.as_deref()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::surface) fn unresolved_requirement(&self) -> Option<&UnresolvedRequirement> {
+        self.unresolved_requirement.as_deref()
+    }
+
+    pub(in crate::surface) fn with_unresolved_requirement(
+        mut self,
+        obligation: &ProofObligation,
+    ) -> Self {
+        self.unresolved_requirement = Some(std::sync::Arc::new(UnresolvedRequirement {
+            proposition: obligation.proposition().clone(),
+            context: obligation.context().map(str::to_owned),
+            introductions: obligation.introductions().cloned().unwrap_or_default(),
+        }));
+        self
+    }
+
     pub(crate) fn with_search_failures(
         mut self,
         failures: Vec<proof_diagnostics::ProofSearchFailure>,
@@ -4878,6 +4911,7 @@ impl ClickError {
             rendered: std::sync::OnceLock::new(),
             diagnostic: self.diagnostic,
             search_failures: self.search_failures,
+            unresolved_requirement: self.unresolved_requirement,
             timing_tactic: self.timing_tactic,
         }
     }
@@ -4906,6 +4940,7 @@ impl Clone for ClickError {
             rendered: std::sync::OnceLock::new(),
             diagnostic: self.diagnostic.clone(),
             search_failures: self.search_failures.clone(),
+            unresolved_requirement: self.unresolved_requirement.clone(),
             timing_tactic: self.timing_tactic.clone(),
         }
     }
@@ -4916,6 +4951,7 @@ impl PartialEq for ClickError {
         self.message == other.message
             && self.diagnostic == other.diagnostic
             && self.search_failures == other.search_failures
+            && self.unresolved_requirement == other.unresolved_requirement
             && self.timing_tactic == other.timing_tactic
     }
 }
