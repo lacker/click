@@ -67,11 +67,14 @@ fn mdtests() {
         mdtests_dir.display()
     );
 
-    // Keep file verification serial to bound peak memory. Tactic correctness
-    // is enforced by deterministic work budgets, not by how much CPU time
-    // happens to be available to this fixture process.
+    // Verify files on every core. Tactic correctness is enforced by
+    // deterministic work budgets, not by how much CPU time happens to be
+    // available to each file, so concurrency cannot change a verdict. Peak
+    // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
+    // serially and 291 MB on 8 workers.
     let _ = instrumentation::take_body_rerun_census();
-    let failures = run_parallel(&paths, 1, |path| run_mdtest_in_thread(path));
+    let workers = std::thread::available_parallelism().map_or(1, usize::from);
+    let failures = run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
     let census = instrumentation::take_body_rerun_census();
     if failures.is_empty() {
         if !filtered

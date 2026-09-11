@@ -77,10 +77,10 @@ not claim that the complete captured Linux translation unit verifies.
 
 `scripts/check.sh` is the single source of truth for "is this tree green", and
 CI runs exactly that script. In order it runs `cargo fmt --check`, then
-`cargo clippy --all-targets -- -D warnings`, then the documentation test, the
-mdBook render and the docs lint, then `cargo nextest run --lib --bins`, then
-the mdtest and example fixture harnesses serially. Judge the verdict from the
-script's exit status.
+`cargo clippy --all-targets -- -D warnings`, then the mdBook render and the
+docs lint, then `cargo nextest run --lib --bins --test documentation`, then
+the mdtest and example fixture harnesses one after the other, each verifying
+its fixtures on every core. Judge the verdict from the script's exit status.
 
 The tree is clippy-clean, so a new diagnostic belongs to the change that
 introduced it. When a lint is wrong about a deliberate design, silence exactly
@@ -187,9 +187,9 @@ or output and may be charged accordingly.
 
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about
-real-time interruption install explicit time limits. Fixture traversal remains
-serial and fail-fast, while nextest owns the narrow process-level timeout for
-an uncooperative hang. The former load-sensitive bubble-sort canary is pinned
+real-time interruption install explicit time limits. Fixture traversal runs on
+every core and reports every failing fixture, while nextest owns the narrow
+process-level timeout for an uncooperative hang. The former load-sensitive bubble-sort canary is pinned
 at 100,000 deterministic units per tactic class; its measured maxima on
 2026-08-20 were 146 simple, 21,090 smart, and 42,169 control units. The gates
 do not rerun a successful proof to decide whether a noisy timing observation was

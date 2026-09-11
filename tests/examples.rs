@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use click::cli::{files_with_extension, read_verifying_sources, source_refs};
+use click::cli::{files_with_extension, read_verifying_sources, run_parallel, source_refs};
 use click::instrumentation::{self, ContractFallback};
 use click::surface::verify_c0_sources;
 
@@ -74,23 +74,38 @@ fn example_projects() {
         examples_dir.display(),
     );
 
-    // Keep project verification serial and fail fast. Deterministic tactic
-    // work budgets decide correctness; the test runner owns hang containment.
+    // Verify projects on every core. Deterministic tactic work budgets decide
+    // correctness, so concurrency cannot change a verdict; the test runner
+    // owns hang containment.
     let _ = instrumentation::take_body_rerun_census();
-    for project in &projects {
+    let workers = std::thread::available_parallelism().map_or(1, usize::from);
+    let failures = run_parallel(&projects, workers, |project| {
         // One line as each project starts and one as it finishes, on stderr
         // so the gate can stream them: a stall shows as a started project
         // that never finishes, and a slow project is visible while it runs.
         eprintln!("example project `{}` started", project.display());
         let started = std::time::Instant::now();
-        if let Err(diagnostics) = run_example_in_thread(project) {
-            panic!("example project `{}` {diagnostics}", project.display());
-        }
+        run_example_in_thread(project)?;
         eprintln!(
             "example project `{}` verified in {:.2}s",
             project.display(),
             started.elapsed().as_secs_f64()
         );
+        Ok(())
+    });
+    if !failures.is_empty() {
+        let mut message = format!(
+            "{} of {} example projects failed:\n",
+            failures.len(),
+            projects.len()
+        );
+        for (index, diagnostics) in failures {
+            message.push_str(&format!(
+                "\nexample project `{}` {diagnostics}\n",
+                projects[index].display()
+            ));
+        }
+        panic!("{message}");
     }
     let census = instrumentation::take_body_rerun_census();
     if requested.is_none()

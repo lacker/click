@@ -25,8 +25,9 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 
 # Keep the rendered technical documentation and its source-backed public
-# inventories in the same deterministic gate as the verifier.
-cargo test --test documentation
+# inventories in the same deterministic gate as the verifier. The
+# `documentation` test that checks those inventories runs with the unit tests
+# below, so it shares their build instead of paying for a separate one.
 scripts/mdbook-build.sh
 scripts/docs-lint.sh
 
@@ -43,10 +44,11 @@ if ! command -v cargo-nextest >/dev/null 2>&1; then
 fi
 
 # Unit tests may use every core.
-cargo nextest run --lib --bins "$@"
-# The fixture harnesses verify serially to bound peak memory. Their proof
-# verdicts come from deterministic tactic-work budgets; nextest's outer
-# timeout is process-level hang containment, not a proof budget. Their
-# output is not captured: each fixture prints a line when it starts and when
-# it finishes, so a stall is visible as it happens and named.
+cargo nextest run --lib --bins --test documentation "$@"
+# The fixture harnesses run one at a time, and each verifies its fixtures on
+# every core. Their proof verdicts come from deterministic tactic-work
+# budgets; nextest's outer timeout is process-level hang containment, not a
+# proof budget. Their output is not captured: each fixture prints a line when
+# it starts and when it finishes, so a stall is visible as it happens and
+# named.
 cargo nextest run --test mdtests --test examples --test compiler_import --test-threads 1 --no-capture "$@"
