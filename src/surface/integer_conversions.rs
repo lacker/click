@@ -49,6 +49,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn opaque_integer_function_results_support_arithmetic_without_unfolding() {
+        let source = "function successor(z: Integer) -> Integer { z + 1 } theorem opaque(z: Integer) { ensures successor(z) + 1 > successor(z) by simp; }";
+        verify_c0_sources(source, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(source, &[], "opaque.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+        let false_identity =
+            source.replace("successor(z) + 1 > successor(z)", "successor(z) == z + 1");
+        assert!(
+            verify_c0_sources(
+                &false_identity.replace("by simp", "by { normalize(); }"),
+                &[]
+            )
+            .is_err()
+        );
+        let expanded_identity =
+            expand_c0_claim_source_by_label(&false_identity, &[], "opaque.ensures_0").unwrap();
+        assert!(expanded_identity.contains("unfold("), "{expanded_identity}");
+        verify_c0_sources(&expanded_identity, &[]).unwrap();
+    }
+
+    #[test]
     fn integer_bounds_establish_c_add_definedness_without_circular_assumptions() {
         let source = "theorem safety(a: int32, b: int32) { requires to_integer(a) + to_integer(b) >= -2147483648; requires to_integer(a) + to_integer(b) <= 2147483647; ensures defined(a + b) by { apply(int32_add_defined_by_integer_bounds(a, b)); } }";
         verify_c0_sources(source, &[]).unwrap();

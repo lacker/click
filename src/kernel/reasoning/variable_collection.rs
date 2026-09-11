@@ -283,6 +283,9 @@ fn collect_algebraic_term_bitvector_variables(
                     PureFunctionArgument::Algebraic(value) => {
                         collect_algebraic_term_bitvector_variables(value, variables)
                     }
+                    PureFunctionArgument::Integer(value) => {
+                        collect_integer_variables(value, variables)
+                    }
                     PureFunctionArgument::ArrayRef {
                         memory, pointer, ..
                     } => {
@@ -732,6 +735,7 @@ fn collect_spec_function_argument_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match argument {
+        SpecPureFunctionArgument::Integer(_) => {}
         SpecPureFunctionArgument::Value(expression) => {
             collect_spec_expression_bitvector_variables(expression, variables)
         }
@@ -1162,6 +1166,27 @@ fn collect_integer_variables_seen(
 ) {
     match term {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::PureFunctionApplication(application) => {
+            for argument in application.arguments() {
+                match argument {
+                    PureFunctionArgument::Value(value) => {
+                        collect_c_value_bitvector_variables(value, variables)
+                    }
+                    PureFunctionArgument::Integer(value) => {
+                        collect_shared_integer_variables(value, variables, seen)
+                    }
+                    PureFunctionArgument::Algebraic(value) => {
+                        collect_algebraic_term_bitvector_variables(value, variables)
+                    }
+                    PureFunctionArgument::ArrayRef {
+                        memory, pointer, ..
+                    } => {
+                        collect_memory_bitvector_variables(memory, variables);
+                        collect_c_value_bitvector_variables(pointer, variables);
+                    }
+                }
+            }
+        }
         IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
@@ -1186,6 +1211,27 @@ fn collect_shared_integer_variables(
     }
     match term.as_ref() {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::PureFunctionApplication(application) => {
+            for argument in application.arguments() {
+                match argument {
+                    PureFunctionArgument::Value(value) => {
+                        collect_c_value_bitvector_variables(value, variables)
+                    }
+                    PureFunctionArgument::Integer(value) => {
+                        collect_shared_integer_variables(value, variables, seen)
+                    }
+                    PureFunctionArgument::Algebraic(value) => {
+                        collect_algebraic_term_bitvector_variables(value, variables)
+                    }
+                    PureFunctionArgument::ArrayRef {
+                        memory, pointer, ..
+                    } => {
+                        collect_memory_bitvector_variables(memory, variables);
+                        collect_c_value_bitvector_variables(pointer, variables);
+                    }
+                }
+            }
+        }
         IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);

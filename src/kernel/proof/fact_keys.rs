@@ -701,6 +701,7 @@ fn alpha_integer_node(
             left: alpha_integer_node(left, bindings, memo, nodes)?,
             right: alpha_integer_node(right, bindings, memo, nodes)?,
         },
+        IntegerTerm::PureFunctionApplication { .. } => return None,
     };
     let index = nodes.len();
     nodes.push(node);
