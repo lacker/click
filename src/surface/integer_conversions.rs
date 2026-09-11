@@ -49,6 +49,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn integer_bounds_establish_c_add_definedness_without_circular_assumptions() {
+        let source = "theorem safety(a: int32, b: int32) { requires to_integer(a) + to_integer(b) >= -2147483648; requires to_integer(a) + to_integer(b) <= 2147483647; ensures defined(a + b) by { apply(int32_add_defined_by_integer_bounds(a, b)); } }";
+        verify_c0_sources(source, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(source, &[], "safety.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+        for missing in [
+            "requires to_integer(a) + to_integer(b) >= -2147483648;",
+            "requires to_integer(a) + to_integer(b) <= 2147483647;",
+        ] {
+            let invalid = source.replace(missing, "");
+            assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn integer_machine_operation_laws_require_definedness() {
+        for (name, operator) in [
+            ("int32_add_to_integer", "+"),
+            ("int32_subtract_to_integer", "-"),
+        ] {
+            let source = format!(
+                "theorem bridge(a: int32, b: int32) {{ requires defined(a {operator} b); ensures to_integer(a {operator} b) == to_integer(a) {operator} to_integer(b) by {{ apply({name}(a, b)); }} }}"
+            );
+            verify_c0_sources(&source, &[]).unwrap_or_else(|e| panic!("{}\n{source}", e.message()));
+            let expanded =
+                expand_c0_claim_source_by_label(&source, &[], "bridge.ensures_0").unwrap();
+            verify_c0_sources(&expanded, &[]).unwrap();
+            let invalid = source.replace(&format!("requires defined(a {operator} b);"), "");
+            assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
     fn integer_conversion_aliases_preserve_shared_expression_scaling() {
         let mut measured = Vec::new();
         for depth in [8, 16, 32, 64] {
