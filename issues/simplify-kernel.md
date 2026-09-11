@@ -15,7 +15,7 @@ a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
 Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 10
-(slices d and e), 11 (first slice), 12, 13, 14, 16, and 17, plus the package 0 census whose results are recorded below. Their sections remain as the record
+(all five slices), 11 (first slice), 12, 13, 14, 16, and 17, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -913,7 +913,45 @@ refused. (e): each stripped ensure premise must be exactly available or
 already discharged above it in the same chain; the retained implication
 is a fact, so a proof discharges it with `extract` after establishing the
 antecedent, not `intro`. Probe: 128 attempts, 30 successes, all exact; no
-fixture text changed. Slices (a), (b), (c) remain.
+fixture text changed.
+
+**Slices (a), (b), and (c) landed** 2026-09-10. (a) and (b) ("Decide
+resource population transitions by exact routes only", "Decide contract
+guards and refinement premises by exact routes only"): every listed site
+uses `quantity_condition_holds`, the shared exact predicate
+`path_facts.rs::required_obligation_is_exactly_discharged` (exact index,
+frozen bare-condition checker, atomic memory/resource checkers; also the
+suppression rule of `add_required_proof_obligation_with_context`, so the
+two cannot drift), or the emitted-obligation route; the population
+invariant facts are emitted. `evaluate_function_resource_spec`'s
+nonnegativity is route-restricted with a diagnostic rather than emitted,
+because that evaluator owns no obligation vector. Two new fixtures reach
+`assume_contract_proposition`'s implication arm and the structured
+resource-guard leg; `evaluate_decided_contract_mutable_ranges` is a dead
+branch (its only caller passes `explicit_case: false`), and the
+mutable-guard obligation checks are unreachable because resource
+conditions must be load-free. The reported `satisfies_fact` miss scan was
+in `exact_less_equal_for_memory_resolution`, now indexed through
+`signed_order_bounds` (541 to 285 work at size 128; residual slope is the
+order-path edge walk under ruling 2); `exact_signed_constant` still scans
+linearly and could use the equality indexes. (c) ("Discharge call
+preconditions by exact routes only" and two more): both `proves` calls in
+`prepare_verified_function_call` are gone; a requirement the exact routes
+miss is emitted with the package 17 chain, and the surface's
+`transition_certification.rs` lost its bare `proves` verdict, discharging
+by exact routes or the retained checked derivation. Emitted precondition
+goals rose from 67 to 103 over the corpus with no fixture lost. Left, as
+package 10(c2): a call requirement is still discharged as a prerequisite
+and never presented as a goal, so `intro` does not consume its chain and a
+smart `execute(); simp();` over a disjunctive precondition expands to bare
+steps that re-verify only under the checked-derivation leg; closing that
+means the step driver reports unresolved conditions and the planner
+applies a `have` before the step, an 11-fixture blast radius with
+automatic proofs. Also left: recursive-call `decreases` is a syntactic
+walk, not a prover site, and emitting it as a call obligation needs the
+caller's termination plan at the call site, which the whole-program
+termination pass does not provide; any such obligation must include
+nonnegativity of the new measure, per package 5's convention.
 
 **Entry points.** In `src/kernel/functions.rs`:
 `prepare_verified_function_call` (about line 1419; precondition discharge at
@@ -1206,8 +1244,8 @@ planning, validation, and the entry check.
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 first slice, 12, 13, 14, 16.
-Open: 10 (slices a to c; d and e landed), 11 second slice after 10(b),
-then 15 last.
+Open: 10(c2) (present emitted call requirements as goals), 11 second
+slice, then 15 last.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
