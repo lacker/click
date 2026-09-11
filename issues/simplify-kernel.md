@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 10
-(all five slices), 11 (both slices), 12, 13, 14, 16, and 17, plus the package 0 census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10 and 11): packages 1 through 9, 5b, 10 (all five
+slices), 11 (both slices), 12 through 19, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -1221,6 +1221,42 @@ is rejected by `from_steps`.
 
 ### Package 15: relocate the prover and delete authority
 
+**Landed** 2026-09-11 (three commits: residual audit, relocation,
+acceptance). No production `.proves(` or `derive_proposition(` remains
+under `src/kernel/`. The logical search lives in
+`src/surface/planning/proposition_search.rs` as a trait over
+`PureFactContext` that advances state only through four new checked kernel
+operations and read-only fact views enumerated in
+`crate::kernel::planning_api`. `ContextualAtomic` and `Explosion` carry
+`RetainedPremises`, the cited propositions, and their check rebuilds a
+context from exactly those. The residual audit migrated the last two
+authoritative sites (`capture_spec_integer_value`,
+`c_loop_preservation_contexts_with_mode`), the selected-separation and
+fact-conflict helpers, and the normalization leaf, which was split: the
+kernel keeps builtin solving, constructor congruence over the goal's own
+structure, and atomic theory on the empty context, and the surface
+planner does the structural recursion, which was never context-free
+(`derive_implies_rule` assumed the antecedent). The fenced
+`prove_c_while_invariant_rule` and its unconstructible proposition variant
+are deleted. Deterministic work is flat on four profiled targets; a
+scaling regression pins near-linear work in source with growing ambient
+facts. Two functions stayed in the kernel as leaves of the retained
+atomic checkers: `proves_exists_from_facts` and
+`select_forall_int32_instantiation_evidence`. **Completeness narrowing to
+weigh:** the latter used to discharge instantiation guards with the
+general prover and retain that derivation's premises; since retained
+evidence must name premises and `decide` does not report what it
+consumed, a guard must now be builtin-solvable or exactly available, and a
+guard needing a derivation refuses the instantiation. The alternative,
+retaining an empty premise list, would make the atomic-derivation check
+vacuous. No fixture depends on it; restoring it is the evidence-checked
+`decide` this umbrella already defers. An inconsistent context also no
+longer refutes an unrelated fact by explosion. Remaining audit gap: the
+planning-policy prerequisite leg in `transition_certification.rs` still
+discharges a call requirement that never reaches a proof site; it now
+checks the derivation it built, so relocation opened no new hole, but the
+gap belongs to 10(c2).
+
 **Entry points.** `PureFactContext::proves`, `derive_proposition`,
 `atomic_derivation_premises`, `select_forall_int32_instantiation_evidence`,
 `derive_by_singleton_substitution`, `derive_by_disjunction_cases`,
@@ -1362,9 +1398,9 @@ name in equality while synthesis names binders `__click_qN`.
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 (both slices), 12, 13, 14, 16.
-Open: 10(c2) (second attempt red on two planner and spelling gaps, see its
-note), then 15 last; 15 may proceed with the checked-derivation leg still
-present on the surface, relocating it with the prover. Package 15 may delete kernel authority while 10(c2) is open, provided
+Open: 10(c2) only (second attempt red on two planner and spelling gaps,
+see its note), plus the separate arithmetic issue. Everything else in this
+umbrella has landed. Package 15 may delete kernel authority while 10(c2) is open, provided
 the surface's retained checked-derivation leg in
 `transition_certification.rs` moves out of the kernel with the prover.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
