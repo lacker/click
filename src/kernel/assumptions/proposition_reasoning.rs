@@ -3182,9 +3182,13 @@ impl PureFactContext {
         let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
             return false;
         };
-        let mut order_facts = self.condition_order_facts().as_ref().clone();
-        self.collect_derived_order_facts(&mut order_facts);
-        self.collect_quantified_order_facts_for_condition(condition, &mut order_facts);
+        // Order facts come from `condition_facts` only. A bound that lives
+        // inside a guarded implication or a finite universal reaches this
+        // theory through an explicit `intro`, `extract`, or `enumerate` step,
+        // or through the exact conjunction split `assume_proposition`
+        // performs; deriving it here meant discharging antecedents with the
+        // general prover and instantiating quantifiers inside a theory query.
+        let order_facts = self.condition_order_facts();
         self.has_order_path_in_facts(&left, &right, strict, &order_facts)
     }
 

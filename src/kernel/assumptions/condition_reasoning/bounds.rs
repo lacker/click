@@ -55,15 +55,14 @@ impl PureFactContext {
         facts
     }
 
-    pub(in crate::kernel) fn collect_derived_order_facts(
-        &self,
-        order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
-    ) {
-        for proposition in self.prop_facts.iter() {
-            self.collect_derived_order_facts_from_proposition(proposition, order_facts);
-        }
-    }
-
+    /// Collect the order facts one *named* proposition states outright.
+    ///
+    /// The walk is structural: conjunction splits, and a guard is consumed
+    /// only when the exact index, the intrinsic rule, or the retained
+    /// condition checker decides it. There is no prover call and no scan of
+    /// the ambient fact set, so an order fact that a proof has not made
+    /// available stays invisible to the theory (package 13 of
+    /// `issues/simplify-kernel.md`).
     pub(in crate::kernel) fn collect_derived_order_facts_from_proposition(
         &self,
         proposition: &Proposition,
@@ -79,13 +78,33 @@ impl PureFactContext {
                 self.collect_derived_order_facts_from_proposition(left, order_facts);
                 self.collect_derived_order_facts_from_proposition(right, order_facts);
             }
-            Proposition::Implies(left, right) if self.proves_without_prop_facts(left) => {
+            Proposition::Implies(left, right) if self.guard_is_decided(left) => {
                 self.collect_derived_order_facts_from_proposition(right, order_facts);
             }
             Proposition::ForAll { .. } => {
                 self.collect_finite_forall_order_facts(proposition, order_facts);
             }
             _ => {}
+        }
+    }
+
+    /// Whether a guard is discharged without a proof search. Conjunction
+    /// splits structurally; a leaf that is one bare condition goes to the
+    /// retained condition checker, and every other leaf must be exactly
+    /// available. No logical structure below a conjunction is introduced and
+    /// no general prover runs.
+    fn guard_is_decided(&self, guard: &Proposition) -> bool {
+        match guard {
+            Proposition::And(left, right) => {
+                self.guard_is_decided(left) && self.guard_is_decided(right)
+            }
+            Proposition::ConditionIs(condition, value) => {
+                PureFactContext::decide_intrinsically(condition) == Some(*value)
+                    || self.exact_condition_value(condition) == Some(*value)
+                    || !self.should_defer_non_exact_condition_reasoning()
+                        && self.decide(condition) == Some(*value)
+            }
+            _ => self.proves_exact(guard),
         }
     }
 

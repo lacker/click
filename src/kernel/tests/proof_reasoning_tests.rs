@@ -3979,8 +3979,15 @@ fn assumptions_do_not_split_a_multi_value_context_variable() {
     assert!(assumptions.derive_proposition(&proposition).is_none());
 }
 
+/// A finite universal's order fact reaches the order theory only through an
+/// explicit instantiation.
+///
+/// Package 13 of `issues/simplify-kernel.md`: the theory reads order facts
+/// from `condition_facts`. Instantiating an ambient quantified fact inside an
+/// order query was proof search in a theory checker; the `enumerate` step a
+/// proof writes puts the instance where the theory can see it.
 #[test]
-fn finite_forall_order_fact_participates_in_transitive_order_path() {
+fn finite_forall_order_fact_needs_an_explicit_instantiation() {
     let memory = CMemory::new();
     let indexed_load = |index| {
         Bitvector32Term::MemoryLoad(
@@ -3997,6 +4004,7 @@ fn finite_forall_order_fact_participates_in_transitive_order_path() {
     let load_0 = indexed_load(Bitvector32Term::Constant(0));
     let load_1 = indexed_load(Bitvector32Term::Constant(1));
     let load_2 = indexed_load(Bitvector32Term::Constant(2));
+    let load_1_again = load_1.clone();
     let finite_order_fact = Proposition::ForAll {
         var: k,
         sort: Sort::CInt32,
@@ -4024,10 +4032,102 @@ fn finite_forall_order_fact_participates_in_transitive_order_path() {
             true,
         );
 
-    assert!(assumptions.proves(&Proposition::ConditionIs(
-        ConditionTerm::signed_less_equal(load_0, load_2),
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(load_0.clone(), load_2),
         true,
-    )));
+    );
+    assert!(
+        !assumptions.proves(&goal),
+        "the quantified bound is not an order fact until it is instantiated"
+    );
+
+    // The condition fact an explicit `enumerate` instantiation contributes.
+    let enumerated =
+        assumptions.assume_condition(ConditionTerm::signed_less_equal(load_0, load_1_again), true);
+    assert!(enumerated.proves(&goal));
+}
+
+/// A bound available only under a guarded implication needs the explicit
+/// step that introduces it.
+///
+/// The guard is exactly available, so the old collection discharged it with
+/// the general prover and harvested the conclusion as an order fact. The
+/// theory now sees only `condition_facts`, and the conclusion joins the
+/// transitive path once an explicit `intro`/`extract` step has added it.
+#[test]
+fn guarded_implication_bound_needs_an_explicit_extraction() {
+    let a = Bitvector32Term::Variable(Variable(97_001));
+    let b = Bitvector32Term::Variable(Variable(97_002));
+    let c = Bitvector32Term::Variable(Variable(97_003));
+    let guard = ConditionTerm::signed_less_than(
+        Bitvector32Term::Variable(Variable(97_004)),
+        Bitvector32Term::Constant(10),
+    );
+    let a_le_b =
+        Proposition::ConditionIs(ConditionTerm::signed_less_equal(a.clone(), b.clone()), true);
+    let assumptions = PureFactContext::new()
+        .assume_condition(guard.clone(), true)
+        .assume_proposition(Proposition::Implies(
+            Box::new(Proposition::ConditionIs(guard, true)),
+            Box::new(a_le_b.clone()),
+        ))
+        .assume_condition(ConditionTerm::signed_less_equal(b, c.clone()), true);
+
+    let goal = Proposition::ConditionIs(ConditionTerm::signed_less_equal(a, c), true);
+    assert!(
+        !assumptions.proves(&goal),
+        "a guarded bound is not an order fact until the proof extracts it"
+    );
+    assert!(assumptions.assume_proposition(a_le_b).proves(&goal));
+}
+
+/// The order query's work does not grow with unrelated ambient propositions.
+///
+/// The removed collection walked every `prop_facts` entry and ran the prover
+/// on each implication antecedent, so unrelated propositions were charged to
+/// every order decision.
+#[test]
+fn order_path_decision_scales_flat_in_unrelated_propositions() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let a = Bitvector32Term::Variable(Variable(97_101));
+            let b = Bitvector32Term::Variable(Variable(97_102));
+            let c = Bitvector32Term::Variable(Variable(97_103));
+            let mut assumptions = PureFactContext::new()
+                .assume_condition(ConditionTerm::signed_less_equal(a.clone(), b.clone()), true)
+                .assume_condition(ConditionTerm::signed_less_equal(b, c.clone()), true);
+            for index in 0..size {
+                let guard = ConditionTerm::signed_less_than(
+                    Bitvector32Term::Variable(Variable(97_200 + index as u64)),
+                    Bitvector32Term::Constant(10),
+                );
+                assumptions = assumptions
+                    .assume_condition(guard.clone(), true)
+                    .assume_proposition(Proposition::Implies(
+                        Box::new(Proposition::ConditionIs(guard, true)),
+                        Box::new(Proposition::ConditionIs(
+                            ConditionTerm::signed_less_equal(
+                                Bitvector32Term::Variable(Variable(97_400 + index as u64)),
+                                Bitvector32Term::Variable(Variable(97_600 + index as u64)),
+                            ),
+                            true,
+                        )),
+                    ));
+            }
+            let goal = Proposition::ConditionIs(ConditionTerm::signed_less_equal(a, c), true);
+            let (proved, work) =
+                crate::instrumentation::measure_deterministic_work(|| assumptions.proves(&goal));
+            assert!(proved);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8),
+            "order decision grew with unrelated propositions: {samples:?}"
+        );
+    }
 }
 
 #[test]
