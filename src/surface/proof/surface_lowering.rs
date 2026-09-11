@@ -72,6 +72,58 @@ pub(super) fn promote_integer_comparison(
             operator: *operator,
             right: promote_integer_expression(right, integer_values, surface_bindings),
         },
+        ClickProposition::And(left, right) => ClickProposition::And(
+            Box::new(promote_integer_comparison(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_comparison(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ClickProposition::Or(left, right) => ClickProposition::Or(
+            Box::new(promote_integer_comparison(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_comparison(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ClickProposition::Implies(left, right) => ClickProposition::Implies(
+            Box::new(promote_integer_comparison(
+                left,
+                integer_values,
+                surface_bindings,
+            )),
+            Box::new(promote_integer_comparison(
+                right,
+                integer_values,
+                surface_bindings,
+            )),
+        ),
+        ClickProposition::Not(body) => ClickProposition::Not(Box::new(promote_integer_comparison(
+            body,
+            integer_values,
+            surface_bindings,
+        ))),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(promote_integer_comparison(
+                proposition,
+                integer_values,
+                surface_bindings,
+            )),
+        },
         _ => surface.clone(),
     }
 }
