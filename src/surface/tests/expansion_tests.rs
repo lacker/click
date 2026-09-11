@@ -12374,3 +12374,57 @@ fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
     verify_c0_sources(&missing_intro, &sources)
         .expect_err("deleting the retained guard introduction must be rejected at validation");
 }
+
+/// A specification `if` whose condition holds only under an ambient fact.
+///
+/// Lowering does not consult that fact: it folds a literally constant
+/// condition and otherwise lowers both branches, so the checked goal still
+/// carries the conditional. The branch is therefore chosen by a proof step,
+/// and expansion prints that step together with the exact ambient premise it
+/// cites. Dropping the citation must invalidate the proof, which is what
+/// makes the choice explicit rather than rediscovered.
+#[test]
+fn specification_conditional_branch_is_an_expanded_proof_step() {
+    let click_source = r#"verifying "select_when_positive.c";
+
+int32 select_when_positive(int32 limit, int32 left, int32 right) {
+    requires limit > 0;
+    ensures result == (if limit > 0 { left } else { right });
+} by { execute(); simp(); }
+"#;
+    let sources = [(
+        "select_when_positive.c",
+        "int32 select_when_positive(int32 limit, int32 left, int32 right) {\n    return left;\n}\n",
+    )];
+    verify_c0_sources(click_source, &sources).expect("smart conditional proof should verify");
+    let offset = click_source.find("simp();").expect("expected smart tactic");
+    let position = expansion::position_at_offset(click_source, offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column).unwrap();
+    assert!(
+        expanded.contains("have result == (if limit > 0 { left } else { right }) by"),
+        "lowering decided the branch instead of keeping the conditional: {expanded}"
+    );
+    assert!(
+        expanded.contains("at(function.entry, limit > 0);"),
+        "the expansion must cite the ambient fact the branch choice rests on: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("expanded conditional proof failed independent verification: {error:?}\n{expanded}")
+    });
+    let uncited = expanded.replacen(
+        "normalize() using {\n        at(function.entry, limit > 0);\n    }",
+        "normalize();",
+        1,
+    );
+    assert_ne!(uncited, expanded, "{expanded}");
+    verify_c0_sources(&uncited, &sources)
+        .expect_err("dropping the cited premise must leave the branch unresolved");
+    let wrong_branch = click_source.replace(
+        "if limit > 0 { left } else { right }",
+        "if limit > 0 { right } else { left }",
+    );
+    assert_ne!(wrong_branch, click_source);
+    verify_c0_sources(&wrong_branch, &sources)
+        .expect_err("the arm the ambient fact selects is checked, not assumed");
+}
