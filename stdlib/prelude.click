@@ -14,6 +14,29 @@ function nat_add(left: Nat, right: Nat) -> Nat
     }
 }
 
+function nat_to_integer(value: Nat) -> Integer
+    decreases value
+{
+    match value {
+        Nat::Zero => 0,
+        Nat::Succ(previous) => nat_to_integer(previous) + 1,
+    }
+}
+
+theorem nat_to_integer_zero() {
+    ensures nat_to_integer(Nat::Zero) == 0 by {
+        unfold(nat_to_integer(Nat::Zero));
+        normalize();
+    }
+}
+
+theorem nat_to_integer_succ(n: Nat) {
+    ensures nat_to_integer(Nat::Succ(n)) == nat_to_integer(n) + 1 by {
+        unfold(nat_to_integer(Nat::Succ(n)));
+        normalize();
+    }
+}
+
 theorem nat_add_left_identity(n: Nat) {
     ensures nat_add(Nat::Zero, n) == n by {
         unfold(nat_add(Nat::Zero, n));

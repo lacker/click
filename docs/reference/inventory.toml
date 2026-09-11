@@ -2110,6 +2110,18 @@ id = "stdlib.function.nat_add"
 path = "reference/library/index.md#nat_add"
 
 [[item]]
+id = "stdlib.function.nat_to_integer"
+path = "reference/library/index.md#nat_to_integer"
+
+[[item]]
+id = "stdlib.theorem.nat_to_integer_zero"
+path = "reference/library/index.md#nat_to_integer_zero"
+
+[[item]]
+id = "stdlib.theorem.nat_to_integer_succ"
+path = "reference/library/index.md#nat_to_integer_succ"
+
+[[item]]
 id = "stdlib.theorem.nat_add_left_identity"
 path = "reference/library/index.md#nat_add_left_identity"
 

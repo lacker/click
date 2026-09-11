@@ -6,6 +6,7 @@ fn integer_function_unfold_expands_and_reverifies() {
 function successor(z: Integer) -> Integer {
     z + 1
 }
+
 theorem successor_expansion(z: Integer) {
     ensures successor(z) == z + 1 by {
         unfold(successor(z));
@@ -17,6 +18,24 @@ theorem successor_expansion(z: Integer) {
     let expanded = expand_c0_claim_source_by_label(source, &[], "successor_expansion.ensures_0")
         .expect("Integer successor claim expands");
     verify_c0_sources(&expanded, &[]).expect("expanded Integer successor re-verifies");
+}
+
+#[test]
+fn nat_to_integer_laws_expand_and_reject_wrong_successor() {
+    let source = r#"
+theorem nat_to_integer_client(n: Nat) {
+    ensures nat_to_integer(Nat::Succ(n)) == nat_to_integer(n) + 1 by {
+        apply(nat_to_integer_succ(n));
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("Nat conversion law verifies");
+    let expanded = expand_c0_claim_source_by_label(source, &[], "nat_to_integer_client.ensures_0")
+        .expect("Nat conversion claim expands");
+    verify_c0_sources(&expanded, &[]).expect("expanded Nat conversion re-verifies");
+
+    let invalid = source.replace("+ 1", "+ 2");
+    assert!(verify_c0_sources(&invalid, &[]).is_err());
 }
 
 #[test]

@@ -48,6 +48,43 @@ spec enum Nat {
 
 **Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
 
+### `nat_to_integer`
+
+```click
+function nat_to_integer(value: Nat) -> Integer
+    decreases value
+{
+    match value {
+        Nat::Zero => 0,
+        Nat::Succ(previous) => nat_to_integer(previous) + 1,
+    }
+}
+```
+
+**Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
+
+### `nat_to_integer_zero`
+
+```click
+theorem nat_to_integer_zero() {
+    ensures nat_to_integer(Nat::Zero) == 0 by {
+        unfold(nat_to_integer(Nat::Zero));
+        normalize();
+    }
+}
+```
+
+### `nat_to_integer_succ`
+
+```click
+theorem nat_to_integer_succ(n: Nat) {
+    ensures nat_to_integer(Nat::Succ(n)) == nat_to_integer(n) + 1 by {
+        unfold(nat_to_integer(Nat::Succ(n)));
+        normalize();
+    }
+}
+```
+
 ### `nat_add`
 
 ```click

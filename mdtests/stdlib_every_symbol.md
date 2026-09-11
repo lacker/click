@@ -54,6 +54,15 @@ theorem one_plus_one() {
     }
 }
 
+theorem nat_integer_laws(n: Nat) {
+    ensures nat_to_integer(Nat::Zero) == 0 by {
+        apply(nat_to_integer_zero());
+    }
+    ensures nat_to_integer(Nat::Succ(n)) == nat_to_integer(n) + 1 by {
+        apply(nat_to_integer_succ(n));
+    }
+}
+
 theorem length_laws<T>(head: T, xs: List<T>, ys: List<T>) {
     ensures list_length(List<T>::Nil) == Nat::Zero by {
         apply(list_length_nil(List<T>::Nil));
