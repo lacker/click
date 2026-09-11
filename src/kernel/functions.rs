@@ -3525,6 +3525,7 @@ pub(super) fn spec_algebraic_expression_is_obligation_free(
 fn spec_argument_is_obligation_free(argument: &SpecPureFunctionArgument) -> bool {
     match argument {
         SpecPureFunctionArgument::Value(value) => spec_value_is_obligation_free(value),
+        SpecPureFunctionArgument::Integer(value) => spec_integer_is_obligation_free(value),
         SpecPureFunctionArgument::Algebraic(value) => {
             spec_algebraic_expression_is_obligation_free(value)
         }
@@ -3550,6 +3551,9 @@ fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
         | SpecIntegerExpression::Subtract(left, right)
         | SpecIntegerExpression::Multiply(left, right) => {
             spec_integer_is_obligation_free(left) && spec_integer_is_obligation_free(right)
+        }
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(spec_argument_is_obligation_free)
         }
         SpecIntegerExpression::FromMachine(_) | SpecIntegerExpression::ResourceField(_) => false,
     }
