@@ -3602,7 +3602,7 @@ fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
 /// premises it consumed. The rule therefore refuses the instantiation rather
 /// than retaining evidence with no premise, which would make
 /// `checks_atomic_derivation` vacuous for that guard. Restoring it is the
-/// evidence-checked `decide` that `issues/simplify-kernel.md` defers; when
+/// evidence-checked `decide` that the kernel authority boundary defers; when
 /// that lands, this test should start selecting the instantiation again and
 /// name `not (exit < 3)` as the guard premise.
 #[test]
@@ -4058,7 +4058,7 @@ fn assumptions_do_not_split_a_multi_value_context_variable() {
 /// A finite universal's order fact reaches the order theory only through an
 /// explicit instantiation.
 ///
-/// Package 13 of `issues/simplify-kernel.md`: the theory reads order facts
+/// From the kernel-search cleanup: the theory reads order facts
 /// from `condition_facts`. Instantiating an ambient quantified fact inside an
 /// order query was proof search in a theory checker; the `enumerate` step a
 /// proof writes puts the instance where the theory can see it.

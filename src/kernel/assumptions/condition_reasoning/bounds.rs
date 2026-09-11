@@ -62,7 +62,7 @@ impl PureFactContext {
     /// condition checker decides it. There is no prover call and no scan of
     /// the ambient fact set, so an order fact that a proof has not made
     /// available stays invisible to the theory (package 13 of
-    /// `issues/simplify-kernel.md`).
+    /// `docs/internals/proof-objects.md`).
     pub(in crate::kernel) fn collect_derived_order_facts_from_proposition(
         &self,
         proposition: &Proposition,

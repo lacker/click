@@ -2,11 +2,13 @@
 
 ## Priority and relationship
 
-This is P1 and is a blocking companion to
-[simplify-kernel.md](simplify-kernel.md). It remains a separate implementation
-issue because its certificate vocabulary, arithmetic rules, diagnostics, and
-expansion design form one coherent unit. The kernel-search umbrella cannot close
-while `arithmetic()` reconstructs a proof internally or while
+This is P1. It is the last kernel decision procedure hidden behind a
+simple tactic after the 2026-09 kernel-search cleanup (see the kernel
+authority boundary in [proof-objects.md](../docs/internals/proof-objects.md)
+and [simplify-step.md](simplify-step.md) for the other remaining route). It
+is its own issue because its certificate vocabulary, arithmetic rules,
+diagnostics, and expansion design form one coherent unit. The boundary is
+not closed while `arithmetic()` reconstructs a proof internally or while
 `ARITHMETIC_INTERVAL_DEPTH` can change whether a supported proof succeeds.
 
 ## Violated invariant
@@ -74,7 +76,7 @@ The interval reconstruction is capped by
 `ARITHMETIC_INTERVAL_DEPTH = 32`. `signed_term_interval` silently returns no
 interval beyond that depth, so otherwise supported proofs depend on an opaque
 nesting limit. This was initially listed as a structural cleanup in
-`issues/simplify-kernel.md`. Merely replacing the recursion with an iterative
+the kernel-search cleanup. Merely replacing the recursion with an iterative
 walk would make that hidden decision procedure complete over its input, but it
 would invest in machinery that this issue intends to remove from the kernel.
 The limit is therefore tracked here and should normally disappear as part of

@@ -1369,7 +1369,7 @@ fn empty_atomic_premise_derivation_cannot_hide_an_ambient_premise() {
 
 /// A quantifier is a proof step, not a normalization.
 ///
-/// Package 8 of `issues/simplify-kernel.md`: `normalize` no longer closes a
+/// From the kernel-search cleanup: `normalize` no longer closes a
 /// `forall` or `exists` goal. A vacuous range is discharged by the explicit
 /// `enumerate`, which checks the quantifier's own named instances -- here,
 /// none.

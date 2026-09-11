@@ -218,7 +218,7 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         // before accepting it. That the discharge never
                         // reaches a proof site at all is package 10(c2)'s
                         // remaining audit gap, recorded in
-                        // `issues/simplify-kernel.md`.
+                        // `issues/simplify-step.md`.
                         prerequisite_assumptions
                             .derive_proposition(obligation.proposition())
                             .filter(|derivation| {

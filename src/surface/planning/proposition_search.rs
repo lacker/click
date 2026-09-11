@@ -20,7 +20,7 @@
 //! `proves_memory_access`, `proves_memory_disjoint`,
 //! `proves_resource_separate`, `proves_resource_contains`, and the
 //! canonicalization equality walks) stay in the kernel and are unchanged;
-//! see `issues/simplify-kernel.md`.
+//! see the kernel authority boundary in `docs/internals/proof-objects.md`.
 //!
 //! Nothing under `src/kernel/` may call into this module. A kernel
 //! operation that needs to know whether a proposition holds uses an exact

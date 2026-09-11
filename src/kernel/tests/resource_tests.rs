@@ -3892,7 +3892,7 @@ fn allocation_separation_ignores_unrelated_facts() {
 /// The resource axis is flat. On the ambient-condition axis the residual
 /// slope is the exact order-path walk in `condition_reasoning/order_paths.rs`,
 /// a whole-context loop inside the frozen condition checker that
-/// `issues/simplify-kernel.md` tracks as a separate indexing debt. This test
+/// the kernel authority boundary in `docs/internals/proof-objects.md` treats as a separate indexing debt. This test
 /// pins the slope that remains after the two `condition_facts` scans in
 /// `exact_less_equal_for_memory_resolution` became indexed lookups at the two
 /// endpoints the query names. Before that change the same query grew at twice

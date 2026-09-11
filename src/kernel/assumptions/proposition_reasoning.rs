@@ -225,7 +225,7 @@ impl PureFactContext {
     }
 
     /// Decide one *bare* atomic memory or resource proposition with the
-    /// retained theory checkers named in `issues/simplify-kernel.md`.
+    /// retained theory checkers named in `docs/internals/proof-objects.md`.
     ///
     /// This is the obligation-suppression route that survives the removal of
     /// the general prover from lowering and execution. It traverses no

@@ -3906,7 +3906,7 @@ pub(crate) struct LoadAddressCongruenceEvidence {
 /// embedding one makes a leaf's size a function of the whole proof rather
 /// than of what it actually cited, and `context_premises` had to
 /// materialize that index to answer at all. See the "Retained evidence
-/// names premises, never a context" ruling in `issues/simplify-kernel.md`.
+/// names premises, never a context" rule in `docs/internals/proof-objects.md`.
 ///
 /// Checking a leaf rebuilds a context from exactly these propositions, so
 /// the check can never consult more than the evidence names.

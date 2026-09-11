@@ -413,6 +413,30 @@ obligation for an ordinary tactic to prove. Because a derivation carries no
 authority until it is checked, a planning bug can lose a proof but cannot
 issue one.
 
+### Kernel authority boundary
+
+Three standing rules keep the boundary where the 2026-09 cleanup left it.
+
+- **The atomic theory checkers are frozen.** `PureFactContext::decide` and
+  the atomic memory and resource checkers (`proves_memory_loadable`,
+  `proves_memory_access`, `proves_memory_disjoint`, `proves_resource_separate`,
+  `proves_resource_contains`, and the memory-DAG and canonicalization
+  equality walks) decide one named condition or atomic proposition by a
+  fixed rule set over indexed facts. Add no rule to them. Their remaining
+  whole-context loops are indexing debts under the efficiency contract, not
+  license to reason more. A kernel site may call `decide` only on a bare
+  `ConditionIs`.
+- **Selections need a spelling; discharges become obligations.** A kernel
+  operation that asks whether a proposition holds uses an exact route or
+  emits the proposition as an obligation. One that must choose among
+  candidates the kernel itself enumerates lowers the choice as a finite
+  disjunction so `left`/`right` pick it and expansion prints it; open
+  choices use the existing `instantiate`, `witness`, `choose`, `rewrite`,
+  and `transport` spellings.
+- **Retained evidence names premises, never a context.** A derivation leaf
+  carries the propositions it cites, and its check rebuilds a context from
+  exactly those.
+
 The target invariants are:
 
 - explicit and smart tactics advance one `Proof` through checked operations;
