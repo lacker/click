@@ -8,10 +8,10 @@ int32 invoke(int32 (*callback)()) { return callback(); }
 resource Counter() { field revision: int32; field tag: int32; }
 theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
-    ensures Progress(callback) by {
-        step(Exact(cell));
-        have cell.revision == old(cell.revision) + 1 by { assumption(); }
-        apply(int32_increment_strictly_increases(old(cell.revision), 2147483647));
+    ensures Progress(callback) as { cell: k } by {
+        step(Exact(k));
+        have k.revision == old(k.revision) + 1 by { assumption(); }
+        apply(int32_increment_strictly_increases(old(k.revision), 2147483647));
         simp();
     }
 }

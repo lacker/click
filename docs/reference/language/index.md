@@ -638,12 +638,31 @@ also cannot be named `result`. Additional theorem parameters remain outside
 this slice. Const-qualified pointer returns and parameters use the same C
 spelling in callbacks, named contracts, and execution proofs.
 
-When the target contract declares resource proof parameters, their names are
-available inside the execution proof block. For example, a target parameter
-`cell: Counter()` can be passed to `step(Exact(cell))`; the theorem proves the
-refinement for an arbitrary such instance. These names cannot shadow the
-callback, call arguments, theorem local names, or `result`, and do not escape
-the block. Source and target parameter names need not match, and the target
+When the target contract declares resource proof parameters, the conclusion
+introduces one arbitrary instance per parameter with an `as` map keyed by the
+contract's parameter names:
+
+<!-- verified-example: mdtests/c_contract_executes_counter.md -->
+```click
+theorem lift(callback: int32 (*)()) executes callback() {
+    requires Exact(callback);
+    ensures Progress(callback) as { cell: k } by {
+        step(Exact(k));
+        have k.revision == old(k.revision) + 1 by { assumption(); }
+        apply(int32_increment_strictly_increases(old(k.revision), 2147483647));
+        simp();
+    }
+}
+```
+
+`k` is the only name for that instance inside the block, and the theorem proves
+the refinement for an arbitrary such instance. The target's own spelling `cell`
+is not in scope: nothing enters an execution proof block implicitly. Every
+target proof parameter must be named exactly once, and an introduced name
+cannot shadow the callback, the call arguments, a theorem local name, or
+`result`. The names do not escape the block. A target with no proof parameters
+takes no map, though an empty `as {}` is accepted, and a map on such a target
+is an error. Source and target parameter names are unrelated, and the target
 contract may be declared later in the file. The
 [counter refinement tests](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_counter.md)
 demonstrate an exact field increment refined to progress while framing an

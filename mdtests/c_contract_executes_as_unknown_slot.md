@@ -1,8 +1,6 @@
-# Refinement applies only to the selected counter
+# An `as` map cannot name a parameter the target does not declare
 
-```c filename=counter.c
-int32 invoke(int32 (*callback)()) { return callback(); }
-```
+`Progress` declares `cell`, not `counter`, so the map keys nothing.
 
 ```click
 resource Counter() { field revision: int32; field tag: int32; }
@@ -20,33 +18,15 @@ contract Progress(cell: Counter()) for int32() {
 }
 theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
-    ensures Progress(callback) as { cell: k } by {
+    ensures Progress(callback) as { counter: k } by {
         step(Exact(k));
         have k.revision == old(k.revision) + 1 by { assumption(); }
         apply(int32_increment_strictly_increases(old(k.revision), 2147483647));
         simp();
     }
 }
-verifying "counter.c";
-int32 invoke(int32 (*callback)()) {
-    requires Exact(callback);
-    owns first: Counter();
-    owns second: Counter();
-    requires first.revision < 2147483647;
-    requires second.revision < 2147483647;
-    ensures first.revision > old(first.revision);
-    ensures second.revision == old(second.revision);
-    ensures second.tag == old(second.tag);
-    ensures result == 0;
-} by {
-    apply(lift(callback));
-    step(Progress(second));
-    execute();
-    simp();
-}
 ```
 
 ```expect
-fail: unclosed goal
+fail: does not declare a proof parameter `counter`
 ```
-

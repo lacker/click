@@ -1,8 +1,7 @@
-# Refinement applies only to the selected counter
+# A target proof parameter needs an explicit introduced name
 
-```c filename=counter.c
-int32 invoke(int32 (*callback)()) { return callback(); }
-```
+The conclusion carries no `as` map, so nothing introduces an instance for the
+target contract's `cell`. The diagnostic names the parameter that is missing.
 
 ```click
 resource Counter() { field revision: int32; field tag: int32; }
@@ -20,33 +19,15 @@ contract Progress(cell: Counter()) for int32() {
 }
 theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
-    ensures Progress(callback) as { cell: k } by {
+    ensures Progress(callback) by {
         step(Exact(k));
         have k.revision == old(k.revision) + 1 by { assumption(); }
         apply(int32_increment_strictly_increases(old(k.revision), 2147483647));
         simp();
     }
 }
-verifying "counter.c";
-int32 invoke(int32 (*callback)()) {
-    requires Exact(callback);
-    owns first: Counter();
-    owns second: Counter();
-    requires first.revision < 2147483647;
-    requires second.revision < 2147483647;
-    ensures first.revision > old(first.revision);
-    ensures second.revision == old(second.revision);
-    ensures second.tag == old(second.tag);
-    ensures result == 0;
-} by {
-    apply(lift(callback));
-    step(Progress(second));
-    execute();
-    simp();
-}
 ```
 
 ```expect
-fail: unclosed goal
+fail: proof parameter `cell` needs an introduced name
 ```
-

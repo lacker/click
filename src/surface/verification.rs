@@ -4362,7 +4362,17 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary(
 ) -> Result<ResourceClause, String> {
     match resource {
         ResourceClause::Named { binding, resource } => Ok(ResourceClause::Named {
-            binding: binding.clone(),
+            binding: match crate::surface::lowering::resource_instance_rename(
+                substitutions,
+                &binding.name,
+                binding.identity,
+            ) {
+                Some(name) => ResourceInstanceBinding {
+                    name,
+                    ..binding.clone()
+                },
+                None => binding.clone(),
+            },
             resource: Box::new(substitute_resource_clause_for_summary(
                 resource,
                 substitutions,

@@ -5,7 +5,7 @@ fn execution_target_resource_scope_parsing_is_linear_in_selected_declarations() 
     let samples = [1, 8, 32, 128].map(|count| {
         let mut source = "resource Counter() { field revision: int32; }\n".to_string();
         for index in 0..count {
-            source.push_str(&format!("theorem lift{index}(callback: int32 (*)()) executes callback() {{ requires C{index}(callback); ensures C{index}(callback) by {{ step(C{index}(cell)); simp(); }} }}\n"));
+            source.push_str(&format!("theorem lift{index}(callback: int32 (*)()) executes callback() {{ requires C{index}(callback); ensures C{index}(callback) as {{ cell: k }} by {{ step(C{index}(k)); simp(); }} }}\n"));
         }
         for index in 0..count {
             source.push_str(&format!("contract C{index}(cell: Counter()) for int32() {{ owns cell; ensures result == 0; }}\n"));

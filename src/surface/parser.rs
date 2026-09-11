@@ -450,10 +450,11 @@ impl Parser {
             } else if self.peek_ident() == Some("function") {
                 click_function_definitions.push(self.parse_click_function_definition()?);
             } else if self.peek_ident() == Some("theorem") {
-                // Resource parameters of an executes target are lexical proof
-                // bindings, including when that contract is declared later.
-                // Visit each declaration's tokens once here, then parse it
-                // after the contract index is complete.
+                // An executes conclusion's `as` map is checked against the
+                // target contract's proof parameters, including when that
+                // contract is declared later. Visit each declaration's tokens
+                // once here, then parse it after the contract index is
+                // complete.
                 deferred_theorems.push(self.position);
                 let mut depth = 0usize;
                 loop {
@@ -1344,10 +1345,12 @@ impl Parser {
             Some(TheoremExecution {
                 callback,
                 parameters: call_parameters.parameters,
+                target_instances: Vec::new(),
             })
         } else {
             None
         };
+        let mut target_instances = Vec::new();
         self.expect(Token::LBrace)?;
 
         let parameter_names = parsed_parameters
@@ -1494,7 +1497,10 @@ impl Parser {
                         let mut names = parameter_names.clone();
                         names.extend(execution.parameters.iter().map(|p| p.name().to_string()));
                         names.extend(contract_let_names.iter().cloned());
-                        self.parse_ensure_clause_with_execution_scope(Some(&names))?
+                        let (ensure, introduced) =
+                            self.parse_ensure_clause_with_execution_scope(Some(&names))?;
+                        target_instances.extend(introduced);
+                        ensure
                     } else {
                         self.parse_ensure_clause()?
                     };
@@ -1537,7 +1543,10 @@ impl Parser {
             name,
             type_parameters,
             parameters: parsed_parameters.parameters,
-            executes,
+            executes: executes.map(|execution| TheoremExecution {
+                target_instances,
+                ..execution
+            }),
             requires,
             ensures,
         })
@@ -2734,13 +2743,15 @@ impl Parser {
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {
-        self.parse_ensure_clause_with_execution_scope(None)
+        Ok(self.parse_ensure_clause_with_execution_scope(None)?.0)
     }
 
+    /// Parse one `ensures` clause, returning the conclusion's `as` instance
+    /// map alongside it when the clause belongs to an `executes` theorem.
     fn parse_ensure_clause_with_execution_scope(
         &mut self,
         execution_names: Option<&BTreeSet<String>>,
-    ) -> Result<EnsureClause, ClickError> {
+    ) -> Result<(EnsureClause, Vec<(String, String)>), ClickError> {
         self.expect_ident_spelling("ensures")?;
         let name = if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_next() == Some(&Token::Colon)
@@ -2753,30 +2764,116 @@ impl Parser {
         };
         let ensure = self.parse_ensure_condition()?;
         let previous = execution_names.map(|_| std::mem::take(&mut self.current_resource_bindings));
-        if let Some(names) = execution_names
-            && let Ensure::Proposition(ClickProposition::PredicateCall { name, .. }) = &ensure
-            && let Some(bindings) = self.contract_proof_bindings.get(name)
-        {
-            for (name, identity, resource) in bindings {
-                crate::instrumentation::record_deterministic_work(1);
-                if name == "result" || names.contains(name) {
-                    return Err(self.error(format!("target resource parameter `{name}` conflicts with an execution proof binding")));
-                }
-                self.current_resource_bindings
-                    .insert(name.clone(), (*identity, resource.clone()));
-            }
-        }
+        let introduced = match execution_names {
+            Some(names) => self.introduce_execution_target_instances(&ensure, names)?,
+            None => Vec::new(),
+        };
         let proof = self.parse_proof_clause_or_default()?;
         if let Some(previous) = previous {
             self.current_resource_bindings = previous;
         }
 
-        Ok(EnsureClause {
-            name,
-            ensure,
-            proof,
-            borrowed: false,
-        })
+        Ok((
+            EnsureClause {
+                name,
+                ensure,
+                proof,
+                borrowed: false,
+            },
+            introduced,
+        ))
+    }
+
+    /// Bind the target contract's resource proof parameters for an `executes`
+    /// proof block. Every instance name is introduced by the conclusion's
+    /// `as { parameter: name }` map; the contract's own parameter spelling is
+    /// never in scope, so the block has exactly one way to name an instance.
+    fn introduce_execution_target_instances(
+        &mut self,
+        ensure: &Ensure,
+        names: &BTreeSet<String>,
+    ) -> Result<Vec<(String, String)>, ClickError> {
+        let target = match ensure {
+            Ensure::Proposition(ClickProposition::PredicateCall { name, .. }) => Some(name.clone()),
+            _ => None,
+        };
+        let declared = target
+            .as_deref()
+            .and_then(|target| self.contract_proof_bindings.get(target))
+            .cloned()
+            .unwrap_or_default();
+        let mut introduced: Vec<(String, String)> = Vec::new();
+        let wrote_map = self.peek_ident() == Some("as");
+        if wrote_map {
+            self.position += 1;
+            self.expect(Token::LBrace)?;
+            while self.peek() != Some(&Token::RBrace) {
+                crate::instrumentation::record_deterministic_work(1);
+                let slot = self.expect_ident("target proof parameter")?;
+                self.expect(Token::Colon)?;
+                let name = self.expect_ident("introduced instance name")?;
+                introduced.push((slot, name));
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+            }
+            self.expect(Token::RBrace)?;
+        }
+        let Some(target) = target else {
+            if wrote_map {
+                return Err(
+                    self.error("an `as` instance map requires a target contract as the conclusion")
+                );
+            }
+            return Ok(Vec::new());
+        };
+        if declared.is_empty() && !introduced.is_empty() {
+            return Err(self.error(format!(
+                "contract `{target}` declares no proof parameters, so its conclusion takes no `as` map"
+            )));
+        }
+        let mut bound: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut used: BTreeSet<&str> = BTreeSet::new();
+        for (slot, name) in &introduced {
+            crate::instrumentation::record_deterministic_work(1);
+            if !declared
+                .iter()
+                .any(|(parameter, _, _)| parameter == slot.as_str())
+            {
+                return Err(self.error(format!(
+                    "contract `{target}` does not declare a proof parameter `{slot}`"
+                )));
+            }
+            if bound.insert(slot.as_str(), name.as_str()).is_some() {
+                return Err(self.error(format!(
+                    "duplicate `as` entry for proof parameter `{slot}` of contract `{target}`"
+                )));
+            }
+            if !used.insert(name.as_str()) {
+                return Err(self.error(format!("`as` introduces the name `{name}` twice")));
+            }
+            if name == "result" || names.contains(name.as_str()) {
+                return Err(self.error(format!(
+                    "`as` name `{name}` conflicts with an execution proof binding"
+                )));
+            }
+        }
+        let mut bindings = Vec::new();
+        let mut ordered = Vec::new();
+        for (parameter, identity, resource) in &declared {
+            crate::instrumentation::record_deterministic_work(1);
+            let Some(name) = bound.get(parameter.as_str()) else {
+                return Err(self.error(format!(
+                    "contract `{target}` proof parameter `{parameter}` needs an introduced name; \
+                     write `ensures {target}(...) as {{ {parameter}: <name> }}`"
+                )));
+            };
+            bindings.push(((*name).to_string(), (*identity, resource.clone())));
+            ordered.push((parameter.clone(), (*name).to_string()));
+        }
+        self.current_resource_bindings.extend(bindings);
+        Ok(ordered)
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {

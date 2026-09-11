@@ -2363,14 +2363,60 @@ pub(in crate::surface) fn contract_let_substitutions(
         .collect()
 }
 
+/// Build the substitution entry that renames one resource instance. A rename
+/// is spelled as a field-free `ResourceField` carrying the new surface name
+/// and the instance's own identity, so it cannot be confused with an ordinary
+/// value substitution for a C parameter or a contract `let`.
+pub(in crate::surface) fn resource_instance_rename_entry(
+    declared: &str,
+    introduced: &str,
+    resource_name: &str,
+    identity: Variable,
+) -> (String, ContractExpression) {
+    (
+        declared.to_string(),
+        ContractExpression::ResourceField(ResourceFieldAccess {
+            owner: introduced.to_string(),
+            resource_name: resource_name.to_string(),
+            identity,
+            children: Vec::new(),
+            field: String::new(),
+            field_index: 0,
+            click_type: None,
+        }),
+    )
+}
+
+/// The new surface name for the instance `owner`, when `substitutions` carries
+/// a rename for exactly that instance identity.
+pub(in crate::surface) fn resource_instance_rename(
+    substitutions: &BTreeMap<String, ContractExpression>,
+    owner: &str,
+    identity: Variable,
+) -> Option<String> {
+    match substitutions.get(owner) {
+        Some(ContractExpression::ResourceField(rename)) if rename.identity == identity => {
+            Some(rename.owner.clone())
+        }
+        _ => None,
+    }
+}
+
 pub(in crate::surface) fn substitute_contract_expression(
     expression: &ContractExpression,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
-        ContractExpression::ResourceField(_) | ContractExpression::IntegerLiteral(_) => {
-            Ok(expression.clone())
-        }
+        ContractExpression::IntegerLiteral(_) => Ok(expression.clone()),
+        ContractExpression::ResourceField(access) => Ok(ContractExpression::ResourceField(
+            match resource_instance_rename(substitutions, &access.owner, access.identity) {
+                Some(owner) => ResourceFieldAccess {
+                    owner,
+                    ..access.clone()
+                },
+                None => access.clone(),
+            },
+        )),
         ContractExpression::Negate(inner) => Ok(ContractExpression::Negate(Box::new(
             substitute_contract_expression(inner, substitutions)?,
         ))),

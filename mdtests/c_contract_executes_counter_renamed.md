@@ -23,10 +23,10 @@ contract Progress(counter: Counter()) for int32() {
 }
 theorem lift(callback: int32 (*)()) executes callback() {
     requires Exact(callback);
-    ensures Progress(callback) by {
-        step(Exact(counter));
-        have counter.revision == old(counter.revision) + 1 by { assumption(); }
-        apply(int32_increment_strictly_increases(old(counter.revision), 2147483647));
+    ensures Progress(callback) as { counter: k } by {
+        step(Exact(k));
+        have k.revision == old(k.revision) + 1 by { assumption(); }
+        apply(int32_increment_strictly_increases(old(k.revision), 2147483647));
         simp();
     }
 }

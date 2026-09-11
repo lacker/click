@@ -131,7 +131,7 @@ pub(super) fn verify_execution_theorem(
     let SourceProof::Script(tactics) = ensure.proof() else {
         return Err(error("requires an explicit execution proof block"));
     };
-    let substitutions = target
+    let mut substitutions = target
         .function_block()
         .signature()
         .parameters()
@@ -144,6 +144,40 @@ pub(super) fn verify_execution_theorem(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    // The conclusion's `as` map is the only way a target proof parameter is
+    // named inside the block, so the target's clauses are rewritten to those
+    // names before anything reads them. Goals, ambient facts, diagnostics, and
+    // expanded proofs then agree with what the proof script may write.
+    let declared_parameters = target.proof_parameters().unwrap_or_default();
+    if declared_parameters.len() != execution.target_instances().len() {
+        return Err(error(
+            "the conclusion must introduce one name per target proof parameter",
+        ));
+    }
+    for (declared, (parameter, introduced)) in
+        declared_parameters.iter().zip(execution.target_instances())
+    {
+        let ResourceClause::Named { binding, resource } = declared else {
+            return Err(error("a target proof parameter must be a named instance"));
+        };
+        let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+            return Err(error(
+                "a target proof parameter must name a declared resource",
+            ));
+        };
+        if &binding.name != parameter {
+            return Err(error(
+                "the conclusion's instance map does not match the target proof parameters",
+            ));
+        }
+        let (key, value) = crate::surface::lowering::resource_instance_rename_entry(
+            parameter,
+            introduced,
+            name,
+            binding.identity,
+        );
+        substitutions.insert(key, value);
+    }
     let mut block = target.function_block().clone();
     block.one_call_proof = true;
     block.signature.name = theorem.name().to_string();

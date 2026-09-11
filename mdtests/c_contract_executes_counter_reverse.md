@@ -20,8 +20,8 @@ contract Progress(cell: Counter()) for int32() {
 }
 theorem lift(callback: int32 (*)()) executes callback() {
     requires Progress(callback);
-    ensures Exact(callback) by {
-        step(Progress(cell));
+    ensures Exact(callback) as { cell: k } by {
+        step(Progress(k));
         simp();
     }
 }

@@ -1,4 +1,4 @@
-# Target resource parameters cannot shadow the executed callback
+# An introduced instance name cannot shadow the executed callback
 
 ```c filename=counter.c
 int32 invoke(int32 (*callback)()) { return callback(); }
@@ -20,7 +20,7 @@ contract Progress(cell: Counter()) for int32() {
 }
 theorem lift(cell: int32 (*)()) executes cell() {
     requires Exact(cell);
-    ensures Progress(cell) by {
+    ensures Progress(cell) as { cell: cell } by {
         step(Exact(cell));
         have cell.revision == old(cell.revision) + 1 by { assumption(); }
         apply(int32_increment_strictly_increases(old(cell.revision), 2147483647));

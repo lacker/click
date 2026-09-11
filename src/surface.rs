@@ -596,6 +596,11 @@ pub struct TheoremDefinition {
 pub struct TheoremExecution {
     callback: String,
     parameters: Vec<FunctionParameter>,
+    /// The conclusion's `as { parameter: name }` map, in the target contract's
+    /// declaration order: one introduced instance name per target proof
+    /// parameter. The target's own parameter spelling never enters the proof
+    /// block, so this is the only way an instance is named there.
+    target_instances: Vec<(String, String)>,
 }
 
 /// A named behavioral interface for a function pointer. The embedded block
@@ -4316,6 +4321,13 @@ impl TheoremDefinition {
 
     pub fn ensures(&self) -> &[EnsureClause] {
         &self.ensures
+    }
+}
+
+impl TheoremExecution {
+    /// The conclusion's `as` map, in the target contract's parameter order.
+    pub fn target_instances(&self) -> &[(String, String)] {
+        &self.target_instances
     }
 }
 

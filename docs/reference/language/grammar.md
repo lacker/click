@@ -67,7 +67,7 @@ documentation inventory keep the following accepted words synchronized.
 | `conclusion` | Selects the final node of an Integer certificate. |
 | `reverse` | Selects the reverse equality direction for `eq_to_le`. |
 | `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |
-| `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. |
+| `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. `as` also introduces the target contract's proof instances on an `executes` conclusion. |
 | `function`, `loop`, `statement`, `entry`, `exit` | Program-region and program-point selectors. |
 | `apply_loop_summary`, `bounded_execute`, `calculate`, `conjunction`, `double_negation`, `execute_else_step`, `execute_rest`, `execute_step`, `execute_then_step`, `summarize`, `symbolic_execute`, `vacuous` | Compatibility-only tactic spellings that produce focused migration diagnostics. |
 
@@ -101,6 +101,9 @@ function-declaration  := "function" identifier parameters
 resource-declaration  := "resource" identifier parameters resource-body
 theorem-declaration   := "theorem" identifier parameters executes-clause? theorem-body
 executes-clause      := "executes" identifier "(" c-parameters ")"
+executes-conclusion  := "ensures" proposition instance-map? proof
+instance-map         := "as" "{" (identifier ":" identifier
+                         ("," identifier ":" identifier)* ","?)? "}"
 named-contract-declaration := "contract" c-signature contract-body
 c-function-contract   := "function" c-signature contract-body
 ```
