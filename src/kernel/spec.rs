@@ -1035,7 +1035,16 @@ fn lower_spec_algebraic_comparison_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
-    if super::functions::spec_algebraic_expression_is_state_independent(left)
+    let has_checked_to_nat = |expression: &SpecAlgebraicExpression| {
+        matches!(
+            expression.node,
+            SpecAlgebraicExpressionNode::PureFunctionApplication { ref name, .. }
+                if name == "to_nat"
+        )
+    };
+    if !has_checked_to_nat(left)
+        && !has_checked_to_nat(right)
+        && super::functions::spec_algebraic_expression_is_state_independent(left)
         && super::functions::spec_algebraic_expression_is_state_independent(right)
         && (left == right
             || algebraic_match_reconstructs(left, right)

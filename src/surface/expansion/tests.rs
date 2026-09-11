@@ -50,6 +50,16 @@ theorem checked_to_nat(z: Integer) {
 }
 "#;
     verify_c0_sources(source, &[]).expect("Nat/Integer conversion dispatch verifies");
+    let missing_bound = r#"
+theorem missing_to_nat_bound(z: Integer) {
+    ensures to_nat(z) == to_nat(z) by { normalize(); }
+}
+"#;
+    assert!(verify_c0_sources(missing_bound, &[]).is_err());
+    let shadowed = r#"
+function to_nat(z: Integer) -> Nat { Nat::Zero }
+"#;
+    assert!(verify_c0_sources(shadowed, &[]).is_err());
 }
 
 #[test]
