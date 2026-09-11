@@ -235,7 +235,7 @@ pub(in crate::kernel) fn solve_builtin_prop(proposition: &Proposition) -> bool {
     }
 }
 
-fn disprove_builtin_prop(proposition: &Proposition) -> bool {
+pub(in crate::kernel) fn disprove_builtin_prop(proposition: &Proposition) -> bool {
     match proposition {
         Proposition::ConditionIs(ConditionTerm::Constant(actual), expected) => actual != expected,
         Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) => {

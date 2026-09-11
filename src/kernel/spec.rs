@@ -4476,15 +4476,10 @@ pub(super) fn evaluate_spec_if_paths(
         );
         // Logical expressions must have the same shape at declaration and
         // application sites. Ambient proof facts justify explicit reductions,
-        // not a different expression during lowering.
-        let context_free = PureFactContext::new();
-        let condition_truth = if context_free.proves(&condition_path.proposition) {
-            Some(true)
-        } else if assumptions_prove_proposition_false(&context_free, &condition_path.proposition) {
-            Some(false)
-        } else {
-            None
-        };
+        // not a different expression during lowering. The only branch this
+        // lowering decides is one a literally constant condition folds away;
+        // every other condition lowers both branches.
+        let condition_truth = constant_spec_condition_value(&condition_path.proposition);
 
         let branch_paths = match condition_truth {
             Some(true) => evaluate_spec_expression_paths_with_algebraic_bindings(
@@ -4857,15 +4852,28 @@ pub(super) fn proposition_as_single_condition(
     }
 }
 
-pub(super) fn assumptions_prove_proposition_false(
-    assumptions: &PureFactContext,
-    proposition: &Proposition,
-) -> bool {
+/// The truth value a lowered specification condition folds to on its own,
+/// or `None` when deciding it would need an ambient fact.
+///
+/// This is exact constant folding: context-free builtin solving of the
+/// lowered proposition, plus the frozen condition checker on the empty
+/// context for a bare `ConditionIs`, which is where a folded comparison of
+/// two constants is decided. Nothing here reads the surrounding proof
+/// context, so a specification `if` lowers to the same shape wherever it is
+/// written and wherever it is applied; a condition that holds only under
+/// ambient facts is chosen by a proof step, not by lowering.
+pub(super) fn constant_spec_condition_value(proposition: &Proposition) -> Option<bool> {
+    if solve_builtin_prop(proposition) {
+        return Some(true);
+    }
+    if disprove_builtin_prop(proposition) {
+        return Some(false);
+    }
     match proposition {
         Proposition::ConditionIs(condition, value) => {
-            assumptions.proves(&Proposition::ConditionIs(condition.clone(), !*value))
+            PureFactContext::decide_intrinsically(condition).map(|decided| decided == *value)
         }
-        _ => assumptions.proves(&Proposition::Not(Box::new(proposition.clone()))),
+        _ => None,
     }
 }
 
