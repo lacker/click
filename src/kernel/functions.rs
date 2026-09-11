@@ -3339,14 +3339,10 @@ fn resource_spec_supports_framed_refinement(resource: &CResourceSpec) -> bool {
 fn evaluate_refinement_resource_context(
     state: &CState,
     resources: &[CResourceSpec],
-    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<ResourceContext>> {
-    Ok(
-        (evaluate_function_resource_context(state, resources, definitions, assumptions, budget)?)
-            .ok(),
-    )
+    Ok((evaluate_function_resource_context(state, resources, assumptions, budget)?).ok())
 }
 
 /// Checks that the named requirements can supply the concrete requirements,
@@ -3380,7 +3376,6 @@ fn framed_resource_transition_refines(
     let Some(contract_requires) = evaluate_refinement_resource_context(
         contract_entry,
         contract.resource_requires(),
-        contract.composite_resource_definitions(),
         assumptions,
         budget,
     )?
@@ -3390,7 +3385,6 @@ fn framed_resource_transition_refines(
     let Some(function_requires) = evaluate_refinement_resource_context(
         function_entry,
         function.resource_requires(),
-        function.composite_resource_definitions(),
         assumptions,
         budget,
     )?
@@ -3400,7 +3394,6 @@ fn framed_resource_transition_refines(
     let Some(function_ensures) = evaluate_refinement_resource_context(
         function_post,
         function.resource_ensures(),
-        function.composite_resource_definitions(),
         assumptions,
         budget,
     )?
@@ -3410,7 +3403,6 @@ fn framed_resource_transition_refines(
     let Some(contract_ensures) = evaluate_refinement_resource_context(
         contract_post,
         contract.resource_ensures(),
-        contract.composite_resource_definitions(),
         assumptions,
         budget,
     )?
@@ -8171,7 +8163,6 @@ fn prepare_function_resource_transfer(
             evaluate_function_resource_context(
                 callee_state,
                 function.resource_requires(),
-                function.composite_resource_definitions(),
                 assumptions,
                 budget,
             )
@@ -8762,7 +8753,6 @@ fn apply_counted_population_transitions(
     let required = match evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
-        function.composite_resource_definitions(),
         assumptions,
         budget,
     )? {
@@ -8773,7 +8763,6 @@ fn apply_counted_population_transitions(
     let ensured = match evaluate_function_resource_context(
         &post_contract_state,
         function.resource_ensures(),
-        function.composite_resource_definitions(),
         assumptions,
         budget,
     )? {
@@ -9563,10 +9552,6 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         } else {
             &[]
         },
-        // A resource body is rewritten against its own declared memory only;
-        // expanding a contained composite here would hand the body read
-        // authority it has not opened.
-        &[],
         assumptions,
         &mut budget,
         false,
@@ -11374,14 +11359,12 @@ pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
 pub(super) fn evaluate_function_resource_context(
     state: &CState,
     resources: &[CResourceSpec],
-    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     evaluate_function_resource_context_with_normalization(
         state,
         resources,
-        definitions,
         assumptions,
         budget,
         true,
@@ -11391,23 +11374,33 @@ pub(super) fn evaluate_function_resource_context(
 fn evaluate_function_resource_context_with_normalization(
     state: &CState,
     resources: &[CResourceSpec],
-    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     normalize: bool,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
-    let evaluated = match evaluate_resource_clauses_against_whole_section(
-        state,
-        resources,
-        definitions,
-        assumptions,
-        budget,
-    )? {
-        Ok(evaluated) => evaluated,
-        Err(error) => return Ok(Err(error)),
-    };
     let mut context = ResourceContext::new();
-    for resource in evaluated {
+    for (index, resource) in resources.iter().enumerate() {
+        let evaluation_state = state.clone().with_resource_context(
+            state
+                .resources()
+                .clone()
+                .unchecked_with_facts(context.facts().iter().cloned()),
+        );
+        let resource = match evaluate_function_resource_spec(
+            &evaluation_state,
+            resource,
+            assumptions,
+            budget,
+        )? {
+            Ok(resource) => resource,
+            Err(error) => {
+                return Ok(Err(resource_clause_runtime_error(
+                    error,
+                    index,
+                    resources.len(),
+                )));
+            }
+        };
         // Instance rewrites retain the declared memory pieces so folding does
         // not need to normalize an ambient block just to consume those pieces.
         let composed = if normalize {
@@ -11421,151 +11414,6 @@ fn evaluate_function_resource_context_with_normalization(
         };
     }
     Ok(Ok(context))
-}
-
-/// Evaluates one contract section's resource clauses against the loadability
-/// the whole section supplies, and returns their resources in source order.
-///
-/// A base load in one clause may read a cell any other clause of the same
-/// section owns or views, including a cell inside a folded composite, exactly
-/// as a `requires` clause may. The first pass walks the clauses in order with
-/// the incremental authority each one adds, so a section that already
-/// evaluated in order costs precisely what it did before and produces the
-/// identical context. Only when that pass leaves clauses unevaluated is the
-/// evaluated part expanded through its composite definitions, exposing the
-/// cells a folded composite holds as read authority, and the remaining clauses
-/// retried against it.
-///
-/// Each clause contributes its resource exactly once: a clause that evaluates
-/// is never revisited, and the caller composes the results once, in source
-/// order. Retrying a clause that has not yet produced a resource cannot
-/// double-count authority.
-///
-/// Clauses that no order evaluates are refused by name. That is the honest
-/// verdict for a dependency cycle between two clauses and for two clauses that
-/// are independently unevaluable; either way the user needs both positions.
-fn evaluate_resource_clauses_against_whole_section(
-    state: &CState,
-    resources: &[CResourceSpec],
-    definitions: &[CCompositeResourceDefinition],
-    assumptions: &PureFactContext,
-    budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<Vec<CResourceFact>, CRuntimeError>> {
-    let mut evaluated: Vec<Option<CResourceFact>> = vec![None; resources.len()];
-    let mut supplied: Vec<CResourceFact> = Vec::new();
-    let mut pending: Vec<usize> = Vec::new();
-    let mut failures: BTreeMap<usize, CRuntimeError> = BTreeMap::new();
-    for (index, resource) in resources.iter().enumerate() {
-        let evaluation_state = state.clone().with_resource_context(
-            state
-                .resources()
-                .clone()
-                .unchecked_with_facts(supplied.iter().cloned()),
-        );
-        match evaluate_function_resource_spec(&evaluation_state, resource, assumptions, budget)? {
-            Ok(resource) => {
-                supplied.push(resource.clone());
-                evaluated[index] = Some(resource);
-            }
-            Err(error) => {
-                failures.insert(index, error);
-                pending.push(index);
-            }
-        }
-    }
-    while !pending.is_empty() {
-        let evaluation_state = state
-            .clone()
-            .with_resource_context(resource_clause_section_supply(
-                state,
-                &supplied,
-                definitions,
-                assumptions,
-            ));
-        let mut progressed = false;
-        let mut still_pending = Vec::new();
-        for index in pending {
-            match evaluate_function_resource_spec(
-                &evaluation_state,
-                &resources[index],
-                assumptions,
-                budget,
-            )? {
-                Ok(resource) => {
-                    supplied.push(resource.clone());
-                    evaluated[index] = Some(resource);
-                    failures.remove(&index);
-                    progressed = true;
-                }
-                Err(error) => {
-                    failures.insert(index, error);
-                    still_pending.push(index);
-                }
-            }
-        }
-        pending = still_pending;
-        if !progressed {
-            break;
-        }
-    }
-    // A clause refused for its own shape is reported at its own position: no
-    // other clause's authority was ever going to repair it, so naming a pair
-    // would send the user to a clause that is fine.
-    let refused = pending.iter().copied().find(|index| {
-        failures
-            .get(index)
-            .is_none_or(|error| !resource_clause_failure_awaits_supply(error))
-    });
-    if let Some(index) = refused.or_else(|| pending.first().copied()) {
-        let error = failures
-            .remove(&index)
-            .unwrap_or_else(|| CRuntimeError::FunctionContract("unevaluated".to_string()));
-        let cycle = refused
-            .is_none()
-            .then(|| pending.iter().copied().find(|other| *other != index))
-            .flatten();
-        return Ok(Err(match cycle {
-            Some(other) => resource_clause_cycle_runtime_error(error, index, other),
-            None => resource_clause_runtime_error(error, index, resources.len()),
-        }));
-    }
-    Ok(Ok(evaluated.into_iter().flatten().collect()))
-}
-
-/// The read authority a section's already-evaluated clauses supply to the
-/// clauses that still need one.
-///
-/// Expansion adds views, never ownership: a folded composite's cells become
-/// readable so a later clause's base load denotes, while every owned resource
-/// stays exactly where the clause set put it. This state is a scratch
-/// evaluation frame and is never the section's result.
-fn resource_clause_section_supply(
-    state: &CState,
-    supplied: &[CResourceFact],
-    definitions: &[CCompositeResourceDefinition],
-    assumptions: &PureFactContext,
-) -> ResourceContext {
-    let base = state
-        .resources()
-        .clone()
-        .unchecked_with_facts(supplied.iter().cloned());
-    if definitions.is_empty() {
-        return base;
-    }
-    let Some(expanded) =
-        expand_all_composite_resource_facts(&base, definitions, state.memory(), assumptions)
-    else {
-        return base;
-    };
-    let views = expanded
-        .facts()
-        .iter()
-        .filter_map(|fact| match fact.resource() {
-            CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    base.unchecked_with_facts(views)
 }
 
 /// Names which resource clause of a contract section failed to evaluate. The
@@ -11584,38 +11432,6 @@ fn resource_clause_runtime_error(
     CRuntimeError::FunctionContract(format!(
         "{message} (resource clause {} of {total})",
         index + 1
-    ))
-}
-
-/// Whether a clause failed for want of a value it had to read, which is the
-/// only failure another clause's authority can repair. The evaluator reports
-/// a section that stalls on these as a pair; anything else is one clause's own
-/// problem.
-fn resource_clause_failure_awaits_supply(error: &CRuntimeError) -> bool {
-    let CRuntimeError::FunctionContract(message) = error else {
-        return false;
-    };
-    message.starts_with("could not evaluate an owned memory resource segment")
-        || message.starts_with("could not evaluate a viewed memory resource segment")
-        || message.starts_with("could not evaluate resource `")
-}
-
-/// Names two clauses that no order evaluates. Clause order does not decide a
-/// section, so reporting only the first position would send the user to a
-/// clause that is fine on its own.
-fn resource_clause_cycle_runtime_error(
-    error: CRuntimeError,
-    index: usize,
-    other: usize,
-) -> CRuntimeError {
-    let CRuntimeError::FunctionContract(message) = error else {
-        return error;
-    };
-    CRuntimeError::FunctionContract(format!(
-        "{message} (resource clauses {} and {} cannot be evaluated in any order: each needs a \
-         cell no clause evaluated before it supplies)",
-        index + 1,
-        other + 1
     ))
 }
 
@@ -12114,7 +11930,6 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     let returned_resources = match evaluate_function_resource_context(
         &output_state,
         function.resource_ensures(),
-        function.composite_resource_definitions(),
         assumptions,
         budget,
     )? {

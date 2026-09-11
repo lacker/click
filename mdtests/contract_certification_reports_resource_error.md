@@ -1,17 +1,13 @@
 # Contract certification reports why the entry resources could not be built
 
 `probe` owns `pair(node)`, which owns `node->left` and `node->right`, and then
-owns `node->right->right->augmented`. Its base loads `node->right`, a cell the
-contract does own through the folded `pair(node)`, and then
-`node->right->right`, which nothing in the contract owns. No clause can supply
-that second link, so the segment cannot be evaluated and the contract is
-rejected.
+owns `node->right->augmented`, whose base is loaded through a cell the same
+contract already owns. Click cannot evaluate that segment yet, so the contract
+is rejected.
 
 The point of this fixture is the message, not the verdict: the runtime error
 raised while evaluating the entry resource clauses has to reach the user
-instead of being replaced by an empty path set. The case one link shallower is
-`mdtests/contract_owns_through_composite_field.md`, where the clause set does
-supply the base and the contract passes.
+instead of being replaced by an empty path set.
 
 ```c filename=probe.c
 struct node {
@@ -35,7 +31,7 @@ void probe(struct node* node) {
     requires node != 0;
     requires node->right != 0;
     owns pair(node);
-    owns node->right->right->augmented;
+    owns node->right->augmented;
 }
 ```
 

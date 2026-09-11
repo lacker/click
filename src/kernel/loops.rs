@@ -2360,26 +2360,19 @@ fn loop_body_resource_context(
     if resource_specs.is_empty() {
         return Ok((top_state.clone(), Vec::new()));
     }
-    let declared = match evaluate_function_resource_context(
-        entry_state,
-        resource_specs,
-        // A loop head has no composite-definition environment in scope,
-        // so its clauses see each other's declared cells but not the
-        // cells inside a folded composite.
-        &[],
-        assumptions,
-        budget,
-    )? {
-        Ok(declared) => declared,
-        Err(error) => {
-            return Ok((
-                top_state.clone(),
-                vec![format!(
-                    "loop declares a resource the enclosing function does not hold: {error:?}"
-                )],
-            ));
-        }
-    };
+    let declared =
+        match evaluate_function_resource_context(entry_state, resource_specs, assumptions, budget)?
+        {
+            Ok(declared) => declared,
+            Err(error) => {
+                return Ok((
+                    top_state.clone(),
+                    vec![format!(
+                        "loop declares a resource the enclosing function does not hold: {error:?}"
+                    )],
+                ));
+            }
+        };
     let mut withheld = entry_state.resources().clone();
     for fact in declared.facts() {
         let Some(remaining) = withheld.clone().without_fact(fact, assumptions) else {

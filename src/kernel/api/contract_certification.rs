@@ -22,7 +22,6 @@ pub(crate) fn contract_resource_condition_cases(
     let required_resources = evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
-        function.composite_resource_definitions(),
         assumptions,
         &mut budget,
     )
@@ -1415,7 +1414,6 @@ pub(super) fn c_function_contract_certification_assumptions(
     let required_resources = match evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
-        function.composite_resource_definitions(),
         &assumptions,
         &mut budget,
     ) {

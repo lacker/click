@@ -15,14 +15,10 @@ contract AugmentRotate(t: tree_at(new)) for void(struct node* old, struct node* 
 ```
 
 The rotation helper still takes the root's two link cells and the two subtree
-resources rather than one folded `tree_at(node)`, where the memory-only fixture
-now consumes one folded `shape(node)`. The reason is no longer clause order: a
-resource clause does read cells the rest of its contract supplies, including
-cells inside a folded composite, which
-`mdtests/contract_owns_through_composite_field.md` pins. It is that `tree_at`
-decides which links it owns from its `model` field, so nothing can read
-`node->right` out of a folded `tree_at(node)` until a proof step has selected
-the `Shape::Node` arm, and a contract is lowered before any proof step runs.
+resources rather than one folded `tree_at(node)`, as the memory-only fixture
+does: a contract cannot today own a memory segment, here
+`node->right->augmented`, whose base is loaded through a field owned by another
+owned or consumed composite in the same contract.
 
 `bump` and `reset` state model preservation in their own contracts — a
 callee's post instance fields are always fresh, so preservation that is not
