@@ -1035,15 +1035,8 @@ fn lower_spec_algebraic_comparison_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
-    let has_checked_to_nat = |expression: &SpecAlgebraicExpression| {
-        matches!(
-            expression.node,
-            SpecAlgebraicExpressionNode::PureFunctionApplication { ref name, .. }
-                if name == "to_nat"
-        )
-    };
-    if !has_checked_to_nat(left)
-        && !has_checked_to_nat(right)
+    if !spec_algebraic_expression_contains_checked_to_nat(left)
+        && !spec_algebraic_expression_contains_checked_to_nat(right)
         && super::functions::spec_algebraic_expression_is_state_independent(left)
         && super::functions::spec_algebraic_expression_is_state_independent(right)
         && (left == right
@@ -1111,6 +1104,31 @@ fn lower_spec_algebraic_comparison_at_state(
         }
     }
     Ok(paths)
+}
+
+fn spec_algebraic_expression_contains_checked_to_nat(expression: &SpecAlgebraicExpression) -> bool {
+    match &expression.node {
+        SpecAlgebraicExpressionNode::Variable(_)
+        | SpecAlgebraicExpressionNode::Binding(_)
+        | SpecAlgebraicExpressionNode::ResourceField(_) => false,
+        SpecAlgebraicExpressionNode::Constructor { fields, .. } => fields.iter().any(|field| {
+            matches!(field, SpecAlgebraicValue::Algebraic(value)
+                if spec_algebraic_expression_contains_checked_to_nat(value))
+        }),
+        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+            spec_algebraic_expression_contains_checked_to_nat(scrutinee)
+                || arms
+                    .iter()
+                    .any(|arm| spec_algebraic_expression_contains_checked_to_nat(&arm.body))
+        }
+        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
+            name == "to_nat"
+                || arguments.iter().any(|argument| {
+                    matches!(argument, SpecPureFunctionArgument::Algebraic(value)
+                        if spec_algebraic_expression_contains_checked_to_nat(value))
+                })
+        }
+    }
 }
 
 fn algebraic_match_reconstructs(

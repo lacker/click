@@ -56,6 +56,12 @@ theorem missing_to_nat_bound(z: Integer) {
 }
 "#;
     assert!(verify_c0_sources(missing_bound, &[]).is_err());
+    let nested_missing_bound = r#"
+theorem nested_missing_to_nat_bound(z: Integer) {
+    ensures Nat::Succ(to_nat(z)) == Nat::Succ(to_nat(z)) by { normalize(); }
+}
+"#;
+    assert!(verify_c0_sources(nested_missing_bound, &[]).is_err());
     let shadowed = r#"
 function to_nat(z: Integer) -> Nat { Nat::Zero }
 "#;

@@ -2463,15 +2463,13 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::Call { name, arguments } if name == "to_integer" => {
                 let argument = integer_conversion_argument(name, arguments)?;
-                if let Ok(nat) = self.lower_contract_algebraic_to_spec(argument, environment) {
-                    if nat.algebraic_type.name == "Nat" {
-                        return Ok(SpecIntegerExpression::PureFunctionApplication {
-                            name: "nat_to_integer".to_string(),
-                            arguments: vec![crate::kernel::SpecPureFunctionArgument::Algebraic(
-                                nat,
-                            )],
-                        });
-                    }
+                if let Ok(nat) = self.lower_contract_algebraic_to_spec(argument, environment)
+                    && nat.algebraic_type.name == "Nat"
+                {
+                    return Ok(SpecIntegerExpression::PureFunctionApplication {
+                        name: "nat_to_integer".to_string(),
+                        arguments: vec![crate::kernel::SpecPureFunctionArgument::Algebraic(nat)],
+                    });
                 }
                 let argument = self.lower_contract_expression_to_spec(argument, environment)?;
                 if let SpecExpression::Value(value) = &argument {
