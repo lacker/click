@@ -114,6 +114,9 @@ names.
 
 ## Chunk 1: bare function designators
 
+**Status: landed** as `bdcab487`. A bare designator needs a declaration in
+its own translation unit, matching C; `&f` does not.
+
 **Gap.** C decays a bare function name to a pointer, and Linux passes
 callbacks that way: `__rb_insert(node, root, dummy_rotate)`. Click only forms
 a function address after `&`. This fails to parse today:
@@ -156,6 +159,10 @@ call position (`f(x)` stays a call).
 pointers are described.
 
 ## Chunk 2: file-scope const callback tables
+
+**Status: landed** as `fd679912`. By-value structs with function-pointer
+fields now parse everywhere, so a modular contract over such a parameter must
+carry named contracts on the fields; that is chunk 8 territory.
 
 **Gap.** Linux declares
 `static const struct rb_augment_callbacks dummy_callbacks = { .propagate =
@@ -214,6 +221,9 @@ contract. Writes to a `const` object are already rejected; keep that.
 `issues/struct-model.md`.
 
 ## Chunk 3: the rotation regression over memory-only resources
+
+**Status: landed** as `mdtests/augment_rotate_callback*.md`; see the
+findings at the end of this section.
 
 This is the first of the two regressions named in the acceptance criteria. It
 needs no kernel change; it is a fixture that exercises the existing framing
@@ -312,7 +322,47 @@ path (`let [path] = paths.as_slice()` in
 If it does, record the exact clause that failed and stop; that is input to
 chunk 7, not something to route around.
 
+**Findings from chunk 3 (landed as `mdtests/augment_rotate_callback*.md`).**
+The fixtures pass, but the helper contract had to take the root's two link
+cells and the two subtree shapes instead of one folded `shape(node)`, because
+of the first gap below. None of these is fixed yet; none has an issue file.
+
+- A contract cannot own a memory segment whose base is loaded through a field
+  that another owned or consumed composite in the same contract owns. Minimal
+  repro: `resource pair(node: struct node*) { owns node->left; owns
+  node->right; }` and a contract with `requires node->right != 0; owns
+  pair(node); owns node->right->augmented;` fails certification. `views
+  pair(node)` or owning the two links directly passes. Chunk 8a needs this
+  fixed, since it wants `owns t: tree_at(new)` next to an augmentation
+  footprint.
+- That failure surfaces as `could not certify contract for 'probe':
+  certification produced no paths`. The real error, a `CRuntimeError::
+  FunctionContract("could not evaluate an owned memory resource segment")`
+  from `evaluate_function_resource_context`, is discarded by
+  `.ok().and_then(Result::ok)?` in `c_function_contract_certification_
+  assumptions` (`src/kernel/api/contract_certification.rs`), and four other
+  `?`s in that function drop errors the same way. This is a tooling defect
+  under the "tooling stability comes first" rule and should be fixed before
+  chunk 8: report the runtime error text, never an empty path set.
+- A named contract whose resource clause reads through a parameter cannot be
+  prepared: `requires old->left != 0; views old->left->augmented;` in
+  `AugmentRotate` fails with `missing pure fact: loadable(base=old, bytes=8)`
+  because the clause is lowered with no facts or resources in scope. This
+  blocks the chunk 3 stretch item (guarded child reads) and any realistic
+  recompute callback. It is earlier than the two-path limit the chunk
+  predicted.
+- Diagnostic wording: `src/surface/diagnostics.rs` renders an available
+  `Contract(p)` fact on a symbolic pointer as ``named contract `X` is not
+  established for p`` inside "available pure facts", which reads as the
+  opposite of what it means.
+
 ## Chunk 4: explicit instance introduction in execution theorems
+
+**Status: landed** as `d38cf746`. The rename of target clauses to the
+introduced names is encoded as a field-free `ResourceField` substitution
+entry guarded by instance identity (`resource_instance_rename_entry` in
+`src/surface/lowering/contract_substitution.rs`); a dedicated substitution
+variant would be cleaner if that map is touched again.
 
 **Gap.** In `mdtests/c_contract_executes_counter.md` the proof writes
 `step(Exact(cell))`, and in `c_contract_executes_counter_renamed.md` it
