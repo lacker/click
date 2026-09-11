@@ -2741,7 +2741,8 @@ impl PropositionDerivation {
                 for_simp,
                 evidence,
             } => {
-                (id_scope.id == *premises_id || available.includes(premises))
+                let premises = premises.context();
+                (id_scope.id == *premises_id || available.includes(&premises))
                     && premises.checks_atomic_derivation(
                         &self.conclusion,
                         *for_simp,
@@ -2750,7 +2751,8 @@ impl PropositionDerivation {
                     )
             }
             PropositionDerivationRule::Explosion { premises } => {
-                available.includes(premises) && premises.is_inconsistent()
+                let premises = premises.context();
+                available.includes(&premises) && premises.is_inconsistent()
             }
             PropositionDerivationRule::And { left, right } => {
                 let Proposition::And(expected_left, expected_right) = &self.conclusion else {

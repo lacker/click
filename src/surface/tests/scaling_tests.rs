@@ -1330,3 +1330,62 @@ fn call_requirement_checking_scales_near_linearly_with_unrelated_caller_facts() 
         &samples,
     );
 }
+
+/// A project written entirely in explicit simple tactics must verify in work
+/// approximately linear in its own source while unrelated ambient facts grow
+/// alongside it.
+///
+/// This is package 15's acceptance regression. Before the proposition search
+/// left the kernel, every miss in an authoritative kernel route ran the
+/// general prover, whose whole-context fallbacks (the inconsistency scan and
+/// singleton substitution) read every ambient fact on every failed query. A
+/// project like this one -- `size` statements, each closed by its own
+/// `step()`, under `size` unrelated requirements the proof never cites --
+/// grew both axes at once, so that scan was charged once per query per fact.
+/// The retained exact routes read the index the goal names and nothing else.
+#[test]
+fn explicit_simple_tactics_scale_with_source_while_ambient_facts_grow() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = explicit_simple_project_with_ambient_facts(size);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(&click_source, &[("straight.c", c_source.as_str())])
+            });
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} explicit simple-tactic project failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+
+    assert_near_linear_scaling(
+        "explicit simple tactics with growing source and ambient facts",
+        &samples,
+    );
+}
+
+/// `size` assignments closed by one explicit `step()` each, under `size`
+/// unrelated `requires` the proof never mentions. Both the selected source
+/// and the ambient fact set grow with `size`.
+fn explicit_simple_project_with_ambient_facts(size: usize) -> (String, String) {
+    let (c_source, base_click) = straight_line_project(size, false);
+    // Unrelated ambient facts: true of the argument, never cited by the
+    // proof, and disjoint from the equality the claim needs.
+    let unrelated = (0..size)
+        .map(|index| format!("    requires x != {};\n", index + 1000))
+        .collect::<String>();
+    let click_source = base_click.replacen(
+        "    ensures result == x;\n",
+        &format!("{unrelated}    ensures result == x;\n"),
+        1,
+    );
+    assert_ne!(
+        click_source, base_click,
+        "the ambient facts were not inserted"
+    );
+    (c_source, click_source)
+}

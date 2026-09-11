@@ -584,7 +584,7 @@ impl PropositionDerivation {
                 premises: required, ..
             }
             | PropositionDerivationRule::Explosion { premises: required } => {
-                premises.extend(required.pure_facts());
+                premises.extend(required.named().iter().cloned());
             }
             PropositionDerivationRule::And { left, right } => {
                 left.collect_context_premises(premises);

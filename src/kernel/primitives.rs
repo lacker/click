@@ -3894,17 +3894,55 @@ pub(crate) struct LoadAddressCongruenceEvidence {
     pub(super) offset: PointerOffsetCongruenceEvidence,
 }
 
+/// The premises a retained evidence leaf names.
+///
+/// Evidence records propositions, never a context. A `PureFactContext`
+/// carries every derived index and grows with the ambient proof state, so
+/// embedding one makes a leaf's size a function of the whole proof rather
+/// than of what it actually cited, and `context_premises` had to
+/// materialize that index to answer at all. See the "Retained evidence
+/// names premises, never a context" ruling in `issues/simplify-kernel.md`.
+///
+/// Checking a leaf rebuilds a context from exactly these propositions, so
+/// the check can never consult more than the evidence names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RetainedPremises {
+    propositions: std::sync::Arc<Vec<Proposition>>,
+}
+
+impl RetainedPremises {
+    pub(crate) fn from_context(context: &PureFactContext) -> Self {
+        Self {
+            propositions: std::sync::Arc::new(context.pure_facts()),
+        }
+    }
+
+    /// The propositions this leaf cites, in a deterministic order.
+    pub(crate) fn named(&self) -> &[Proposition] {
+        &self.propositions
+    }
+
+    /// A context holding exactly the cited propositions and nothing else.
+    pub(crate) fn context(&self) -> PureFactContext {
+        self.propositions
+            .iter()
+            .fold(PureFactContext::new(), |context, premise| {
+                context.assume_proposition(premise.clone())
+            })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PropositionDerivationRule {
     ContextFree,
     ContextualAtomic {
-        premises: PureFactContext,
+        premises: RetainedPremises,
         premises_id: u64,
         for_simp: bool,
         evidence: AtomicPropositionDerivationEvidence,
     },
     Explosion {
-        premises: PureFactContext,
+        premises: RetainedPremises,
     },
     And {
         left: Box<PropositionDerivation>,

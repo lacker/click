@@ -382,7 +382,7 @@ impl PropositionSearch for PureFactContext {
                 proposition_derivation(
                     proposition,
                     PropositionDerivationRule::ContextualAtomic {
-                        premises,
+                        premises: RetainedPremises::from_context(&premises),
                         premises_id,
                         for_simp,
                         evidence,
@@ -570,7 +570,7 @@ impl PropositionSearch for PureFactContext {
             return Some(proposition_derivation(
                 proposition,
                 PropositionDerivationRule::Explosion {
-                    premises: self.clone(),
+                    premises: RetainedPremises::from_context(self),
                 },
             ));
         }
@@ -703,7 +703,7 @@ impl PropositionSearch for PureFactContext {
     ) -> Option<PropositionDerivationRule> {
         self.atomic_derivation_premises(proposition, for_simp).map(
             |(premises, premises_id, evidence)| PropositionDerivationRule::ContextualAtomic {
-                premises,
+                premises: RetainedPremises::from_context(&premises),
                 premises_id,
                 for_simp,
                 evidence,
