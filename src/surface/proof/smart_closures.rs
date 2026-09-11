@@ -5,6 +5,9 @@ use crate::kernel::proof::integer_arithmetic::{
     IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
     integer_affine_claim,
 };
+use crate::kernel::proof::{
+    PropositionIdentityKey, proposition_identity_key, propositions_are_alpha_equal,
+};
 use crate::kernel::{CFloatClassification, CFloatCondition};
 use crate::surface::planning::proposition_search::PropositionSearch;
 use num_bigint::BigInt;
@@ -4067,11 +4070,135 @@ impl<'a> Proof<'a> {
         source_proof_is_supported(proof)
     }
 
+    /// Applies one statement step, retaining one newly proved non-load
+    /// requirement when the checked step reports it as unavailable.  The
+    /// requirement is lowered again at this exact frontier and compared by
+    /// the shared alpha-aware identity before any proof operation is accepted.
+    /// A failed retry returns the original structured error, allowing the
+    /// normal smart caller to preserve its diagnostic and planner behavior.
+    fn try_statement_step_with_retries(
+        &self,
+        step: ProofStep,
+        retried_requirements: &mut std::collections::BTreeSet<PropositionIdentityKey>,
+    ) -> Result<Self, ClickError> {
+        match self.apply_step(step.clone()) {
+            Ok(proof) => Ok(proof),
+            Err(error) => {
+                let Some(mut requirement) = error.unresolved_requirement().cloned() else {
+                    return Err(error);
+                };
+                // D1 intentionally handles the first non-load synthesis
+                // shape only.  Loadability requirements need the canonical
+                // load spelling/epoch path and remain on the existing error
+                // route until that package lands.
+                if proposition_contains_memory_loadability(&requirement.proposition)? {
+                    return Err(error);
+                }
+                let Some(identity) = proposition_identity_key(&requirement.proposition) else {
+                    return Err(error);
+                };
+                if !retried_requirements.insert(identity) {
+                    return Err(error);
+                }
+                let ProofContext::Execution(context) = self.context.as_ref() else {
+                    return Err(error);
+                };
+                let mut proof = self.clone();
+                let mut error = error;
+                loop {
+                    let Some(execution) = proof.execution() else {
+                        return Err(error);
+                    };
+                    let Some(surface) = synthesize_surface_proposition(
+                        &requirement.proposition,
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        &execution.core.state,
+                    ) else {
+                        return Err(error);
+                    };
+                    let lowered = match proof
+                        .lower_surface_goal(&surface, "smart retained-have requirement")
+                    {
+                        Ok(lowered) => lowered,
+                        Err(_) => {
+                            check_verification_deadline()?;
+                            return Err(error);
+                        }
+                    };
+                    if !propositions_are_alpha_equal(&lowered, &requirement.proposition) {
+                        return Err(error);
+                    }
+                    let have = match proof.begin_have(surface) {
+                        Ok(have) => have,
+                        Err(_) => {
+                            check_verification_deadline()?;
+                            return Err(error);
+                        }
+                    };
+                    let Some(closed) = have.try_simp_closure()? else {
+                        return Err(error);
+                    };
+                    // `join` publishes the checked proposition into the exact
+                    // enclosing frontier.  Reapply the original step value so a
+                    // future StepContract follows precisely the same contract
+                    // selection and certificate provenance as the refused step.
+                    proof = closed.join()?;
+                    match proof.apply_step(step.clone()) {
+                        Ok(next) => return Ok(next),
+                        Err(next_error) => {
+                            let Some(next_requirement) =
+                                next_error.unresolved_requirement().cloned()
+                            else {
+                                return Err(next_error);
+                            };
+                            if proposition_contains_memory_loadability(
+                                &next_requirement.proposition,
+                            )? {
+                                return Err(next_error);
+                            }
+                            let Some(next_identity) =
+                                proposition_identity_key(&next_requirement.proposition)
+                            else {
+                                return Err(next_error);
+                            };
+                            if !retried_requirements.insert(next_identity) {
+                                return Err(next_error);
+                            }
+                            requirement = next_requirement;
+                            error = next_error;
+                            // The next loop iteration uses the newly returned
+                            // requirement, but still the same exact step.
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Tries one bare `step()` in the whole proof context. There is no premise
     /// selection: the checked step either advances the frontier or reports why
     /// the statement cannot run here. An undecided C `if` is left to the
     /// structural branch driver.
     pub(in crate::surface::proof) fn try_statement_step(&self) -> Result<Option<Self>, ClickError> {
+        self.try_statement_step_with_apply(|proof| proof.apply_step(ProofStep::Step))
+    }
+
+    pub(in crate::surface::proof) fn try_smart_statement_step(
+        &self,
+        step: ProofStep,
+        retried_requirements: &mut std::collections::BTreeSet<PropositionIdentityKey>,
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_statement_step_with_apply(|proof| {
+            proof.try_statement_step_with_retries(step.clone(), retried_requirements)
+        })
+    }
+
+    fn try_statement_step_with_apply(
+        &self,
+        mut apply: impl FnMut(&Self) -> Result<Self, ClickError>,
+    ) -> Result<Option<Self>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
@@ -4097,7 +4224,7 @@ impl<'a> Proof<'a> {
             // symbolic switch likewise belongs to the bounded planner, which
             // materializes its case split before applying one switch theorem
             // per path.
-            return match self.apply_step(ProofStep::Step) {
+            return match apply(self) {
                 Ok(proof) => Ok(Some(proof)),
                 Err(_) => {
                     check_verification_deadline()?;
@@ -4108,8 +4235,39 @@ impl<'a> Proof<'a> {
         // The statement runs in the whole proof context; nothing can supply
         // more than the step already sees, so its failure is the answer,
         // with the step's diagnostic.
-        self.apply_step(ProofStep::Step).map(Some)
+        apply(self).map(Some)
     }
+}
+
+/// D1 retries only propositions whose tree contains no memory-loadability
+/// atom.  This is deliberately structural: it never inspects unrelated facts
+/// or searches the ambient context.
+fn proposition_contains_memory_loadability(proposition: &Proposition) -> Result<bool, ClickError> {
+    const WALK_LIMIT: usize = 16_384;
+    let mut pending = vec![proposition];
+    let mut work = 0;
+    while let Some(proposition) = pending.pop() {
+        work += 1;
+        if work > WALK_LIMIT || crate::instrumentation::deadline_exceeded_with_work(1) {
+            return Err(ClickError::new(
+                "verification budget exhausted inside smart requirement shape guard",
+            ));
+        }
+        match proposition {
+            Proposition::CMemoryLoadable { .. } => return Ok(true),
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            Proposition::Not(body)
+            | Proposition::ForAll { body, .. }
+            | Proposition::Exists { body, .. } => pending.push(body),
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 /// Candidate spellings of one kernel fact from recorded program-point

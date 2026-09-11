@@ -1,6 +1,7 @@
 //! Smart execute-until search, fact transport, and theorem selection.
 
 use super::*;
+use std::collections::BTreeSet;
 
 impl<'a> Proof<'a> {
     /// Searches a straight-line prefix up to one named statement by applying
@@ -68,8 +69,15 @@ impl<'a> Proof<'a> {
         let mut proof = self.clone();
         let mut introduced_facts = Vec::new();
         let mut advanced = false;
+        // Retrying a refused statement is bounded by the owning smart
+        // operation: one retained-have attempt per distinct requirement
+        // identity.  The set follows this immutable search, rather than a
+        // process-global cache, so unrelated proofs cannot affect it.
+        let mut retried_requirements = BTreeSet::new();
         while !proof.is_at_function_exit() {
-            let next = if let Some(next) = proof.try_statement_step()? {
+            let next = if let Some(next) =
+                proof.try_smart_statement_step(ProofStep::Step, &mut retried_requirements)?
+            {
                 next
             } else {
                 if !proof.is_at_execution_branch()? {
@@ -80,6 +88,7 @@ impl<'a> Proof<'a> {
                 };
                 next
             };
+            retried_requirements.clear();
             for fact in next.added_facts() {
                 if !introduced_facts.contains(fact) {
                     introduced_facts.push(fact.clone());
