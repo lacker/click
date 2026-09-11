@@ -371,7 +371,7 @@ pub(in crate::surface) fn synthesize_surface_proposition(
     state: &CState,
 ) -> Option<ClickProposition> {
     let _scope = SurfaceSynthesisScope::enter();
-    synthesize_surface_proposition_with_bound_variables(
+    synthesize_surface_proposition_with_guard_fallback(
         proposition,
         parameters,
         arguments,
@@ -388,13 +388,42 @@ pub(in crate::surface) fn synthesize_surface_proposition_with_bound_variable_nam
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
     let _scope = SurfaceSynthesisScope::enter();
-    synthesize_surface_proposition_with_bound_variables(
+    synthesize_surface_proposition_with_guard_fallback(
         proposition,
         parameters,
         arguments,
         state,
         bound_variables,
     )
+}
+
+fn synthesize_surface_proposition_with_guard_fallback(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    let literal = synthesize_surface_proposition_with_bound_variables(
+        proposition,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )?;
+    // A proposition body passed with external binder names does not carry
+    // enough context to validate a rebuilt Surface candidate independently.
+    // The complete quantified proposition still takes the ordinary literal
+    // path in that case; this keeps the fallback conservative.
+    if !bound_variables.is_empty() {
+        return Some(literal);
+    }
+    let Some(candidate) = omit_leading_definedness_spellings(proposition, &literal) else {
+        return Some(literal);
+    };
+    synthesized_surface_matches_proposition(&candidate, proposition, parameters, arguments, state)
+        .then_some(candidate)
+        .or(Some(literal))
 }
 
 #[inline(never)]
@@ -417,21 +446,23 @@ fn synthesize_surface_proposition_with_bound_variables(
                     Proposition::Implies(..) => ClickProposition::Implies,
                     _ => unreachable!(),
                 };
+            let synthesized_left = synthesize_surface_proposition_with_bound_variables(
+                left,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?;
+            let synthesized_right = synthesize_surface_proposition_with_bound_variables(
+                right,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?;
             Some(construct(
-                Box::new(synthesize_surface_proposition_with_bound_variables(
-                    left,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?),
-                Box::new(synthesize_surface_proposition_with_bound_variables(
-                    right,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?),
+                Box::new(synthesized_left),
+                Box::new(synthesized_right),
             ))
         }
         Proposition::ForAll { .. } | Proposition::Exists { .. } => {
@@ -451,6 +482,125 @@ fn synthesize_surface_proposition_with_bound_variables(
             bound_variables,
         ),
     }
+}
+
+/// Whether a kernel conjunction's leading child is the explicit
+/// definedness fact generated for a signed C `int32` addition.  The
+/// proposition shape, rather than a surface spelling heuristic, identifies
+/// the only guard this synthesis fallback may omit.
+fn is_leading_add_definedness_guard(proposition: &Proposition) -> bool {
+    matches!(
+        proposition,
+        Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(_, _), false)
+    )
+}
+
+/// Remove only leading Surface spellings of kernel add-definedness guards.
+/// The walk follows a quantified wrapper once and strips a contiguous prefix
+/// of `And` children, rebuilding each wrapper once on the way back. It does
+/// not inspect facts or infer a guard from a convenient-looking expression;
+/// the caller validates the one resulting candidate against the complete
+/// kernel proposition.
+fn omit_leading_definedness_spellings(
+    proposition: &Proposition,
+    surface: &ClickProposition,
+) -> Option<ClickProposition> {
+    match (proposition, surface) {
+        (
+            Proposition::ForAll { body, .. },
+            ClickProposition::ForAll {
+                body: surface_body, ..
+            },
+        ) => {
+            let body = omit_leading_definedness_spellings(body, surface_body)?;
+            let ClickProposition::ForAll {
+                click_type, name, ..
+            } = surface
+            else {
+                unreachable!("surface universal matched above");
+            };
+            Some(ClickProposition::ForAll {
+                click_type: click_type.clone(),
+                name: name.clone(),
+                body: Box::new(body),
+            })
+        }
+        (
+            Proposition::Exists { body, .. },
+            ClickProposition::Exists {
+                body: surface_body, ..
+            },
+        ) => {
+            let body = omit_leading_definedness_spellings(body, surface_body)?;
+            let ClickProposition::Exists {
+                click_type, name, ..
+            } = surface
+            else {
+                unreachable!("surface existential matched above");
+            };
+            Some(ClickProposition::Exists {
+                click_type: click_type.clone(),
+                name: name.clone(),
+                body: Box::new(body),
+            })
+        }
+        (Proposition::And(_, _), ClickProposition::And(_, _)) => {
+            let mut proposition = proposition;
+            let mut surface = surface;
+            let mut omitted = false;
+            while let Proposition::And(left, right) = proposition {
+                if !is_leading_add_definedness_guard(left)
+                    || !matches!(surface, ClickProposition::And(surface_left, _)
+                        if matches!(surface_left.as_ref(), ClickProposition::Defined { .. }))
+                {
+                    break;
+                }
+                let ClickProposition::And(_, surface_right) = surface else {
+                    unreachable!("surface conjunction matched above");
+                };
+                proposition = right;
+                surface = surface_right;
+                omitted = true;
+            }
+            omitted.then(|| surface.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Re-lower one candidate through the ordinary fixed-state path and require
+/// the complete proposition to retain its shared alpha/load identity.  This
+/// is intentionally a small, context-free validation used only for the
+/// arithmetic guard fallback; callers with snapshot- or proof-local context
+/// still perform their own authoritative re-lowering.
+fn synthesized_surface_matches_proposition(
+    candidate: &ClickProposition,
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> bool {
+    let Ok(parameter_values) = parameter_values(parameters, arguments) else {
+        return false;
+    };
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&parameter_values, &array_refs, state);
+    let lowered = crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+        candidate,
+        &PureFactContext::new(),
+        &values,
+        &array_refs,
+        state,
+        state,
+        None,
+        &RecordedSnapshots::default(),
+        &PredicateEnvironment::new(&[]),
+        &ClickFunctionEnvironment::new(&[]),
+        &std::collections::BTreeSet::new(),
+    );
+    lowered.is_ok_and(|lowered| {
+        crate::kernel::proof::propositions_are_alpha_equal(&lowered, proposition)
+    })
 }
 
 #[inline(never)]
