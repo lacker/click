@@ -524,23 +524,39 @@ impl Names {
         }
     }
     fn resource_spec(&mut self, resource: &mut CResourceSpec) {
-        match resource {
+        match &mut resource.term {
             // A binder's spelling is a name, not part of the interface: the
             // identity beside it is the semantic key, exactly as a parameter's
             // type rather than its name is. Erase it so two declarations that
             // differ only in what they call an instance stay one interface.
-            CResourceSpec::Instance {
+            CResourceTerm::Instance {
                 binder, resource, ..
             } => {
                 binder.clear();
-                self.resource_spec(resource);
+                self.resource_term(resource);
             }
-            CResourceSpec::ViewMemory(s) | CResourceSpec::OwnMemory(s) => self.segment(s),
-            CResourceSpec::Quantified { quantity, resource } => {
-                self.c(quantity);
-                self.resource_spec(resource);
+            CResourceTerm::Memory(s) => self.segment(s),
+            CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
+                for e in arguments {
+                    self.c(e);
+                }
             }
-            CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+        }
+        if let CResourceQuantity::Count(quantity) = &mut resource.quantity {
+            self.c(quantity);
+        }
+    }
+
+    fn resource_term(&mut self, resource: &mut CResourceTerm) {
+        match resource {
+            CResourceTerm::Instance {
+                binder, resource, ..
+            } => {
+                binder.clear();
+                self.resource_term(resource);
+            }
+            CResourceTerm::Memory(segment) => self.segment(segment),
+            CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
                 for e in arguments {
                     self.c(e);
                 }

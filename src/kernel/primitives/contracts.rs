@@ -711,7 +711,6 @@ impl CFunction {
             body,
             resource_requires: Vec::new(),
             resource_ensures: Vec::new(),
-            borrowed_resource_ensures: Vec::new(),
             resource_constructors: Vec::new(),
             contract_requires: Vec::new(),
             contract_requirement_sources: ContractRequirementSources::default(),
@@ -810,15 +809,6 @@ impl CFunction {
     ) -> Self {
         self.resource_requires = requires;
         self.resource_ensures = ensures;
-        self
-    }
-
-    /// Marks which `resource_ensures` return a borrowed resource. A borrow
-    /// is evaluated at the function's entry state: the callee returns exactly
-    /// what it was lent, even when its address depends on a field the body
-    /// writes.
-    pub fn with_borrowed_resource_ensures(mut self, indices: Vec<usize>) -> Self {
-        self.borrowed_resource_ensures = indices;
         self
     }
 
@@ -999,12 +989,6 @@ impl CFunction {
 
     pub fn resource_ensures(&self) -> &[CResourceSpec] {
         &self.resource_ensures
-    }
-
-    /// Whether the `index`th resource ensure returns a borrowed resource,
-    /// evaluated at entry rather than at exit.
-    pub fn resource_ensure_is_borrowed(&self, index: usize) -> bool {
-        self.borrowed_resource_ensures.contains(&index)
     }
 
     pub fn resource_constructors(&self) -> &[CResourceSpec] {
@@ -1534,7 +1518,6 @@ impl CFunctionContract {
             && self.function.parameters == function.parameters
             && self.function.resource_requires == function.resource_requires
             && self.function.resource_ensures == function.resource_ensures
-            && self.function.borrowed_resource_ensures == function.borrowed_resource_ensures
             && self.function.contract_requires == function.contract_requires
             && self.function.contract_ensures == function.contract_ensures
             && self.function.contract_mutable == function.contract_mutable

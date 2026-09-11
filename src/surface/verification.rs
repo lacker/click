@@ -3903,7 +3903,7 @@ pub(in crate::surface) fn build_function_environment(
             .find(|block| block.signature().name() == function.source_name())
         {
             Some(function_block) => {
-                let (resource_requires, resource_ensures, borrowed_resource_ensures) =
+                let (resource_requires, resource_ensures) =
                     function_resource_summary(function_block, function, resource_environment)?;
                 let resource_constructors = function_resource_constructors(function_block)?;
                 let (
@@ -3929,7 +3929,6 @@ pub(in crate::surface) fn build_function_environment(
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
-                    .with_borrowed_resource_ensures(borrowed_resource_ensures)
                     .with_resource_constructors(resource_constructors)
                     .with_composite_resource_definitions(composite_resource_definitions(
                         resource_environment,
@@ -3994,7 +3993,17 @@ pub(in crate::surface) fn function_resource_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     resource_environment: &ResourceEnvironment,
-) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>, Vec<usize>), ClickError> {
+) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>), ClickError> {
+    let borrowed_resources = function_block
+        .ensures()
+        .iter()
+        .filter(|ensure| ensure.borrowed())
+        .filter_map(|ensure| match ensure.ensure() {
+            Ensure::Resource(resource) => Some(resource),
+            Ensure::Proposition(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let mut borrowed_requirements = vec![false; borrowed_resources.len()];
     let mut requires = Vec::new();
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
@@ -4006,23 +4015,58 @@ pub(in crate::surface) fn function_resource_summary(
             resource_environment,
             &mut requires,
         )?;
+        if let Some(spec) = requires.last_mut() {
+            let borrowed_index = borrowed_resources
+                .iter()
+                .enumerate()
+                .find(|(index, borrowed)| !borrowed_requirements[*index] && **borrowed == resource)
+                .map(|(index, _)| index);
+            let role = if spec.is_view() || borrowed_index.is_some() {
+                if let Some(index) = borrowed_index {
+                    borrowed_requirements[index] = true;
+                }
+                CResourceTransferRole::Borrow
+            } else {
+                CResourceTransferRole::Consume
+            };
+            *spec = spec
+                .clone()
+                .with_role(role)
+                .with_snapshot(CResourceSnapshot::Entry);
+        }
     }
     let mut ensures = Vec::new();
-    let mut borrowed = Vec::new();
     for ensure in function_block.ensures() {
         let Ensure::Resource(resource) = ensure.ensure() else {
             continue;
         };
-        if ensure.borrowed() {
-            borrowed.push(ensures.len());
-        }
-        ensures.push(resource_clause_to_resource_spec_with_parameters(
+        let role = if ensure.borrowed() {
+            CResourceTransferRole::Borrow
+        } else {
+            CResourceTransferRole::Produce
+        };
+        let snapshot = if ensure.borrowed() {
+            CResourceSnapshot::Entry
+        } else {
+            CResourceSnapshot::Post
+        };
+        let mut spec = resource_clause_to_resource_spec_with_metadata(
             resource,
             parsed_function.parameters(),
             Some(parsed_function.return_type().to_kernel_type()),
-        )?);
+            role,
+            snapshot,
+        )?;
+        // Instance ownership is identity-borrowed but field-produced: its
+        // selected identity comes from entry while its declared fields are
+        // checked against the post-call instance.  Keep that exceptional
+        // snapshot explicit in the normalized descriptor.
+        if ensure.borrowed() && spec.is_instance() {
+            spec = spec.with_snapshot(CResourceSnapshot::Post);
+        }
+        ensures.push(spec);
     }
-    Ok((requires, ensures, borrowed))
+    Ok((requires, ensures))
 }
 
 pub(in crate::surface) fn function_resource_constructors(
@@ -4031,7 +4075,15 @@ pub(in crate::surface) fn function_resource_constructors(
     function_block
         .constructs()
         .iter()
-        .map(resource_clause_to_resource_spec)
+        .map(|resource| {
+            resource_clause_to_resource_spec_with_metadata(
+                resource,
+                &[],
+                None,
+                CResourceTransferRole::Produce,
+                CResourceSnapshot::Current,
+            )
+        })
         .collect()
 }
 
@@ -4070,11 +4122,7 @@ pub(in crate::surface) fn composite_resource_definitions(
             .contains()
             .iter()
             .map(|resource| {
-                resource_clause_to_resource_spec_with_parameters(
-                    resource,
-                    &definition_parameters,
-                    None,
-                )
+                resource_clause_to_resource_spec_for_body(resource, &definition_parameters, None)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let recursive = body.contains().iter().any(|resource| {
@@ -4171,11 +4219,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                     .contains()
                     .iter()
                     .map(|resource| {
-                        resource_clause_to_resource_spec_with_parameters(
-                            resource,
-                            &parameters,
-                            None,
-                        )
+                        resource_clause_to_resource_spec_for_body(resource, &parameters, None)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let facts = lower_composite_resource_facts_with_bindings(
@@ -4271,29 +4315,86 @@ fn resource_clause_to_resource_spec_with_parameters(
     parameters: &[syntax::C0Parameter],
     result_type: Option<crate::kernel::CType>,
 ) -> Result<CResourceSpec, ClickError> {
+    resource_clause_to_resource_spec_with_metadata(
+        resource,
+        parameters,
+        result_type,
+        crate::kernel::CResourceTransferRole::Borrow,
+        crate::kernel::CResourceSnapshot::Entry,
+    )
+}
+
+fn resource_clause_to_resource_spec_for_body(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    result_type: Option<crate::kernel::CType>,
+) -> Result<CResourceSpec, ClickError> {
+    let role = match resource {
+        ResourceClause::Named { .. } | ResourceClause::Quantified { .. } => {
+            CResourceTransferRole::Consume
+        }
+        ResourceClause::ViewMemory(_) => CResourceTransferRole::Borrow,
+        ResourceClause::OwnMemory(_) => CResourceTransferRole::Consume,
+        ResourceClause::MemoryAggregate { access, .. }
+        | ResourceClause::Declared { access, .. } => match access {
+            ResourceAccessMode::Own => CResourceTransferRole::Consume,
+            ResourceAccessMode::View => CResourceTransferRole::Borrow,
+        },
+    };
+    resource_clause_to_resource_spec_with_metadata(
+        resource,
+        parameters,
+        result_type,
+        role,
+        CResourceSnapshot::Current,
+    )
+}
+
+fn resource_clause_to_resource_spec_with_metadata(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    result_type: Option<crate::kernel::CType>,
+    role: crate::kernel::CResourceTransferRole,
+    snapshot: crate::kernel::CResourceSnapshot,
+) -> Result<CResourceSpec, ClickError> {
     match resource {
-        ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
-            identity: binding.identity,
-            binder: binding.name.clone(),
-            schema: binding
-                .schema
-                .clone()
-                .ok_or_else(|| ClickError::new("resource binding has no checked field schema"))?,
-            resource: Box::new(resource_clause_to_resource_spec_with_parameters(
+        ResourceClause::Named { binding, resource } => {
+            let inner = resource_clause_to_resource_spec_with_metadata(
                 resource,
                 parameters,
                 result_type,
-            )?),
-        }),
-        ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
-            quantity: resource_argument_to_c_expression(quantity)?,
-            resource: Box::new(resource_clause_to_resource_spec_with_parameters(
+                role,
+                snapshot,
+            )?;
+            CResourceSpec::instance(
+                binding.identity,
+                binding.name.clone(),
+                binding.schema.clone().ok_or_else(|| {
+                    ClickError::new("resource binding has no checked field schema")
+                })?,
+                inner,
+                role,
+                snapshot,
+            )
+            .map_err(|error| ClickError::new(error.to_string()))
+        }
+        ResourceClause::Quantified { quantity, resource } => {
+            let inner = resource_clause_to_resource_spec_with_metadata(
                 resource,
                 parameters,
                 result_type,
-            )?),
-        }),
-        ResourceClause::ViewMemory(segment) => Ok(CResourceSpec::ViewMemory(
+                role,
+                snapshot,
+            )?;
+            CResourceSpec::quantified(
+                resource_argument_to_c_expression(quantity)?,
+                inner,
+                role,
+                snapshot,
+            )
+            .map_err(|error| ClickError::new(error.to_string()))
+        }
+        ResourceClause::ViewMemory(segment) => Ok(CResourceSpec::memory(
             CMemorySegment::new(
                 segment.base.clone(),
                 segment.start.clone(),
@@ -4306,8 +4407,11 @@ fn resource_clause_to_resource_spec_with_parameters(
                     result_type,
                 ),
             ),
+            CResourceAccessMode::View,
+            role,
+            snapshot,
         )),
-        ResourceClause::OwnMemory(segment) => Ok(CResourceSpec::OwnMemory(
+        ResourceClause::OwnMemory(segment) => Ok(CResourceSpec::memory(
             CMemorySegment::new(
                 segment.base.clone(),
                 segment.start.clone(),
@@ -4320,6 +4424,9 @@ fn resource_clause_to_resource_spec_with_parameters(
                     result_type,
                 ),
             ),
+            CResourceAccessMode::Own,
+            role,
+            snapshot,
         )),
         ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
             "aggregate resource clauses must be expanded before one resource spec is required",
@@ -4340,20 +4447,19 @@ fn resource_clause_to_resource_spec_with_parameters(
                 .iter()
                 .map(|c_type| c_type.to_kernel_type())
                 .collect();
-            Ok(match kind {
-                ResourceKind::Composite => CResourceSpec::Composite {
-                    access,
-                    name: name.clone(),
-                    arguments,
-                    parameter_types,
+            CResourceSpec::declared(
+                match kind {
+                    ResourceKind::Composite => ResourceFamily::Composite,
+                    ResourceKind::Token => ResourceFamily::Token,
                 },
-                ResourceKind::Token => CResourceSpec::Token {
-                    access,
-                    name: name.clone(),
-                    arguments,
-                    parameter_types,
-                },
-            })
+                access,
+                name.clone(),
+                arguments,
+                parameter_types,
+                role,
+                snapshot,
+            )
+            .map_err(|error| ClickError::new(error.to_string()))
         }
     }
 }
@@ -4468,65 +4574,13 @@ pub(in crate::surface) fn substitute_contract_segment(
 pub(in crate::surface) fn resource_clause_to_resource_spec(
     resource: &ResourceClause,
 ) -> Result<CResourceSpec, ClickError> {
-    match resource {
-        ResourceClause::Named { binding, resource } => Ok(CResourceSpec::Instance {
-            identity: binding.identity,
-            binder: binding.name.clone(),
-            schema: binding
-                .schema
-                .clone()
-                .ok_or_else(|| ClickError::new("resource binding has no checked field schema"))?,
-            resource: Box::new(resource_clause_to_resource_spec(resource)?),
-        }),
-        ResourceClause::Quantified { quantity, resource } => Ok(CResourceSpec::Quantified {
-            quantity: resource_argument_to_c_expression(quantity)?,
-            resource: Box::new(resource_clause_to_resource_spec(resource)?),
-        }),
-        ResourceClause::ViewMemory(segment) => Ok(CResourceSpec::ViewMemory(CMemorySegment::new(
-            segment.base.clone(),
-            segment.start.clone(),
-            segment.end.clone(),
-        ))),
-        ResourceClause::OwnMemory(segment) => Ok(CResourceSpec::OwnMemory(CMemorySegment::new(
-            segment.base.clone(),
-            segment.start.clone(),
-            segment.end.clone(),
-        ))),
-        ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
-            "aggregate resource clauses must be expanded before one resource spec is required",
-        )),
-        ResourceClause::Declared {
-            access,
-            kind,
-            name,
-            arguments,
-            parameter_types,
-        } => {
-            let access = resource_access_to_kernel(*access);
-            let arguments = arguments
-                .iter()
-                .map(resource_argument_to_c_expression)
-                .collect::<Result<Vec<_>, _>>()?;
-            let parameter_types = parameter_types
-                .iter()
-                .map(|c_type| c_type.to_kernel_type())
-                .collect();
-            Ok(match kind {
-                ResourceKind::Composite => CResourceSpec::Composite {
-                    access,
-                    name: name.clone(),
-                    arguments,
-                    parameter_types,
-                },
-                ResourceKind::Token => CResourceSpec::Token {
-                    access,
-                    name: name.clone(),
-                    arguments,
-                    parameter_types,
-                },
-            })
-        }
-    }
+    resource_clause_to_resource_spec_with_metadata(
+        resource,
+        &[],
+        None,
+        crate::kernel::CResourceTransferRole::Borrow,
+        crate::kernel::CResourceSnapshot::Current,
+    )
 }
 
 pub(in crate::surface) fn resource_access_to_kernel(

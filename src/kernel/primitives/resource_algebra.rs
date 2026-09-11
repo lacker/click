@@ -2054,6 +2054,10 @@ fn resource_family_algebra(family: ResourceFamily) -> &'static dyn ResourceFamil
     algebra
 }
 
+pub(super) fn validate_resource_spec(spec: &CResourceSpec) -> Result<(), CResourceSpecError> {
+    resource_family_algebra(spec.family()).validate_spec(spec)
+}
+
 fn resource_fact_entails(
     available: &CResourceFact,
     required: &CResourceFact,

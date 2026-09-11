@@ -30,12 +30,12 @@ fn certified_program_entry_claims_do_not_authorize_ordinary_calls() {
 }
 
 fn pool_resource_spec(name: &str) -> CResourceSpec {
-    CResourceSpec::Composite {
-        access: CResourceAccessMode::Own,
-        name: name.to_string(),
-        arguments: vec![c_variable("pool"), c_variable("object")],
-        parameter_types: vec![CType::Int32, CType::Int32],
-    }
+    CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        name.to_string(),
+        vec![c_variable("pool"), c_variable("object")],
+        vec![CType::Int32, CType::Int32],
+    )
 }
 
 fn pool_transition_function(from: &str, to: &str) -> CFunction {
@@ -1498,7 +1498,7 @@ fn contract_effect_claim_rejects_interior_entry_live_heap_pointer_as_fresh() {
         ),
     )
     .with_resource_summary(
-        vec![CResourceSpec::OwnMemory(CMemorySegment::new(
+        vec![CResourceSpec::owned_memory(CMemorySegment::new(
             c_pointer_offset_bytes(c_variable("p"), 8),
             c_int32_literal(0),
             c_int32_literal(1),

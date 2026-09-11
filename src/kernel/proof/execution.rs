@@ -2333,13 +2333,7 @@ fn interface_resource_intrinsic_fact(
     resource: &CResourceFact,
     state: &CState,
 ) -> Option<Proposition> {
-    let segment = match spec {
-        CResourceSpec::Instance { .. } => return None,
-        CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => segment,
-        CResourceSpec::Quantified { .. }
-        | CResourceSpec::Composite { .. }
-        | CResourceSpec::Token { .. } => return None,
-    };
+    let segment = spec.memory_segment()?;
     let range = resource.memory_range()?;
     let element_width = segment.element_width();
     Some(Proposition::CMemoryLoadable {
@@ -5721,7 +5715,7 @@ mod tests {
             vec![],
             None,
             false,
-            vec![crate::kernel::CResourceSpec::OwnMemory(
+            vec![crate::kernel::CResourceSpec::owned_memory(
                 crate::kernel::CMemorySegment {
                     base: CExpression::Value(CValue::pointer(crate::kernel::Pointer::symbolic(
                         Variable(100),
@@ -6473,12 +6467,12 @@ mod tests {
 
     #[test]
     fn checked_composite_events_reject_forged_resources_facts_memory_and_definitions() {
-        let child_spec = CResourceSpec::Token {
-            access: CResourceAccessMode::Own,
-            name: "child".to_string(),
-            arguments: Vec::new(),
-            parameter_types: Vec::new(),
-        };
+        let child_spec = CResourceSpec::token(
+            CResourceAccessMode::Own,
+            "child".to_string(),
+            Vec::new(),
+            Vec::new(),
+        );
         let definition = CCompositeResourceDefinition::new(
             "bundle",
             Vec::new(),

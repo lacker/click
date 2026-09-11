@@ -1563,15 +1563,38 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
     resource: &CResourceSpec,
     variables: &mut BTreeSet<Variable>,
 ) {
+    match &resource.term {
+        CResourceTerm::Instance { resource, .. } => {
+            collect_resource_term_bitvector_variables(resource, variables)
+        }
+        CResourceTerm::Memory(segment) => {
+            collect_c_expression_bitvector_variables(&segment.base, variables);
+            collect_c_expression_bitvector_variables(&segment.start, variables);
+            collect_c_expression_bitvector_variables(&segment.end, variables);
+            if let Some(guard) = segment.guard() {
+                collect_spec_proposition_bitvector_variables(guard, variables);
+            }
+        }
+        CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
+    }
+    if let CResourceQuantity::Count(quantity) = &resource.quantity {
+        collect_c_expression_bitvector_variables(quantity, variables);
+    }
+}
+
+fn collect_resource_term_bitvector_variables(
+    resource: &CResourceTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
     match resource {
-        CResourceSpec::Instance { resource, .. } => {
-            collect_resource_spec_bitvector_variables(resource, variables)
+        CResourceTerm::Instance { resource, .. } => {
+            collect_resource_term_bitvector_variables(resource, variables)
         }
-        CResourceSpec::Quantified { quantity, resource } => {
-            collect_c_expression_bitvector_variables(quantity, variables);
-            collect_resource_spec_bitvector_variables(resource, variables);
-        }
-        CResourceSpec::ViewMemory(segment) => {
+        CResourceTerm::Memory(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
@@ -1579,15 +1602,7 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
                 collect_spec_proposition_bitvector_variables(guard, variables);
             }
         }
-        CResourceSpec::OwnMemory(segment) => {
-            collect_c_expression_bitvector_variables(&segment.base, variables);
-            collect_c_expression_bitvector_variables(&segment.start, variables);
-            collect_c_expression_bitvector_variables(&segment.end, variables);
-            if let Some(guard) = segment.guard() {
-                collect_spec_proposition_bitvector_variables(guard, variables);
-            }
-        }
-        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+        CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
             for argument in arguments {
                 collect_c_expression_bitvector_variables(argument, variables);
             }

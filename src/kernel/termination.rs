@@ -682,9 +682,13 @@ fn structural_resource_children(
     function: &CFunction,
     requirement_index: usize,
 ) -> Result<StructuralResourceMeasure, CTerminationError> {
-    let Some(CResourceSpec::Composite {
-        name, arguments, ..
-    }) = function.resource_requires().get(requirement_index)
+    let Some(resource) = function.resource_requires().get(requirement_index) else {
+        return Err(error(format!(
+            "structural resource measure index is invalid for `{}`",
+            function.name()
+        )));
+    };
+    let (Some(name), Some(arguments)) = (resource.declared_name(), resource.declared_arguments())
     else {
         return Err(error(format!(
             "structural resource measure index is invalid for `{}`",
@@ -735,11 +739,8 @@ fn structural_resource_children(
     let mut children = Vec::new();
     let mut witness_children = Vec::new();
     for contained in definition.contains() {
-        let CResourceSpec::Composite {
-            name: child_name,
-            arguments: child_arguments,
-            ..
-        } = contained
+        let (Some(child_name), Some(child_arguments)) =
+            (contained.declared_name(), contained.declared_arguments())
         else {
             continue;
         };
@@ -749,7 +750,7 @@ fn structural_resource_children(
         if child_arguments.iter().any(mentions_witness) {
             witness_children.push(WitnessChildMeasure {
                 definition: definition.clone(),
-                arguments: child_arguments.clone(),
+                arguments: child_arguments.to_vec(),
             });
         } else {
             children.push(
@@ -766,7 +767,7 @@ fn structural_resource_children(
         )));
     }
     Ok(StructuralResourceMeasure {
-        arguments: arguments.clone(),
+        arguments: arguments.to_vec(),
         children,
         witness_children,
         guard,

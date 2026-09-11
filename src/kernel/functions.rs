@@ -975,7 +975,7 @@ fn selected_call_binder_application(
     let parameters = function
         .resource_requires()
         .iter()
-        .filter(|resource| matches!(resource, CResourceSpec::Instance { .. }))
+        .filter(|resource| resource.is_instance())
         .cloned()
         .collect::<Vec<_>>();
     Some(ResourceCallApplication {
@@ -1016,11 +1016,10 @@ fn execute_verified_function_templates(
             .resource_requires()
             .iter()
             .chain(function.resource_ensures())
-            .find(|resource| match resource {
-                CResourceSpec::Instance { identity, .. } => {
-                    !bindings.is_some_and(|bindings| bindings.contains_key(identity))
-                }
-                _ => false,
+            .find(|resource| {
+                resource.instance_identity().is_some_and(|identity| {
+                    !bindings.is_some_and(|bindings| bindings.contains_key(&identity))
+                })
             })
             .map(|_| function.name().to_string())
     }) {
@@ -1189,32 +1188,32 @@ fn execute_verified_function_templates(
         // built once, here, so the population transition and the returned
         // resources agree on its fresh fields.
         let mut produced_instances = BTreeMap::new();
-        for (ensure_index, resource) in function.resource_ensures().iter().enumerate() {
-            let CResourceSpec::Instance {
-                identity,
-                schema,
-                resource: instance_resource,
-                ..
-            } = resource
-            else {
+        for resource in function.resource_ensures() {
+            let Some(identity) = resource.instance_identity() else {
                 continue;
             };
-            if function.resource_ensure_is_borrowed(ensure_index)
+            let Some(schema) = resource.instance_schema() else {
+                continue;
+            };
+            if resource.role() == CResourceTransferRole::Borrow
                 || entry_contract_state
-                    .owned_resource_instance(*identity)
+                    .owned_resource_instance(identity)
                     .is_some()
             {
                 continue;
             }
             let Some(produced) = selected_bindings
                 .as_ref()
-                .and_then(|bindings| bindings.get(identity).copied())
+                .and_then(|bindings| bindings.get(&identity).copied())
             else {
+                continue;
+            };
+            let Some(instance_resource) = resource.instance_resource_spec() else {
                 continue;
             };
             let (name, arguments) = match evaluate_function_resource_spec(
                 &post_state,
-                instance_resource,
+                &instance_resource,
                 &effective_assumptions,
                 budget,
             )? {
@@ -1260,7 +1259,7 @@ fn execute_verified_function_templates(
                 })
                 .collect();
             produced_instances.insert(
-                *identity,
+                identity,
                 ResourceInstance::new(produced, name, arguments, schema.clone(), fields)
                     .expect("fresh symbolic fields have their declared types"),
             );
@@ -1334,13 +1333,13 @@ fn execute_verified_function_templates(
         // Returned ownership keeps its identity, not its old field values.
         // Only the ensures below relate fresh post-fields to the entry snapshot.
         for resource in function.resource_ensures() {
-            let CResourceSpec::Instance { identity, .. } = resource else {
+            let Some(identity) = resource.instance_identity() else {
                 continue;
             };
-            let after = if let Some(produced) = produced_instances.get(identity) {
+            let after = if let Some(produced) = produced_instances.get(&identity) {
                 produced.clone()
             } else {
-                let Some(before) = entry_contract_state.owned_resource_instance(*identity) else {
+                let Some(before) = entry_contract_state.owned_resource_instance(identity) else {
                     return Ok(vec![resource_call_failure(
                         "returned resource parameter is not owned at call entry",
                     )]);
@@ -2015,7 +2014,7 @@ pub(super) fn execute_c_function_contracts_paths(
         let mut bindings = BTreeMap::new();
         let mut actuals = BTreeSet::new();
         for (parameter, argument) in contract.proof_parameters.iter().zip(arguments) {
-            let CResourceSpec::Instance { identity, .. } = parameter else {
+            let Some(identity) = parameter.instance_identity() else {
                 return Ok(vec![resource_call_failure(
                     "resource proof parameter must be an exclusive instance",
                 )]);
@@ -2026,7 +2025,7 @@ pub(super) fn execute_c_function_contracts_paths(
                 )]);
             };
             if !actuals.insert(instance.identity())
-                || bindings.insert(*identity, instance.identity()).is_some()
+                || bindings.insert(identity, instance.identity()).is_some()
             {
                 return Ok(vec![resource_call_failure(
                     "duplicate exclusive resource proof argument",
@@ -2208,14 +2207,11 @@ fn declared_instance_binder_names(specs: &[&[CResourceSpec]]) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut names = Vec::new();
     for spec in specs.iter().flat_map(|specs| specs.iter()) {
-        let CResourceSpec::Instance {
-            identity, binder, ..
-        } = spec
-        else {
+        let Some(identity) = spec.instance_identity() else {
             continue;
         };
-        if seen.insert(*identity) {
-            names.push(binder.clone());
+        if seen.insert(identity) {
+            names.push(spec.instance_binder().unwrap_or_default().to_string());
         }
     }
     names
@@ -2584,25 +2580,25 @@ fn evaluate_declared_resource_instances(
     let mut seen = BTreeSet::new();
     let mut declared = Vec::new();
     for spec in specs.iter().flat_map(|specs| specs.iter()) {
-        let CResourceSpec::Instance {
-            identity,
-            schema,
-            resource,
-            ..
-        } = spec
-        else {
+        let Some(identity) = spec.instance_identity() else {
             continue;
         };
-        if !seen.insert(*identity) {
+        if !seen.insert(identity) {
             continue;
         }
-        let instance = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
+        let Some(schema) = spec.instance_schema() else {
+            continue;
+        };
+        let Some(resource) = spec.instance_resource_spec() else {
+            continue;
+        };
+        let instance = match evaluate_function_resource_spec(state, &resource, assumptions, budget)?
         {
             Ok(CResourceFact::Own(CResource::Composite { name, arguments }, quantity))
                 if quantity.as_const() == Some(1) =>
             {
                 DeclaredResourceInstance {
-                    identity: *identity,
+                    identity,
                     family: name,
                     schema: schema.clone(),
                     arguments,
@@ -3267,8 +3263,12 @@ fn exact_resource_interfaces_match(
         .iter()
         .zip(function.resource_ensures())
     {
+        let contract_state = match contract_resource.snapshot() {
+            CResourceSnapshot::Entry => contract_entry,
+            CResourceSnapshot::Current | CResourceSnapshot::Post => contract_post,
+        };
         let contract_resource = match evaluate_function_resource_spec(
-            contract_post,
+            contract_state,
             contract_resource,
             assumptions,
             budget,
@@ -3276,8 +3276,12 @@ fn exact_resource_interfaces_match(
             Ok(resource) => resource,
             Err(_) => return Ok(false),
         };
+        let function_state = match function_resource.snapshot() {
+            CResourceSnapshot::Entry => function_entry,
+            CResourceSnapshot::Current | CResourceSnapshot::Post => function_post,
+        };
         let function_resource = match evaluate_function_resource_spec(
-            function_post,
+            function_state,
             function_resource,
             assumptions,
             budget,
@@ -3311,29 +3315,15 @@ fn context_contains_only_refinable_resources(resources: &ResourceContext) -> boo
 }
 
 fn resource_spec_supports_framed_refinement(resource: &CResourceSpec) -> bool {
-    match resource {
-        // A named instance is refinable once both sides evaluate it to the
-        // same identity, which automatic formation arranges by binding each
-        // forced pair to one shared instance. The declared family underneath
-        // is checked by the same rule as any other resource.
-        CResourceSpec::Instance { resource, .. } => {
-            resource_spec_supports_framed_refinement(resource)
-        }
-        CResourceSpec::OwnMemory(_)
-        | CResourceSpec::ViewMemory(_)
-        | CResourceSpec::Composite { .. }
-        | CResourceSpec::Token { .. } => true,
-        CResourceSpec::Quantified { resource, .. } => matches!(
-            resource.as_ref(),
-            CResourceSpec::Composite {
-                access: CResourceAccessMode::Own,
-                ..
-            } | CResourceSpec::Token {
-                access: CResourceAccessMode::Own,
-                ..
-            }
-        ),
+    if resource.is_instance() {
+        return resource
+            .instance_resource_spec()
+            .is_some_and(|inner| resource_spec_supports_framed_refinement(&inner));
     }
+    matches!(
+        resource.family(),
+        ResourceFamily::Memory | ResourceFamily::Composite | ResourceFamily::Token
+    )
 }
 
 fn evaluate_refinement_resource_context(
@@ -8360,12 +8350,14 @@ pub(super) fn evaluate_function_return_resource_context(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
-    for (index, resource) in function.resource_ensures().iter().take(count).enumerate() {
-        // A named instance keeps its identity and takes fresh post-fields;
-        // only its ensures relate those to entry, so it is read at exit.
-        let borrowed = function.resource_ensure_is_borrowed(index)
-            && !matches!(resource, CResourceSpec::Instance { .. });
-        let state = if borrowed { entry_state } else { post_state };
+    for resource in function.resource_ensures().iter().take(count) {
+        // Snapshot selection is carried by the normalized specification. A
+        // named instance is always post-evaluated by lowering, so its
+        // identity remains stable while its fields can be fresh.
+        let state = match resource.snapshot() {
+            CResourceSnapshot::Entry => entry_state,
+            CResourceSnapshot::Current | CResourceSnapshot::Post => post_state,
+        };
         let evaluation_state = state.clone().with_resource_context(
             state
                 .resources()
@@ -8609,35 +8601,31 @@ fn population_quantities_are_equal(
 }
 
 fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
-    match resource {
-        CResourceSpec::Instance { .. } => false,
-        CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => {
+    if resource.is_instance() {
+        return false;
+    }
+    let term_independent = match resource.term() {
+        CResourceTerm::Memory(segment) => {
             segment.guard.is_none()
                 && c_expression_is_snapshot_independent(&segment.base)
                 && c_expression_is_snapshot_independent(&segment.start)
                 && c_expression_is_snapshot_independent(&segment.end)
         }
-        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+        CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
             arguments.iter().all(c_expression_is_snapshot_independent)
         }
-        CResourceSpec::Quantified { quantity, resource } => {
-            c_expression_is_snapshot_independent(quantity)
-                && resource_spec_has_snapshot_independent_footprint(resource)
+        CResourceTerm::Instance { .. } => false,
+    };
+    term_independent
+        && match resource.quantity() {
+            CResourceQuantity::One => true,
+            CResourceQuantity::Count(quantity) => c_expression_is_snapshot_independent(quantity),
         }
-    }
 }
 
 fn population_body_requires_positive_witness(definition: &CCompositeResourceDefinition) -> bool {
     fn resource_is_duplicable_view(resource: &CResourceSpec) -> bool {
-        match resource {
-            CResourceSpec::Instance { .. } => false,
-            CResourceSpec::ViewMemory(_) => true,
-            CResourceSpec::Quantified { resource, .. } => resource_is_duplicable_view(resource),
-            CResourceSpec::Composite { access, .. } | CResourceSpec::Token { access, .. } => {
-                *access == CResourceAccessMode::View
-            }
-            CResourceSpec::OwnMemory(_) => false,
-        }
+        !resource.is_instance() && resource.is_view()
     }
 
     !definition.facts().is_empty()
@@ -9344,13 +9332,11 @@ fn held_child_witness(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let child_name = definition.contains().iter().find_map(|spec| match spec {
-        CResourceSpec::Composite {
-            name, arguments, ..
-        } if matches!(arguments.as_slice(), [CExpression::Variable(argument)] if argument == witness) => {
-            Some(name.as_str())
-        }
-        _ => None,
+    let child_name = definition.contains().iter().find_map(|spec| {
+        let arguments = spec.declared_arguments()?;
+        (spec.family() == ResourceFamily::Composite
+            && matches!(arguments, [CExpression::Variable(argument)] if argument == witness))
+        .then(|| spec.declared_name().expect("composite spec has a name"))
     })?;
     let mut candidates = resources
         .facts()
@@ -9465,7 +9451,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         || definition
             .contains
             .iter()
-            .any(|body| !matches!(body, CResourceSpec::OwnMemory(_)))
+            .any(|body| body.family() != ResourceFamily::Memory || body.is_view())
     {
         return Err("instance fold/unfold requires a nonrecursive, witness-free memory body");
     }
@@ -9880,7 +9866,7 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
             || arm
                 .contains
                 .iter()
-                .any(|resource| !matches!(resource, CResourceSpec::OwnMemory(_)))
+                .any(|resource| resource.family() != ResourceFamily::Memory || resource.is_view())
         {
             return Err("invalid resource match arm");
         }
@@ -10920,12 +10906,8 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
 
     let mut propositions = Vec::new();
     for resource in definition.contains() {
-        let segment = match resource {
-            CResourceSpec::Instance { .. } => continue,
-            CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => segment,
-            CResourceSpec::Quantified { .. }
-            | CResourceSpec::Composite { .. }
-            | CResourceSpec::Token { .. } => continue,
+        let Some(segment) = resource.memory_segment() else {
+            continue;
         };
         let evaluated = match evaluate_function_resource_spec(
             &state,
@@ -11660,15 +11642,22 @@ pub(super) fn evaluate_function_resource_spec(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
-    match resource {
-        CResourceSpec::Instance {
+    match resource.term() {
+        CResourceTerm::Instance {
             identity,
             schema,
-            resource,
+            resource: inner_term,
             ..
         } => {
+            let inner = CResourceSpec {
+                term: (**inner_term).clone(),
+                access: CResourceAccessMode::Own,
+                quantity: CResourceQuantity::One,
+                role: resource.role(),
+                snapshot: resource.snapshot(),
+            };
             let required =
-                match evaluate_function_resource_spec(state, resource, assumptions, budget)? {
+                match evaluate_function_resource_spec(state, &inner, assumptions, budget)? {
                     Ok(resource) => resource,
                     Err(error) => return Ok(Err(error)),
                 };
@@ -11701,139 +11690,101 @@ pub(super) fn evaluate_function_resource_spec(
                 instance.clone(),
             ))))
         }
-        CResourceSpec::Quantified { quantity, resource } => {
-            let (access, name) = match resource.as_ref() {
-                CResourceSpec::Composite { access, name, .. }
-                | CResourceSpec::Token { access, name, .. } => (access, name),
-                _ => {
+        CResourceTerm::Memory(segment) => {
+            let element_width = segment.element_width();
+            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
+                Ok(segment) => segment,
+                Err(_) => {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "symbolic quantities require a user-declared resource".to_string(),
+                        if resource.is_view() {
+                            "could not evaluate a viewed memory resource segment".to_string()
+                        } else {
+                            "could not evaluate an owned memory resource segment".to_string()
+                        },
                     )));
                 }
             };
-            if *access != CResourceAccessMode::Own
-                || name == CResourceFact::ALLOCATION_RESOURCE_NAME
-            {
-                return Ok(Err(CRuntimeError::FunctionContract(
-                    "symbolic quantities require owned user-declared resources".to_string(),
-                )));
-            }
-            let quantity = match evaluate_loop_effect_segment_value(
+            let range = CMemoryRange::new_with_element_width(
+                segment.base,
+                segment.start,
+                segment.end,
+                element_width,
+            );
+            Ok(Ok(if resource.is_view() {
+                CResourceFact::view_memory(range)
+            } else {
+                CResourceFact::own_memory(range)
+            }))
+        }
+        CResourceTerm::Composite {
+            name,
+            arguments,
+            parameter_types,
+        }
+        | CResourceTerm::Token {
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            let family = resource.family();
+            let mut fact = match evaluate_function_declared_resource_spec(
                 state,
-                quantity,
+                resource.access(),
+                family,
+                name,
+                arguments,
+                parameter_types,
                 assumptions,
-                "declared resource quantity",
                 budget,
             )? {
-                Ok(CValue::Int32(quantity)) => quantity,
-                Ok(_) | Err(_) => {
-                    return Ok(Err(CRuntimeError::FunctionContract(
-                        "declared resource quantity must evaluate to int32".to_string(),
-                    )));
-                }
-            };
-            // Nonnegativity of a declared quantity is decided by the exact
-            // fact index and the frozen condition checker only. This
-            // evaluator returns one resource fact and has no obligation
-            // vector to emit into — its callers include contract entry and
-            // exit lowering, population body evaluation, and refinement
-            // checking, none of which own a proof site here — so an
-            // undecided quantity is refused with a diagnostic naming the
-            // condition to state in the contract.
-            if !quantity_condition_holds(
-                assumptions,
-                ConditionTerm::Bitvector32SignedGreaterEqual(
-                    Box::new(quantity.clone()),
-                    Box::new(Bitvector32Term::Constant(0)),
-                ),
-            ) {
-                return Ok(Err(CRuntimeError::FunctionContract(
-                    "declared resource quantity is not known nonnegative; state that the \
-                     quantity expression is at least 0 as a requirement, an invariant, or a \
-                     fact proved in scope"
-                        .to_string(),
-                )));
-            }
-            let inner = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
-            {
-                Ok(inner) => inner,
+                Ok(fact) => fact,
                 Err(error) => return Ok(Err(error)),
             };
-            let CResourceFact::Own(inner, _) = inner else {
-                return Ok(Err(CRuntimeError::FunctionContract(
-                    "declared resource quantity did not lower to owned authority".to_string(),
-                )));
-            };
-            Ok(Ok(CResourceFact::own_quantity(inner, quantity)))
-        }
-        CResourceSpec::ViewMemory(segment) => {
-            let element_width = segment.element_width();
-            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
-                Ok(segment) => segment,
-                Err(_) => {
+            if let CResourceQuantity::Count(quantity) = resource.quantity() {
+                if resource.access() != CResourceAccessMode::Own
+                    || name == CResourceFact::ALLOCATION_RESOURCE_NAME
+                {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "could not evaluate a viewed memory resource segment".to_string(),
+                        "symbolic quantities require owned user-declared resources".to_string(),
                     )));
                 }
-            };
-            Ok(Ok(CResourceFact::view_memory(
-                CMemoryRange::new_with_element_width(
-                    segment.base,
-                    segment.start,
-                    segment.end,
-                    element_width,
-                ),
-            )))
-        }
-        CResourceSpec::OwnMemory(segment) => {
-            let element_width = segment.element_width();
-            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
-                Ok(segment) => segment,
-                Err(_) => {
+                let quantity = match evaluate_loop_effect_segment_value(
+                    state,
+                    quantity,
+                    assumptions,
+                    "declared resource quantity",
+                    budget,
+                )? {
+                    Ok(CValue::Int32(quantity)) => quantity,
+                    Ok(_) | Err(_) => {
+                        return Ok(Err(CRuntimeError::FunctionContract(
+                            "declared resource quantity must evaluate to int32".to_string(),
+                        )));
+                    }
+                };
+                if !quantity_condition_holds(
+                    assumptions,
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(quantity.clone()),
+                        Box::new(Bitvector32Term::Constant(0)),
+                    ),
+                ) {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "could not evaluate an owned memory resource segment".to_string(),
+                        "declared resource quantity is not known nonnegative; state that the \
+                         quantity expression is at least 0 as a requirement, an invariant, or a \
+                         fact proved in scope"
+                            .to_string(),
                     )));
                 }
-            };
-            Ok(Ok(CResourceFact::own_memory(
-                CMemoryRange::new_with_element_width(
-                    segment.base,
-                    segment.start,
-                    segment.end,
-                    element_width,
-                ),
-            )))
+                let CResourceFact::Own(inner, _) = fact else {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "declared resource quantity did not lower to owned authority".to_string(),
+                    )));
+                };
+                fact = CResourceFact::own_quantity(inner, quantity);
+            }
+            Ok(Ok(fact))
         }
-        CResourceSpec::Composite {
-            access,
-            name,
-            arguments,
-            parameter_types,
-        } => evaluate_function_declared_resource_spec(
-            state,
-            *access,
-            ResourceFamily::Composite,
-            name,
-            arguments,
-            parameter_types,
-            assumptions,
-            budget,
-        ),
-        CResourceSpec::Token {
-            access,
-            name,
-            arguments,
-            parameter_types,
-        } => evaluate_function_declared_resource_spec(
-            state,
-            *access,
-            ResourceFamily::Token,
-            name,
-            arguments,
-            parameter_types,
-            assumptions,
-            budget,
-        ),
     }
 }
 
@@ -11849,7 +11800,7 @@ pub(super) fn quantified_resource_requirement_assumptions(
 ) -> ExecutionResult<Result<Vec<Proposition>, CRuntimeError>> {
     let mut propositions = Vec::new();
     for resource in resources {
-        let CResourceSpec::Quantified { quantity, .. } = resource else {
+        let CResourceQuantity::Count(quantity) = resource.quantity() else {
             continue;
         };
         let quantity = match evaluate_loop_effect_segment_value(
@@ -12080,11 +12031,8 @@ pub(crate) fn unreturned_allocation_at_function_exit(
             .iter()
             .any(|definition| {
                 definition.contains().iter().any(|resource| {
-                    matches!(
-                        resource,
-                        CResourceSpec::Token { name, .. }
-                            if name == CResourceFact::ALLOCATION_RESOURCE_NAME
-                    )
+                    resource.family() == ResourceFamily::Token
+                        && resource.declared_name() == Some(CResourceFact::ALLOCATION_RESOURCE_NAME)
                 })
             });
     if !function_can_package_allocation
@@ -12711,7 +12659,7 @@ mod verified_call_initialization_tests {
     }
 
     fn owned_cell_spec() -> CResourceSpec {
-        CResourceSpec::OwnMemory(CMemorySegment::new(
+        CResourceSpec::owned_memory(CMemorySegment::new(
             c_variable("p"),
             c_int32_literal(0),
             c_int32_literal(1),

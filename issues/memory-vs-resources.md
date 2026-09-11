@@ -205,6 +205,38 @@ as obligations at both ordinary and callback calls.
 W0 changed only this issue document. The resulting checkpoint is ready for
 manager integration; no old implementation path or adapter was removed.
 
+## W1 handoff (2026-09-11)
+
+W1 started from `345eb056` (`Reconcile memory resource issue with G1
+status`) in the isolated `codex/mvr-w1` worktree. The normalized resource
+specification is now a validated `CResourceSpec` carrying a `CResourceTerm`,
+explicit access, quantity, transfer role, and snapshot. Memory remains a
+range term; composite, token, and field-bearing instance terms retain their
+family-specific identity and validation. Surface resource lowering constructs
+this form at one metadata-aware boundary, and substitution, interface
+identity, termination, loop handling, proof execution, certification, and
+resource evaluation consume it without legacy variant matches or the removed
+borrowed-ensure index. No syntax, C source, budget, quarantine, or unrelated
+files changed.
+
+The focused normalized-resource tests cover memory/composite/token/instance
+families, valid view/own/count combinations, rejected memory quantities,
+rejected counted views, rejected instance views and non-composite instance
+bodies, and indexed lookup scaling at sizes 16, 32, 64, and 128. The
+deterministic-work ratio assertion passed. Existing resource, contract, heap,
+surface, callback, expansion, certification, and rejection tests retain their
+outcomes.
+
+Checks in the W1 worktree all passed: `cargo check --all-targets` (0),
+`MDTEST_FILTER=resource cargo nextest run --test mdtests --no-capture` (0),
+`cargo nextest run --lib resource_tests contract_execution_tests heap_tests`
+(172/172), `cargo fmt --check` and `git diff --check` (0), and the unfiltered
+`scripts/check.sh` gate (0; 2555 tests plus the 14 fixture/example checks).
+The tested commit is the W1 implementation plus this handoff; the manager
+should commit it without merging or pushing from this worktree. No verified
+blockers remain; G2/G3 and later R1-R6 behavior remain assigned to later
+chunks.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

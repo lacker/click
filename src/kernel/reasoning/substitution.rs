@@ -940,18 +940,36 @@ fn collect_c_resource_spec_bound_variables(
     resource: &CResourceSpec,
     variables: &mut BTreeSet<Variable>,
 ) {
-    match resource {
-        CResourceSpec::Instance { resource, .. } => {
-            collect_c_resource_spec_bound_variables(resource, variables)
+    match &resource.term {
+        CResourceTerm::Instance { resource, .. } => {
+            collect_c_resource_term_bound_variables(resource, variables)
         }
-        CResourceSpec::Quantified { quantity, resource } => {
-            collect_c_expression_bound_variables(quantity, variables);
-            collect_c_resource_spec_bound_variables(resource, variables);
-        }
-        CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => {
+        CResourceTerm::Memory(segment) => {
             collect_c_memory_segment_bound_variables(segment, variables)
         }
-        CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
+        CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bound_variables(argument, variables);
+            }
+        }
+    }
+    if let CResourceQuantity::Count(quantity) = &resource.quantity {
+        collect_c_expression_bound_variables(quantity, variables);
+    }
+}
+
+fn collect_c_resource_term_bound_variables(
+    resource: &CResourceTerm,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        CResourceTerm::Instance { resource, .. } => {
+            collect_c_resource_term_bound_variables(resource, variables)
+        }
+        CResourceTerm::Memory(segment) => {
+            collect_c_memory_segment_bound_variables(segment, variables)
+        }
+        CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
             for argument in arguments {
                 collect_c_expression_bound_variables(argument, variables);
             }
@@ -3678,7 +3696,6 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
             .collect(),
-        borrowed_resource_ensures: function.borrowed_resource_ensures.clone(),
         contract_requires: function
             .contract_requires
             .iter()
@@ -3813,27 +3830,40 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CResourceSpec {
+    CResourceSpec {
+        term: substitute_bitvector_variable_in_resource_term(&resource.term, from, to),
+        access: resource.access,
+        quantity: match &resource.quantity {
+            CResourceQuantity::One => CResourceQuantity::One,
+            CResourceQuantity::Count(quantity) => CResourceQuantity::Count(
+                substitute_bitvector_variable_in_c_expression(quantity, from, to),
+            ),
+        },
+        role: resource.role,
+        snapshot: resource.snapshot,
+    }
+}
+
+fn substitute_bitvector_variable_in_resource_term(
+    resource: &CResourceTerm,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CResourceTerm {
     match resource {
-        CResourceSpec::Instance {
+        CResourceTerm::Instance {
             identity,
             binder,
             schema,
             resource,
-        } => CResourceSpec::Instance {
+        } => CResourceTerm::Instance {
             identity: *identity,
             binder: binder.clone(),
             schema: schema.clone(),
-            resource: Box::new(substitute_bitvector_variable_in_resource_spec(
+            resource: Box::new(substitute_bitvector_variable_in_resource_term(
                 resource, from, to,
             )),
         },
-        CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
-            quantity: substitute_bitvector_variable_in_c_expression(quantity, from, to),
-            resource: Box::new(substitute_bitvector_variable_in_resource_spec(
-                resource, from, to,
-            )),
-        },
-        CResourceSpec::ViewMemory(segment) => CResourceSpec::ViewMemory(CMemorySegment {
+        CResourceTerm::Memory(segment) => CResourceTerm::Memory(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
@@ -3843,23 +3873,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
                 .as_ref()
                 .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
         }),
-        CResourceSpec::OwnMemory(segment) => CResourceSpec::OwnMemory(CMemorySegment {
-            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
-            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
-            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
-            element_width: segment.element_width,
-            guard: segment
-                .guard
-                .as_ref()
-                .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
-        }),
-        CResourceSpec::Composite {
-            access,
+        CResourceTerm::Composite {
             name,
             arguments,
             parameter_types,
-        } => CResourceSpec::Composite {
-            access: *access,
+        } => CResourceTerm::Composite {
             name: name.clone(),
             arguments: arguments
                 .iter()
@@ -3867,13 +3885,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
                 .collect(),
             parameter_types: parameter_types.clone(),
         },
-        CResourceSpec::Token {
-            access,
+        CResourceTerm::Token {
             name,
             arguments,
             parameter_types,
-        } => CResourceSpec::Token {
-            access: *access,
+        } => CResourceTerm::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()
@@ -6686,7 +6702,6 @@ fn substitute_pointer_variable_in_c_function(
             .iter()
             .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
             .collect(),
-        borrowed_resource_ensures: function.borrowed_resource_ensures.clone(),
         contract_requires: function
             .contract_requires
             .iter()
@@ -6818,27 +6833,40 @@ fn substitute_pointer_variable_in_resource_spec(
     from: Variable,
     to: &Pointer,
 ) -> CResourceSpec {
+    CResourceSpec {
+        term: substitute_pointer_variable_in_resource_term(&resource.term, from, to),
+        access: resource.access,
+        quantity: match &resource.quantity {
+            CResourceQuantity::One => CResourceQuantity::One,
+            CResourceQuantity::Count(quantity) => CResourceQuantity::Count(
+                substitute_pointer_variable_in_c_expression(quantity, from, to),
+            ),
+        },
+        role: resource.role,
+        snapshot: resource.snapshot,
+    }
+}
+
+fn substitute_pointer_variable_in_resource_term(
+    resource: &CResourceTerm,
+    from: Variable,
+    to: &Pointer,
+) -> CResourceTerm {
     match resource {
-        CResourceSpec::Instance {
+        CResourceTerm::Instance {
             identity,
             binder,
             schema,
             resource,
-        } => CResourceSpec::Instance {
+        } => CResourceTerm::Instance {
             identity: *identity,
             binder: binder.clone(),
             schema: schema.clone(),
-            resource: Box::new(substitute_pointer_variable_in_resource_spec(
+            resource: Box::new(substitute_pointer_variable_in_resource_term(
                 resource, from, to,
             )),
         },
-        CResourceSpec::Quantified { quantity, resource } => CResourceSpec::Quantified {
-            quantity: substitute_pointer_variable_in_c_expression(quantity, from, to),
-            resource: Box::new(substitute_pointer_variable_in_resource_spec(
-                resource, from, to,
-            )),
-        },
-        CResourceSpec::ViewMemory(segment) => CResourceSpec::ViewMemory(CMemorySegment {
+        CResourceTerm::Memory(segment) => CResourceTerm::Memory(CMemorySegment {
             base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
             start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),
             end: substitute_pointer_variable_in_c_expression(&segment.end, from, to),
@@ -6848,23 +6876,11 @@ fn substitute_pointer_variable_in_resource_spec(
                 .as_ref()
                 .map(|guard| substitute_pointer_variable_in_spec_proposition(guard, from, to)),
         }),
-        CResourceSpec::OwnMemory(segment) => CResourceSpec::OwnMemory(CMemorySegment {
-            base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
-            start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),
-            end: substitute_pointer_variable_in_c_expression(&segment.end, from, to),
-            element_width: segment.element_width,
-            guard: segment
-                .guard
-                .as_ref()
-                .map(|guard| substitute_pointer_variable_in_spec_proposition(guard, from, to)),
-        }),
-        CResourceSpec::Composite {
-            access,
+        CResourceTerm::Composite {
             name,
             arguments,
             parameter_types,
-        } => CResourceSpec::Composite {
-            access: *access,
+        } => CResourceTerm::Composite {
             name: name.clone(),
             arguments: arguments
                 .iter()
@@ -6872,13 +6888,11 @@ fn substitute_pointer_variable_in_resource_spec(
                 .collect(),
             parameter_types: parameter_types.clone(),
         },
-        CResourceSpec::Token {
-            access,
+        CResourceTerm::Token {
             name,
             arguments,
             parameter_types,
-        } => CResourceSpec::Token {
-            access: *access,
+        } => CResourceTerm::Token {
             name: name.clone(),
             arguments: arguments
                 .iter()

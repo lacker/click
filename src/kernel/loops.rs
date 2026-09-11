@@ -2420,16 +2420,7 @@ fn loop_body_resource_context(
 
 /// Whether a declared loop resource asks only to read.
 fn resource_spec_is_view(spec: &CResourceSpec) -> bool {
-    match spec {
-        CResourceSpec::ViewMemory(_) => true,
-        CResourceSpec::OwnMemory(_) => false,
-        CResourceSpec::Instance { resource, .. } | CResourceSpec::Quantified { resource, .. } => {
-            resource_spec_is_view(resource)
-        }
-        CResourceSpec::Composite { access, .. } | CResourceSpec::Token { access, .. } => {
-            *access == CResourceAccessMode::View
-        }
-    }
+    spec.is_view()
 }
 
 /// The read-only form of a resource the loop did not declare. Memory and

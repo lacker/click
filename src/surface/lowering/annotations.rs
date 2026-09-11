@@ -442,7 +442,7 @@ pub(in crate::surface) fn annotated_function(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<CFunction, ClickError> {
-    let (resource_requires, resource_ensures, borrowed_resource_ensures) =
+    let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, parsed_function, resource_environment)?;
     let resource_constructors = function_resource_constructors(function_block)?;
     let (
@@ -568,7 +568,6 @@ pub(in crate::surface) fn annotated_function(
                 .collect(),
         )
         .with_resource_summary(resource_requires, resource_ensures)
-        .with_borrowed_resource_ensures(borrowed_resource_ensures)
         .with_resource_constructors(resource_constructors)
         .with_composite_resource_definitions(composite_resource_definitions(
             resource_environment,

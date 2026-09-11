@@ -667,11 +667,16 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                 .with_source_body(parsed.source_body().clone())
             }
             .with_resource_summary(
-                vec![CResourceSpec::OwnMemory(CMemorySegment::new(
-                    CExpression::Variable("p".to_string()),
-                    CExpression::Value(int32(0)),
-                    CExpression::Value(int32(3)),
-                ))],
+                vec![CResourceSpec::memory(
+                    CMemorySegment::new(
+                        CExpression::Variable("p".to_string()),
+                        CExpression::Value(int32(0)),
+                        CExpression::Value(int32(3)),
+                    ),
+                    CResourceAccessMode::Own,
+                    CResourceTransferRole::Consume,
+                    CResourceSnapshot::Entry,
+                )],
                 Vec::new(),
             )
             .with_contract(

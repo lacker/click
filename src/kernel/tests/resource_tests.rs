@@ -5,6 +5,207 @@ use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[test]
+fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() {
+    let segment = CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(2));
+    let memory_view = CResourceSpec::new(
+        CResourceTerm::Memory(segment.clone()),
+        CResourceAccessMode::View,
+        CResourceQuantity::One,
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Entry,
+    )
+    .unwrap();
+    assert_eq!(memory_view.family(), ResourceFamily::Memory);
+    assert_eq!(memory_view.access(), CResourceAccessMode::View);
+    assert_eq!(memory_view.role(), CResourceTransferRole::Borrow);
+    assert_eq!(memory_view.snapshot(), CResourceSnapshot::Entry);
+
+    let memory_owner = CResourceSpec::new(
+        CResourceTerm::Memory(segment),
+        CResourceAccessMode::Own,
+        CResourceQuantity::One,
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    assert!(memory_owner.memory_segment().is_some());
+
+    let composite_view = CResourceSpec::declared(
+        ResourceFamily::Composite,
+        CResourceAccessMode::View,
+        "box".into(),
+        vec![],
+        vec![],
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Entry,
+    )
+    .unwrap();
+    let token_owner = CResourceSpec::declared(
+        ResourceFamily::Token,
+        CResourceAccessMode::Own,
+        "permit".into(),
+        vec![],
+        vec![],
+        CResourceTransferRole::Produce,
+        CResourceSnapshot::Post,
+    )
+    .unwrap();
+    assert_eq!(composite_view.family(), ResourceFamily::Composite);
+    assert_eq!(token_owner.family(), ResourceFamily::Token);
+    assert_eq!(token_owner.role(), CResourceTransferRole::Produce);
+    assert_eq!(token_owner.snapshot(), CResourceSnapshot::Post);
+
+    let counted = CResourceSpec::quantified(
+        c_int32_literal(3),
+        token_owner.clone(),
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    assert!(matches!(counted.quantity(), CResourceQuantity::Count(_)));
+
+    assert!(matches!(
+        CResourceSpec::new(
+            CResourceTerm::Memory(CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            )),
+            CResourceAccessMode::Own,
+            CResourceQuantity::Count(c_int32_literal(2)),
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Entry,
+        ),
+        Err(CResourceSpecError::InvalidQuantity {
+            family: ResourceFamily::Memory,
+            ..
+        })
+    ));
+    assert!(matches!(
+        CResourceSpec::quantified(
+            c_int32_literal(2),
+            composite_view,
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Current,
+        ),
+        Err(CResourceSpecError::InvalidAccess {
+            family: ResourceFamily::Composite,
+            access: CResourceAccessMode::View,
+        })
+    ));
+
+    let schema = ResourceFieldSchema::new(vec![]).unwrap();
+    let instance_term = CResourceTerm::Instance {
+        identity: Variable(77),
+        binder: "cell".into(),
+        schema: schema.clone(),
+        resource: Box::new(CResourceTerm::Composite {
+            name: "cell".into(),
+            arguments: vec![],
+            parameter_types: vec![],
+        }),
+    };
+    assert!(matches!(
+        CResourceSpec::new(
+            instance_term.clone(),
+            CResourceAccessMode::View,
+            CResourceQuantity::One,
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        ),
+        Err(CResourceSpecError::InvalidAccess {
+            family: ResourceFamily::Instance,
+            access: CResourceAccessMode::View,
+        })
+    ));
+    assert!(
+        CResourceSpec::new(
+            instance_term,
+            CResourceAccessMode::Own,
+            CResourceQuantity::One,
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        CResourceSpec::new(
+            CResourceTerm::Instance {
+                identity: Variable(78),
+                binder: "token".into(),
+                schema,
+                resource: Box::new(CResourceTerm::Token {
+                    name: "token".into(),
+                    arguments: vec![],
+                    parameter_types: vec![],
+                }),
+            },
+            CResourceAccessMode::Own,
+            CResourceQuantity::One,
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Entry,
+        ),
+        Err(CResourceSpecError::InvalidNestedTerm(_))
+    ));
+}
+
+#[test]
+fn normalized_resource_spec_evaluation_preserves_indexed_lookup_scaling() {
+    let samples = [16, 32, 64, 128]
+        .into_iter()
+        .map(|size| {
+            let names = (0..size)
+                .map(|index| format!("token{index}"))
+                .collect::<Vec<_>>();
+            let context = ResourceContext::new().unchecked_with_facts(
+                names
+                    .iter()
+                    .cloned()
+                    .map(|name| CResourceFact::own_token(name, Vec::new())),
+            );
+            let spec = CResourceSpec::declared(
+                ResourceFamily::Token,
+                CResourceAccessMode::Own,
+                names[size / 2].clone(),
+                Vec::new(),
+                Vec::new(),
+                CResourceTransferRole::Consume,
+                CResourceSnapshot::Current,
+            )
+            .unwrap();
+            let state = CState::new().with_resource_context(context);
+            let assumptions = PureFactContext::new();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut budget = ExecutionBudget::default();
+                let fact = crate::kernel::functions::evaluate_function_resource_spec(
+                    &state,
+                    &spec,
+                    &assumptions,
+                    &mut budget,
+                )
+                .unwrap()
+                .unwrap();
+                assert!(state.resources().satisfies_fact(&fact, &assumptions));
+                let remaining = state
+                    .resources()
+                    .clone()
+                    .without_fact_delaying_normalization(&fact, &assumptions)
+                    .expect("indexed lookup finds the normalized token");
+                assert_eq!(remaining.facts().len(), size - 1);
+            });
+            assert!(work > 0);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        samples
+            .windows(2)
+            .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3) + 64),
+        "normalized resource evaluation is superlinear: {samples:?}"
+    );
+}
+
+#[test]
 fn owned_range_access_survives_learning_a_symbolic_pointer_alias() {
     let cell = Pointer::symbolic(Variable(100));
     let slot = Pointer {
@@ -62,7 +263,7 @@ fn instance_memory_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
         vec![c_parameter("p", CType::Int32Pointer)],
         None,
         false,
-        vec![CResourceSpec::OwnMemory(CMemorySegment {
+        vec![CResourceSpec::owned_memory(CMemorySegment {
             base: c_variable("p"),
             start: c_int32_literal(0),
             end: c_int32_literal(1),
@@ -168,7 +369,7 @@ fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
 fn stored_child_arguments_require_owned_memory() {
     let (instance, mut definition, state) = recursive_child_fixture();
     let arm = &mut definition.matched.as_mut().unwrap().arms[1];
-    let CResourceSpec::OwnMemory(segment) = &mut arm.contains[0] else {
+    let Some(segment) = arm.contains[0].memory_segment_mut() else {
         unreachable!()
     };
     segment.end = c_int32_literal(2); // one LP64 pointer
@@ -243,7 +444,7 @@ fn stored_child_arguments_require_owned_memory() {
     assert!(rewrite(&concrete_state, &concrete_definition, &assumptions, true).is_err());
     concrete_definition.matched.as_mut().unwrap().arms[1]
         .contains
-        .push(CResourceSpec::OwnMemory(CMemorySegment {
+        .push(CResourceSpec::owned_memory(CMemorySegment {
             base: c_pointer_value(concrete),
             start: c_int32_literal(0),
             end: c_int32_literal(2),
@@ -298,7 +499,7 @@ fn instance_fold_preserves_memory_pieces_without_scanning_unrelated_resources() 
     let (instance, mut definition, _) = instance_memory_fixture();
     definition.contains = (0..3)
         .map(|i| {
-            CResourceSpec::OwnMemory(CMemorySegment {
+            CResourceSpec::owned_memory(CMemorySegment {
                 base: c_variable("p"),
                 start: c_int32_literal(i),
                 end: c_int32_literal(i + 1),
@@ -1191,17 +1392,20 @@ fn resource_instance_contract_selects_current_fields_without_promising_preservat
     let ty = resource_index_type("Mark", vec![]);
     let before = field_instance(10, resource_index_variable(&ty, 1), 3);
     let after = field_instance(10, resource_index_variable(&ty, 2), 4);
-    let requirement = CResourceSpec::Instance {
-        binder: "cell".into(),
-        identity: before.identity(),
-        schema: before.schema().clone(),
-        resource: Box::new(CResourceSpec::Composite {
-            access: CResourceAccessMode::Own,
-            name: "marked_cell".into(),
-            arguments: vec![CExpression::Value(int32(7))],
-            parameter_types: vec![CType::Int32],
-        }),
-    };
+    let requirement = CResourceSpec::instance(
+        before.identity(),
+        "cell".into(),
+        before.schema().clone(),
+        CResourceSpec::composite(
+            CResourceAccessMode::Own,
+            "marked_cell".into(),
+            vec![CExpression::Value(int32(7))],
+            vec![CType::Int32],
+        ),
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
     for instance in [before, after] {
         let fact = CResourceFact::own(CResource::Instance(instance));
         let state = CState::new()
@@ -3377,7 +3581,7 @@ fn composite_exposure_finds_held_cells_by_structure_near_linearly() {
         vec![c_parameter("item", CType::Int32Pointer)],
         None,
         false,
-        vec![CResourceSpec::OwnMemory(CMemorySegment {
+        vec![CResourceSpec::owned_memory(CMemorySegment {
             base: c_variable("item"),
             start: c_int32_literal(0),
             end: c_int32_literal(1),

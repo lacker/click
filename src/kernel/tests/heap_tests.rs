@@ -598,7 +598,7 @@ fn scoped_call_borrows_end_before_free() {
         c_return(c_int32_literal(0)),
     )
     .with_resource_summary(
-        vec![CResourceSpec::ViewMemory(CMemorySegment::new(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
             c_variable("data"),
             c_int32_literal(0),
             c_int32_literal(1),
@@ -1108,16 +1108,16 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
         }),
         false,
         vec![
-            CResourceSpec::Token {
-                access: CResourceAccessMode::Own,
-                name: "allocation".to_string(),
-                arguments: vec![
+            CResourceSpec::token(
+                CResourceAccessMode::Own,
+                "allocation".to_string(),
+                vec![
                     c_variable("item"),
                     CExpression::Value(CValue::Int32(Bitvector32Term::Constant(4))),
                 ],
-                parameter_types: vec![CType::Int32Pointer, CType::Int32],
-            },
-            CResourceSpec::OwnMemory(CMemorySegment {
+                vec![CType::Int32Pointer, CType::Int32],
+            ),
+            CResourceSpec::owned_memory(CMemorySegment {
                 base: c_variable("item"),
                 start: c_int32_literal(0),
                 end: c_int32_literal(1),
@@ -1127,12 +1127,12 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
         ],
         Vec::new(),
     );
-    let requirement = CResourceSpec::Composite {
-        access: CResourceAccessMode::Own,
-        name: "owned_item".to_string(),
-        arguments: vec![c_variable("item")],
-        parameter_types: vec![CType::Int32Pointer],
-    };
+    let requirement = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "owned_item".to_string(),
+        vec![c_variable("item")],
+        vec![CType::Int32Pointer],
+    );
     let function = c_function(
         CType::Int32,
         "item_destroy",

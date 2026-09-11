@@ -7,16 +7,16 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
         ResourceFieldType::C(CType::Int32),
     )])
     .unwrap();
-    let parameter = |identity| CResourceSpec::Instance {
-        identity: Variable(identity),
-        binder: format!("cell{identity}"),
-        schema: schema.clone(),
-        resource: Box::new(CResourceSpec::Composite {
-            access: CResourceAccessMode::Own,
-            name: "marker".into(),
-            arguments: vec![],
-            parameter_types: vec![],
-        }),
+    let parameter = |identity| {
+        CResourceSpec::instance(
+            Variable(identity),
+            format!("cell{identity}"),
+            schema.clone(),
+            CResourceSpec::composite(CResourceAccessMode::Own, "marker".into(), vec![], vec![]),
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Current,
+        )
+        .unwrap()
     };
     let function = c_function(CType::Void, "touch", vec![], CStatement::Skip)
         .with_contract(vec![], vec![], vec![], vec![], true)

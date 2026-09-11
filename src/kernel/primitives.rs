@@ -2123,8 +2123,6 @@ pub struct CFunction {
     pub(super) source_body: CStatement,
     pub(super) resource_requires: Vec<CResourceSpec>,
     pub(super) resource_ensures: Vec<CResourceSpec>,
-    /// Indices into `resource_ensures` that return borrowed resources.
-    pub(super) borrowed_resource_ensures: Vec<usize>,
     pub(super) resource_constructors: Vec<CResourceSpec>,
     pub(super) contract_requires: Vec<SpecProposition>,
     /// For each lowered contract requirement, the originating source
@@ -3668,6 +3666,59 @@ pub(super) enum ResourceFactConsumption {
 pub(super) trait ResourceFamilyAlgebra {
     fn family(&self) -> ResourceFamily;
 
+    /// Checks the access/quantity envelope before a specification reaches a
+    /// family operation.  The common normalized carrier delegates this check
+    /// to the selected family rather than allowing its representational shape
+    /// to broaden family semantics.
+    fn validate_spec(&self, spec: &CResourceSpec) -> Result<(), CResourceSpecError> {
+        if spec.term.family() != self.family() {
+            return Err(CResourceSpecError::InvalidNestedTerm(
+                "resource term and family algebra disagree".into(),
+            ));
+        }
+        match self.family() {
+            ResourceFamily::Memory => {
+                if !matches!(spec.quantity, CResourceQuantity::One) {
+                    return Err(CResourceSpecError::InvalidQuantity {
+                        family: ResourceFamily::Memory,
+                        reason: "memory ranges have unit quantity".into(),
+                    });
+                }
+            }
+            ResourceFamily::Instance => {
+                if spec.access != CResourceAccessMode::Own {
+                    return Err(CResourceSpecError::InvalidAccess {
+                        family: ResourceFamily::Instance,
+                        access: spec.access,
+                    });
+                }
+                if !matches!(spec.quantity, CResourceQuantity::One) {
+                    return Err(CResourceSpecError::InvalidQuantity {
+                        family: ResourceFamily::Instance,
+                        reason: "field-bearing instances have unit quantity".into(),
+                    });
+                }
+                if !matches!(spec.term, CResourceTerm::Instance { ref resource, .. } if matches!(resource.as_ref(), CResourceTerm::Composite { .. }))
+                {
+                    return Err(CResourceSpecError::InvalidNestedTerm(
+                        "field-bearing instances require a declared composite term".into(),
+                    ));
+                }
+            }
+            ResourceFamily::Composite | ResourceFamily::Token => {
+                if matches!(spec.quantity, CResourceQuantity::Count(_))
+                    && spec.access != CResourceAccessMode::Own
+                {
+                    return Err(CResourceSpecError::InvalidAccess {
+                        family: self.family(),
+                        access: spec.access,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn pair_validity_error(
         &self,
         left: &CResourceFact,
@@ -3736,8 +3787,27 @@ pub enum CResourceAccessMode {
     View,
 }
 
+/// The resource term carried by a normalized specification.
+///
+/// Access is deliberately not part of this enum.  A memory range, declared
+/// resource, and field-bearing instance all share the same representation
+/// above the family algebra; the family still decides which access and
+/// quantity combinations are valid.  An instance's inner term is retained so
+/// its declaration identity and schema remain explicit without encoding them
+/// in vector position or in a memory-only variant.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum CResourceSpec {
+pub enum CResourceTerm {
+    Memory(CMemorySegment),
+    Composite {
+        name: String,
+        arguments: Vec<CExpression>,
+        parameter_types: Vec<CType>,
+    },
+    Token {
+        name: String,
+        arguments: Vec<CExpression>,
+        parameter_types: Vec<CType>,
+    },
     Instance {
         identity: Variable,
         /// The spelling the declaration gave this binder. The identity is the
@@ -3752,26 +3822,451 @@ pub enum CResourceSpec {
         /// checks before lowering runs.
         binder: String,
         schema: ResourceFieldSchema,
-        resource: Box<CResourceSpec>,
+        resource: Box<CResourceTerm>,
     },
-    ViewMemory(CMemorySegment),
-    OwnMemory(CMemorySegment),
-    Quantified {
+}
+
+/// Quantity is explicit in the normalized form.  `One` is the ordinary unit
+/// quantity; `Count` is reserved for the existing counted composite/token
+/// resources.  In particular, memory and exclusive instances cannot acquire a
+/// quantity merely because a wrapper could represent one.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceQuantity {
+    One,
+    Count(CExpression),
+}
+
+/// The transfer operation associated with a normalized specification.
+/// Resource vectors remain grouped by their source-level section for stable
+/// ordering, but the semantic operation is carried on each element.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceTransferRole {
+    Borrow,
+    Consume,
+    Produce,
+}
+
+/// Which state supplies the resource term's address, arguments, or quantity.
+/// Callers may still pass an explicitly selected state to the evaluator; this
+/// metadata records the selection made by lowering and prevents entry/post
+/// meaning from being inferred from a vector's position.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceSnapshot {
+    Entry,
+    Current,
+    Post,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CResourceSpec {
+    pub(super) term: CResourceTerm,
+    pub(super) access: CResourceAccessMode,
+    pub(super) quantity: CResourceQuantity,
+    pub(super) role: CResourceTransferRole,
+    pub(super) snapshot: CResourceSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CResourceSpecError {
+    InvalidAccess {
+        family: ResourceFamily,
+        access: CResourceAccessMode,
+    },
+    InvalidQuantity {
+        family: ResourceFamily,
+        reason: String,
+    },
+    InvalidNestedTerm(String),
+}
+
+impl std::fmt::Display for CResourceSpecError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidAccess { family, access } => {
+                write!(
+                    formatter,
+                    "{family:?} resources do not permit {access:?} access"
+                )
+            }
+            Self::InvalidQuantity { family, reason } => {
+                write!(
+                    formatter,
+                    "{family:?} resource has invalid quantity: {reason}"
+                )
+            }
+            Self::InvalidNestedTerm(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
+impl std::error::Error for CResourceSpecError {}
+
+impl CResourceTerm {
+    pub fn family(&self) -> ResourceFamily {
+        match self {
+            Self::Memory(_) => ResourceFamily::Memory,
+            Self::Composite { .. } => ResourceFamily::Composite,
+            Self::Token { .. } => ResourceFamily::Token,
+            Self::Instance { .. } => ResourceFamily::Instance,
+        }
+    }
+
+    pub fn memory_segment(&self) -> Option<&CMemorySegment> {
+        match self {
+            Self::Memory(segment) => Some(segment),
+            _ => None,
+        }
+    }
+
+    pub fn instance_identity(&self) -> Option<Variable> {
+        match self {
+            Self::Instance { identity, .. } => Some(*identity),
+            _ => None,
+        }
+    }
+
+    pub fn instance_binder(&self) -> Option<&str> {
+        match self {
+            Self::Instance { binder, .. } => Some(binder),
+            _ => None,
+        }
+    }
+
+    pub fn instance_schema(&self) -> Option<&ResourceFieldSchema> {
+        match self {
+            Self::Instance { schema, .. } => Some(schema),
+            _ => None,
+        }
+    }
+
+    pub fn instance_resource(&self) -> Option<&CResourceTerm> {
+        match self {
+            Self::Instance { resource, .. } => Some(resource),
+            _ => None,
+        }
+    }
+
+    pub fn declared_name(&self) -> Option<&str> {
+        match self {
+            Self::Composite { name, .. } | Self::Token { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    pub fn declared_arguments(&self) -> Option<&[CExpression]> {
+        match self {
+            Self::Composite { arguments, .. } | Self::Token { arguments, .. } => Some(arguments),
+            _ => None,
+        }
+    }
+
+    pub fn declared_parameter_types(&self) -> Option<&[CType]> {
+        match self {
+            Self::Composite {
+                parameter_types, ..
+            }
+            | Self::Token {
+                parameter_types, ..
+            } => Some(parameter_types),
+            _ => None,
+        }
+    }
+}
+
+impl CResourceSpec {
+    pub fn new(
+        term: CResourceTerm,
+        access: CResourceAccessMode,
+        quantity: CResourceQuantity,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+    ) -> Result<Self, CResourceSpecError> {
+        let spec = Self {
+            term,
+            access,
+            quantity,
+            role,
+            snapshot,
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    pub fn memory(
+        segment: CMemorySegment,
+        access: CResourceAccessMode,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+    ) -> Self {
+        Self::new(
+            CResourceTerm::Memory(segment),
+            access,
+            CResourceQuantity::One,
+            role,
+            snapshot,
+        )
+        .expect("unit memory terms are valid by construction")
+    }
+
+    /// Constructors for kernel callers that do not have a surrounding
+    /// transfer section.  Surface lowering uses the fully annotated
+    /// constructor below; these defaults describe the caller-selected
+    /// current state, with the transfer role made explicit as `Consume`.
+    pub fn viewed_memory(segment: CMemorySegment) -> Self {
+        Self::memory(
+            segment,
+            CResourceAccessMode::View,
+            CResourceTransferRole::Borrow,
+            CResourceSnapshot::Current,
+        )
+    }
+
+    pub fn owned_memory(segment: CMemorySegment) -> Self {
+        Self::memory(
+            segment,
+            CResourceAccessMode::Own,
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Current,
+        )
+    }
+
+    pub fn declared(
+        family: ResourceFamily,
+        access: CResourceAccessMode,
+        name: String,
+        arguments: Vec<CExpression>,
+        parameter_types: Vec<CType>,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+    ) -> Result<Self, CResourceSpecError> {
+        let term = match family {
+            ResourceFamily::Composite => CResourceTerm::Composite {
+                name,
+                arguments,
+                parameter_types,
+            },
+            ResourceFamily::Token => CResourceTerm::Token {
+                name,
+                arguments,
+                parameter_types,
+            },
+            ResourceFamily::Memory | ResourceFamily::Instance => {
+                return Err(CResourceSpecError::InvalidNestedTerm(
+                    "only composite and token families have declared resource terms".into(),
+                ));
+            }
+        };
+        Self::new(term, access, CResourceQuantity::One, role, snapshot)
+    }
+
+    pub fn instance(
+        identity: Variable,
+        binder: String,
+        schema: ResourceFieldSchema,
+        resource: CResourceSpec,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+    ) -> Result<Self, CResourceSpecError> {
+        if resource.access != CResourceAccessMode::Own
+            || resource.quantity != CResourceQuantity::One
+            || !matches!(resource.term, CResourceTerm::Composite { .. })
+        {
+            return Err(CResourceSpecError::InvalidNestedTerm(
+                "named resource instances require an owned unit composite term".into(),
+            ));
+        }
+        Self::new(
+            CResourceTerm::Instance {
+                identity,
+                binder,
+                schema,
+                resource: Box::new(resource.term),
+            },
+            CResourceAccessMode::Own,
+            CResourceQuantity::One,
+            role,
+            snapshot,
+        )
+    }
+
+    pub fn quantified(
         quantity: CExpression,
-        resource: Box<CResourceSpec>,
-    },
-    Composite {
+        resource: CResourceSpec,
+        role: CResourceTransferRole,
+        snapshot: CResourceSnapshot,
+    ) -> Result<Self, CResourceSpecError> {
+        if resource.access != CResourceAccessMode::Own {
+            return Err(CResourceSpecError::InvalidAccess {
+                family: resource.family(),
+                access: resource.access,
+            });
+        }
+        if resource.quantity != CResourceQuantity::One {
+            return Err(CResourceSpecError::InvalidQuantity {
+                family: resource.family(),
+                reason: "a counted resource must wrap a unit term".into(),
+            });
+        }
+        if matches!(
+            resource.family(),
+            ResourceFamily::Memory | ResourceFamily::Instance
+        ) {
+            return Err(CResourceSpecError::InvalidQuantity {
+                family: resource.family(),
+                reason: "this resource family does not support quantities".into(),
+            });
+        }
+        if !matches!(
+            resource.term,
+            CResourceTerm::Composite { .. } | CResourceTerm::Token { .. }
+        ) {
+            return Err(CResourceSpecError::InvalidNestedTerm(
+                "quantities require an owned unit composite or token term".into(),
+            ));
+        }
+        Self::new(
+            resource.term,
+            CResourceAccessMode::Own,
+            CResourceQuantity::Count(quantity),
+            role,
+            snapshot,
+        )
+    }
+
+    pub fn term(&self) -> &CResourceTerm {
+        &self.term
+    }
+
+    pub fn access(&self) -> CResourceAccessMode {
+        self.access
+    }
+
+    pub fn quantity(&self) -> &CResourceQuantity {
+        &self.quantity
+    }
+
+    pub fn role(&self) -> CResourceTransferRole {
+        self.role
+    }
+
+    pub fn snapshot(&self) -> CResourceSnapshot {
+        self.snapshot
+    }
+
+    pub fn family(&self) -> ResourceFamily {
+        self.term.family()
+    }
+
+    pub fn is_view(&self) -> bool {
+        self.access == CResourceAccessMode::View
+    }
+
+    pub fn is_instance(&self) -> bool {
+        matches!(self.term, CResourceTerm::Instance { .. })
+    }
+
+    pub fn instance_identity(&self) -> Option<Variable> {
+        self.term.instance_identity()
+    }
+
+    pub fn instance_binder(&self) -> Option<&str> {
+        self.term.instance_binder()
+    }
+
+    pub fn instance_schema(&self) -> Option<&ResourceFieldSchema> {
+        self.term.instance_schema()
+    }
+
+    pub fn instance_resource(&self) -> Option<CResourceTerm> {
+        self.term.instance_resource().cloned()
+    }
+
+    pub fn instance_resource_spec(&self) -> Option<Self> {
+        let resource = self.instance_resource()?;
+        Some(
+            Self::new(
+                resource,
+                CResourceAccessMode::Own,
+                CResourceQuantity::One,
+                self.role,
+                self.snapshot,
+            )
+            .expect("validated instance terms have valid owned unit bodies"),
+        )
+    }
+
+    pub fn memory_segment(&self) -> Option<&CMemorySegment> {
+        self.term.memory_segment()
+    }
+
+    pub fn memory_segment_mut(&mut self) -> Option<&mut CMemorySegment> {
+        match &mut self.term {
+            CResourceTerm::Memory(segment) => Some(segment),
+            _ => None,
+        }
+    }
+
+    pub fn declared_name(&self) -> Option<&str> {
+        self.term.declared_name()
+    }
+
+    pub fn declared_arguments(&self) -> Option<&[CExpression]> {
+        self.term.declared_arguments()
+    }
+
+    pub fn declared_parameter_types(&self) -> Option<&[CType]> {
+        self.term.declared_parameter_types()
+    }
+
+    pub fn composite(
         access: CResourceAccessMode,
         name: String,
         arguments: Vec<CExpression>,
         parameter_types: Vec<CType>,
-    },
-    Token {
+    ) -> Self {
+        Self::declared(
+            ResourceFamily::Composite,
+            access,
+            name,
+            arguments,
+            parameter_types,
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Current,
+        )
+        .expect("composite resource terms are valid by construction")
+    }
+
+    pub fn token(
         access: CResourceAccessMode,
         name: String,
         arguments: Vec<CExpression>,
         parameter_types: Vec<CType>,
-    },
+    ) -> Self {
+        Self::declared(
+            ResourceFamily::Token,
+            access,
+            name,
+            arguments,
+            parameter_types,
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Current,
+        )
+        .expect("token resource terms are valid by construction")
+    }
+
+    pub fn with_role(mut self, role: CResourceTransferRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    pub fn with_snapshot(mut self, snapshot: CResourceSnapshot) -> Self {
+        self.snapshot = snapshot;
+        self
+    }
+
+    fn validate(&self) -> Result<(), CResourceSpecError> {
+        crate::kernel::primitives::resource_algebra::validate_resource_spec(self)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
