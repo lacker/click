@@ -842,6 +842,7 @@ fn prepare_function_claim_path(
     let required_resources = match evaluate_function_resource_context(
         &entry_state,
         function.resource_requires(),
+        function.composite_resource_definitions(),
         &assumptions,
         &mut budget,
     ) {
