@@ -1485,7 +1485,6 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                         &path_assumptions,
                         algebraic_bindings,
                         budget,
-                        false,
                     )? {
                         let Some((merged_facts, merged_obligations)) =
                             merge_execution_pure_facts_and_obligations(
@@ -2992,8 +2991,36 @@ fn evaluate_spec_integer_pure_function_application_paths(
                 &path_assumptions,
                 algebraic_bindings,
                 budget,
-                true,
             )?;
+            let domain = argument_paths
+                .iter()
+                .map(|path| {
+                    proposition_and_all(
+                        path.facts
+                            .iter()
+                            .map(|fact| fact.proposition().clone())
+                            .chain(
+                                path.obligations
+                                    .iter()
+                                    .map(|obligation| obligation.proposition().clone()),
+                            )
+                            .collect(),
+                    )
+                })
+                .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)));
+            let argument_paths = argument_paths
+                .into_iter()
+                .map(|mut path| {
+                    if let Some(domain) = domain.clone() {
+                        retain_required_conversion_obligation(
+                            &mut path.obligations,
+                            assumptions,
+                            domain,
+                        );
+                    }
+                    path
+                })
+                .collect::<Vec<_>>();
             let single_path = argument_paths.len() == 1;
             let mut prefix = Some(values);
             for (index, argument_path) in argument_paths.into_iter().enumerate() {
@@ -4080,7 +4107,6 @@ fn evaluate_spec_pure_function_application_paths(
                 &path_assumptions,
                 algebraic_bindings,
                 budget,
-                false,
             )? {
                 if let Some((merged_facts, merged_obligations)) =
                     merge_execution_pure_facts_and_obligations(
@@ -4126,7 +4152,6 @@ fn evaluate_spec_pure_function_argument_paths(
     assumptions: &PureFactContext,
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
-    retain_integer_call_domain: bool,
 ) -> ExecutionResult<Vec<SpecPureFunctionArgumentPath>> {
     match argument {
         SpecPureFunctionArgument::Integer(expression) => {
@@ -4155,48 +4180,12 @@ fn evaluate_spec_pure_function_argument_paths(
                 algebraic_bindings,
                 budget,
             )?;
-            // A deferred opaque function call still owes the complete domain
-            // of each C argument.  Its successful evaluation path may carry
-            // an overflow fact, but that fact is not an assumption supplied
-            // by the call itself.  Retain the disjunction of all normal
-            // argument paths as a mandatory verification condition, just as
-            // integer-to-machine conversion does above.
-            let domain = retain_integer_call_domain
-                .then(|| {
-                    paths
-                        .iter()
-                        .filter_map(|path| {
-                            let propositions = path
-                                .facts
-                                .iter()
-                                .map(|fact| fact.proposition().clone())
-                                .chain(
-                                    path.obligations
-                                        .iter()
-                                        .map(|obligation| obligation.proposition().clone()),
-                                )
-                                .collect::<Vec<_>>();
-                            (!propositions.is_empty()).then(|| proposition_and_all(propositions))
-                        })
-                        .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)))
-                })
-                .flatten();
             Ok(paths
                 .into_iter()
-                .map(|path| {
-                    let mut obligations = path.obligations;
-                    if let Some(domain) = domain.clone() {
-                        retain_required_conversion_obligation(
-                            &mut obligations,
-                            assumptions,
-                            domain,
-                        );
-                    }
-                    SpecPureFunctionArgumentPath {
-                        value: PureFunctionArgument::Value(path.value),
-                        facts: path.facts,
-                        obligations,
-                    }
+                .map(|path| SpecPureFunctionArgumentPath {
+                    value: PureFunctionArgument::Value(path.value),
+                    facts: path.facts,
+                    obligations: path.obligations,
                 })
                 .collect())
         }
