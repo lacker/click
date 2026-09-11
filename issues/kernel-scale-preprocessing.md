@@ -612,7 +612,7 @@ because one implementation package landed.
 - [Multi-function files and headers](multi-function-files-and-headers.md)
 - [GNU C extensions](gnu-c-extensions.md)
 - [Multiple compilers and targets](multiple-compilers.md)
-- [Inline functions in headers](inline-functions-in-headers.md)
+- [Linux rbtree inline helpers](linux-rbtree-inline-helpers.md)
 - [Testing and tooling failure workflow](../docs/internals/testing.md)
 - [Verification efficiency contract](../docs/internals/verification-efficiency.md)
 - [GCC preprocessing options](https://gcc.gnu.org/onlinedocs/gcc/Preprocessor-Options.html):

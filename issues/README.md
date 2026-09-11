@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (10)
+## P1: before launch (9)
 
 Launch is the minimum viable rbtree (MVR): the smallest result that supports
 a public claim that Click verified the Linux kernel rbtree implementation. It
@@ -61,7 +61,6 @@ Soundness and kernel shape:
 C import and execution:
 
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
-- [Verify inline function definitions reached through headers](inline-functions-in-headers.md)
 - [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
 
@@ -72,7 +71,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (17)
+## P2: after launch (18)
 
 - [Split the slow nested callback expansion regression](slow-nested-callback-expansion-test.md)
 - [Make `step` simple across a call precondition](simplify-step.md)
@@ -85,6 +84,7 @@ normal tooling-first policy and moves up.
 C language coverage:
 
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
+- [Verify Linux rbtree inline helpers from the pinned headers](linux-rbtree-inline-helpers.md)
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
