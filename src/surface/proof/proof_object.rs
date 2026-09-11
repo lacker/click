@@ -1089,6 +1089,12 @@ impl<'a> Proof<'a> {
         self.state.state()
     }
 
+    pub(super) fn local_integer_values(
+        &self,
+    ) -> &PersistentMap<String, crate::kernel::SpecIntegerExpression> {
+        &self.state().locals().integer_values
+    }
+
     fn focused_branch_id(&self) -> BranchId {
         self.state.focused_branch()
     }

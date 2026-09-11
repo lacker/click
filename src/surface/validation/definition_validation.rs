@@ -577,12 +577,19 @@ fn validate_contract_applications_in_proposition(
             body,
         } => {
             let mut variables = variables.clone();
-            variables.insert(
-                name.clone(),
-                c_type.c_type().ok_or_else(|| {
-                    ClickError::new("only C quantifier binders are currently supported")
-                })?,
-            );
+            match c_type {
+                ClickType::C(c_type) => {
+                    variables.insert(name.clone(), *c_type);
+                }
+                ClickType::Integer => {
+                    variables.remove(name);
+                }
+                _ => {
+                    return Err(ClickError::new(
+                        "this quantifier binder type is not supported",
+                    ));
+                }
+            }
             validate_contract_applications_in_proposition(
                 body,
                 contracts,

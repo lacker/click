@@ -2224,6 +2224,8 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::ArithmeticUsing(_)
         | ProofStep::IntegerCertificate(_)
         | ProofStep::Intro
+        | ProofStep::Witness(_)
+        | ProofStep::Choose(_)
         | ProofStep::Induct { .. }
         | ProofStep::ApplyInduction { .. }
         | ProofStep::Split
@@ -2308,14 +2310,23 @@ fn check_pure_script_with_proof(
         return Ok(None);
     }
 
-    let checked = if tactics.iter().any(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::ArithmeticUsing(_)
-                | ProofTactic::NormalizeUsing(_)
-                | ProofTactic::IntegerCertificate(_)
-        )
-    }) {
+    // Integer source binders must stay on the checked Proof path even when an
+    // explicit step fails. The compatibility driver lowers raw source
+    // variables as C expressions and can mask the real focused failure (for
+    // example, an invalid `assumption` after a shadowing `intro`) with a
+    // spurious zero-path lowering error.
+    let has_integer_surface = surface_goal_contains_integer_quantifier(surface_goal);
+    let checked = if has_integer_surface
+        || tactics.iter().any(|tactic| {
+            matches!(
+                tactic,
+                ProofTactic::ArithmeticUsing(_)
+                    | ProofTactic::NormalizeUsing(_)
+                    | ProofTactic::IntegerCertificate(_)
+                    | ProofTactic::Witness(_)
+                    | ProofTactic::Choose(_)
+            )
+        }) {
         root.try_authoritative_linear_script(tactics)?
     } else {
         root.try_linear_script(tactics)?
@@ -2325,6 +2336,30 @@ fn check_pure_script_with_proof(
     }
 
     Ok(None)
+}
+
+fn surface_goal_contains_integer_quantifier(surface: &ClickProposition) -> bool {
+    match surface {
+        ClickProposition::ForAll {
+            click_type, body, ..
+        }
+        | ClickProposition::Exists {
+            click_type, body, ..
+        } => *click_type == ClickType::Integer || surface_goal_contains_integer_quantifier(body),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            surface_goal_contains_integer_quantifier(left)
+                || surface_goal_contains_integer_quantifier(right)
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        }
+        | ClickProposition::RangeAll { body, .. }
+        | ClickProposition::RangeAny { body, .. } => surface_goal_contains_integer_quantifier(body),
+        _ => false,
+    }
 }
 
 fn pure_theorem_surface_certificate(

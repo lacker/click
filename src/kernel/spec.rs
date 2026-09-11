@@ -480,6 +480,52 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             }
             Ok(paths)
         }
+        SpecProposition::ForAllInteger {
+            name,
+            variable,
+            body,
+        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
+            state,
+            body,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| {
+            let (body, guards) =
+                wrap_path_context_with_introductions(path.proposition, &path.facts, &[]);
+            let mut introductions = vec![LoweringIntroduction::WrittenUniversal {
+                name: name.clone(),
+                variable: *variable,
+                pointer: false,
+                integer: true,
+            }];
+            introductions.extend(guards);
+            introductions.extend(path.introductions);
+            SpecPropositionPath {
+                proposition: Proposition::ForAll {
+                    var: *variable,
+                    sort: Sort::Integer,
+                    body: Box::new(body),
+                },
+                facts: Vec::new(),
+                obligations: path
+                    .obligations
+                    .into_iter()
+                    .map(|obligation| {
+                        obligation.map_proposition(|proposition| Proposition::ForAll {
+                            var: *variable,
+                            sort: Sort::Integer,
+                            body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                        })
+                    })
+                    .collect(),
+                introductions,
+            }
+        })
+        .collect()),
         SpecProposition::ForAllInt32 {
             name,
             variable,
@@ -505,6 +551,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                     name: name.clone(),
                     variable: *variable,
                     pointer: false,
+                    integer: false,
                 }];
                 introductions.extend(guards);
                 introductions.extend(path.introductions);
@@ -563,6 +610,7 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                     name: name.clone(),
                     variable: *variable,
                     pointer: true,
+                    integer: false,
                 }];
                 introductions.extend(guards);
                 introductions.extend(path.introductions);
@@ -589,6 +637,36 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             })
             .collect())
         }
+        SpecProposition::ExistsInteger {
+            name,
+            variable,
+            body,
+        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
+            state,
+            body,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| {
+            if !path.facts.is_empty() || !path.obligations.is_empty() {
+                return Err(ExecutionLimit::UnsupportedIntegerExistentialBody);
+            }
+            Ok(SpecPropositionPath {
+                introductions: path.introductions,
+                proposition: Proposition::Exists {
+                    name: name.clone(),
+                    var: *variable,
+                    sort: Sort::Integer,
+                    body: Box::new(path.proposition),
+                },
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?),
         SpecProposition::ExistsInt32 {
             name,
             variable,
@@ -5673,6 +5751,7 @@ mod lowering_provenance_tests {
                     name: "k".to_string(),
                     variable: Variable(41),
                     pointer: false,
+                    integer: false,
                 },
                 LoweringIntroduction::WrittenImplication,
             ]
@@ -5702,6 +5781,7 @@ mod lowering_provenance_tests {
                     name: "k".to_string(),
                     variable: Variable(41),
                     pointer: false,
+                    integer: false,
                 },
                 LoweringIntroduction::PathFactGuard,
                 LoweringIntroduction::WrittenImplication,

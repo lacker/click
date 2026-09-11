@@ -92,6 +92,20 @@ pub(super) fn validate_proposition_expression_types(
             proposition: body, ..
         } => validate_proposition_expression_types(body, variables, click_functions, context),
         ClickProposition::ForAll {
+            click_type: ClickType::Integer,
+            ..
+        }
+        | ClickProposition::Exists {
+            click_type: ClickType::Integer,
+            ..
+        } => validate_theorem_proposition_expression_types(
+            proposition,
+            variables,
+            &BTreeSet::new(),
+            click_functions,
+            context,
+        ),
+        ClickProposition::ForAll {
             click_type: c_type,
             name,
             body,
@@ -148,6 +162,24 @@ pub(super) fn validate_theorem_proposition_expression_types(
     click_functions: &BTreeMap<String, ClickFunctionType>,
     context: &str,
 ) -> Result<(), ClickError> {
+    let mut variables = variables.clone();
+    let mut integer_bindings = integer_bindings.clone();
+    validate_scoped_integer_proposition(
+        proposition,
+        &mut variables,
+        &mut integer_bindings,
+        click_functions,
+        context,
+    )
+}
+
+fn validate_scoped_integer_proposition(
+    proposition: &ClickProposition,
+    variables: &mut BTreeMap<String, C0Type>,
+    integer_bindings: &mut BTreeSet<String>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison {
             left,
@@ -185,14 +217,14 @@ pub(super) fn validate_theorem_proposition_expression_types(
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            validate_theorem_proposition_expression_types(
+            validate_scoped_integer_proposition(
                 left,
                 variables,
                 integer_bindings,
                 click_functions,
                 context,
             )?;
-            validate_theorem_proposition_expression_types(
+            validate_scoped_integer_proposition(
                 right,
                 variables,
                 integer_bindings,
@@ -203,13 +235,87 @@ pub(super) fn validate_theorem_proposition_expression_types(
         ClickProposition::Not(body)
         | ClickProposition::At {
             proposition: body, ..
-        } => validate_theorem_proposition_expression_types(
+        } => validate_scoped_integer_proposition(
             body,
             variables,
             integer_bindings,
             click_functions,
             context,
         ),
+        ClickProposition::ForAll {
+            click_type,
+            name,
+            body,
+        }
+        | ClickProposition::Exists {
+            click_type,
+            name,
+            body,
+        } => {
+            let previous_c = variables.remove(name);
+            let previous_integer = integer_bindings.remove(name);
+            match click_type {
+                ClickType::C(c_type) => {
+                    variables.insert(name.clone(), *c_type);
+                }
+                ClickType::Integer => {
+                    integer_bindings.insert(name.clone());
+                }
+                _ => {
+                    return Err(ClickError::new(
+                        "this quantifier binder type is not supported",
+                    ));
+                }
+            }
+            let result = validate_scoped_integer_proposition(
+                body,
+                variables,
+                integer_bindings,
+                click_functions,
+                context,
+            );
+            variables.remove(name);
+            integer_bindings.remove(name);
+            if let Some(c_type) = previous_c {
+                variables.insert(name.clone(), c_type);
+            }
+            if previous_integer {
+                integer_bindings.insert(name.clone());
+            }
+            result
+        }
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        }
+        | ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => {
+            let _ = infer_contract_expression_type(start, variables, click_functions, context)?;
+            let _ = infer_contract_expression_type(end, variables, click_functions, context)?;
+            let previous_c = variables.insert(item.clone(), C0Type::Int32);
+            let previous_integer = integer_bindings.remove(item);
+            let result = validate_scoped_integer_proposition(
+                body,
+                variables,
+                integer_bindings,
+                click_functions,
+                context,
+            );
+            variables.remove(item);
+            if let Some(c_type) = previous_c {
+                variables.insert(item.clone(), c_type);
+            }
+            if previous_integer {
+                integer_bindings.insert(item.clone());
+            }
+            result
+        }
         _ => {
             validate_proposition_expression_types(proposition, variables, click_functions, context)
         }
@@ -779,6 +885,8 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Contradiction(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::InstantiateUsing { .. }
+            | ProofTactic::Witness(_)
+            | ProofTactic::Choose(_)
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
             ProofTactic::Match(proof_match) => {
@@ -827,9 +935,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::TransportUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
-            | ProofTactic::ConstructResource(_)
-            | ProofTactic::Witness(_)
-            | ProofTactic::Choose(_) => {
+            | ProofTactic::ConstructResource(_) => {
                 return Err(ClickError::new(format!(
                     "tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)

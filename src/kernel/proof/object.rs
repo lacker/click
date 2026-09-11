@@ -9,7 +9,7 @@ use super::{
     PersistentOrderedSet, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState,
     ProofFacts, ProofObligation,
 };
-use crate::kernel::{Proposition, Sort};
+use crate::kernel::{Proposition, Sort, Variable};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -150,6 +150,10 @@ pub(crate) enum PropositionCloseError {
     IntegerArithmeticPremiseUnavailable(usize),
     IntegerArithmetic(super::integer_arithmetic::IntegerArithmeticCheckError),
     ExpectedIntroduction(Proposition),
+    IntegerFresheningExhausted,
+    IntegerChoiceSourceUnavailable,
+    IntegerChoiceWrongSort,
+    IntegerChoiceFresheningExhausted,
     ExpectedConjunction(Proposition),
     MissingConjuncts(Proposition, Proposition),
     ExpectedDisjunction(Proposition),
@@ -648,6 +652,55 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .ok_or(PropositionCloseError::DoesNotNormalize)
     }
 
+    /// Checks and instantiates an Integer existential fact for a checked proof
+    /// transition. The returned witness proposition is the only fact the
+    /// surface driver may publish; freshness is checked against the complete
+    /// kernel fact index before substitution.
+    pub(crate) fn check_integer_exists_choice(
+        &self,
+        source: &Proposition,
+        hint: Variable,
+    ) -> Result<(Proposition, Variable), PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        if !facts.contains_top_level(source) {
+            return Err(PropositionCloseError::IntegerChoiceSourceUnavailable);
+        }
+        let Proposition::Exists {
+            var,
+            sort: Sort::Integer,
+            body,
+            ..
+        } = source
+        else {
+            return Err(PropositionCloseError::IntegerChoiceWrongSort);
+        };
+        let goal_variables = crate::kernel::proposition_variables(goal.proposition());
+        let body_variables = crate::kernel::proposition_variables(body);
+        let mut variable = hint;
+        loop {
+            if !facts.reserves_variable(variable)
+                && !goal_variables.contains(&variable)
+                && !body_variables.contains(&variable)
+            {
+                break;
+            }
+            variable = Variable(
+                variable
+                    .0
+                    .checked_add(1)
+                    .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?,
+            );
+        }
+        let witness = crate::kernel::IntegerTerm::var(variable);
+        let fact = super::super::reasoning::substitute_integer_variable_in_pure_proposition(
+            body, *var, &witness,
+        )
+        .map_err(|_| PropositionCloseError::IntegerChoiceFresheningExhausted)?;
+        Ok((fact, variable))
+    }
+
     pub(crate) fn apply_normalize_using(
         &self,
         premises: &[Proposition],
@@ -731,6 +784,12 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                         let (variable, body) =
                             facts.freshen_pointer_forall_body(*var, *c_type, body);
                         (variable, body, Some(*c_type))
+                    }
+                    Sort::Integer => {
+                        let (variable, body) = facts
+                            .freshen_integer_forall_body(*var, body)
+                            .ok_or(PropositionCloseError::IntegerFresheningExhausted)?;
+                        (variable, body, None)
                     }
                     _ => {
                         let (variable, body) = facts.freshen_int32_forall_body(*var, body);
@@ -2020,6 +2079,87 @@ mod tests {
     use super::*;
     use crate::kernel::proof::PropositionObligation;
     use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
+
+    #[test]
+    fn integer_choice_freshens_against_focused_goal_binding() {
+        let collision = Variable(3_000_000);
+        let source = Proposition::Exists {
+            name: "source".into(),
+            var: Variable(41),
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::IntegerEqual(
+                    crate::kernel::IntegerTerm::var(Variable(41)).into(),
+                    crate::kernel::IntegerTerm::var(Variable(41)).into(),
+                ),
+                true,
+            )),
+        };
+        let goal = Proposition::ForAll {
+            var: collision,
+            sort: Sort::Integer,
+            body: Box::new(source.clone()),
+        };
+        type TestProof = ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()>;
+        let proof: TestProof = ProofObject::root(
+            (),
+            ProofBranch::new(
+                ProofObligation::Proposition(PropositionObligation::new(goal, ())),
+                ProofBranchState {
+                    facts: ProofFacts::from_ordered(std::slice::from_ref(&source)),
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: None,
+                },
+            ),
+        );
+        let (_, witness) = match proof.check_integer_exists_choice(&source, collision) {
+            Ok(choice) => choice,
+            Err(_) => panic!("the kernel should freshen a choice colliding with the focused goal"),
+        };
+        assert_ne!(witness, collision);
+    }
+
+    #[test]
+    fn integer_choice_freshens_against_unused_ambient_binding() {
+        let ambient = Variable(3_000_000);
+        let source = Proposition::Exists {
+            name: "source".into(),
+            var: Variable(51),
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::IntegerEqual(
+                    crate::kernel::IntegerTerm::var(Variable(51)).into(),
+                    crate::kernel::IntegerTerm::var(Variable(51)).into(),
+                ),
+                true,
+            )),
+        };
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source))
+            .with_reserved_variables([ambient]);
+        let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
+            ProofObject::root(
+                (),
+                ProofBranch::new(
+                    ProofObligation::Proposition(PropositionObligation::new(
+                        Proposition::Predicate {
+                            name: "later_ambient_reference".into(),
+                            arguments: vec![],
+                        },
+                        (),
+                    )),
+                    ProofBranchState {
+                        facts,
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: None,
+                    },
+                ),
+            );
+        let (_, witness) = match proof.check_integer_exists_choice(&source, ambient) {
+            Ok(choice) => choice,
+            Err(_) => panic!("the kernel should retain ambient reservations across subgoals"),
+        };
+        assert_ne!(witness, ambient);
+    }
 
     #[test]
     fn invariant_body_evidence_requires_exact_complete_root_and_context() {

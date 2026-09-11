@@ -481,6 +481,46 @@ enum IntegerShallowKey {
 }
 
 impl IntegerTerm {
+    pub fn max_variable(&self) -> Option<Variable> {
+        let mut variables = BTreeSet::new();
+        fn visit(term: &IntegerTerm, variables: &mut BTreeSet<Variable>, seen: &mut BTreeSet<u64>) {
+            match term {
+                IntegerTerm::Constant(_) => {}
+                IntegerTerm::Variable(variable) => {
+                    variables.insert(*variable);
+                }
+                IntegerTerm::Machine(value) => {
+                    crate::kernel::reasoning::variable_collection::collect_bitvector_variables(
+                        value.value(),
+                        variables,
+                    )
+                }
+                IntegerTerm::PureFunctionApplication(_application) => {
+                    crate::kernel::reasoning::variable_collection::collect_integer_variables(
+                        term, variables,
+                    );
+                }
+                IntegerTerm::Negate(value) => visit_shared(value, variables, seen),
+                IntegerTerm::Add(left, right)
+                | IntegerTerm::Subtract(left, right)
+                | IntegerTerm::Multiply(left, right) => {
+                    visit_shared(left, variables, seen);
+                    visit_shared(right, variables, seen);
+                }
+            }
+        }
+        fn visit_shared(
+            term: &SharedIntegerTerm,
+            variables: &mut BTreeSet<Variable>,
+            seen: &mut BTreeSet<u64>,
+        ) {
+            if seen.insert(term.id()) {
+                visit(term.as_ref(), variables, seen);
+            }
+        }
+        visit(self, &mut variables, &mut BTreeSet::new());
+        variables.into_iter().next_back()
+    }
     pub fn from_machine(ty: MachineIntegerType, value: Bitvector32Term) -> Option<Self> {
         let constant = match (&ty, &value) {
             (MachineIntegerType::Int16, Bitvector32Term::Constant(v)) => {

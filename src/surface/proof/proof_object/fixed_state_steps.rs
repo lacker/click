@@ -318,6 +318,9 @@ impl<'a> Proof<'a> {
         &self,
         choice: &ProofChoice,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
+            return self.apply_pure_integer_choose(choice);
+        }
         let frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
@@ -434,10 +437,82 @@ impl<'a> Proof<'a> {
         Ok(self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]))
     }
 
+    fn apply_pure_integer_choose(
+        &self,
+        choice: &ProofChoice,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            unreachable!()
+        };
+        if context
+            .theorem_context
+            .integer_values
+            .get(&choice.name)
+            .is_some()
+            || context.theorem_context.values.contains_key(&choice.name)
+            || self
+                .state()
+                .locals()
+                .integer_values
+                .get(&choice.name)
+                .is_some()
+            || self.state().locals().values.get(&choice.name).is_some()
+        {
+            return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
+        }
+        let index = match &choice.source {
+            ProofFactSource::Requirement(index) => *index,
+            ProofFactSource::RequirementLabel(label) => {
+                return Err(self.step_error(format!(
+                    "pure `choose` does not support requirement labels (`{label}`)"
+                )));
+            }
+        };
+        let source = context
+            .theorem_context
+            .requires
+            .get(index)
+            .cloned()
+            .ok_or_else(|| self.step_error(format!("requirement {index} is out of range")))?;
+        let (fact, chosen_variable) =
+            self.state
+                .check_integer_exists_choice(
+                    &source,
+                    Variable(self.state().locals().next_choice_variable),
+                )
+                .map_err(|error| match error {
+                    PropositionCloseError::IntegerChoiceSourceUnavailable => self
+                        .step_error("Integer choose source is not an exact available requirement"),
+                    PropositionCloseError::IntegerChoiceWrongSort => self.step_error(
+                        "pure `choose` currently requires an Integer existential requirement",
+                    ),
+                    PropositionCloseError::IntegerChoiceFresheningExhausted => {
+                        self.step_error("pure `choose` could not allocate a fresh Integer witness")
+                    }
+                    _ => self.step_error("could not apply Integer choice"),
+                })?;
+        let chosen = crate::kernel::IntegerTerm::var(chosen_variable);
+        let mut locals = self.state().locals().clone();
+        locals.integer_values = locals.integer_values.with_inserted(
+            choice.name.clone(),
+            crate::kernel::SpecIntegerExpression::Term(chosen),
+        );
+        locals.next_choice_variable = chosen_variable.0.saturating_add(1);
+        let added = (!self.facts().contains_top_level(&fact))
+            .then(|| fact.clone())
+            .into_iter()
+            .collect();
+        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
+    }
+
     pub(super) fn apply_fixed_state_witness(
         &self,
         witness: &ProofWitness,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
+            return self.apply_pure_integer_witness(witness);
+        }
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A witness refinement on a judgment stated at a function
@@ -559,6 +634,79 @@ impl<'a> Proof<'a> {
         Ok(CheckedFocusedTransition::replacing(
             self.state().locals().clone(),
             Some(self.refined_proposition(context, goal, surface_goal)),
+            Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn apply_pure_integer_witness(
+        &self,
+        witness: &ProofWitness,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let goal = self
+            .proposition_goal("`witness` requires a proposition goal")?
+            .clone();
+        let Proposition::Exists {
+            name,
+            var,
+            sort: Sort::Integer,
+            body,
+        } = goal
+        else {
+            return Err(self.step_error(
+                "pure `witness` currently requires an Integer existential proposition",
+            ));
+        };
+        if name != witness.name {
+            return Err(self.step_error(format!(
+                "`witness` binds `{name}`, but proof provided `{}`",
+                witness.name
+            )));
+        }
+        let mut integer_values = match self.context.as_ref() {
+            ProofContext::Pure(context) => context.theorem_context.integer_values.clone(),
+            _ => crate::persistent::PersistentMap::default(),
+        };
+        for (name, value) in self.state().locals().integer_values.iter() {
+            integer_values = integer_values.with_inserted(name.clone(), value.clone());
+        }
+        let promoted = crate::surface::proof::surface_lowering::promote_integer_expression(
+            &witness.value,
+            &integer_values,
+            &crate::persistent::PersistentMap::default(),
+        );
+        let value =
+            crate::surface::lowering::lower_contract_integer_to_spec(&promoted, &integer_values)
+                .map_err(|message| {
+                    self.step_error(format!("could not lower Integer witness: {message}"))
+                })?;
+        let crate::kernel::SpecIntegerExpression::Term(value) = value else {
+            return Err(
+                self.step_error("pure `witness` currently supports only lowered Integer terms")
+            );
+        };
+        let proposition =
+            crate::kernel::substitute_integer_variable_in_pure_proposition(&body, var, &value)
+                .map_err(|error| {
+                    self.step_error(format!("could not apply Integer witness: {error:?}"))
+                })?;
+        let surface_goal = match self.surface_goal() {
+            Some(ClickProposition::Exists { name, body, .. }) if name == &witness.name => {
+                let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
+                Some(
+                    substitute_click_proposition(body, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate Integer witness goal: {message}"
+                        ))
+                    })?,
+                )
+            }
+            _ => None,
+        };
+        let context = self.refined_branch_state(self.facts().clone());
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals().clone(),
+            Some(self.refined_proposition(context, proposition, surface_goal)),
             Vec::new(),
             Vec::new(),
         ))

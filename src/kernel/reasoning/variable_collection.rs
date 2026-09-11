@@ -627,8 +627,10 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
             collect_spec_proposition_bitvector_variables(body, variables);
         }
         SpecProposition::ForAllInt32 { variable, body, .. }
+        | SpecProposition::ForAllInteger { variable, body, .. }
         | SpecProposition::ForAllPointer { variable, body, .. }
         | SpecProposition::ExistsInt32 { variable, body, .. }
+        | SpecProposition::ExistsInteger { variable, body, .. }
         | SpecProposition::ExistsPointer { variable, body, .. } => {
             collect_spec_proposition_bitvector_variables(body, variables);
             variables.remove(variable);
@@ -671,7 +673,7 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     }
 }
 
-fn collect_spec_integer_variables(
+pub(crate) fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -712,7 +714,7 @@ fn collect_spec_integer_variables(
     }
 }
 
-fn collect_spec_algebraic_expression_bitvector_variables(
+pub(crate) fn collect_spec_algebraic_expression_bitvector_variables(
     expression: &SpecAlgebraicExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1172,7 +1174,7 @@ pub(in crate::kernel) fn collect_condition_bitvector_variables(
     }
 }
 
-fn collect_integer_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
+pub(crate) fn collect_integer_variables(term: &IntegerTerm, variables: &mut BTreeSet<Variable>) {
     let mut seen = BTreeSet::new();
     collect_integer_variables_seen(term, variables, &mut seen);
 }
@@ -1447,7 +1449,7 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
     }
 }
 
-pub(in crate::kernel) fn collect_c_value_bitvector_variables(
+pub(crate) fn collect_c_value_bitvector_variables(
     value: &CValue,
     variables: &mut BTreeSet<Variable>,
 ) {

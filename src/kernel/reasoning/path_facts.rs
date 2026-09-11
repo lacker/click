@@ -101,6 +101,7 @@ pub enum LoweringIntroduction {
         name: String,
         variable: Variable,
         pointer: bool,
+        integer: bool,
     },
 }
 

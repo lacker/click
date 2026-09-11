@@ -1413,7 +1413,12 @@ pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
         &lowering_assumptions,
         &mut budget,
     )
-    .map_err(|limit| format!("the kernel lowering hit {limit:?}"))?;
+    .map_err(|limit| match limit {
+        ExecutionLimit::UnsupportedIntegerExistentialBody => {
+            "Integer existential bodies must currently be pure and total".to_string()
+        }
+        limit => format!("the kernel lowering hit {limit:?}"),
+    })?;
     let [path] = paths.as_slice() else {
         return Err(format!(
             "the kernel lowering produced {} paths, not one",

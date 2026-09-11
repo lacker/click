@@ -63,8 +63,13 @@ pub(crate) use reasoning::memory_effect_write_pointers;
 pub(crate) use reasoning::resolve_load_variables_from_registry;
 pub(crate) use reasoning::resolve_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
+pub(crate) use reasoning::substitute_integer_variable_in_pure_proposition;
 pub(crate) use reasoning::substitute_pointer_variable_in_proposition;
 pub use reasoning::{LoweringIntroduction, LoweringIntroductions};
+pub(crate) use reasoning::{
+    collect_c_value_bitvector_variables, collect_spec_algebraic_expression_bitvector_variables,
+    collect_spec_integer_variables,
+};
 pub use termination::c_verified_function_termination_rules;
 
 /// The bitvector variables one condition fact mentions, including those

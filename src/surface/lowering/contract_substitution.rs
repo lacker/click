@@ -1954,10 +1954,12 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
             name, value, body, ..
         } => {
             collect_contract_expression_referenced_names(value, names);
-            let mut body_names = BTreeSet::new();
-            collect_contract_expression_referenced_names(body, &mut body_names);
-            body_names.remove(name);
-            names.extend(body_names);
+            let previous = names.remove(name);
+            collect_contract_expression_referenced_names(body, names);
+            names.remove(name);
+            if previous {
+                names.insert(name.clone());
+            }
         }
         ContractExpression::Call { arguments, .. } => {
             for argument in arguments {
@@ -2005,10 +2007,12 @@ pub(in crate::surface) fn collect_click_proposition_referenced_names(
         ClickProposition::Not(body) => collect_click_proposition_referenced_names(body, names),
         ClickProposition::ForAll { name, body, .. }
         | ClickProposition::Exists { name, body, .. } => {
-            let mut body_names = BTreeSet::new();
-            collect_click_proposition_referenced_names(body, &mut body_names);
-            body_names.remove(name);
-            names.extend(body_names);
+            let previous = names.remove(name);
+            collect_click_proposition_referenced_names(body, names);
+            names.remove(name);
+            if previous {
+                names.insert(name.clone());
+            }
         }
         ClickProposition::RangeAll {
             start,
@@ -2024,10 +2028,12 @@ pub(in crate::surface) fn collect_click_proposition_referenced_names(
         } => {
             collect_contract_expression_referenced_names(start, names);
             collect_contract_expression_referenced_names(end, names);
-            let mut body_names = BTreeSet::new();
-            collect_click_proposition_referenced_names(body, &mut body_names);
-            body_names.remove(item);
-            names.extend(body_names);
+            let previous = names.remove(item);
+            collect_click_proposition_referenced_names(body, names);
+            names.remove(item);
+            if previous {
+                names.insert(item.clone());
+            }
         }
         ClickProposition::PredicateCall { arguments, .. } => {
             for argument in arguments {

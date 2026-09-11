@@ -446,10 +446,26 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(context) => crate::surface::lower_integer_certificate_proposition(
-                surface,
-                &context.theorem_context.integer_values,
-            )
+            ProofContext::Pure(_context) => {
+                let mut integer_values = match self.context.as_ref() {
+                    ProofContext::Pure(context) => context.theorem_context.integer_values.clone(),
+                    _ => crate::persistent::PersistentMap::default(),
+                };
+                for (name, value) in self.state().locals().integer_values.iter() {
+                    integer_values = integer_values.with_inserted(name.clone(), value.clone());
+                }
+                let promoted = self.proposition_obligation().map_or_else(
+                    || surface.clone(),
+                    |goal| {
+                        crate::surface::proof::surface_lowering::promote_integer_comparison(
+                            surface,
+                            &integer_values,
+                            &goal.surface_bindings,
+                        )
+                    },
+                );
+                crate::surface::lower_integer_certificate_proposition(&promoted, &integer_values)
+            }
             .map_err(|message| {
                 self.step_error(format!("could not lower {description}: {message}"))
             }),
@@ -461,7 +477,9 @@ impl<'a> Proof<'a> {
     // owns several by-value proposition variants.
     #[inline(never)]
     pub(super) fn apply_intro(&self) -> Result<KernelProofHandle, ClickError> {
-        self.state
+        let mut integer_binding = None;
+        let state = self
+            .state
             .apply_intro(|current, introduction, introduced| {
                 let mut surface_bindings = current.surface_bindings.clone();
                 let mut introduced_antecedents = current.introduced_antecedents.clone();
@@ -510,13 +528,21 @@ impl<'a> Proof<'a> {
                         None => Some(Arc::new(surface.clone())),
                     },
                     (
-                        Some(LoweringIntroduction::WrittenUniversal { name, pointer, .. }),
+                        Some(LoweringIntroduction::WrittenUniversal {
+                            name,
+                            pointer,
+                            integer,
+                            ..
+                        }),
                         PropositionIntroduction::Universal {
                             variable,
                             pointer: introduced_pointer,
                         },
                         surface,
                     ) => {
+                        if *integer {
+                            integer_binding = Some((name.clone(), variable));
+                        }
                         // The binding names the exact variable the kernel
                         // bound the body to, not the one lowering first
                         // chose: `intro` freshens the binder away from
@@ -527,10 +553,12 @@ impl<'a> Proof<'a> {
                             }
                             _ => CValue::Int32(Bitvector32Term::Variable(variable)),
                         };
-                        surface_bindings = surface_bindings.with_inserted(
-                            name.clone(),
-                            ContractExpression::CFragment(CExpression::Value(value)),
-                        );
+                        if !*integer {
+                            surface_bindings = surface_bindings.with_inserted(
+                                name.clone(),
+                                ContractExpression::CFragment(CExpression::Value(value)),
+                            );
+                        }
                         surface.and_then(written_universal_body).map(Arc::new)
                     }
                     // No lowering provenance was recorded for this goal, so
@@ -569,8 +597,23 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::ExpectedIntroduction(goal) => self.step_error(format!(
                     "`intro` requires an implication, negation, or universal goal, got {goal:?}"
                 )),
+                PropositionCloseError::IntegerFresheningExhausted => {
+                    self.step_error("`intro` requires a fresh Integer binder variable")
+                }
                 _ => unreachable!("kernel returned an unrelated intro error"),
-            })
+            })?;
+        if let Some((name, variable)) = integer_binding {
+            let mut locals = state.locals().clone();
+            locals.integer_values = locals.integer_values.with_inserted(
+                name,
+                crate::kernel::SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(
+                    variable,
+                )),
+            );
+            Ok(state.with_locals(locals))
+        } else {
+            Ok(state)
+        }
     }
 
     #[inline(never)]
