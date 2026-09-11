@@ -32,7 +32,7 @@ pub(super) use path_facts::{
 };
 pub(crate) use substitution::*;
 pub(crate) use variable_collection::resource_context_has_read;
-pub(super) use variable_collection::*;
+pub(crate) use variable_collection::*;
 
 pub(crate) fn memory_effect_write_pointers(facts: &[ExecutionPureFact]) -> BTreeSet<Pointer> {
     collect_memory_effect_write_pointers(facts)

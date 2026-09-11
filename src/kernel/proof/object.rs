@@ -2100,6 +2100,48 @@ mod tests {
     }
 
     #[test]
+    fn integer_choice_freshens_against_unused_ambient_binding() {
+        let ambient = Variable(3_000_000);
+        let source = Proposition::Exists {
+            name: "source".into(),
+            var: Variable(51),
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::IntegerEqual(
+                    crate::kernel::IntegerTerm::var(Variable(51)).into(),
+                    crate::kernel::IntegerTerm::var(Variable(51)).into(),
+                ),
+                true,
+            )),
+        };
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source))
+            .with_reserved_variables([ambient]);
+        let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
+            ProofObject::root(
+                (),
+                ProofBranch::new(
+                    ProofObligation::Proposition(PropositionObligation::new(
+                        Proposition::Predicate {
+                            name: "later_ambient_reference".into(),
+                            arguments: vec![],
+                        },
+                        (),
+                    )),
+                    ProofBranchState {
+                        facts,
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: None,
+                    },
+                ),
+            );
+        let (_, witness) = match proof.check_integer_exists_choice(&source, ambient) {
+            Ok(choice) => choice,
+            Err(_) => panic!("the kernel should retain ambient reservations across subgoals"),
+        };
+        assert_ne!(witness, ambient);
+    }
+
+    #[test]
     fn invariant_body_evidence_requires_exact_complete_root_and_context() {
         use crate::kernel::proof::{
             ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,

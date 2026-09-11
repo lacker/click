@@ -670,7 +670,7 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     }
 }
 
-fn collect_spec_integer_variables(
+pub(crate) fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
@@ -1385,7 +1385,7 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
     }
 }
 
-pub(in crate::kernel) fn collect_c_value_bitvector_variables(
+pub(crate) fn collect_c_value_bitvector_variables(
     value: &CValue,
     variables: &mut BTreeSet<Variable>,
 ) {

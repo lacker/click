@@ -275,6 +275,16 @@ impl ProofFacts {
         }
     }
 
+    pub(crate) fn with_reserved_variables(
+        mut self,
+        variables: impl IntoIterator<Item = Variable>,
+    ) -> Self {
+        for variable in variables {
+            self.reserved_variables = self.reserved_variables.with_value(variable);
+        }
+        self
+    }
+
     /// Rebuilds a legacy drain view while retaining the exact provenance
     /// indexes owned by facts that remain available. The adapter iterates
     /// only the explicit predicate-unfold delta, never the ambient fact set.

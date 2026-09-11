@@ -269,7 +269,14 @@ impl<'a> Proof<'a> {
         induction_setup: Option<PureInductionSetup>,
         structural_induction_setup: Option<PureStructuralInductionBranchSetup>,
     ) -> Self {
-        let facts = ProofFacts::from_ordered(requires);
+        let mut ambient_variables = std::collections::BTreeSet::new();
+        for value in theorem_context.values.values() {
+            crate::kernel::collect_c_value_bitvector_variables(value, &mut ambient_variables);
+        }
+        for (_, value) in theorem_context.integer_values.iter() {
+            crate::kernel::collect_spec_integer_variables(value, &mut ambient_variables);
+        }
+        let facts = ProofFacts::from_ordered(requires).with_reserved_variables(ambient_variables);
         Self {
             site: ProofStepSite::default(),
             context: Arc::new(ProofContext::Pure(PureProofContext {
