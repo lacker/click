@@ -9500,6 +9500,7 @@ fn c0_syntax_lowers_calls_in_expression_position() {
     let function = syntax::parse_function(
         r#"
         int32 caller(int32 x) {
+            int32 values[4];
             int32 result = increment(x) + 1;
             result = increment(result) + 1;
             if (increment(x) > 0)
@@ -9521,6 +9522,41 @@ fn c0_syntax_lowers_calls_in_expression_position() {
     assert!(
         !debug.contains("Call {"),
         "the lowered C0 body contains no expression-level call nodes"
+    );
+}
+
+#[test]
+fn c0_syntax_rejects_an_undeclared_identifier_in_a_value_position() {
+    let error = syntax::parse_function(
+        r#"
+        int32 caller(int32 x) {
+            return x + missing;
+        }
+        "#,
+    )
+    .expect_err("an identifier this translation unit never declared is not a value");
+    assert!(
+        format!("{error}").contains("use of undeclared identifier `missing`"),
+        "the parser names the undeclared identifier, got {error}"
+    );
+}
+
+#[test]
+fn c0_syntax_accepts_a_call_to_a_function_from_another_source() {
+    // `increment` is defined in a different translation unit; the linker
+    // resolves it after each source is parsed, so the call position must not
+    // be mistaken for an undeclared object reference.
+    let function = syntax::parse_function(
+        r#"
+        int32 caller(int32 x) {
+            return increment(x);
+        }
+        "#,
+    )
+    .expect("a call to a function defined in another source stays a call");
+    assert!(
+        format!("{:?}", function.body()).contains("CallAssign"),
+        "the cross-translation-unit call lowers to a call statement"
     );
 }
 

@@ -5525,13 +5525,35 @@ impl Parser {
                 .any(|global| global.kernel_name() == name)
     }
 
+    /// Whether `source_name`, as spelled in the source, names an object this
+    /// translation unit currently declares. The source-keyed lookups answer
+    /// every visible name on their own; the resolved-name walk runs only when
+    /// they all miss, which is the path that is about to report an error.
+    fn declares_source_object(&self, source_name: &str) -> bool {
+        self.scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .any(|binding| binding.source_name == source_name)
+            || self.globals.contains_key(source_name)
+            || self.global_arrays.contains_key(source_name)
+            || self.global_aggregates.contains_key(source_name)
+            || self.global_aggregate_arrays.contains_key(source_name)
+            || self.declares_resolved_object(&self.resolve_name(source_name))
+    }
+
+    /// Resolves a name used in a value position. A name this translation unit
+    /// never declared, and a name whose declaration has gone out of scope,
+    /// are both rejected here rather than lowered to a variable the kernel
+    /// would later report as unbound.
     fn resolve_object_name(
         &self,
         source_name: &str,
         position: Option<SourcePosition>,
     ) -> Result<String, C0SyntaxError> {
         let name = self.resolve_name(source_name);
-        if !self.out_of_scope_names.contains(source_name) {
+        if !self.out_of_scope_names.contains(source_name)
+            && self.declares_source_object(source_name)
+        {
             Ok(name)
         } else {
             Err(self.error_at_position(
