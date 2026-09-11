@@ -122,7 +122,13 @@ impl SharedIntegerApplication {
                 }
             }
         }
-        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = NEXT_ID
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |id| id.checked_add(1),
+            )
+            .expect("Integer application interner ID exhausted");
         let node = Arc::new(SharedIntegerApplicationNode {
             id,
             name: name.clone(),
@@ -856,6 +862,21 @@ mod tests {
             }
         }
         seen.len()
+    }
+
+    #[test]
+    fn opaque_application_alias_chain_stays_shallow() {
+        for depth in [8usize, 16, 32, 64] {
+            let mut value = IntegerTerm::var(Variable(1));
+            for _ in 0..depth {
+                let argument = PureFunctionArgument::Integer(value.clone().into());
+                value = IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                    "successor".to_string(),
+                    vec![argument],
+                ));
+            }
+            assert!(shared_node_count(&value.into()) <= depth + 1);
+        }
     }
 
     #[test]

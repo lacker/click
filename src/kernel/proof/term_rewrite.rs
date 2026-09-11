@@ -164,7 +164,9 @@ impl<'a> TermRewrite<'a> {
     fn argument(&mut self, a: &PureFunctionArgument) -> PureFunctionArgument {
         match a {
             PureFunctionArgument::Value(v) => PureFunctionArgument::Value(self.value(v)),
-            PureFunctionArgument::Integer(v) => PureFunctionArgument::Integer(v.clone()),
+            PureFunctionArgument::Integer(v) => {
+                PureFunctionArgument::Integer(self.integer_shared(v).into())
+            }
             PureFunctionArgument::Algebraic(v) => {
                 PureFunctionArgument::Algebraic(self.algebraic(v))
             }
@@ -209,9 +211,18 @@ impl<'a> TermRewrite<'a> {
         }
         self.visit();
         let result = match shared.as_ref() {
-            IntegerTerm::Constant(_)
-            | IntegerTerm::Variable(_)
-            | IntegerTerm::PureFunctionApplication { .. } => shared.as_ref().clone(),
+            IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => shared.as_ref().clone(),
+            IntegerTerm::PureFunctionApplication(application) => {
+                let arguments = application
+                    .arguments()
+                    .iter()
+                    .map(|argument| self.argument(argument))
+                    .collect();
+                IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                    application.name().to_string(),
+                    arguments,
+                ))
+            }
             IntegerTerm::Machine(value) => {
                 IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
                     value.ty(),

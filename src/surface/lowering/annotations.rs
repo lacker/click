@@ -2307,6 +2307,42 @@ impl AnnotationLowerer<'_> {
             return Err("symbolic Integer-valued datatype matches are not supported yet".into());
         }
         match expression {
+            ContractExpression::Call { name, arguments } if name != "to_integer" => {
+                let definition = self
+                    .click_function_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown function `{name}`"))?
+                    .clone();
+                let definition =
+                    self.instantiate_click_function_for_call(&definition, arguments, environment)?;
+                if definition.return_type() != &ClickType::Integer {
+                    return Err(format!(
+                        "function `{name}` does not return an Integer value"
+                    ));
+                }
+                let mut lowered = Vec::new();
+                for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+                    if parameter.click_type() != &ClickType::Integer {
+                        return Err(format!(
+                            "Integer function `{name}` has a non-Integer parameter"
+                        ));
+                    }
+                    let SpecIntegerExpression::Term(value) =
+                        self.lower_contract_integer_to_spec(argument, environment)?
+                    else {
+                        return Err("Integer function arguments must be symbolic terms".into());
+                    };
+                    lowered.push(crate::kernel::PureFunctionArgument::Integer(value.into()));
+                }
+                Ok(SpecIntegerExpression::Term(
+                    crate::kernel::IntegerTerm::PureFunctionApplication(
+                        crate::kernel::SharedIntegerApplication::intern(
+                            definition.name().to_string(),
+                            lowered,
+                        ),
+                    ),
+                ))
+            }
             ContractExpression::Binding(name) => {
                 let value = environment
                     .integer_values
