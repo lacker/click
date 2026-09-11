@@ -890,8 +890,8 @@ pub(in crate::kernel) fn add_required_proof_obligation_with_context(
         return;
     }
 
-    let obligation =
-        ProofObligation::verification_condition(proposition).with_shared_introductions(introductions);
+    let obligation = ProofObligation::verification_condition(proposition)
+        .with_shared_introductions(introductions);
     obligations.push(match context {
         Some(context) => obligation.with_context(context),
         None => obligation,

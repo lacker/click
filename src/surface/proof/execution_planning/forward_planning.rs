@@ -498,23 +498,24 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     let (fact, introductions) = if let Some(prelowered_goal) = prelowered_goal {
         (prelowered_goal.clone(), goal_introductions.cloned())
     } else {
-        let (fact, recorded) = lower_fixed_state_proposition_with_assumptions_recording_introductions(
-            proposition,
-            &assumptions_from_propositions(available),
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            None,
-            recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
-            ))
-        })?;
+        let (fact, recorded) =
+            lower_fixed_state_proposition_with_assumptions_recording_introductions(
+                proposition,
+                &assumptions_from_propositions(available),
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                None,
+                recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
+                ))
+            })?;
         (fact, Some(recorded))
     };
 

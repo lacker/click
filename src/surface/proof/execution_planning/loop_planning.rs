@@ -222,8 +222,8 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 let exact_expected_obligation = entry_obligations
                     .iter()
                     .find(|obligation| obligation.context() == Some(&obligation_context));
-                let exact_expected_goal = exact_expected_obligation
-                    .map(|obligation| obligation.proposition().clone());
+                let exact_expected_goal =
+                    exact_expected_obligation.map(|obligation| obligation.proposition().clone());
                 // Stripping already-available antecedents consumes head
                 // nodes, so the record for the checked goal starts that
                 // many entries in. The kernel recorded the chain while it
@@ -402,14 +402,17 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         obligation.proposition(),
                         &certificate_available,
                     );
-                    let introductions = obligation.introductions().map(|recorded| {
-                        recorded.get(stripped..).unwrap_or_default().to_vec()
-                    });
+                    let introductions = obligation
+                        .introductions()
+                        .map(|recorded| recorded.get(stripped..).unwrap_or_default().to_vec());
                     (goal, introductions)
                 });
                 let (fact, goal_introductions) = match exact_entry_goal {
                     Some(checked) => checked,
-                    None => match surface_propositions.unique_kernel(&have.proposition).cloned() {
+                    None => match surface_propositions
+                        .unique_kernel(&have.proposition)
+                        .cloned()
+                    {
                         Some(fact) => (fact, None),
                         None => {
                             let (fact, recorded) =
