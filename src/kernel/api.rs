@@ -4913,10 +4913,16 @@ pub fn c_function_contract_refinement_context(
 ///
 /// Both names are exact map lookups into the same tables the formation check
 /// reads, so the printed skeleton states the obligation that was refused.
+///
+/// `declared_parameter_spellings` lets the caller spell parameter types this
+/// interface cannot: a struct pointer is kept as a layout, so the struct tag
+/// comes from the contract's source declaration. A position left empty keeps
+/// the spelling this interface derives from the modeled type.
 pub fn c_named_contract_refinement_theorem_skeleton(
     environment: &CExecutionEnvironment,
     contract_name: &str,
     target_name: &str,
+    declared_parameter_spellings: &[Option<String>],
 ) -> Option<String> {
     let contract = environment.get_function_contract(contract_name)?;
     let function = if let Some(rule) = environment.get_verified_function_rule(target_name) {
@@ -4927,7 +4933,9 @@ pub fn c_named_contract_refinement_theorem_skeleton(
             .function
     };
     Some(named_contract_refinement_theorem_skeleton(
-        contract, function,
+        contract,
+        function,
+        declared_parameter_spellings,
     ))
 }
 

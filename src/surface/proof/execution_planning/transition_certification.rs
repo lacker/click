@@ -301,6 +301,7 @@ pub(in crate::surface) fn certified_statement_transitions(
     pure_facts: &[Proposition],
     statement: &CStatement,
     function_environment: &CExecutionEnvironment,
+    predicate_environment: Option<&PredicateEnvironment>,
     execution_semantics: CExecutionSemantics,
     context_label: &str,
     next_opaque_call: &mut u64,
@@ -397,6 +398,7 @@ pub(in crate::surface) fn certified_statement_transitions(
         loop_rule,
         &transition_pure_facts,
         function_environment,
+        predicate_environment,
         context_label,
         prerequisite_policy,
         fact_transport_policy,
@@ -477,6 +479,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
     pure_facts: &[Proposition],
     statement: &CStatement,
     function_environment: &CExecutionEnvironment,
+    predicate_environment: Option<&PredicateEnvironment>,
     context_label: &str,
     initialization_proven: bool,
     preservation_proven: bool,
@@ -506,6 +509,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
         loop_rule,
         pure_facts,
         function_environment,
+        predicate_environment,
         context_label,
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
@@ -586,6 +590,7 @@ fn certified_transitions_from_execution(
     loop_rule: Option<CVerifiedLoopRule>,
     pure_facts: &[Proposition],
     environment: &CExecutionEnvironment,
+    predicate_environment: Option<&PredicateEnvironment>,
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
@@ -704,7 +709,12 @@ fn certified_transitions_from_execution(
                             }
                             return Err(ClickError::new(format!(
                                 "{context_label} used an assumption-derived theorem premise without a checkable derivation: {}",
-                                describe_derivation_failure(&premise, &theorem_context, environment),
+                                describe_derivation_failure(
+                                    &premise,
+                                    &theorem_context,
+                                    environment,
+                                    predicate_environment,
+                                ),
                             )));
                         };
                         if !prerequisite_derivations
@@ -748,7 +758,12 @@ fn certified_transitions_from_execution(
                     {
                         return Err(ClickError::new(format!(
                             "{context_label} used an assumption-derived execution fact without a checkable derivation: {}",
-                            describe_derivation_failure(proposition, pure_facts, environment),
+                            describe_derivation_failure(
+                                proposition,
+                                pure_facts,
+                                environment,
+                                predicate_environment,
+                            ),
                         )));
                     }
                 }
@@ -815,7 +830,12 @@ fn certified_transitions_from_execution(
                                             .context()
                                             .map(|context| format!(" ({context})"))
                                             .unwrap_or_default(),
-                                        describe_derivation_failure(proposition, pure_facts, environment),
+                                        describe_derivation_failure(
+                                proposition,
+                                pure_facts,
+                                environment,
+                                predicate_environment,
+                            ),
                                     ))
                                 })
                                 .map(Some)?
@@ -827,7 +847,12 @@ fn certified_transitions_from_execution(
                                         .context()
                                         .map(|context| format!(" ({context})"))
                                         .unwrap_or_default(),
-                                    describe_derivation_failure(proposition, pure_facts, environment),
+                                    describe_derivation_failure(
+                                proposition,
+                                pure_facts,
+                                environment,
+                                predicate_environment,
+                            ),
                                 ),
                                 obligation,
                             ));
@@ -894,7 +919,12 @@ fn certified_transitions_from_execution(
                                         .context()
                                         .map(|context| format!(" ({context})"))
                                         .unwrap_or_default(),
-                                    describe_derivation_failure(proposition, pure_facts, environment),
+                                    describe_derivation_failure(
+                                proposition,
+                                pure_facts,
+                                environment,
+                                predicate_environment,
+                            ),
                                 ),
                                 obligation,
                             ));
@@ -923,6 +953,7 @@ fn certified_transitions_from_execution(
                                                 proposition,
                                                 &derivation_facts,
                                                 environment,
+                                                predicate_environment,
                                             ),
                                         ),
                                         obligation,

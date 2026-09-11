@@ -159,17 +159,62 @@ pub(super) fn describe_pure_fact_with_environment(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     environment: &crate::kernel::CExecutionEnvironment,
+    predicate_environment: Option<&PredicateEnvironment>,
 ) -> String {
     let description = describe_pure_fact(fact, parameters, arguments);
     let Some((contract, target)) = concrete_named_contract_fact(fact) else {
         return description;
     };
-    let Some(skeleton) =
-        crate::kernel::c_named_contract_refinement_theorem_skeleton(environment, contract, target)
-    else {
+    let Some(skeleton) = crate::kernel::c_named_contract_refinement_theorem_skeleton(
+        environment,
+        contract,
+        target,
+        &declared_contract_parameter_spellings(predicate_environment, contract),
+    ) else {
         return description;
     };
     format!("{description} automatically;\nprove it explicitly:\n{skeleton}")
+}
+
+/// The C spelling each of a named contract's parameters has in its source
+/// declaration, for the positions the kernel cannot spell on its own.
+///
+/// The kernel models an aggregate pointer as a layout and keeps no struct
+/// tag, so it prints `struct node*` as the pointer type it is modeled by. The
+/// declaration that names the struct is right here on the surface, and this
+/// is where the skeleton is rendered, so recover the tag from it rather than
+/// teaching the kernel about tags. Every other position is left empty and
+/// keeps the kernel's spelling.
+fn declared_contract_parameter_spellings(
+    predicate_environment: Option<&PredicateEnvironment>,
+    contract: &str,
+) -> Vec<Option<String>> {
+    let Some(definition) =
+        predicate_environment.and_then(|environment| environment.contract_definition(contract))
+    else {
+        return Vec::new();
+    };
+    definition
+        .function_block()
+        .signature()
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            let name = parameter.struct_name()?;
+            // A struct-valued parameter is modeled as a byte array; every
+            // other tagged parameter is a pointer to the struct.
+            let base = if matches!(parameter.click_type(), ClickType::C(C0Type::UInt8Array(_))) {
+                format!("struct {name}")
+            } else {
+                format!("struct {name}*")
+            };
+            Some(if parameter.pointee_is_constant() {
+                format!("const {base}")
+            } else {
+                base
+            })
+        })
+        .collect()
 }
 
 /// The contract and concrete target of a named-contract fact over an exact

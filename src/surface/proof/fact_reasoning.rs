@@ -276,6 +276,7 @@ pub(super) fn describe_derivation_failure(
     proposition: &Proposition,
     available: &[Proposition],
     environment: &CExecutionEnvironment,
+    predicate_environment: Option<&PredicateEnvironment>,
 ) -> String {
     if matches!(proposition, Proposition::ConditionIs(_, _)) {
         describe_condition_search_miss(proposition, available, &[], &[])
@@ -287,7 +288,13 @@ pub(super) fn describe_derivation_failure(
         // A named-contract prerequisite the kernel refused is where the
         // automatic formation route ends. Print the explicit theorem that
         // replaces it rather than only the refusal.
-        describe_pure_fact_with_environment(proposition, &[], &[], environment)
+        describe_pure_fact_with_environment(
+            proposition,
+            &[],
+            &[],
+            environment,
+            predicate_environment,
+        )
     } else {
         bounded_debug(proposition)
     }

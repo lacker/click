@@ -2124,9 +2124,17 @@ fn function_contract_requirement_is_proven(
 /// the implementation's C parameter list — so the printed obligation cannot
 /// drift from the one that was refused. A target with no proof parameters
 /// gets the `unfold(Name)` form, which is the route that already exists.
+///
+/// `declared_parameter_spellings` carries, per parameter position, the C
+/// spelling the caller's source declaration uses where this interface cannot
+/// reconstruct it: an aggregate pointer is a layout here, not a struct tag,
+/// so `struct node*` would print as the pointer type it is modeled by. The
+/// caller supplies the tag rather than the kernel storing one; a position
+/// without a supplied spelling keeps this interface's own.
 pub(super) fn named_contract_refinement_theorem_skeleton(
     contract: &CFunctionContract,
     function: &CFunction,
+    declared_parameter_spellings: &[Option<String>],
 ) -> String {
     let theorem = format!(
         "{}_is_{}",
@@ -2136,12 +2144,14 @@ pub(super) fn named_contract_refinement_theorem_skeleton(
     let parameters = function
         .parameters()
         .iter()
-        .map(|parameter| {
-            format!(
-                "{} {}",
-                c_parameter_type_spelling(parameter),
-                parameter.name()
-            )
+        .enumerate()
+        .map(|(index, parameter)| {
+            let spelling = declared_parameter_spellings
+                .get(index)
+                .and_then(Option::as_deref)
+                .map(str::to_string)
+                .unwrap_or_else(|| c_parameter_type_spelling(parameter));
+            format!("{spelling} {}", parameter.name())
         })
         .collect::<Vec<_>>()
         .join(", ");

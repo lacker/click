@@ -283,6 +283,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         std::slice::from_ref(&fact),
         &statement,
         &CExecutionEnvironment::new(),
+        None,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         "simple transition test",
         &mut next_opaque_call,
