@@ -520,6 +520,16 @@ is the only source of bindings.
 
 ## Chunk 6: concrete-callee execution theorems
 
+**Status: landed** as `a4aa68c2`. The conclusion picks the form: a function
+address is the concrete route, a plain binding the abstract one. The kernel
+authority (`prove_executed_concrete_contract_refinement` in
+`src/kernel/api.rs`) requires the verified wrapper to carry exactly the
+target's interface and a body of exactly one call to the named callee. The
+skeleton printed by chunk 7's refusal now parses and verifies
+(`mdtests/c_named_contract_refusal_theorem_roundtrip.md`). Noticed in
+passing: `simp()` cannot discharge a constructor disequality such as
+`r.model != Mark::Clear()` from `r.model == Mark::Set()`.
+
 Depends on chunks 4 and 5. This is the explicit route for proving that a
 concrete function satisfies a named contract with proof parameters, which the
 `unfold(Name)` route refuses.
