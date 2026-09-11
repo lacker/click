@@ -2127,6 +2127,9 @@ pub struct CFunction {
     pub(super) borrowed_resource_ensures: Vec<usize>,
     pub(super) resource_constructors: Vec<CResourceSpec>,
     pub(super) contract_requires: Vec<SpecProposition>,
+    /// For each lowered contract requirement, the originating source
+    /// `requires` clause, or `None` for a generated definedness clause.
+    pub(super) contract_requirement_sources: ContractRequirementSources,
     pub(super) contract_ensures: Vec<SpecProposition>,
     pub(super) contract_mutable: Vec<CMemorySegment>,
     /// Whether the mutable contract frame requires an explicit Effect claim.
@@ -2147,6 +2150,43 @@ pub struct CFunction {
     pub(super) static_variables: Vec<CStaticLocal>,
     pub(super) static_storage: std::sync::Arc<CFunctionStaticStorage>,
     pub(super) string_literals: Vec<CStringLiteral>,
+}
+
+/// Source provenance is planning metadata, not part of a function's checked
+/// semantic identity. Its vector remains available through the function
+/// accessor, while equality, hashing, and ordering stay neutral so adding a
+/// source map cannot invalidate semantic caches or certificates.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ContractRequirementSources(Vec<Option<usize>>);
+
+impl ContractRequirementSources {
+    pub(super) fn as_slice(&self) -> &[Option<usize>] {
+        &self.0
+    }
+}
+
+impl PartialEq for ContractRequirementSources {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ContractRequirementSources {}
+
+impl std::hash::Hash for ContractRequirementSources {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl PartialOrd for ContractRequirementSources {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ContractRequirementSources {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2895,6 +2935,108 @@ impl std::fmt::Debug for SharedCMemory {
     }
 }
 
+/// The compact identity of a memory snapshot at a retained proof frontier.
+/// This only records the persistent-node pointers already held by `CMemory`;
+/// it does not intern, clone, or scan the snapshot.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct CMemorySnapshotIdentity {
+    shallow: CMemoryShallowIdentity,
+}
+
+#[cfg(test)]
+thread_local! {
+    static CALL_REQUIREMENT_SITE_CONSTRUCTION_COUNT: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+impl CMemorySnapshotIdentity {
+    pub(crate) fn of(memory: &CMemory) -> Self {
+        Self {
+            shallow: CMemoryShallowIdentity::of(memory),
+        }
+    }
+}
+
+/// The exact source-side identity needed to retry one unresolved call
+/// requirement.  This is deliberately limited to the selected callee, its
+/// source argument expressions, and the call's source snapshot identity; it
+/// does not retain a C state or an ambient fact set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CallRequirementSite {
+    pub(crate) callee: String,
+    pub(crate) interface: std::sync::Arc<str>,
+    pub(crate) candidate_ordinal: usize,
+    pub(crate) source_arguments: std::sync::Arc<Vec<CExpression>>,
+    pub(crate) source_snapshot: CMemorySnapshotIdentity,
+}
+
+impl CallRequirementSite {
+    pub(crate) fn for_requirement(
+        callee: impl Into<String>,
+        interface: &str,
+        candidate_ordinal: usize,
+        source_arguments: &[CExpression],
+        source_memory: &CMemory,
+    ) -> Self {
+        #[cfg(test)]
+        CALL_REQUIREMENT_SITE_CONSTRUCTION_COUNT.with(|count| {
+            count.set(count.get().saturating_add(1));
+        });
+        Self {
+            callee: callee.into(),
+            interface: std::sync::Arc::from(interface),
+            candidate_ordinal,
+            source_arguments: std::sync::Arc::new(source_arguments.to_vec()),
+            source_snapshot: CMemorySnapshotIdentity::of(source_memory),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_test_construction_count() {
+        CALL_REQUIREMENT_SITE_CONSTRUCTION_COUNT.with(|count| count.set(0));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_construction_count() -> u64 {
+        CALL_REQUIREMENT_SITE_CONSTRUCTION_COUNT.with(std::cell::Cell::get)
+    }
+}
+
+/// The selected top-level requirement attached to one unresolved call site.
+/// The site identity is shared across requirements from that call, while the
+/// ordinal remains specific to this requirement and its path obligations.
+/// `None` denotes a generated clause or a kernel-built contract without a
+/// source registry entry; ordinary callee source resolution is a later
+/// planner concern.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CallRequirementSource {
+    pub(crate) site: std::sync::Arc<CallRequirementSite>,
+    pub(crate) requirement_ordinal: usize,
+    pub(crate) source_requirement_ordinal: Option<usize>,
+}
+
+impl CallRequirementSource {
+    pub(crate) fn new(
+        site: std::sync::Arc<CallRequirementSite>,
+        requirement_ordinal: usize,
+        source_requirement_ordinal: Option<usize>,
+    ) -> Self {
+        Self {
+            site,
+            requirement_ordinal,
+            source_requirement_ordinal,
+        }
+    }
+}
+
+impl std::ops::Deref for CallRequirementSource {
+    type Target = CallRequirementSite;
+
+    fn deref(&self) -> &Self::Target {
+        &self.site
+    }
+}
+
 impl std::ops::Deref for SharedCMemory {
     type Target = CMemory;
 
@@ -3064,7 +3206,7 @@ struct CMemoryArena {
     derivations: Vec<Option<std::sync::Arc<CMemoryDerivation>>>,
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct CMemoryShallowIdentity {
     blocks: usize,
     cells: usize,
@@ -4286,6 +4428,11 @@ pub struct ProofObligation {
     pub(super) proposition: Proposition,
     pub(super) context: Option<String>,
     pub(super) assumable: bool,
+    /// Source identity for a required call precondition, when this
+    /// obligation was emitted while applying a selected callee contract.
+    /// This is planning metadata only and is excluded from obligation
+    /// equality, hashing, and ordering just like lowering introductions.
+    pub(super) call_requirement_site: Option<std::sync::Arc<CallRequirementSource>>,
     /// The head chain the lowering that built `proposition` recorded for it,
     /// outermost first, when the kernel built this obligation from a lowered
     /// specification proposition.

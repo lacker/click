@@ -3644,8 +3644,17 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         name: "unrepresentable".to_string(),
         arguments: Vec::new(),
     };
+    let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
+        "identity",
+        "identity",
+        0,
+        &arguments,
+        root.execution().unwrap().core.state.memory(),
+    ));
+    let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(site, 0, None));
     let refusal = ClickError::new("injected unsupported requirement").with_unresolved_requirement(
-        &ProofObligation::verification_condition(unsupported.clone()),
+        &ProofObligation::verification_condition(unsupported.clone())
+            .with_call_requirement_site(source.clone()),
     );
     let error = match root.retry_statement_after_refusal(
         ProofStep::Step,
@@ -3659,6 +3668,15 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         error.unresolved_requirement().unwrap().proposition,
         unsupported
     );
+    assert!(std::sync::Arc::ptr_eq(
+        error
+            .unresolved_requirement()
+            .unwrap()
+            .call_site
+            .as_ref()
+            .expect("retry preserves call-site metadata"),
+        &source
+    ));
     assert!(root.certificate().steps().is_empty());
     assert!(
         root.execution()

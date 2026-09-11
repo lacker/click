@@ -3686,6 +3686,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 substitute_bitvector_variable_in_spec_proposition(proposition, from, to)
             })
             .collect(),
+        contract_requirement_sources: function.contract_requirement_sources.clone(),
         contract_ensures: function
             .contract_ensures
             .iter()
@@ -6693,6 +6694,7 @@ fn substitute_pointer_variable_in_c_function(
                 substitute_pointer_variable_in_spec_proposition(proposition, from, to)
             })
             .collect(),
+        contract_requirement_sources: function.contract_requirement_sources.clone(),
         contract_ensures: function
             .contract_ensures
             .iter()

@@ -948,6 +948,7 @@ fn execute_verified_function_rule(
         caller_state,
         &[&rule.function],
         None,
+        None,
         binder_application
             .as_ref()
             .map(|application| (0, application)),
@@ -986,6 +987,7 @@ fn selected_call_binder_application(
 fn execute_verified_function_templates(
     caller_state: &CState,
     functions: &[&CFunction],
+    contract_interfaces: Option<&[&CFunctionContract]>,
     selected_contract: Option<usize>,
     resource_application: Option<(usize, &ResourceCallApplication)>,
     arguments: &[CExpression],
@@ -993,6 +995,15 @@ fn execute_verified_function_templates(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    if contract_interfaces.is_some_and(|interfaces| interfaces.len() != functions.len()) {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "call interface identity map does not match candidate functions".to_string(),
+            )),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
     let function = functions[0];
     // Every named instance the callee declares must be bound by the selected
     // application. The check is one map lookup per declared binder, so an
@@ -1065,9 +1076,15 @@ fn execute_verified_function_templates(
         let mut first_failure = None;
         let mut selected_position = None;
         for (index, function) in functions.iter().enumerate() {
+            let interface = contract_interfaces
+                .map(|contracts| contracts[index].name())
+                .unwrap_or_else(|| function.name());
             let prepared = prepare_verified_function_call(
                 caller_state,
                 function,
+                interface,
+                index,
+                arguments,
                 arguments_path.clone(),
                 functions.len() > 1 || selected_contract.is_some(),
                 assumptions,
@@ -1562,6 +1579,9 @@ struct PreparedVerifiedFunctionCall<'a> {
 fn prepare_verified_function_call<'a>(
     caller_state: &CState,
     function: &'a CFunction,
+    interface: &str,
+    candidate_ordinal: usize,
+    source_arguments: &[CExpression],
     arguments_path: CArgumentsPath,
     require_established: bool,
     assumptions: &PureFactContext,
@@ -1569,6 +1589,16 @@ fn prepare_verified_function_call<'a>(
     budget: &mut ExecutionBudget,
     resource_application: Option<&ResourceCallApplication>,
 ) -> ExecutionResult<Result<PreparedVerifiedFunctionCall<'a>, CFunctionPath>> {
+    if function.contract_requirement_sources().len() != function.contract_requires().len() {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "call requirement source map does not match the selected contract".to_string(),
+            )),
+            facts: arguments_path.facts,
+            obligations: arguments_path.obligations,
+        }));
+    }
+    let mut call_requirement_site = None;
     let initial_obligation_count = arguments_path.obligations.len();
     let path_assumptions = assumptions_with_path_context(
         assumptions,
@@ -1651,7 +1681,7 @@ fn prepare_verified_function_call<'a>(
         "verified function rule application",
         "verified call requirement checking",
     );
-    for requirement in function.contract_requires() {
+    for (requirement_ordinal, requirement) in function.contract_requires().iter().enumerate() {
         let requirement_assumptions =
             assumptions_with_path_context(&path_assumptions, &facts, &obligations);
         let requirement_assumptions =
@@ -1659,6 +1689,32 @@ fn prepare_verified_function_call<'a>(
         let lowering_assumptions = requirement_assumptions
             .clone()
             .allow_symbolic_contract_loads();
+        let mut requirement_source: Option<std::sync::Arc<CallRequirementSource>> = None;
+        let mut source_for_requirement = || {
+            if let Some(source) = &requirement_source {
+                return source.clone();
+            }
+            let site = call_requirement_site
+                .get_or_insert_with(|| {
+                    std::sync::Arc::new(CallRequirementSite::for_requirement(
+                        function.name(),
+                        interface,
+                        candidate_ordinal,
+                        source_arguments,
+                        &caller_state.memory,
+                    ))
+                })
+                .clone();
+            let source = std::sync::Arc::new(CallRequirementSource::new(
+                site,
+                requirement_ordinal,
+                function
+                    .contract_requirement_source(requirement_ordinal)
+                    .unwrap_or(None),
+            ));
+            requirement_source = Some(source.clone());
+            source
+        };
         let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
             &entry_contract_state,
             requirement,
@@ -1669,6 +1725,7 @@ fn prepare_verified_function_call<'a>(
         if requirement_paths.is_empty() {
             obligations.push(
                 ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_call_requirement_site(source_for_requirement())
                     .with_context(format!("{} precondition", function.name())),
             );
             continue;
@@ -1700,9 +1757,11 @@ fn prepare_verified_function_call<'a>(
                         &guarded,
                     );
                 } else {
+                    let call_requirement_site = source_for_requirement();
                     obligations.push(
                         ProofObligation::verification_condition(guarded.clone())
                             .with_introductions(guard_introductions)
+                            .with_call_requirement_site(call_requirement_site.clone())
                             .with_context(format!("{} precondition", function.name())),
                     );
                 }
@@ -1769,9 +1828,11 @@ fn prepare_verified_function_call<'a>(
                         &guarded_requirement,
                     );
                 } else {
+                    let call_requirement_site = source_for_requirement();
                     obligations.push(
                         ProofObligation::verification_condition(guarded_requirement.clone())
                             .with_introductions(introductions)
+                            .with_call_requirement_site(call_requirement_site.clone())
                             .with_context(format!("{} precondition", function.name())),
                     );
                 }
@@ -1986,6 +2047,7 @@ pub(super) fn execute_c_function_contracts_paths(
     execute_verified_function_templates(
         caller_state,
         &functions,
+        Some(&contracts),
         selected_index,
         selected_index.zip(resource_application.as_ref()),
         arguments,

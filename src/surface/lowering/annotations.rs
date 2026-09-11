@@ -255,6 +255,7 @@ use crate::kernel::{
 
 type FunctionContractSummary = (
     Vec<SpecProposition>,
+    Vec<Option<usize>>,
     Vec<SpecProposition>,
     Vec<CMemorySegment>,
     Vec<CFunctionContractClaim>,
@@ -446,6 +447,7 @@ pub(in crate::surface) fn annotated_function(
     let resource_constructors = function_resource_constructors(function_block)?;
     let (
         contract_requires,
+        contract_requirement_sources,
         contract_ensures,
         contract_mutable,
         contract_claims,
@@ -580,7 +582,8 @@ pub(in crate::surface) fn annotated_function(
             contract_mutable,
             contract_claims,
             opaque_contract_supported,
-        );
+        )
+        .with_contract_requirement_sources(contract_requirement_sources);
     if let Some(parameter) =
         crate::kernel::modified_by_value_aggregate_parameter_with_current_ensure_in_source(
             &function,
@@ -1045,13 +1048,17 @@ pub(in crate::surface) fn function_contract_summary(
     let mut opaque_contract_supported = true;
     let mut predicate_unfoldings = Vec::new();
     let mut requires = Vec::new();
+    let mut contract_requirement_sources = Vec::new();
     for proposition in requirement_definedness_surfaces(function_block.requires()) {
         match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
-            Ok(proposition) => requires.push(proposition),
+            Ok(proposition) => {
+                requires.push(proposition);
+                contract_requirement_sources.push(None);
+            }
             Err(_) => opaque_contract_supported = false,
         }
     }
-    for requirement in function_block.requires() {
+    for (source_index, requirement) in function_block.requires().iter().enumerate() {
         let proposition = match requirement.inner() {
             Requirement::Proposition(proposition) => proposition.clone(),
             Requirement::LoadableSegment { segment } => ClickProposition::Loadable {
@@ -1080,7 +1087,8 @@ pub(in crate::surface) fn function_contract_summary(
                     predicate_unfoldings
                         .push(CPredicateUnfolding::new(predicate, proposition.clone()));
                 }
-                requires.push(proposition)
+                requires.push(proposition);
+                contract_requirement_sources.push(Some(source_index));
             }
             Err(_) => opaque_contract_supported = false,
         }
@@ -1174,6 +1182,7 @@ pub(in crate::surface) fn function_contract_summary(
     };
     Ok((
         requires,
+        contract_requirement_sources,
         ensures,
         mutable,
         claims,

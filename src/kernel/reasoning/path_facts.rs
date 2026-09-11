@@ -919,21 +919,45 @@ pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     context: Option<&str>,
     introductions: Option<&std::sync::Arc<LoweringIntroductions>>,
 ) {
+    add_required_proof_obligation_with_context_and_site(
+        obligations,
+        assumptions,
+        proposition,
+        context,
+        introductions,
+        None,
+    );
+}
+
+fn add_required_proof_obligation_with_context_and_site(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    proposition: Proposition,
+    context: Option<&str>,
+    introductions: Option<&std::sync::Arc<LoweringIntroductions>>,
+    call_site: Option<&std::sync::Arc<CallRequirementSource>>,
+) {
     // Suppression is the exact index, the frozen condition checker for a
     // proposition that is already one bare condition, or the retained atomic
     // memory/resource checkers. A required verification condition with
     // logical structure is emitted for an ordinary Surface tactic to
     // discharge.
-    if required_obligation_is_exactly_discharged(assumptions, &proposition)
-        || obligations
-            .iter()
-            .any(|obligation| obligation.proposition == proposition)
+    if required_obligation_is_exactly_discharged(assumptions, &proposition) {
+        return;
+    }
+    if let Some(existing) = obligations
+        .iter_mut()
+        .find(|obligation| obligation.proposition == proposition)
     {
+        reconcile_call_requirement_site(existing, call_site);
         return;
     }
 
-    let obligation = ProofObligation::verification_condition(proposition)
+    let mut obligation = ProofObligation::verification_condition(proposition)
         .with_shared_introductions(introductions);
+    if let Some(call_site) = call_site {
+        obligation = obligation.with_call_requirement_site(call_site.clone());
+    }
     obligations.push(match context {
         Some(context) => obligation.with_context(context),
         None => obligation,
@@ -949,18 +973,53 @@ pub(in crate::kernel) fn add_required_proof_obligation_without_search(
     context: Option<&str>,
     introductions: Option<&std::sync::Arc<LoweringIntroductions>>,
 ) {
-    if assumptions.proves_exact(&proposition)
-        || obligations
-            .iter()
-            .any(|obligation| obligation.proposition == proposition)
-    {
+    add_required_proof_obligation_without_search_and_site(
+        obligations,
+        assumptions,
+        proposition,
+        context,
+        introductions,
+        None,
+    );
+}
+
+fn add_required_proof_obligation_without_search_and_site(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    proposition: Proposition,
+    context: Option<&str>,
+    introductions: Option<&std::sync::Arc<LoweringIntroductions>>,
+    call_site: Option<&std::sync::Arc<CallRequirementSource>>,
+) {
+    if assumptions.proves_exact(&proposition) {
         return;
     }
-    let obligation = ProofObligation::new(proposition).with_shared_introductions(introductions);
+    if let Some(existing) = obligations
+        .iter_mut()
+        .find(|obligation| obligation.proposition == proposition)
+    {
+        reconcile_call_requirement_site(existing, call_site);
+        return;
+    }
+    let mut obligation = ProofObligation::new(proposition).with_shared_introductions(introductions);
+    if let Some(call_site) = call_site {
+        obligation = obligation.with_call_requirement_site(call_site.clone());
+    }
     obligations.push(match context {
         Some(context) => obligation.with_context(context),
         None => obligation,
     });
+}
+
+fn reconcile_call_requirement_site(
+    existing: &mut ProofObligation,
+    incoming: Option<&std::sync::Arc<CallRequirementSource>>,
+) {
+    match (existing.call_requirement_site.as_ref(), incoming) {
+        (None, None) => {}
+        (Some(existing), Some(incoming)) if existing.as_ref() == incoming.as_ref() => {}
+        _ => existing.call_requirement_site = None,
+    }
 }
 
 pub(in crate::kernel) fn append_required_proof_obligations(
@@ -969,12 +1028,13 @@ pub(in crate::kernel) fn append_required_proof_obligations(
     new_obligations: &[ProofObligation],
 ) {
     for obligation in new_obligations {
-        add_required_proof_obligation_with_context(
+        add_required_proof_obligation_with_context_and_site(
             obligations,
             assumptions,
             obligation.proposition().clone(),
             obligation.context(),
             obligation.shared_introductions(),
+            obligation.call_requirement_site(),
         );
     }
 }
@@ -985,12 +1045,13 @@ pub(in crate::kernel) fn append_required_proof_obligations_without_search(
     new_obligations: &[ProofObligation],
 ) {
     for obligation in new_obligations {
-        add_required_proof_obligation_without_search(
+        add_required_proof_obligation_without_search_and_site(
             obligations,
             assumptions,
             obligation.proposition().clone(),
             obligation.context(),
             obligation.shared_introductions(),
+            obligation.call_requirement_site(),
         );
     }
 }
@@ -1016,12 +1077,13 @@ pub(in crate::kernel) fn append_required_proof_obligations_under_path_context(
             introductions.extend(recorded.iter().cloned());
             std::sync::Arc::new(introductions)
         });
-        add_required_proof_obligation_with_context(
+        add_required_proof_obligation_with_context_and_site(
             obligations,
             assumptions,
             proposition,
             obligation.context(),
             introductions.as_ref(),
+            obligation.call_requirement_site(),
         );
     }
 }
@@ -1085,11 +1147,14 @@ pub(in crate::kernel) fn merge_obligations(
             // snapshot. Exact and intrinsic contradictions still reject the
             // merge; non-exact cross-snapshot reasoning cannot erase a path
             // that the executor just certified as possible.
-            if assumptions.proves_exact(obligation.proposition())
-                || obligations
-                    .iter()
-                    .any(|existing| existing.proposition() == obligation.proposition())
+            if assumptions.proves_exact(obligation.proposition()) {
+                continue;
+            }
+            if let Some(existing) = obligations
+                .iter_mut()
+                .find(|existing| existing.proposition() == obligation.proposition())
             {
+                reconcile_call_requirement_site(existing, obligation.call_requirement_site());
                 continue;
             }
             if let Proposition::ConditionIs(condition, value) = obligation.proposition()
@@ -1288,6 +1353,73 @@ mod sequence_equality_tests {
 #[cfg(test)]
 mod mandatory_integer_obligation_tests {
     use super::*;
+
+    fn call_source(interface: &str, ordinal: usize) -> std::sync::Arc<CallRequirementSource> {
+        std::sync::Arc::new(CallRequirementSource::new(
+            std::sync::Arc::new(CallRequirementSite::for_requirement(
+                "callee",
+                interface,
+                0,
+                &[],
+                &CMemory::new(),
+            )),
+            ordinal,
+            Some(ordinal),
+        ))
+    }
+
+    #[test]
+    fn required_obligation_append_variants_preserve_call_source_and_reject_conflicts() {
+        let proposition = Proposition::Predicate {
+            name: "required".to_string(),
+            arguments: vec![],
+        };
+        let source = call_source("selected", 0);
+        let required = ProofObligation::verification_condition(proposition.clone())
+            .with_call_requirement_site(source.clone());
+        let assumptions = PureFactContext::new();
+
+        let appenders: [fn(&mut Vec<ProofObligation>, &PureFactContext, &[ProofObligation]); 2] = [
+            append_required_proof_obligations,
+            append_required_proof_obligations_without_search,
+        ];
+        for append in appenders {
+            let mut obligations = Vec::new();
+            append(
+                &mut obligations,
+                &assumptions,
+                std::slice::from_ref(&required),
+            );
+            assert!(std::sync::Arc::ptr_eq(
+                obligations[0]
+                    .call_requirement_site()
+                    .expect("append preserves call source"),
+                &source
+            ));
+        }
+
+        let mut under_path = Vec::new();
+        append_required_proof_obligations_under_path_context(
+            &mut under_path,
+            &assumptions,
+            std::slice::from_ref(&required),
+            &[],
+            &[],
+        );
+        assert!(under_path[0].call_requirement_site().is_some());
+
+        let conflicting = ProofObligation::verification_condition(proposition)
+            .with_call_requirement_site(call_source("other", 0));
+        append_required_proof_obligations(
+            &mut under_path,
+            &assumptions,
+            std::slice::from_ref(&conflicting),
+        );
+        assert!(
+            under_path[0].call_requirement_site().is_none(),
+            "conflicting duplicate provenance must fail closed"
+        );
+    }
 
     #[test]
     fn integer_conversion_obligation_merge_preserves_kind_and_context() {

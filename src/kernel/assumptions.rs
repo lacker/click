@@ -3734,6 +3734,7 @@ impl ProofObligation {
             proposition,
             context: None,
             assumable: true,
+            call_requirement_site: None,
             introductions: None,
         }
     }
@@ -3743,6 +3744,7 @@ impl ProofObligation {
             proposition,
             context: None,
             assumable: false,
+            call_requirement_site: None,
             introductions: None,
         }
     }
@@ -3777,6 +3779,22 @@ impl ProofObligation {
     /// a lowering built it. Indexed access by the consumer; no scan here.
     pub fn introductions(&self) -> Option<&crate::kernel::LoweringIntroductions> {
         self.introductions.as_deref()
+    }
+
+    /// The exact source-side identity for a required call precondition, when
+    /// this obligation came from a selected callee contract.
+    pub(crate) fn call_requirement_site(&self) -> Option<&std::sync::Arc<CallRequirementSource>> {
+        self.call_requirement_site.as_ref()
+    }
+
+    /// Attach source-side call identity without changing the checked
+    /// proposition identity used by obligation indexes.
+    pub(crate) fn with_call_requirement_site(
+        mut self,
+        site: std::sync::Arc<CallRequirementSource>,
+    ) -> Self {
+        self.call_requirement_site = Some(site);
+        self
     }
 
     pub(super) fn shared_introductions(
@@ -3830,6 +3848,7 @@ impl ProofObligation {
             proposition: f(self.proposition),
             context: self.context,
             assumable: self.assumable,
+            call_requirement_site: None,
             // The chain describes the head nodes of the proposition it was
             // recorded for. A rewrite adds or removes head nodes, so the
             // record is dropped rather than left describing another shape.

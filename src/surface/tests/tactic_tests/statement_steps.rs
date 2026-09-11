@@ -371,12 +371,44 @@ fn failed_call_step_reports_its_unresolved_required_precondition() {
         Some("either_positive precondition")
     );
     assert!(matches!(requirement.proposition, Proposition::Or(_, _)));
+    let call_site = requirement
+        .call_site
+        .as_ref()
+        .expect("call requirements retain their selected call site");
+    assert_eq!(call_site.callee, "either_positive");
+    assert_eq!(call_site.interface.as_ref(), "either_positive");
+    assert_eq!(call_site.candidate_ordinal, 0);
+    assert_eq!(call_site.requirement_ordinal, 0);
+    assert_eq!(call_site.source_requirement_ordinal, Some(0));
+    assert_eq!(
+        call_site.source_arguments.as_slice(),
+        [
+            CExpression::Variable("x".to_string()),
+            CExpression::Variable("y".to_string())
+        ]
+    );
 
     let wrapped = error
         .clone()
         .with_context("outer context")
         .with_prefix("branch: ");
     assert_eq!(wrapped.unresolved_requirement(), Some(requirement));
+}
+
+#[test]
+fn ordinary_requirement_errors_have_no_call_site_metadata() {
+    let obligation = ProofObligation::verification_condition(Proposition::Predicate {
+        name: "ordinary_requirement".to_string(),
+        arguments: Vec::new(),
+    });
+    let error = ClickError::new("ordinary requirement").with_unresolved_requirement(&obligation);
+    assert!(
+        error
+            .unresolved_requirement()
+            .expect("structured ordinary requirement")
+            .call_site
+            .is_none()
+    );
 }
 
 #[test]

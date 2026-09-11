@@ -714,6 +714,7 @@ impl CFunction {
             borrowed_resource_ensures: Vec::new(),
             resource_constructors: Vec::new(),
             contract_requires: Vec::new(),
+            contract_requirement_sources: ContractRequirementSources::default(),
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
             contract_effect_claim_required: false,
@@ -835,12 +836,30 @@ impl CFunction {
         opaque_supported: bool,
     ) -> Self {
         self.contract_requires = requires;
+        self.contract_requirement_sources =
+            ContractRequirementSources(vec![None; self.contract_requires.len()]);
         self.contract_ensures = ensures;
         self.contract_mutable = mutable;
         self.contract_effect_claim_required = !self.contract_mutable.is_empty();
         self.resource_derived_mutable_frame = false;
         self.contract_claims = claims;
         self.opaque_contract_supported = opaque_supported;
+        self
+    }
+
+    pub(crate) fn with_contract_requirement_sources(mut self, sources: Vec<Option<usize>>) -> Self {
+        assert_eq!(
+            sources.len(),
+            self.contract_requires.len(),
+            "contract requirement source map must match lowered requirements"
+        );
+        self.contract_requirement_sources = ContractRequirementSources(sources);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn without_test_contract_requirement_sources(mut self) -> Self {
+        self.contract_requirement_sources = ContractRequirementSources::default();
         self
     }
 
@@ -994,6 +1013,17 @@ impl CFunction {
 
     pub fn contract_requires(&self) -> &[SpecProposition] {
         &self.contract_requires
+    }
+
+    pub(crate) fn contract_requirement_sources(&self) -> &[Option<usize>] {
+        self.contract_requirement_sources.as_slice()
+    }
+
+    pub(crate) fn contract_requirement_source(&self, index: usize) -> Option<Option<usize>> {
+        self.contract_requirement_sources
+            .as_slice()
+            .get(index)
+            .copied()
     }
 
     pub fn contract_ensures(&self) -> &[SpecProposition] {

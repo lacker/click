@@ -226,6 +226,280 @@ fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
     }
 }
 
+#[test]
+fn unresolved_call_requirements_retain_selected_source_site_identity() {
+    let function = c_function(
+        CType::Int32,
+        "requires_positive",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("x")),
+            operator: CComparisonOperator::GreaterThan,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        vec![],
+        vec![],
+        vec![],
+        true,
+    );
+    let contract = CFunctionContract::new("RequiresPositive", function).unwrap();
+    let arguments = vec![c_int32_literal(0)];
+    let first_state = CState::new().with_memory(CMemory::new().with_block("first", 4));
+    let second_state = CState::new().with_memory(CMemory::new().with_block("second", 4));
+    let run = |state: &CState| {
+        execute_c_function_contracts_paths(
+            state,
+            &[&contract],
+            &arguments,
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap()
+    };
+    let first = run(&first_state);
+    let second = run(&second_state);
+    let first_site = first[0].obligations[0]
+        .call_requirement_site()
+        .expect("the first required call should carry source identity");
+    let second_site = second[0].obligations[0]
+        .call_requirement_site()
+        .expect("the second required call should carry source identity");
+    assert_eq!(first_site.callee, "requires_positive");
+    assert_eq!(second_site.callee, "requires_positive");
+    assert_eq!(first_site.interface.as_ref(), "RequiresPositive");
+    assert_eq!(second_site.interface.as_ref(), "RequiresPositive");
+    assert_eq!(first_site.candidate_ordinal, 0);
+    assert_eq!(second_site.candidate_ordinal, 0);
+    assert_eq!(first_site.requirement_ordinal, 0);
+    assert_eq!(second_site.requirement_ordinal, 0);
+    assert_eq!(first_site.source_requirement_ordinal, None);
+    assert_eq!(second_site.source_requirement_ordinal, None);
+    assert_eq!(first_site.source_arguments.as_slice(), arguments.as_slice());
+    assert_eq!(
+        second_site.source_arguments.as_slice(),
+        arguments.as_slice()
+    );
+    assert_eq!(
+        first_site.source_snapshot,
+        CMemorySnapshotIdentity::of(first_state.memory())
+    );
+    assert_eq!(
+        second_site.source_snapshot,
+        CMemorySnapshotIdentity::of(second_state.memory())
+    );
+    assert_ne!(
+        first_site.source_snapshot, second_site.source_snapshot,
+        "same callee and arguments must remain separated by source snapshot identity"
+    );
+}
+
+#[test]
+fn selected_contract_and_requirement_ordinals_stay_with_their_call() {
+    let template = c_function(
+        CType::Int32,
+        "same_target",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        vec![
+            SpecProposition::Predicate {
+                name: "first_requirement".to_string(),
+                arguments: vec![],
+            },
+            SpecProposition::Predicate {
+                name: "second_requirement".to_string(),
+                arguments: vec![],
+            },
+        ],
+        vec![],
+        vec![],
+        vec![],
+        true,
+    )
+    .with_contract_requirement_sources(vec![None, Some(1)]);
+    let first = CFunctionContract::new("FirstInterface", template.clone()).unwrap();
+    let second = CFunctionContract::new("SecondInterface", template).unwrap();
+    let paths = execute_c_function_contracts_paths(
+        &CState::new(),
+        &[&first, &second],
+        &[c_int32_literal(0)],
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new().with_selected_call_contract("SecondInterface"),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    let sources = paths[0]
+        .obligations
+        .iter()
+        .filter_map(|obligation| obligation.call_requirement_site())
+        .collect::<Vec<_>>();
+    assert_eq!(sources.len(), 2);
+    assert!(
+        sources
+            .iter()
+            .all(|source| source.interface.as_ref() == "SecondInterface")
+    );
+    assert!(sources.iter().all(|source| source.callee == "same_target"));
+    assert!(sources.iter().all(|source| source.candidate_ordinal == 1));
+    assert_eq!(sources[0].requirement_ordinal, 0);
+    assert_eq!(sources[1].requirement_ordinal, 1);
+    assert_eq!(sources[0].source_requirement_ordinal, None);
+    assert_eq!(sources[1].source_requirement_ordinal, Some(1));
+    assert!(std::sync::Arc::ptr_eq(&sources[0].site, &sources[1].site));
+}
+
+#[test]
+fn calls_without_unresolved_requirements_do_not_construct_call_site_metadata() {
+    let function = c_function(
+        CType::Int32,
+        "established",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_variable("x")),
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true);
+    let contract = CFunctionContract::new("Established", function).unwrap();
+
+    CallRequirementSite::reset_test_construction_count();
+    let paths = execute_c_function_contracts_paths(
+        &CState::new(),
+        &[&contract],
+        &[c_int32_literal(7)],
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+
+    assert!(matches!(paths[0].outcome, CFunctionOutcome::Return { .. }));
+    assert_eq!(
+        CallRequirementSite::test_construction_count(),
+        0,
+        "established calls must not construct or intern carrier metadata"
+    );
+}
+
+#[test]
+fn missing_contract_requirement_source_map_fails_closed() {
+    let function = c_function(
+        CType::Int32,
+        "missing_map",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        vec![SpecProposition::Predicate {
+            name: "requirement".to_string(),
+            arguments: vec![],
+        }],
+        vec![],
+        vec![],
+        vec![],
+        true,
+    )
+    .without_test_contract_requirement_sources();
+    let contract = CFunctionContract::new("MissingMap", function).unwrap();
+    let paths = execute_c_function_contracts_paths(
+        &CState::new(),
+        &[&contract],
+        &[c_int32_literal(0)],
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        paths[0].outcome,
+        CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(ref message))
+            if message.contains("source map")
+    ));
+    assert!(paths[0].obligations.is_empty());
+}
+
+#[test]
+fn contract_source_maps_do_not_change_function_semantic_identity() {
+    let requirements = vec![SpecProposition::Predicate {
+        name: "requirement".to_string(),
+        arguments: vec![],
+    }];
+    let base = c_function(
+        CType::Int32,
+        "same_identity",
+        vec![],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(requirements, vec![], vec![], vec![], true);
+    let mapped = base
+        .clone()
+        .with_contract_requirement_sources(vec![Some(0)]);
+    assert_eq!(base, mapped);
+    assert_eq!(base.cmp(&mapped), std::cmp::Ordering::Equal);
+    use std::hash::{Hash, Hasher};
+    let mut base_hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut mapped_hasher = std::collections::hash_map::DefaultHasher::new();
+    base.hash(&mut base_hasher);
+    mapped.hash(&mut mapped_hasher);
+    assert_eq!(base_hasher.finish(), mapped_hasher.finish());
+}
+
+#[test]
+fn call_snapshot_identity_work_does_not_scale_with_unrelated_memory() {
+    let small = CMemory::new();
+    let large = (0..256).fold(CMemory::new(), |memory, index| {
+        memory.with_block(format!("unrelated{index}"), 4)
+    });
+    let (_, small_work) =
+        crate::instrumentation::measure_deterministic_work(|| CMemorySnapshotIdentity::of(&small));
+    let (_, large_work) =
+        crate::instrumentation::measure_deterministic_work(|| CMemorySnapshotIdentity::of(&large));
+    assert_eq!(
+        small_work, large_work,
+        "snapshot identity must not scan unrelated memory"
+    );
+}
+
+#[test]
+fn empty_requirement_lowering_retains_selected_call_source() {
+    let function = c_function(
+        CType::Int32,
+        "empty_requirement_path",
+        vec![],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("missing")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        vec![],
+        vec![],
+        vec![],
+        true,
+    );
+    let contract = CFunctionContract::new("EmptyRequirement", function).unwrap();
+    let paths = execute_c_function_contracts_paths(
+        &CState::new(),
+        &[&contract],
+        &[],
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert_eq!(paths[0].obligations.len(), 1);
+    let source = paths[0].obligations[0]
+        .call_requirement_site()
+        .expect("empty lowering path is still a selected call requirement");
+    assert_eq!(source.interface.as_ref(), "EmptyRequirement");
+    assert_eq!(source.requirement_ordinal, 0);
+    assert_eq!(source.source_requirement_ordinal, None);
+}
+
 fn interface(index: usize) -> CFunctionContract {
     let function = c_function(
         CType::Int32,

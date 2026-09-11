@@ -3889,6 +3889,7 @@ pub(in crate::surface) fn build_function_environment(
                 let resource_constructors = function_resource_constructors(function_block)?;
                 let (
                     contract_requires,
+                    contract_requirement_sources,
                     contract_ensures,
                     contract_mutable,
                     contract_claims,
@@ -3923,7 +3924,8 @@ pub(in crate::surface) fn build_function_environment(
                         contract_mutable,
                         contract_claims,
                         opaque_supported,
-                    );
+                    )
+                    .with_contract_requirement_sources(contract_requirement_sources);
                 if resource_derived_mutable_frame {
                     function.with_resource_derived_mutable_frame()
                 } else {

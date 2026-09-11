@@ -4211,6 +4211,7 @@ pub(in crate::surface) struct UnresolvedRequirement {
     pub(in crate::surface) proposition: Proposition,
     pub(in crate::surface) context: Option<String>,
     pub(in crate::surface) introductions: crate::kernel::LoweringIntroductions,
+    pub(in crate::surface) call_site: Option<std::sync::Arc<crate::kernel::CallRequirementSource>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4996,6 +4997,7 @@ impl ClickError {
             proposition: obligation.proposition().clone(),
             context: obligation.context().map(str::to_owned),
             introductions: obligation.introductions().cloned().unwrap_or_default(),
+            call_site: obligation.call_requirement_site().cloned(),
         }));
         self
     }
