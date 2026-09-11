@@ -335,6 +335,15 @@ fn materialize_symbolic_access_resource_cells(
 /// the same cell. Without this check a clause could address memory through
 /// an arbitrary parameter link while a requirement naming the same link was
 /// refused, which is how adding a guard to a contract used to make it fail.
+///
+/// The entry state already carries what every clause of the section supplies,
+/// including the cells a folded composite holds, so this decides the whole
+/// clause set at once and clause order does not enter into it. That is the
+/// same question the kernel's section evaluator answers when it cannot read a
+/// clause's base at all, so a refusal here identifies the clause -- or the
+/// clauses that stall together -- in the kernel's wording
+/// (`resource_clause_position_note`, `resource_clause_stall_note`) rather
+/// than inventing a second one for one defect.
 pub(in crate::surface) fn check_resource_segment_base_loadability(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
@@ -342,10 +351,15 @@ pub(in crate::surface) fn check_resource_segment_base_loadability(
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Result<(), ClickError> {
-    for requirement in requires {
-        let Requirement::Resource(resource) = requirement.inner() else {
-            continue;
-        };
+    let clauses = requires
+        .iter()
+        .filter_map(|requirement| match requirement.inner() {
+            Requirement::Resource(resource) => Some(resource),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut stalled = Vec::new();
+    for (position, resource) in clauses.iter().enumerate() {
         let segments: &[ContractSegment] = match resource {
             ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
                 std::slice::from_ref(segment)
@@ -356,22 +370,36 @@ pub(in crate::surface) fn check_resource_segment_base_loadability(
             | ResourceClause::Quantified { .. } => continue,
         };
         for segment in segments {
-            check_segment_base_loadability(
+            let Err(message) = check_segment_base_loadability(
                 &segment.base,
                 parameters,
                 arguments,
                 state,
                 assumptions,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "could not address resource clause `{}`: {message}",
-                    crate::surface::diagnostics::describe_contract_segment(segment)
-                ))
-            })?;
+            ) else {
+                continue;
+            };
+            stalled.push((
+                position,
+                crate::surface::diagnostics::describe_contract_segment(segment),
+                message,
+            ));
+            break;
         }
     }
-    Ok(())
+    let Some((position, segment, message)) = stalled.first() else {
+        return Ok(());
+    };
+    // One unaddressed clause is that clause's own problem. Two or more stall
+    // together: no order of them supplies what they read, so name a second
+    // position instead of sending the user to whichever was written first.
+    let note = match stalled.get(1) {
+        Some((other, _, _)) => crate::kernel::resource_clause_stall_note(*position, *other),
+        None => crate::kernel::resource_clause_position_note(*position, clauses.len()),
+    };
+    Err(ClickError::new(format!(
+        "could not address resource clause `{segment}` ({note}): {message}"
+    )))
 }
 
 /// Checks the loads a segment base performs, innermost first, so a chain

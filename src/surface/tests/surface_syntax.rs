@@ -2327,6 +2327,9 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
                 surface: ContractSegmentSurface::Field {
+                    base: Some(Box::new(ContractExpression::CFragment(
+                        CExpression::Variable("obj".to_string())
+                    ))),
                     name: "ref_count".to_string(),
                     element_width: None,
                     element_type: None,
@@ -2588,6 +2591,9 @@ fn parses_pilot_struct_field_owned_segment() {
             start: CExpression::Value(int32(0)),
             end: CExpression::Value(int32(1)),
             surface: ContractSegmentSurface::Field {
+                base: Some(Box::new(ContractExpression::CFragment(
+                    CExpression::Variable("obj".to_string())
+                ))),
                 name: "ref_count".to_string(),
                 element_width: None,
                 element_type: None,

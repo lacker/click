@@ -55,6 +55,7 @@ pub(crate) use functions::stable_symbolic_pointer_cell_value;
 pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
+pub(crate) use functions::{resource_clause_position_note, resource_clause_stall_note};
 pub(crate) use loops::{c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge};
 pub use memory_provenance::*;
 pub(crate) use primitives::resource_context_has_symbolic_int32_range_read;

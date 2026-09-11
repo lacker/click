@@ -11568,6 +11568,29 @@ fn resource_clause_section_supply(
     base.unchecked_with_facts(views)
 }
 
+/// Names which resource clause of a contract section could not be addressed.
+///
+/// Two checks reach this conclusion about the same contract: the surface
+/// refuses a clause whose segment base reads a cell the contract holds no
+/// authority over, and this evaluator refuses a clause whose base it cannot
+/// read at all. They are one defect, so they identify the clause with one
+/// wording, formatted here and in [`resource_clause_stall_note`].
+pub(crate) fn resource_clause_position_note(index: usize, total: usize) -> String {
+    format!("resource clause {} of {total}", index + 1)
+}
+
+/// Names two clauses that no order addresses. Clause order does not decide a
+/// section, so reporting only the first position would send the user to a
+/// clause that is fine on its own.
+pub(crate) fn resource_clause_stall_note(index: usize, other: usize) -> String {
+    format!(
+        "resource clauses {} and {} cannot be evaluated in any order: each needs a cell no \
+         clause evaluated before it supplies",
+        index + 1,
+        other + 1
+    )
+}
+
 /// Names which resource clause of a contract section failed to evaluate. The
 /// evaluator walks the declared clauses in order, so the position is the only
 /// identification available here, and it is enough for a user to find the
@@ -11582,8 +11605,8 @@ fn resource_clause_runtime_error(
         return error;
     };
     CRuntimeError::FunctionContract(format!(
-        "{message} (resource clause {} of {total})",
-        index + 1
+        "{message} ({})",
+        resource_clause_position_note(index, total)
     ))
 }
 
@@ -11600,9 +11623,6 @@ fn resource_clause_failure_awaits_supply(error: &CRuntimeError) -> bool {
         || message.starts_with("could not evaluate resource `")
 }
 
-/// Names two clauses that no order evaluates. Clause order does not decide a
-/// section, so reporting only the first position would send the user to a
-/// clause that is fine on its own.
 fn resource_clause_cycle_runtime_error(
     error: CRuntimeError,
     index: usize,
@@ -11612,10 +11632,8 @@ fn resource_clause_cycle_runtime_error(
         return error;
     };
     CRuntimeError::FunctionContract(format!(
-        "{message} (resource clauses {} and {} cannot be evaluated in any order: each needs a \
-         cell no clause evaluated before it supplies)",
-        index + 1,
-        other + 1
+        "{message} ({})",
+        resource_clause_stall_note(index, other)
     ))
 }
 

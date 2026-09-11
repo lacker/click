@@ -2309,6 +2309,11 @@ enum ContractSegmentSurface {
         end: ContractExpression,
     },
     Field {
+        /// How the contract spelled the struct the field belongs to, when the
+        /// parse had it. A base reached through a link reads as `old->left`
+        /// there, which is what the user wrote; the lowered `CExpression` for
+        /// the same place reads as `load_int32_pointer(old)`, which is not.
+        base: Option<Box<ContractExpression>>,
         name: String,
         element_width: Option<u32>,
         element_type: Option<CType>,

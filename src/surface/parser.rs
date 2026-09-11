@@ -5061,6 +5061,7 @@ impl Parser {
                     self.validate_field_place(&field)?;
                     return Ok(vec![Self::field_segment_from_metadata(
                         base,
+                        Some(surface_base.clone()),
                         &field_name,
                         &field,
                     )]);
@@ -5081,11 +5082,16 @@ impl Parser {
                     self.validate_field_place(&field)?;
                     return Ok(vec![Self::field_segment_from_metadata(
                         base,
+                        Some(surface_base.clone()),
                         &field_name,
                         &field,
                     )]);
                 }
-                return Ok(vec![self.resolve_field_segment(base, &field_name)?]);
+                return Ok(vec![self.resolve_field_segment(
+                    base,
+                    Some(surface_base.clone()),
+                    &field_name,
+                )?]);
             }
             let (
                 lowered,
@@ -5179,6 +5185,9 @@ impl Parser {
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
                 surface: ContractSegmentSurface::Field {
+                    // `surface_base` has already absorbed this field name, so
+                    // there is no parent spelling left to print beside it.
+                    base: None,
                     name,
                     element_width: Some(element_width),
                     element_type: Some(element_type),
@@ -5335,6 +5344,9 @@ impl Parser {
             self.validate_field_place(&absolute)?;
             segments.push(Self::field_segment_from_metadata(
                 base.clone(),
+                // An aggregate leaf's name is already the whole dotted path
+                // from this base, so it prints beside the lowered base.
+                None,
                 &full_name,
                 &absolute,
             ));
@@ -5389,6 +5401,7 @@ impl Parser {
     fn resolve_field_segment(
         &self,
         base: CExpression,
+        surface_base: Option<ContractExpression>,
         field_name: &str,
     ) -> Result<ContractSegment, ClickError> {
         let Some(field) = self.resolve_field_metadata(&base, field_name)? else {
@@ -5400,6 +5413,7 @@ impl Parser {
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
                 surface: ContractSegmentSurface::Field {
+                    base: surface_base.map(Box::new),
                     name: field_name.to_string(),
                     element_width: None,
                     element_type: None,
@@ -5407,11 +5421,17 @@ impl Parser {
             });
         };
         self.validate_field_place(&field)?;
-        Ok(Self::field_segment_from_metadata(base, field_name, &field))
+        Ok(Self::field_segment_from_metadata(
+            base,
+            surface_base,
+            field_name,
+            &field,
+        ))
     }
 
     fn field_segment_from_metadata(
         base: CExpression,
+        surface_base: Option<ContractExpression>,
         field_name: &str,
         field: &ResolvedField,
     ) -> ContractSegment {
@@ -5435,6 +5455,7 @@ impl Parser {
                     (field.slot_end_bytes - field.offset_bytes) / element_width,
                 )),
                 surface: ContractSegmentSurface::Field {
+                    base: surface_base.map(Box::new),
                     name: field_name.to_string(),
                     element_width: Some(element_width),
                     element_type: Some(element_type),
@@ -5458,6 +5479,7 @@ impl Parser {
             start: CExpression::Value(int32(start)),
             end: CExpression::Value(int32(end)),
             surface: ContractSegmentSurface::Field {
+                base: surface_base.map(Box::new),
                 name: field_name.to_string(),
                 // Non-array fields use their ABI width as the resource slot
                 // width. Smaller integer fields retain their natural
