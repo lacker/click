@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::LoweringIntroduction;
 
 pub(super) fn surface_logical_children(
     goal: &ClickProposition,
@@ -134,17 +135,29 @@ pub(super) fn surface_implication_parts(
     }
 }
 
+/// Transcribes a context-free normalization as the explicit structure that
+/// proves it, reading `introductions` — the head chain the lowering that
+/// produced `goal` recorded for it — to tell a node the spec wrote from one
+/// lowering inserted.
+///
+/// The chain is linear and descends through introducible nodes, so an
+/// implication or universal arm consumes its head and recurses with the
+/// rest. A conjunction or disjunction ends it: its children are not head
+/// nodes of the lowered proposition, and those arms recurse with no record.
+/// Pass an empty chain for a goal whose lowering recorded none.
 pub(super) fn plan_context_free_normalization(
     goal: &Proposition,
     surface_goal: &ClickProposition,
+    introductions: &[LoweringIntroduction],
 ) -> Option<Vec<ProofTactic>> {
-    plan_context_free_normalization_with_assumptions(goal, surface_goal, &[])
+    plan_context_free_normalization_with_assumptions(goal, surface_goal, &[], introductions)
 }
 
 fn plan_context_free_normalization_with_assumptions(
     goal: &Proposition,
     surface_goal: &ClickProposition,
     assumptions: &[(Proposition, ClickProposition)],
+    introductions: &[LoweringIntroduction],
 ) -> Option<Vec<ProofTactic>> {
     if assumptions
         .iter()
@@ -166,19 +179,24 @@ fn plan_context_free_normalization_with_assumptions(
                     left,
                     surface_left,
                     assumptions,
+                    &[],
                 )?,
                 right_tactics: plan_context_free_normalization_with_assumptions(
                     right,
                     surface_right,
                     assumptions,
+                    &[],
                 )?,
             })])
         }
         Proposition::Or(left, right) => {
             let (surface_left, surface_right) = surface_logical_children(surface_goal, false)?;
-            if let Some(proof) =
-                plan_context_free_normalization_with_assumptions(left, &surface_left, assumptions)
-            {
+            if let Some(proof) = plan_context_free_normalization_with_assumptions(
+                left,
+                &surface_left,
+                assumptions,
+                &[],
+            ) {
                 return Some(vec![
                     ProofTactic::Have(ProofHave {
                         proposition: surface_left,
@@ -187,9 +205,12 @@ fn plan_context_free_normalization_with_assumptions(
                     ProofTactic::Left,
                 ]);
             }
-            if let Some(proof) =
-                plan_context_free_normalization_with_assumptions(right, &surface_right, assumptions)
-            {
+            if let Some(proof) = plan_context_free_normalization_with_assumptions(
+                right,
+                &surface_right,
+                assumptions,
+                &[],
+            ) {
                 return Some(vec![
                     ProofTactic::Have(ProofHave {
                         proposition: surface_right,
@@ -199,6 +220,25 @@ fn plan_context_free_normalization_with_assumptions(
                 ]);
             }
             None
+        }
+        // Lowering inserts implications that guard a body with a path fact
+        // it established or with an obligation the state did not discharge.
+        // The record is what says this node is one of those: `intro`
+        // exposes it and the written goal stays focused underneath.
+        Proposition::Implies(_, consequent)
+            if matches!(
+                introductions.first(),
+                Some(LoweringIntroduction::PathFactGuard | LoweringIntroduction::ObligationGuard)
+            ) =>
+        {
+            let mut tactics = vec![ProofTactic::Intro];
+            tactics.extend(plan_context_free_normalization_with_assumptions(
+                consequent,
+                surface_goal,
+                assumptions,
+                &introductions[1..],
+            )?);
+            Some(tactics)
         }
         Proposition::Implies(antecedent, consequent) => {
             let (surface_antecedent, surface_consequent) = surface_implication_parts(surface_goal)?;
@@ -222,19 +262,28 @@ fn plan_context_free_normalization_with_assumptions(
                 consequent,
                 &surface_consequent,
                 &introduced,
+                introductions.get(1..).unwrap_or_default(),
             )?);
             Some(tactics)
         }
         Proposition::ForAll { body, .. } => {
             // A universal is introduced, never normalized: the binder is a
             // proof step the certificate must name. The written body under
-            // the binder keeps the Surface goal focused.
+            // the binder keeps the Surface goal focused. A record that
+            // reaches here must agree that this node is written.
+            if !matches!(
+                introductions.first(),
+                None | Some(LoweringIntroduction::WrittenUniversal { .. })
+            ) {
+                return None;
+            }
             let surface_body = written_universal_body(surface_goal)?;
             let mut tactics = vec![ProofTactic::Intro];
             tactics.extend(plan_context_free_normalization_with_assumptions(
                 body,
                 &surface_body,
                 assumptions,
+                introductions.get(1..).unwrap_or_default(),
             )?);
             Some(tactics)
         }
@@ -526,19 +575,22 @@ pub(super) fn lower_surface_atomic_derivation(
         "atomic derivation lowering",
         "derivation lowering: conclusion lowering",
     );
-    let lowered_conclusion = lower_fixed_state_proposition(
-        &conclusion,
-        available,
-        parameters,
-        arguments,
-        view.old_reference_state(state),
-        state,
-        None,
-        view.recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
-    )
-    .map_err(ClickError::new)?;
+    // The record this lowering makes is what the normalization plan below
+    // reads to tell a node the spec wrote from one lowering inserted.
+    let (lowered_conclusion, conclusion_introductions) =
+        lower_fixed_state_proposition_with_assumptions_recording_introductions(
+            &conclusion,
+            &assumptions_from_propositions(available),
+            parameters,
+            arguments,
+            view.old_reference_state(state),
+            state,
+            None,
+            view.recorded_snapshots,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(ClickError::new)?;
     // `normalize()` must also survive a fresh source view. The full
     // certificate-generation context can materialize both sides of a framed
     // snapshot equality to one term; direct surface facts retain the
@@ -1085,7 +1137,12 @@ pub(super) fn lower_surface_atomic_derivation(
         )));
     }
     if premise_pairs.is_empty() && surface_normalizes_context_free {
-        let tactics = plan_context_free_normalization(&lowered_conclusion, &conclusion).ok_or_else(|| {
+        let tactics = plan_context_free_normalization(
+            &lowered_conclusion,
+            &conclusion,
+            &conclusion_introductions,
+        )
+        .ok_or_else(|| {
             ClickError::new(
                 "context-free derivation could not be transcribed as explicit structural normalization",
             )
@@ -2287,7 +2344,10 @@ pub(super) fn lower_restricted_simp_plan(
                     "`simp() using` selected structural context-free normalization, but its surface goal was not retained",
                 )
             })?;
-            return plan_context_free_normalization(goal, surface_goal).ok_or_else(|| {
+            // This plan is checked against a goal the caller lowered
+            // elsewhere and did not hand over with its record, so the
+            // structure below the head is refined from the written form.
+            return plan_context_free_normalization(goal, surface_goal, &[]).ok_or_else(|| {
                 ClickError::new(
                     "`simp() using` could not transcribe context-free normalization as explicit structure",
                 )

@@ -1831,31 +1831,38 @@ pub(super) fn surface_simp_plan_proof(
     let proof = match plan {
         SimpEvidence::Assumption => SourceProof::Script(vec![ProofTactic::Assumption]),
         SimpEvidence::Normalize => {
-            let lowered_goal = lower_fixed_state_proposition(
-                &active_surface_goal,
-                available,
-                parameters,
-                arguments,
-                view.old_reference_state(state),
-                state,
-                None,
-                view.recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "could not lower the context-free smart proof goal: {message}"
-                ))
-            })?;
+            // The plan below reads the record this lowering makes, so a
+            // node lowering inserted is introduced without consuming a
+            // written connective that does not correspond to it.
+            let (lowered_goal, goal_introductions) =
+                lower_fixed_state_proposition_with_assumptions_recording_introductions(
+                    &active_surface_goal,
+                    &assumptions_from_propositions(available),
+                    parameters,
+                    arguments,
+                    view.old_reference_state(state),
+                    state,
+                    None,
+                    view.recorded_snapshots,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "could not lower the context-free smart proof goal: {message}"
+                    ))
+                })?;
             SourceProof::Script(
-                plan_context_free_normalization(&lowered_goal, &active_surface_goal).ok_or_else(
-                    || {
-                        ClickError::new(
-                            "could not transcribe the context-free smart proof as explicit structural normalization",
-                        )
-                    },
-                )?,
+                plan_context_free_normalization(
+                    &lowered_goal,
+                    &active_surface_goal,
+                    &goal_introductions,
+                )
+                .ok_or_else(|| {
+                    ClickError::new(
+                        "could not transcribe the context-free smart proof as explicit structural normalization",
+                    )
+                })?,
             )
         }
         SimpEvidence::Derivation(derivation) => {

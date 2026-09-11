@@ -1168,12 +1168,13 @@ fn lower_pure_simp_certificate(
     context: &PureTheoremContext,
     goal: &Proposition,
     surface_goal: &ClickProposition,
+    goal_introductions: &crate::kernel::LoweringIntroductions,
     certificate: &SimpEvidence,
 ) -> Option<Vec<ProofTactic>> {
     let tactic = match certificate {
         SimpEvidence::Assumption => ProofTactic::Assumption,
         SimpEvidence::Normalize => {
-            let tactics = plan_context_free_normalization(goal, surface_goal)?;
+            let tactics = plan_context_free_normalization(goal, surface_goal, goal_introductions)?;
             ProofCertificate::from_proof_tactics(&tactics).ok()?;
             return Some(tactics);
         }
@@ -1208,7 +1209,8 @@ fn lower_pure_simp_certificate(
                 return Some(vec![tactic]);
             }
             if premise_pairs.is_empty() {
-                let tactics = plan_context_free_normalization(goal, surface_goal)?;
+                let tactics =
+                    plan_context_free_normalization(goal, surface_goal, goal_introductions)?;
                 ProofCertificate::from_proof_tactics(&tactics).ok()?;
                 return Some(tactics);
             } else if let Some(ordered) = recorded_signed_order_pairs(derivation, &premise_pairs)
@@ -1439,6 +1441,7 @@ fn verify_theorem_ensure(
                         context,
                         &goal,
                         surface_goal,
+                        &goal_introductions,
                         source_tactics.as_deref(),
                         predicate_environment,
                         click_function_environment,
@@ -2361,12 +2364,14 @@ fn surface_goal_contains_integer_quantifier(surface: &ClickProposition) -> bool 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pure_theorem_surface_certificate(
     theorem: &TheoremDefinition,
     claim_label: &str,
     context: &PureTheoremContext,
     goal: &Proposition,
     surface_goal: &ClickProposition,
+    goal_introductions: &crate::kernel::LoweringIntroductions,
     source_tactics: Option<&[ProofTactic]>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -2431,7 +2436,8 @@ fn pure_theorem_surface_certificate(
         );
     }
     if matches!(normalize_proposition(goal), SimpProposition::True) {
-        let tactics = plan_context_free_normalization(goal, surface_goal).ok_or_else(|| {
+        let tactics = plan_context_free_normalization(goal, surface_goal, goal_introductions)
+            .ok_or_else(|| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` could not transcribe normalization as explicit structure"
             ))
@@ -2538,8 +2544,14 @@ fn pure_theorem_surface_certificate(
     }
     let assumptions = assumptions_from_propositions(&context.requires);
     if let Some(plan) = plan_simp_certificate(goal, &assumptions)
-        && let Some(tactics) =
-            lower_pure_simp_certificate(theorem, context, goal, surface_goal, &plan)
+        && let Some(tactics) = lower_pure_simp_certificate(
+            theorem,
+            context,
+            goal,
+            surface_goal,
+            goal_introductions,
+            &plan,
+        )
     {
         return ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
