@@ -15,7 +15,7 @@ a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
 Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 10
-(slices d and e), 11 (first slice), 12, 13, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
+(slices d and e), 11 (first slice), 12, 13, 14, 16, and 17, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -716,7 +716,7 @@ closed by `arithmetic() using`, so this package does not depend on
 
 ### Package 6: one goal for loop-entry planning and validation
 
-**Landed** 2026-09-10 ("Share one goal between loop-entry planning and validation"). `loop_planning.rs::loop_entry_checked_goal` is the shared function. No fixture's expansion changed: the retained certificates already carried the introductions, so the defect was goal-versus-fact identity, not a missing step. The helper `invariant_lowering_under_guards` mirrors the `intro` shape heuristic and is package 7's to replace with provenance.
+**Landed** 2026-09-10 ("Share one goal between loop-entry planning and validation"). `loop_planning.rs::loop_entry_checked_goal` is the shared function. No fixture's expansion changed: the retained certificates already carried the introductions, so the defect was goal-versus-fact identity, not a missing step. The helper `invariant_lowering_under_guards` mirrored the `intro` shape heuristic; package 17 replaced it.
 
 **Entry points.** `src/surface/proof/execution_planning/loop_planning.rs`:
 planning strips leading implications with `planning_assumptions.proves`
@@ -759,8 +759,7 @@ bundles (`functions.rs`, `loops.rs`) carry no chain and fall back to
 structural refinement of the written form (packages 4 and 10), and
 `plan_context_free_normalization_with_assumptions` still pairs by shape
 below the recorded chain (package 8). The `invariant_lowering_under_guards`
-replacement was not done; package 8's owner does it while migrating the
-planner.
+replacement landed with package 17.
 
 **Entry points.** `src/kernel/reasoning/path_facts.rs::wrap_path_context`
 (about line 72; folds path obligations and facts into kernel `Implies` nodes
@@ -1155,6 +1154,30 @@ regression and the deletion becomes an explicit obligation instead.
 
 ### Package 17: provenance on kernel-built obligations
 
+**Landed** 2026-09-10 (four commits, "Record lowering provenance on
+kernel-built loop and call obligations" onward). `ProofObligation` carries
+`introductions: Option<Arc<LoweringIntroductions>>`, excluded from
+equality, hashing, and ordering so dedup is unaffected and dropped by
+`map_proposition`. Filled by the loop bundle collector (guards first, then
+the invariant lowering's own chain), the ranking collector (empty chain),
+and both call-requirement constructions in `prepare_verified_function_call`.
+`invariant_lowering_under_guards` is deleted; its replacement strips
+exactly the recorded guards and records no pairing when the record does
+not account for the goal's head. `plan_context_free_normalization` takes
+the recorded head chain: a recorded guard is introduced with the written
+goal left focused, a written connective is consumed, and a `ForAll` the
+record does not account for is refused rather than paired. Loop-entry
+planning and validation attach the chain offset by the stripped
+antecedents, so one certificate checks at all three sites. No fixture
+text or expansion changed. Left with reasons: `intro` on a loop-bundle
+member still reads no chain, because `apply_close_invariants_body`
+presents members through a surface synthesized from the kernel goal with
+fresh binder names, and aligning members to written invariants would be
+the forbidden shape pairing; the record is on the members, only the
+consumer is missing. The call-requirement chain has no surface consumer
+until package 10(c) turns requirements into emitted goals. Shape pairing
+below a conjunction or disjunction, where the head chain ends, remains.
+
 **Entry points.** `ProofObligation` (src/kernel/assumptions.rs), the loop
 bundle collection `loops.rs::collect_invariant_check_obligations_with_mode`
 and `collect_loop_ranking_obligations`, the call-requirement obligations in
@@ -1184,7 +1207,7 @@ planning, validation, and the entry check.
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 first slice, 12, 13, 14, 16.
 Open: 10 (slices a to c; d and e landed), 11 second slice after 10(b),
-17, then 15 last.
+then 15 last.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
