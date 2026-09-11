@@ -1485,6 +1485,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                         &path_assumptions,
                         algebraic_bindings,
                         budget,
+                        false,
                     )? {
                         let Some((merged_facts, merged_obligations)) =
                             merge_execution_pure_facts_and_obligations(
@@ -2991,6 +2992,7 @@ fn evaluate_spec_integer_pure_function_application_paths(
                 &path_assumptions,
                 algebraic_bindings,
                 budget,
+                true,
             )?;
             let single_path = argument_paths.len() == 1;
             let mut prefix = Some(values);
@@ -4078,6 +4080,7 @@ fn evaluate_spec_pure_function_application_paths(
                 &path_assumptions,
                 algebraic_bindings,
                 budget,
+                false,
             )? {
                 if let Some((merged_facts, merged_obligations)) =
                     merge_execution_pure_facts_and_obligations(
@@ -4123,6 +4126,7 @@ fn evaluate_spec_pure_function_argument_paths(
     assumptions: &PureFactContext,
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
+    retain_integer_call_domain: bool,
 ) -> ExecutionResult<Vec<SpecPureFunctionArgumentPath>> {
     match argument {
         SpecPureFunctionArgument::Integer(expression) => {
@@ -4157,18 +4161,22 @@ fn evaluate_spec_pure_function_argument_paths(
             // by the call itself.  Retain the disjunction of all normal
             // argument paths as a mandatory verification condition, just as
             // integer-to-machine conversion does above.
-            let domain = paths
-                .iter()
-                .filter_map(|path| {
-                    let propositions = path
-                        .facts
+            let domain = retain_integer_call_domain
+                .then(|| {
+                    paths
                         .iter()
-                        .filter(|fact| is_definedness_path_fact(fact.proposition()))
-                        .map(|fact| fact.proposition().clone())
-                        .collect::<Vec<_>>();
-                    (!propositions.is_empty()).then(|| proposition_and_all(propositions))
+                        .filter_map(|path| {
+                            let propositions = path
+                                .facts
+                                .iter()
+                                .filter(|fact| is_definedness_path_fact(fact.proposition()))
+                                .map(|fact| fact.proposition().clone())
+                                .collect::<Vec<_>>();
+                            (!propositions.is_empty()).then(|| proposition_and_all(propositions))
+                        })
+                        .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)))
                 })
-                .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)));
+                .flatten();
             Ok(paths
                 .into_iter()
                 .map(|path| {
