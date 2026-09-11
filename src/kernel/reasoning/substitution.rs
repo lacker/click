@@ -1532,10 +1532,10 @@ fn collect_integer_bound_variables_seen(
         IntegerTerm::Constant(_) | IntegerTerm::Machine(_) => {}
         IntegerTerm::PureFunctionApplication(application) => {
             for argument in application.arguments() {
-                if let PureFunctionArgument::Integer(value) = argument {
-                    if seen.insert(value.id()) {
-                        collect_integer_bound_variables_seen(value, variables, seen);
-                    }
+                if let PureFunctionArgument::Integer(value) = argument
+                    && seen.insert(value.id())
+                {
+                    collect_integer_bound_variables_seen(value, variables, seen);
                 }
             }
         }
