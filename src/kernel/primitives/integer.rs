@@ -62,6 +62,7 @@ struct SharedIntegerApplicationNode {
 }
 
 impl SharedIntegerApplication {
+    #[allow(dead_code)]
     pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
         static INTERNER: OnceLock<
             Mutex<
