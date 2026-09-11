@@ -12,12 +12,16 @@ theorem integer_exists_simp(x: Integer) {
         simp();
     }
 }
+theorem integer_forall_logical_simp() {
+    ensures logical: forall (z: Integer) { z == z and z == z } by { simp(); }
+}
 "#;
     verify_c0_sources(source, &[]).expect("Integer quantifier smart proofs should verify");
 
     for label in [
         "integer_forall_simp.ordered",
         "integer_exists_simp.witnessed",
+        "integer_forall_logical_simp.logical",
     ] {
         let expanded = expand_c0_claim_source_by_label(source, &[], label)
             .expect("the Integer quantifier claim should expand");
@@ -26,8 +30,11 @@ theorem integer_exists_simp(x: Integer) {
                 expanded.contains("integer_certificate"),
                 "{label}: {expanded}"
             );
-        } else {
+        } else if label.ends_with("witnessed") {
             assert!(expanded.contains("normalize();"), "{label}: {expanded}");
+        } else {
+            assert!(expanded.contains("intro();"), "{label}: {expanded}");
+            assert!(expanded.contains("both {"), "{label}: {expanded}");
         }
         verify_c0_sources(&expanded, &[]).unwrap_or_else(|error| {
             panic!("{label} expansion should recheck: {}", error.message())
