@@ -661,7 +661,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         source: &Proposition,
         hint: Variable,
     ) -> Result<(Proposition, Variable), PropositionCloseError> {
-        let (_, facts) = self
+        let (goal, facts) = self
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
         if !facts.contains_top_level(source) {
@@ -676,10 +676,13 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         else {
             return Err(PropositionCloseError::IntegerChoiceWrongSort);
         };
+        let goal_variables = crate::kernel::proposition_variables(goal.proposition());
+        let body_variables = crate::kernel::proposition_variables(body);
         let mut variable = hint;
         loop {
             if !facts.reserves_variable(variable)
-                && !crate::kernel::proposition_variables(body).contains(&variable)
+                && !goal_variables.contains(&variable)
+                && !body_variables.contains(&variable)
             {
                 break;
             }
