@@ -328,6 +328,122 @@ fn materialize_symbolic_access_resource_cells(
     Ok(memory)
 }
 
+/// Refuses a resource clause whose segment is addressed through a cell the
+/// contract does not hold. `views old->left->augmented` reads the parameter
+/// cell `old->left` to name its segment, so the entry state must justify
+/// that read exactly as it justifies a `requires old->left != 0` reading
+/// the same cell. Without this check a clause could address memory through
+/// an arbitrary parameter link while a requirement naming the same link was
+/// refused, which is how adding a guard to a contract used to make it fail.
+pub(in crate::surface) fn check_resource_segment_base_loadability(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Result<(), ClickError> {
+    for requirement in requires {
+        let Requirement::Resource(resource) = requirement.inner() else {
+            continue;
+        };
+        let segments: &[ContractSegment] = match resource {
+            ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
+                std::slice::from_ref(segment)
+            }
+            ResourceClause::MemoryAggregate { segments, .. } => segments,
+            ResourceClause::Named { .. }
+            | ResourceClause::Declared { .. }
+            | ResourceClause::Quantified { .. } => continue,
+        };
+        for segment in segments {
+            check_segment_base_loadability(
+                &segment.base,
+                parameters,
+                arguments,
+                state,
+                assumptions,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not address resource clause `{}`: {message}",
+                    crate::surface::diagnostics::describe_contract_segment(segment)
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Checks the loads a segment base performs, innermost first, so a chain
+/// such as `old->left->augmented` reports the first cell the contract does
+/// not hold rather than the last.
+fn check_segment_base_loadability(
+    base: &CExpression,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    let CExpression::TypedLoad {
+        pointer,
+        value_type,
+        ..
+    } = base
+    else {
+        return Ok(());
+    };
+    check_segment_base_loadability(pointer, parameters, arguments, state, assumptions)?;
+    // An inline array field is addressed by a typed load of the array
+    // itself. That reads no cell: the elements are the struct's own storage,
+    // and the segment covers them directly.
+    if matches!(
+        value_type,
+        CType::Int32Array(_)
+            | CType::UInt8Array(_)
+            | CType::Int16Array(_)
+            | CType::UInt16Array(_)
+            | CType::UInt32Array(_)
+            | CType::Int64Array(_)
+            | CType::UInt64Array(_)
+            | CType::Float32Array(_)
+            | CType::Float64Array(_)
+    ) {
+        return Ok(());
+    }
+    let Ok(values) = parameter_values(parameters, arguments) else {
+        return Ok(());
+    };
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    // The address of the cell, not its content: a base whose address this
+    // entry cannot evaluate is reported by the clause's own lowering.
+    let Ok(CValue::Pointer(cell)) = crate::surface::proof::evaluate_c_fragment_through_kernel(
+        pointer,
+        assumptions,
+        &values,
+        &array_refs,
+        state,
+        None,
+    ) else {
+        return Ok(());
+    };
+    let obligation = Proposition::CMemoryLoadable {
+        memory: state.memory().clone(),
+        base: cell.into_pointer(),
+        bytes: Bitvector32Term::Constant(value_type.byte_width()),
+    };
+    if crate::kernel::c_state_justifies_loadability_obligation(state, &obligation, assumptions) {
+        return Ok(());
+    }
+    Err(crate::surface::diagnostics::describe_missing_pure_fact(
+        &obligation,
+        &[],
+        &[],
+        parameters,
+        arguments,
+        &[],
+    ))
+}
+
 fn materialize_access_segment_cells(
     mut memory: CMemory,
     segment: &ContractSegment,

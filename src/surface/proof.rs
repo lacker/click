@@ -2379,6 +2379,19 @@ pub(super) fn initial_claim_context(
             requirement_pure_facts.insert(0, kernel);
         }
     }
+    // Resources are addressed in the same entry state that lowered the
+    // requirements, so a clause reading through a parameter cell and a
+    // requirement reading the same cell are justified by the same facts.
+    crate::surface::lowering::check_resource_segment_base_loadability(
+        function_block.requires(),
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &assumptions_from_propositions(&requirement_pure_facts),
+    )
+    .map_err(|error| {
+        ClickError::new(format!("`{claim_label}` setup failed: {}", error.message()))
+    })?;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;

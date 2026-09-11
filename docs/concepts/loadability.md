@@ -96,8 +96,15 @@ views obj->ref_count;
 consumes obj->data;
 ```
 
-Those resources imply loadability for the covered fields. Explicit ranges remain
-useful when a proof needs a broader footprint than one field:
+Those resources imply loadability for the covered fields. A resource addressed
+*through* a field reads that field to name itself, so the contract needs the link
+cell too: `views node->left->augmented` is only meaningful next to a resource
+covering `node->left`, such as `views node->left` or a composite holding it, and
+a `requires node->left != 0` guarding the link. A contract that names a segment
+through a cell it does not hold is refused where it is prepared.
+
+Explicit ranges remain useful when a proof needs a broader footprint than one
+field:
 
 <!-- verified-example: mdtests/pointer_range.md -->
 ```click
