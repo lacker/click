@@ -48,26 +48,7 @@ int32 nested_count(int32 n, int32 m) {
                 initialize by simp;
                 preserve by {
                     step();
-                    close_invariants by {
-                        both { simp(); }
-                        and { both { simp(); }
-                        and { both { simp(); }
-                        and { both { simp(); }
-                        and { both {
-                                  arithmetic() using {
-                                      at(statement(7).entry, j) >= 0;
-                                      at(statement(7).entry, j) < m;
-                                      m >= 0;
-                                  }
-                              }
-                        and {
-                                  arithmetic() using {
-                                      at(statement(7).entry, j) >= 0;
-                                      at(statement(7).entry, j) < m;
-                                      m >= 0;
-                                  }
-                        } } } } }
-                    }
+                    close_invariants();
                 }
             }
             have 0 <= i - 1 by {
@@ -75,13 +56,7 @@ int32 nested_count(int32 n, int32 m) {
             }
             step();
             have i >= 0 by { arithmetic() using { 0 <= i; } }
-            close_invariants by {
-                both { simp(); }
-                and {
-                    both { arithmetic() using { j >= 0; j <= m; m >= 0; } }
-                    and { simp(); }
-                }
-            }
+            close_invariants by { simp(); }
         }
     }
     step();

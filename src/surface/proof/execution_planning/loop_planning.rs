@@ -618,7 +618,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionFrontier::default()
     };
     let mut recorded_snapshots = RecordedSnapshots::new();
-    let constants = ExecutionProofConstants {
+    let mut constants = ExecutionProofConstants {
         proof_site: Some(preserve_site),
         invariant_body_context: Some(Arc::new(InvariantBodyContext {
             loop_entry_state: preservation.loop_entry_state().clone(),
@@ -629,6 +629,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })),
             checks: invariant_checks.to_vec(),
             ranking_measures: ranking_measures.to_vec(),
+            loop_head_premises: Vec::new(),
         })),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
@@ -659,14 +660,27 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         .iter()
         .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
         .flat_map(StructuralClause::items)
-        .map(StructuralItem::proposition);
+        .map(StructuralItem::proposition)
+        .collect::<Vec<_>>();
+    // The loop head's own clauses, in declaration order, are what a smart
+    // bundle closure may cite for a ranking member. Each declared invariant
+    // is named twice, once as written and once re-read at iteration entry:
+    // the back edge holds the written spelling only where an earlier bundle
+    // member or an inner loop already established it, and the closer keeps
+    // only the spellings that are exactly available there. Nothing else
+    // becomes a candidate, so the set is named by the loop head rather than
+    // selected from the ambient fact context.
+    let mut loop_head_premises = invariant_surfaces
+        .iter()
+        .map(|surface| (*surface).clone())
+        .collect::<Vec<_>>();
     {
         let surfaces = if do_while {
-            invariant_surfaces
-                .chain(std::iter::empty())
-                .collect::<Vec<_>>()
+            invariant_surfaces.clone()
         } else {
             invariant_surfaces
+                .iter()
+                .copied()
                 .chain(std::iter::once(&loop_condition))
                 .collect::<Vec<_>>()
         };
@@ -691,8 +705,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                     },
                 )?;
                 surface_propositions.record_lowering(&surface, &lowered)?;
+                loop_head_premises.push(surface);
             }
         }
+    }
+    if let Some(bundle) = constants.invariant_body_context.as_mut() {
+        Arc::make_mut(bundle).loop_head_premises = loop_head_premises;
     }
     let proof_site_for_driver = constants.proof_site.clone();
     let owning_source_index = if environment

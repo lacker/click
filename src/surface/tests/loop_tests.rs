@@ -211,6 +211,157 @@ fn ranking_bundle_rejects_a_missing_or_exchanged_member() {
         .expect_err("a closer nested against the bundle's own order must be rejected");
 }
 
+/// The premise lists of every `arithmetic() using` step printed in `region`,
+/// one entry per cited premise, in printed order.
+fn arithmetic_using_premises(region: &str) -> Vec<Vec<String>> {
+    let mut blocks = Vec::new();
+    let mut rest = region;
+    while let Some(start) = rest.find("arithmetic() using {") {
+        rest = &rest[start + "arithmetic() using {".len()..];
+        let end = rest.find('}').expect("an unterminated premise list");
+        blocks.push(
+            rest[..end]
+                .split(';')
+                .map(str::trim)
+                .filter(|premise| !premise.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        );
+        rest = &rest[end..];
+    }
+    blocks
+}
+
+/// A bare `close_invariants()` closes the ranking members the loop's
+/// `decreases` clause adds to the bundle, and the smart success expands into
+/// the explicit operations that produced it: a `both` per bundle member and
+/// one `arithmetic() using` per arithmetic member. The printed source must
+/// reverify through the ordinary entry point.
+#[test]
+fn smart_ranking_closure_expands_to_explicit_bundle_members() {
+    let (click, sources) = loop_fixture("c_decreases_count_up");
+    let sources = borrowed_sources(&sources);
+    assert!(
+        click.contains("close_invariants();"),
+        "the fixture must exercise the smart closer: {click}"
+    );
+    let expanded = expand_c0_claim_source(&click, &sources, "count_to_n", CProofClaim::Grouped)
+        .unwrap_or_else(|error| panic!("count-up expansion failed: {}", error.message()));
+    let closer = expanded
+        .find("close_invariants by {")
+        .expect("the expansion spells the bundle closer");
+    let closer = &expanded[closer..];
+    assert!(
+        !closer.contains("close_invariants();") && !closer.contains("simp();"),
+        "the expanded closer must contain no smart leaf: {expanded}"
+    );
+    assert!(
+        closer.contains("both {"),
+        "the expanded closer must split the bundle conjunction: {expanded}"
+    );
+    assert_eq!(
+        arithmetic_using_premises(closer).len(),
+        2,
+        "both ranking members must be closed by one cited arithmetic step: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!(
+            "the expanded count-up proof must reverify: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+/// A tuple measure's decrease member is a disjunction over pivots, so the
+/// smart closer's expansion prints the arm it chose, and that arm is checked
+/// like any other: replacing it with the other arm is rejected.
+#[test]
+fn smart_ranking_closure_expands_its_pivot_arm() {
+    let (click, sources) = loop_fixture("c_decreases_nested_loop");
+    let sources = borrowed_sources(&sources);
+    assert!(
+        click.contains("close_invariants by { simp(); }"),
+        "the fixture must exercise the smart closer: {click}"
+    );
+    let expanded = expand_c0_claim_source(&click, &sources, "nested_count", CProofClaim::Grouped)
+        .unwrap_or_else(|error| panic!("nested-loop expansion failed: {}", error.message()));
+    assert!(
+        expanded.contains("left();"),
+        "the chosen pivot arm must be printed: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!(
+            "the expanded nested-loop proof must reverify: {}\n{expanded}",
+            error.message()
+        )
+    });
+    let wrong_arm = expanded.replacen("left();", "right();", 1);
+    assert_ne!(wrong_arm, expanded);
+    verify_c0_sources(&wrong_arm, &sources)
+        .expect_err("the other pivot arm must be rejected on this back edge");
+}
+
+/// The closer's arithmetic candidates cite a named premise set: the loop
+/// head's declared invariants and guard, re-read at iteration entry, and the
+/// function's written preconditions. Nothing is selected from the fact
+/// context, so the expansion cites exactly those and no other proposition.
+#[test]
+fn smart_ranking_closure_cites_only_loop_head_and_contract_premises() {
+    let (click, sources) = loop_fixture("c_decreases_count_up");
+    let sources = borrowed_sources(&sources);
+    let expanded = expand_c0_claim_source(&click, &sources, "count_to_n", CProofClaim::Grouped)
+        .unwrap_or_else(|error| panic!("count-up expansion failed: {}", error.message()));
+    let closer = expanded
+        .find("close_invariants by {")
+        .expect("the expansion spells the bundle closer");
+    let named = [
+        // `invariant i >= 0` and `invariant i <= n` at iteration entry.
+        "at(statement(3).entry, i) >= at(statement(3).entry, 0)",
+        "at(statement(3).entry, i) <= at(statement(3).entry, n)",
+        // The loop guard at iteration entry.
+        "at(statement(3).entry, i) < at(statement(3).entry, n)",
+        // The two conjuncts of the written `requires`.
+        "n >= 0",
+        "n <= 2147483647",
+    ];
+    let blocks = arithmetic_using_premises(&expanded[closer..]);
+    assert!(!blocks.is_empty(), "no cited arithmetic step: {expanded}");
+    for premises in blocks {
+        for premise in premises {
+            assert!(
+                named.contains(&premise.as_str()),
+                "`{premise}` is not named by the loop head or the contract: {expanded}"
+            );
+        }
+    }
+}
+
+/// An inequality that is in scope but is neither a declared invariant, the
+/// loop guard, nor a written precondition is not a candidate premise. The
+/// nested fixture's outer measure needs `j <= m` at the back edge, which the
+/// inner loop's exit makes ambient; dropping the outer `invariant j <= m`
+/// leaves the same fact available and must still fail promptly at that
+/// member rather than succeed by scanning for it.
+#[test]
+fn smart_ranking_closure_does_not_scan_for_an_unnamed_ambient_inequality() {
+    let (click, sources) = loop_fixture("c_decreases_nested_loop");
+    let sources = borrowed_sources(&sources);
+    verify_c0_sources(&click, &sources).expect("the fixture verifies as written");
+    let weakened = click.replacen(
+        "        invariant j <= m;\n        initialize",
+        "        initialize",
+        1,
+    );
+    assert_ne!(weakened, click, "the outer invariant was not removed");
+    let error = verify_c0_sources(&weakened, &sources)
+        .expect_err("an unnamed ambient inequality must not close a ranking member");
+    assert!(
+        error.message().contains("`0 <= m - j` at the back edge"),
+        "{}",
+        error.message()
+    );
+}
+
 #[test]
 fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
     for filename in [

@@ -44,20 +44,7 @@ int32 nest(int32 n) {
                         apply(int32_increment_upper_bound(n, 100)) using { n < 100; }
                     }
                     step();
-                    close_invariants by {
-                        both {
-                            arithmetic() using {
-                                at(statement(2).entry, n) >= 0;
-                                at(statement(2).entry, n) < 10;
-                            }
-                        }
-                        and {
-                            arithmetic() using {
-                                at(statement(2).entry, n) >= 0;
-                                at(statement(2).entry, n) < 10;
-                            }
-                        }
-                    }
+                    close_invariants by { simp(); }
                 }
             }
             step();

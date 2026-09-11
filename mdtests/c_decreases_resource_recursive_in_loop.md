@@ -58,22 +58,7 @@ void zero_walk_loop(struct node* node) {
                 simp();
             }
             step();
-            close_invariants by {
-                both { simp(); }
-                and { both { simp(); }
-                and { both {
-                          arithmetic() using {
-                              at(statement(3).entry, i) >= 0;
-                              at(statement(3).entry, i) < 1;
-                          }
-                      }
-                and {
-                          arithmetic() using {
-                              at(statement(3).entry, i) >= 0;
-                              at(statement(3).entry, i) < 1;
-                          }
-                } } }
-            }
+            close_invariants();
         }
     }
     step();

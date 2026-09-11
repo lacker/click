@@ -414,6 +414,21 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    /// Runs the loop-bundle member planner inside the owned nested body, so a
+    /// pivot arm proved under `have` retains the same checked descendant the
+    /// bundle root would have retained for it.
+    pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
+        &self,
+        premises: &[(Proposition, ClickProposition)],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.plan_invariant_bundle_closure(premises)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     /// Runs one supported source script inside the owned nested body and
     /// retains its already-checked descendant.
     pub(in crate::surface::proof) fn try_linear_script(
