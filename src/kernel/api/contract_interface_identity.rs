@@ -258,6 +258,11 @@ impl Names {
         self.visit();
         match expression {
             SpecIntegerExpression::Term(_) | SpecIntegerExpression::ResourceField(_) => {}
+            SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+                for argument in arguments {
+                    self.argument(argument);
+                }
+            }
             SpecIntegerExpression::FromMachine(machine) => self.expression(machine),
             SpecIntegerExpression::Negate(inner) => self.integer(inner),
             SpecIntegerExpression::Add(left, right)

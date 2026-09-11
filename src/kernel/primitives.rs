@@ -878,6 +878,13 @@ pub enum SpecIntegerExpression {
     /// A pure mathematical value. Shared children preserve specification
     /// abbreviations without copying their expanded expression trees.
     Term(IntegerTerm),
+    /// An opaque pure function returning a mathematical Integer. Arguments
+    /// are evaluated for facts and definedness, while the call remains a
+    /// symbolic application until an explicit unfold step.
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<SpecPureFunctionArgument>,
+    },
     FromMachine(Box<SpecExpression>),
     Negate(Box<Self>),
     Add(Box<Self>, Box<Self>),

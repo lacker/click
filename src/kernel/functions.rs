@@ -3652,6 +3652,11 @@ fn spec_integer_expression_reads_current_parameter(
 ) -> bool {
     match expression {
         SpecIntegerExpression::Term(_) | SpecIntegerExpression::ResourceField(_) => false,
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().any(|argument| {
+                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
+            })
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             spec_expression_reads_current_parameter(machine, parameter_name)
         }

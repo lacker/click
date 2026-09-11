@@ -680,6 +680,24 @@ fn collect_spec_integer_variables(
         match expression {
             SpecIntegerExpression::ResourceField(_) => {}
             SpecIntegerExpression::Term(term) => collect_integer_variables(term, variables),
+            SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
+                for argument in arguments {
+                    match argument {
+                        SpecPureFunctionArgument::Value(value) => {
+                            collect_spec_expression_bitvector_variables(value, variables)
+                        }
+                        SpecPureFunctionArgument::Integer(value) => {
+                            collect_spec_integer_variables(value, variables)
+                        }
+                        SpecPureFunctionArgument::Algebraic(value) => {
+                            collect_spec_algebraic_expression_bitvector_variables(value, variables)
+                        }
+                        SpecPureFunctionArgument::ArrayRef { pointer, .. } => {
+                            collect_spec_expression_bitvector_variables(pointer, variables)
+                        }
+                    }
+                }
+            }
             SpecIntegerExpression::FromMachine(value) => {
                 collect_spec_expression_bitvector_variables(value, variables)
             }

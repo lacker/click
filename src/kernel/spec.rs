@@ -806,6 +806,17 @@ fn evaluate_spec_integer_expression_paths(
                 obligations: Vec::new(),
             }])
         }
+        SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
+            evaluate_spec_integer_pure_function_application_paths(
+                state,
+                name,
+                arguments,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )
+        }
         SpecIntegerExpression::FromMachine(machine) => {
             evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -2912,6 +2923,58 @@ fn lower_spec_memory_loadable_at_state(
         _ => None,
     })
     .collect())
+}
+
+fn evaluate_spec_integer_pure_function_application_paths(
+    state: &CState,
+    name: &str,
+    arguments: &[SpecPureFunctionArgument],
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
+    for argument in arguments {
+        let mut next = Vec::new();
+        for (values, facts, obligations) in paths {
+            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            for argument_path in evaluate_spec_pure_function_argument_paths(
+                state,
+                argument,
+                loop_entry_state,
+                &path_assumptions,
+                algebraic_bindings,
+                budget,
+            )? {
+                if let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &argument_path.facts,
+                        &argument_path.obligations,
+                        assumptions,
+                    )
+                {
+                    let mut merged_values = values.clone();
+                    merged_values.push(argument_path.value);
+                    next.push((merged_values, merged_facts, merged_obligations));
+                }
+            }
+        }
+        paths = next;
+    }
+    Ok(paths
+        .into_iter()
+        .map(|(arguments, facts, obligations)| SpecIntegerPath {
+            value: IntegerTerm::PureFunctionApplication(SharedIntegerApplication::intern(
+                name.to_string(),
+                arguments,
+            )),
+            facts,
+            obligations,
+        })
+        .collect())
 }
 
 /// An element index scaled to bytes, folded when the index is a constant.
