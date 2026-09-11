@@ -136,9 +136,11 @@ axioms, even when Rust names them `prove_*`.
 theorems. They construct only the fixed signed-increment, checked arithmetic,
 predecessor-bound, successor-order, positive-to-nonnegative, and
 order-transitivity implications documented in the standard library.
-Standard-library verification checks each parsed declaration against its exact
-proposition before theorem application becomes available; expanded user proofs
-then use the ordinary simple `apply(...) using { ... }` tactic.
+Standard-library verification (`verify_standard_library`, run by the gate)
+checks each parsed declaration against its exact proposition. The prelude and
+the kernel ship in one executable, so ordinary verifications apply these
+declarations as dependencies without re-checking them; expanded user proofs
+use the ordinary simple `apply(...) using { ... }` tactic.
 
 Execution theorems retain every verification condition as an implication
 premise, including conditions that are not assumable during execution.

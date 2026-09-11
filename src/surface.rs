@@ -117,12 +117,14 @@ use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_certificate, format_proof_tactics};
 use proof::*;
+#[cfg(test)]
+use validation::combined_theorem_definitions;
 use validation::{
     combined_click_function_definitions, combined_external_function_blocks,
-    combined_predicate_definitions, combined_resource_definitions, combined_theorem_definitions,
-    combined_theorem_definitions_with_stdlib_ensure_count, contains_old_expression,
+    combined_predicate_definitions, combined_resource_definitions, contains_old_expression,
     describe_c0_type, describe_resource_clause, proposition_contains_at_expression,
     proposition_contains_old_expression, proposition_contains_resource_count,
+    standard_library_theorem_definitions, standard_library_theorem_index,
 };
 pub(in crate::surface) use verification::CSourceContext;
 pub(in crate::surface) use verification::*;
@@ -131,6 +133,7 @@ pub use verification::{
     c0_prepared_external_dependencies, parse, verify_c0_prepared_sources,
     verify_c0_prepared_sources_at, verify_c0_prepared_sources_functions, verify_c0_sources,
     verify_c0_sources_at, verify_c0_sources_functions, verify_click_theorems,
+    verify_standard_library,
 };
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;

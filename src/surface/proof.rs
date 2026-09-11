@@ -86,6 +86,8 @@ use language_context::*;
 #[cfg(test)]
 pub(in crate::surface) use proof_object::collect_execution_context_export_labels;
 use proof_object::*;
+#[cfg(test)]
+pub(in crate::surface) use pure_theorems::PROVED_THEOREMS;
 pub(super) use pure_theorems::{
     is_kernel_standard_theorem_name, pure_theorem_array_refs, pure_theorem_parameter_values,
     verify_concrete_theorem_definition, verify_theorem_definitions,
@@ -1316,6 +1318,7 @@ mod certificate_tests {
 
         let (verified, events) = crate::instrumentation::collect(|| {
             verify_theorem_definitions(
+                &[],
                 file.theorem_definitions(),
                 &predicate_environment,
                 &click_function_environment,

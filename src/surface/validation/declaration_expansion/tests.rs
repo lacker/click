@@ -72,3 +72,84 @@ fn standard_library_cache_preserves_all_declarations() {
             .algebraic_type_definitions
     );
 }
+
+/// The standard library is proved by its own entry point, not by each
+/// verification that uses it. This is the gate's proof of every library
+/// theorem.
+#[test]
+fn standard_library_theorems_are_proved_by_their_own_entry_point() {
+    let theorems = standard_library_theorem_definitions().unwrap();
+    let verified = crate::surface::verify_standard_library()
+        .unwrap_or_else(|error| panic!("standard library failed: {}", error.message()));
+    let ensure_count = theorems
+        .iter()
+        .map(|theorem| theorem.ensures().len())
+        .sum::<usize>();
+    assert_eq!(verified.len(), ensure_count);
+    for theorem in theorems {
+        assert!(
+            verified
+                .iter()
+                .any(|result| result.theorem_definition.name() == theorem.name()),
+            "`{}` was not proved",
+            theorem.name()
+        );
+    }
+}
+
+fn proved_theorems_during(verify: impl FnOnce()) -> Vec<String> {
+    crate::surface::PROVED_THEOREMS.with(|proved| proved.borrow_mut().clear());
+    verify();
+    crate::surface::PROVED_THEOREMS.with(|proved| proved.take())
+}
+
+/// A verification applies library theorems as dependency declarations and
+/// proves only its own theorems, however large the library grows.
+#[test]
+fn verification_does_not_reprove_the_standard_library() {
+    let proved = proved_theorems_during(|| {
+        let result = verify_click_theorems(
+            r#"
+            theorem uses_library(value: int32) {
+                requires 1 <= value;
+                ensures 0 <= value by {
+                    apply(int32_positive_is_nonnegative(value));
+                }
+            }
+            "#,
+        );
+        result.unwrap_or_else(|error| panic!("theorem failed: {}", error.message()));
+        check_isolated_program(3, 3);
+    });
+    assert_eq!(proved, ["uses_library"]);
+}
+
+/// Certification accepts a pure theorem only with authority from a checked
+/// proof, so a C proof that cites a library theorem needing that authority
+/// checks exactly the cited theorem, not the rest of the library.
+#[test]
+fn certification_checks_only_the_cited_library_theorem() {
+    let c_source = "int32 remainder(int32 value, int32 amount) { return value - amount; }";
+    let click_source = r#"
+        verifying "remainder.c";
+        int32 remainder(int32 value, int32 amount) {
+            requires defined(1 + amount) and value == 1 + amount;
+            requires defined(value - amount);
+            ensures result == 1;
+        } by {
+            have value - amount == 1 by {
+                apply(int32_subtract_equal_sum_right_cancels(value, 1, amount)) using {
+                    defined(1 + amount) and value == 1 + amount;
+                    defined(value - amount);
+                }
+            }
+            execute();
+            simp();
+        }
+    "#;
+    let proved = proved_theorems_during(|| {
+        verify_c0_sources(click_source, &[("remainder.c", c_source)])
+            .unwrap_or_else(|error| panic!("C proof failed: {}", error.message()));
+    });
+    assert_eq!(proved, ["int32_subtract_equal_sum_right_cancels"]);
+}

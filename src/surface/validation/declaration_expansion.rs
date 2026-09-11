@@ -1279,14 +1279,28 @@ pub(in crate::surface) fn combined_theorem_definitions(
     Ok(definitions)
 }
 
-pub(in crate::surface) fn combined_theorem_definitions_with_stdlib_ensure_count(
-    file: &ClickFile,
-) -> Result<(Vec<TheoremDefinition>, usize), ClickError> {
-    let mut definitions = standard_library()?.theorem_definitions().to_vec();
-    let stdlib_ensure_count = definitions
-        .iter()
-        .map(|definition| definition.ensures().len())
-        .sum();
-    definitions.extend(file.theorem_definitions().iter().cloned());
-    Ok((definitions, stdlib_ensure_count))
+/// The standard library's theorem definitions in declaration order.
+///
+/// A verification uses these as dependency declarations; it does not re-prove
+/// them. [`crate::surface::verify_standard_library`] is the one entry point that
+/// proves them.
+pub(in crate::surface) fn standard_library_theorem_definitions()
+-> Result<&'static [TheoremDefinition], ClickError> {
+    Ok(standard_library()?.theorem_definitions())
+}
+
+/// The declaration-order position of the named standard-library theorem.
+pub(in crate::surface) fn standard_library_theorem_index(name: &str) -> Option<usize> {
+    static INDEX: std::sync::OnceLock<BTreeMap<String, usize>> = std::sync::OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            standard_library_theorem_definitions()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .map(|(index, theorem)| (theorem.name().to_string(), index))
+                .collect()
+        })
+        .get(name)
+        .copied()
 }

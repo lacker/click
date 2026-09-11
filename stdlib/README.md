@@ -2,7 +2,16 @@
 
 `prelude.click` is loaded implicitly with every sidecar and C-free theorem
 file. Types, pure functions, and theorems use ordinary Click declarations;
-library theorem instances are checked, not trusted axioms.
+library theorems are checked, not trusted axioms.
+
+The library is checked on its own, like any dependency: `verify_standard_library`
+proves every library theorem, and the gate runs it in
+`standard_library_theorems_are_proved_by_their_own_entry_point`. Verifying a
+sidecar applies library theorems as dependency declarations and proves only
+the sidecar's own theorems. Whole-contract certification accepts a pure theorem
+only with kernel authority from a checked proof, so a C proof that cites one of
+the few library theorems that certification consumes checks that cited theorem
+once during its verification.
 
 Keep the public declarations here until Click supports specification imports.
 The module/import work is tracked in

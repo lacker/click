@@ -177,13 +177,82 @@ fn collect_function_theorem_dependencies(function: &FunctionBlock, names: &mut B
     }
 }
 
+/// Whether a theorem's binders are all kernel sorts that certification can
+/// quantify over, so its verified statement can become a certification fact.
+fn theorem_has_certification_binders(theorem: &TheoremDefinition) -> bool {
+    theorem.parameters().iter().all(|parameter| {
+        matches!(
+            parameter.click_type(),
+            ClickType::C(C0Type::Int32 | C0Type::FunctionPointer(_))
+        )
+    })
+}
+
+/// Records verified pure theorems over supported kernel binders as closed
+/// universally-quantified facts with their kernel authority, so kernel
+/// contract certification can discharge obligations the surface proof
+/// established by `apply`.
+fn record_theorem_certification_authority(
+    verified_theorems: &[VerifiedPureTheorem],
+    facts: &mut BTreeMap<String, Vec<Proposition>>,
+    authorities: &mut BTreeMap<String, Vec<CVerifiedPureTheorem>>,
+) {
+    for theorem in verified_theorems.iter().filter(|theorem| {
+        theorem.kernel_authority.is_some()
+            && theorem_has_certification_binders(&theorem.theorem_definition)
+    }) {
+        let implication = theorem
+            .requires
+            .iter()
+            .rev()
+            .fold(theorem.conclusion.clone(), |body, requirement| {
+                Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+            });
+        let fact = theorem
+            .theorem_definition
+            .parameters()
+            .iter()
+            .enumerate()
+            .rev()
+            .fold(implication, |body, (index, parameter)| {
+                let sort = match parameter.c_type() {
+                    C0Type::Int32 => crate::kernel::Sort::CInt32,
+                    C0Type::FunctionPointer(_) => {
+                        crate::kernel::Sort::CPointer(parameter.c_type().to_kernel_type())
+                    }
+                    _ => unreachable!("the theorem binder filter admits only supported types"),
+                };
+                Proposition::ForAll {
+                    var: crate::kernel::Variable(index as u64),
+                    sort,
+                    body: Box::new(body),
+                }
+            });
+        facts
+            .entry(theorem.theorem_definition.name().to_string())
+            .or_default()
+            .push(fact);
+        let authority = theorem
+            .kernel_authority
+            .as_ref()
+            .expect("theorem certification facts require kernel authority");
+        authorities
+            .entry(theorem.theorem_definition.name().to_string())
+            .or_default()
+            .push(authority.clone());
+    }
+}
+
+/// The file's own theorems that this verification must prove: all of them, or
+/// for a targeted verification the dependency closure of the selected
+/// functions and theorem. Standard-library theorems are dependencies and are
+/// never selected.
 fn selected_theorem_definitions(
     file: &ClickFile,
-    definitions: &[TheoremDefinition],
-    standard_library_count: usize,
     selected_functions: Option<&BTreeSet<String>>,
     verification_target: Option<&VerificationTarget>,
 ) -> Vec<TheoremDefinition> {
+    let definitions = file.theorem_definitions();
     let Some(selected_functions) = selected_functions else {
         return definitions.to_vec();
     };
@@ -218,11 +287,7 @@ fn selected_theorem_definitions(
     }
     definitions
         .iter()
-        .enumerate()
-        .filter(|(index, definition)| {
-            *index < standard_library_count || required.contains(definition.name())
-        })
-        .map(|(_, definition)| definition)
+        .filter(|definition| required.contains(definition.name()))
         .cloned()
         .collect()
 }
@@ -248,25 +313,45 @@ fn verify_click_file_theorems_with_environment(
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let predicate_definitions = combined_predicate_definitions(file)?;
     let click_function_definitions = combined_click_function_definitions(file)?;
-    let (theorem_definitions, stdlib_theorem_ensure_count) =
-        combined_theorem_definitions_with_stdlib_ensure_count(file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
         .with_contracts(file.contract_definitions());
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         &combined_algebraic_type_definitions(file)?,
     );
-    let verified = verify_theorem_definitions(
-        &theorem_definitions,
+    verify_theorem_definitions(
+        standard_library_theorem_definitions()?,
+        file.theorem_definitions(),
         &predicate_environment,
         &click_function_environment,
         function_environment,
         &ResourceEnvironment::new(&combined_resource_definitions(file)?),
-    )?;
-    Ok(verified
-        .into_iter()
-        .skip(stdlib_theorem_ensure_count)
-        .collect())
+    )
+}
+
+/// Proves every standard-library theorem.
+///
+/// Ordinary verification applies standard-library theorems as dependency
+/// declarations without re-proving them, the way a caller uses a verified
+/// function's contract. This is the entry point that proves them, against the
+/// standard library alone, and the gate runs it.
+pub fn verify_standard_library() -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let empty = parse("")?;
+    let predicate_definitions = combined_predicate_definitions(&empty)?;
+    let click_function_definitions = combined_click_function_definitions(&empty)?;
+    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+    let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
+        &click_function_definitions,
+        &combined_algebraic_type_definitions(&empty)?,
+    );
+    verify_theorem_definitions(
+        &[],
+        standard_library_theorem_definitions()?,
+        &predicate_environment,
+        &click_function_environment,
+        None,
+        &ResourceEnvironment::new(&combined_resource_definitions(&empty)?),
+    )
 }
 
 #[cfg(test)]
@@ -1074,27 +1159,22 @@ fn verify_c0_sources_with_context(
     check_verification_deadline()?;
     let (mut termination_plans, mut requested_termination) =
         c_function_termination_plans(&file, selected_functions.as_ref())?;
+    let standard_library_theorems = standard_library_theorem_definitions()?;
     let (
         predicate_environment,
         click_function_environment,
         resource_environment,
         mut function_environment,
-        theorem_certification_facts,
-        theorem_certification_authorities,
+        mut theorem_certification_facts,
+        mut theorem_certification_authorities,
         theorem_environment,
     ) = {
         let _timing = VerificationTimingPhase::new("environment");
         let predicate_definitions = combined_predicate_definitions(&file)?;
         let click_function_definitions = combined_click_function_definitions(&file)?;
         let resource_definitions = combined_resource_definitions(&file)?;
-        let theorem_definitions = combined_theorem_definitions(&file)?;
-        let standard_library_theorem_count = theorem_definitions
-            .len()
-            .saturating_sub(file.theorem_definitions().len());
         let theorem_definitions = selected_theorem_definitions(
             &file,
-            &theorem_definitions,
-            standard_library_theorem_count,
             selected_functions.as_ref(),
             verification_target.as_ref(),
         );
@@ -1146,71 +1226,28 @@ fn verify_c0_sources_with_context(
             }
         }
         let verified_theorems = verify_theorem_definitions(
+            standard_library_theorems,
             &theorem_definitions,
             &predicate_environment,
             &click_function_environment,
             Some(&function_environment),
             &resource_environment,
         )?;
-        // Verified pure theorems over supported kernel binders become closed
-        // universally-quantified facts, so kernel contract certification can
-        // discharge obligations the surface proof established by `apply`.
         let mut theorem_certification_facts = BTreeMap::<String, Vec<Proposition>>::new();
         let mut theorem_certification_authorities =
             BTreeMap::<String, Vec<CVerifiedPureTheorem>>::new();
-        for theorem in verified_theorems.iter().filter(|theorem| {
-            theorem.kernel_authority.is_some()
-                && theorem
-                    .theorem_definition
-                    .parameters()
-                    .iter()
-                    .all(|parameter| {
-                        matches!(
-                            parameter.click_type(),
-                            ClickType::C(C0Type::Int32 | C0Type::FunctionPointer(_))
-                        )
-                    })
-        }) {
-            let implication = theorem.requires.iter().rev().fold(
-                theorem.conclusion.clone(),
-                |body, requirement| {
-                    Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
-                },
-            );
-            let fact = theorem
-                .theorem_definition
-                .parameters()
+        record_theorem_certification_authority(
+            &verified_theorems,
+            &mut theorem_certification_facts,
+            &mut theorem_certification_authorities,
+        );
+        let theorem_environment = TheoremEnvironment::new(
+            &standard_library_theorems
                 .iter()
-                .enumerate()
-                .rev()
-                .fold(implication, |body, (index, parameter)| {
-                    let sort = match parameter.c_type() {
-                        C0Type::Int32 => crate::kernel::Sort::CInt32,
-                        C0Type::FunctionPointer(_) => {
-                            crate::kernel::Sort::CPointer(parameter.c_type().to_kernel_type())
-                        }
-                        _ => unreachable!("the theorem binder filter admits only supported types"),
-                    };
-                    Proposition::ForAll {
-                        var: crate::kernel::Variable(index as u64),
-                        sort,
-                        body: Box::new(body),
-                    }
-                });
-            theorem_certification_facts
-                .entry(theorem.theorem_definition.name().to_string())
-                .or_default()
-                .push(fact);
-            let authority = theorem
-                .kernel_authority
-                .as_ref()
-                .expect("theorem certification facts require kernel authority");
-            theorem_certification_authorities
-                .entry(theorem.theorem_definition.name().to_string())
-                .or_default()
-                .push(authority.clone());
-        }
-        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+                .chain(&theorem_definitions)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         check_verification_deadline()?;
         (
             predicate_environment,
@@ -1240,6 +1277,9 @@ fn verify_c0_sources_with_context(
     check_verification_deadline()?;
     let mut verified = Vec::new();
     let mut termination_loop_rules = BTreeMap::<String, Vec<CVerifiedLoopRule>>::new();
+    // Standard-library theorems already checked for their certification
+    // authority during this verification; see the certification loop below.
+    let mut checked_standard_library_theorems = BTreeSet::<String>::new();
 
     for function_block in file.function_blocks {
         check_verification_deadline()?;
@@ -1442,6 +1482,30 @@ fn verify_c0_sources_with_context(
         }
         let mut certification_pure_theorems = Vec::new();
         for theorem_name in certification_theorems {
+            // A cited standard-library theorem is a dependency: the proof
+            // used its declaration without re-proving it. The kernel accepts
+            // a pure theorem into certification only with authority from a
+            // checked proof, so check just this cited theorem, once, against
+            // the library declarations before it.
+            if !theorem_certification_facts.contains_key(&theorem_name)
+                && checked_standard_library_theorems.insert(theorem_name.clone())
+                && let Some(index) = standard_library_theorem_index(&theorem_name)
+                && theorem_has_certification_binders(&standard_library_theorems[index])
+            {
+                let verified_dependency = verify_theorem_definitions(
+                    &standard_library_theorems[..index],
+                    &standard_library_theorems[index..=index],
+                    &predicate_environment,
+                    &click_function_environment,
+                    None,
+                    &resource_environment,
+                )?;
+                record_theorem_certification_authority(
+                    &verified_dependency,
+                    &mut theorem_certification_facts,
+                    &mut theorem_certification_authorities,
+                );
+            }
             if let Some(facts) = theorem_certification_facts.get(&theorem_name) {
                 certification_facts.extend(facts.iter().cloned());
             }

@@ -9,7 +9,19 @@ const STRUCTURAL_INDUCTION_VARIABLE_BASE: u64 = 1 << 60;
 mod execution_theorems;
 use execution_theorems::verify_execution_theorem;
 
+#[cfg(test)]
+thread_local! {
+    /// Names of the theorem definitions this thread has proved, in order, so
+    /// tests can check which dependencies a verification re-proves.
+    pub(in crate::surface) static PROVED_THEOREMS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Proves `theorem_definitions` in order. Each proof may apply `dependencies`
+/// and the definitions before it. Dependencies are declarations proved
+/// elsewhere, such as the standard library, and are not re-proved here.
 pub(in crate::surface) fn verify_theorem_definitions(
+    dependencies: &[TheoremDefinition],
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -17,8 +29,10 @@ pub(in crate::surface) fn verify_theorem_definitions(
     resource_environment: &ResourceEnvironment,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let mut verified = Vec::new();
-    let mut theorem_environment = TheoremEnvironment::new(&[]);
+    let mut theorem_environment = TheoremEnvironment::new(dependencies);
     for theorem in theorem_definitions {
+        #[cfg(test)]
+        PROVED_THEOREMS.with(|proved| proved.borrow_mut().push(theorem.name().to_string()));
         if theorem.executes.is_some() {
             verified.push(verify_execution_theorem(
                 theorem,
