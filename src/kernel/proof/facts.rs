@@ -1567,6 +1567,42 @@ mod integer_equality_fact_index_tests {
         }
     }
 
+    fn loadable_exists(
+        memory: &CMemory,
+        name: &str,
+        binder: Variable,
+        block: &str,
+        free_offset: Option<Variable>,
+        bytes: u32,
+    ) -> Proposition {
+        let bound_offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(binder)),
+            byte_width: 4,
+        };
+        let offset = free_offset.map_or(bound_offset.clone(), |free| {
+            PointerOffsetTerm::Add(
+                Box::new(bound_offset),
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(free)),
+                    byte_width: 1,
+                }),
+            )
+        });
+        Proposition::Exists {
+            name: name.into(),
+            var: binder,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: Pointer {
+                    block: block.into(),
+                    offset,
+                },
+                bytes: Bitvector32Term::Constant(bytes),
+            }),
+        }
+    }
+
     fn unrelated_fact(value: i64) -> Proposition {
         equality(
             IntegerTerm::constant_i64(value),
@@ -1758,6 +1794,41 @@ mod integer_equality_fact_index_tests {
                 "loadability alpha matching must retain snapshot, pointer, width, and free IDs"
             );
         }
+    }
+
+    #[test]
+    fn quantified_loadable_root_existential_ignores_display_name() {
+        let memory = CMemory::new().with_block("root-existential-loadable", 32);
+        let source = loadable_exists(
+            &memory,
+            "source_witness",
+            Variable(207_500),
+            "root-existential-loadable",
+            Some(Variable(207_501)),
+            4,
+        );
+        let renamed = loadable_exists(
+            &memory,
+            "required_witness",
+            Variable(207_600),
+            "root-existential-loadable",
+            Some(Variable(207_501)),
+            4,
+        );
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source));
+
+        assert_eq!(
+            facts.matching_quantified_fact(&renamed),
+            Some(source.clone())
+        );
+        assert_eq!(
+            facts.matching_fact_across_effects(&renamed, &[]),
+            Some(source.clone())
+        );
+        assert!(facts.available_across_effects(&renamed, &[]));
+
+        let context = PureFactContext::new().assume_proposition(source);
+        assert!(context.states_required_goal(&renamed));
     }
 
     #[test]

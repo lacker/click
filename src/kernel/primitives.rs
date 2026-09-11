@@ -4158,6 +4158,13 @@ pub struct PureFactContext {
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,
     >,
     pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    /// Alpha/load identity index for propositions that may be stated as a
+    /// call requirement.  The key retains memory epochs and canonicalizes
+    /// only binders; the persistent buckets keep updates local to one key.
+    pub(super) stated_proposition_index: crate::persistent::PersistentMap<
+        crate::kernel::proof::PropositionIdentityKey,
+        crate::persistent::PersistentSet<Proposition>,
+    >,
     /// Nominal function-contract witnesses keyed by the exact pointer value.
     /// This keeps indirect-call lookup proportional to contracts explicitly
     /// known for that pointer, never to project-wide declarations.

@@ -904,7 +904,8 @@ pub(in crate::kernel) fn required_obligation_is_exactly_discharged(
     assumptions: &PureFactContext,
     proposition: &Proposition,
 ) -> bool {
-    assumptions.proves_exact(proposition)
+    assumptions.states_required_goal(proposition)
+        || assumptions.proves_exact(proposition)
         || bare_condition_is_decided(assumptions, proposition)
         || assumptions.proves_atomic_memory_or_resource(proposition)
 }

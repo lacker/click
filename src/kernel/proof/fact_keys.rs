@@ -483,6 +483,17 @@ fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlin
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct QuantifiedEquivalenceKey(AlphaPropositionKey);
 
+/// Structural identity for a stated proposition.  Unlike the older
+/// snapshot-blind selection key, this key retains the identity of every
+/// memory snapshot named by a load.  Bound variables are represented by their
+/// structural ordinal while free variables retain their kernel identity.
+///
+/// The key is intentionally private in shape: callers can use it for exact
+/// indexed lookup, but cannot manufacture one without walking a checked
+/// proposition through [`proposition_identity_key`].
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct PropositionIdentityKey(AlphaPropositionKey);
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPropositionKey {
     Condition(AlphaConditionKey, bool),
@@ -2042,6 +2053,356 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
     alpha_proposition_key_with_bindings::<ALLOW_LOADS>(proposition, &mut environment, next_binder)
 }
 
+/// Build the shared identity used for exact stated-requirement lookup and
+/// Surface/kernel goal correspondence. Snapshot-aware load keys make a
+/// registered load and its spelled load agree only when they name the same
+/// memory epoch.
+pub(crate) fn proposition_identity_key(
+    proposition: &Proposition,
+) -> Option<PropositionIdentityKey> {
+    let mut environment = AlphaBindings {
+        integer: BTreeMap::new(),
+        bitvector: BTreeMap::new(),
+        integer_scope: 0,
+        bitvector_scope: 0,
+        next_scope_id: 1,
+        snapshot_aware: true,
+        registered_load_stack: BTreeSet::new(),
+        registered_load_memo: HashMap::new(),
+        load_interner: None,
+        work_units: 0,
+    };
+    alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)
+        .map(PropositionIdentityKey)
+}
+
+/// Compare propositions up to alpha-renaming of binders, while retaining
+/// exact semantic identity for free variables, sorts, connectives, and memory
+/// epochs. Unsupported proposition forms return `false`.
+pub(crate) fn propositions_are_alpha_equal(left: &Proposition, right: &Proposition) -> bool {
+    if left == right {
+        return true;
+    }
+    match (
+        proposition_identity_key(left),
+        proposition_identity_key(right),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        // A pair of unsupported propositions must not compare equal merely
+        // because both key walks declined to represent them.
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod proposition_identity_tests {
+    use super::*;
+    use crate::kernel::{CMemory, CValue};
+
+    fn equal(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+            true,
+        )
+    }
+
+    fn forall(var: u64, body: Proposition) -> Proposition {
+        Proposition::ForAll {
+            var: Variable(var),
+            sort: Sort::Bitvector32,
+            body: Box::new(body),
+        }
+    }
+
+    #[test]
+    fn alpha_identity_is_capture_safe_and_name_blind() {
+        let left = forall(
+            1,
+            Proposition::Exists {
+                name: "left".into(),
+                var: Variable(2),
+                sort: Sort::Bitvector32,
+                body: Box::new(Proposition::And(
+                    Box::new(equal(
+                        Bitvector32Term::Variable(Variable(1)),
+                        Bitvector32Term::Variable(Variable(2)),
+                    )),
+                    Box::new(Proposition::Or(
+                        Box::new(equal(
+                            Bitvector32Term::Variable(Variable(2)),
+                            Bitvector32Term::Variable(Variable(1_000)),
+                        )),
+                        Box::new(Proposition::Not(Box::new(equal(
+                            Bitvector32Term::Variable(Variable(1)),
+                            Bitvector32Term::Constant(0),
+                        )))),
+                    )),
+                )),
+            },
+        );
+        let right = forall(
+            11,
+            Proposition::Exists {
+                name: "right".into(),
+                var: Variable(12),
+                sort: Sort::Bitvector32,
+                body: Box::new(Proposition::And(
+                    Box::new(equal(
+                        Bitvector32Term::Variable(Variable(11)),
+                        Bitvector32Term::Variable(Variable(12)),
+                    )),
+                    Box::new(Proposition::Or(
+                        Box::new(equal(
+                            Bitvector32Term::Variable(Variable(12)),
+                            Bitvector32Term::Variable(Variable(1_000)),
+                        )),
+                        Box::new(Proposition::Not(Box::new(equal(
+                            Bitvector32Term::Variable(Variable(11)),
+                            Bitvector32Term::Constant(0),
+                        )))),
+                    )),
+                )),
+            },
+        );
+        assert!(propositions_are_alpha_equal(&left, &right));
+
+        let changed_free = forall(
+            11,
+            Proposition::Exists {
+                name: "right".into(),
+                var: Variable(12),
+                sort: Sort::Bitvector32,
+                body: Box::new(equal(
+                    Bitvector32Term::Variable(Variable(11)),
+                    Bitvector32Term::Variable(Variable(1_001)),
+                )),
+            },
+        );
+        assert!(!propositions_are_alpha_equal(&left, &changed_free));
+    }
+
+    #[test]
+    fn alpha_identity_rejects_sort_quantifier_and_nonbinder_changes() {
+        let body = equal(
+            Bitvector32Term::Variable(Variable(7)),
+            Bitvector32Term::Constant(3),
+        );
+        let renamed = equal(
+            Bitvector32Term::Variable(Variable(8)),
+            Bitvector32Term::Constant(3),
+        );
+        assert!(propositions_are_alpha_equal(
+            &forall(7, body.clone()),
+            &forall(8, renamed)
+        ));
+        let integer = Proposition::ForAll {
+            var: Variable(8),
+            sort: Sort::Integer,
+            body: Box::new(body.clone()),
+        };
+        assert!(!propositions_are_alpha_equal(
+            &forall(8, body.clone()),
+            &integer
+        ));
+        let exists = Proposition::Exists {
+            name: "x".into(),
+            var: Variable(8),
+            sort: Sort::Bitvector32,
+            body: Box::new(body.clone()),
+        };
+        assert!(!propositions_are_alpha_equal(
+            &forall(8, body.clone()),
+            &exists
+        ));
+        assert!(!propositions_are_alpha_equal(
+            &forall(7, body),
+            &forall(
+                8,
+                equal(
+                    Bitvector32Term::Variable(Variable(8)),
+                    Bitvector32Term::Constant(4)
+                )
+            ),
+        ));
+        assert!(!propositions_are_alpha_equal(
+            &Proposition::Predicate {
+                name: "unsupported-left".into(),
+                arguments: Vec::new(),
+            },
+            &Proposition::Predicate {
+                name: "unsupported-right".into(),
+                arguments: Vec::new(),
+            },
+        ));
+    }
+
+    #[test]
+    fn alpha_identity_tracks_shadowing_through_every_logical_connective() {
+        let make = |outer: u64, inner: u64, witness: u64| {
+            forall(
+                outer,
+                Proposition::And(
+                    Box::new(equal(
+                        Bitvector32Term::Variable(Variable(outer)),
+                        Bitvector32Term::Constant(0),
+                    )),
+                    Box::new(Proposition::Or(
+                        Box::new(Proposition::Implies(
+                            Box::new(Proposition::Exists {
+                                name: "witness".into(),
+                                var: Variable(inner),
+                                sort: Sort::Bitvector32,
+                                body: Box::new(Proposition::Not(Box::new(equal(
+                                    Bitvector32Term::Variable(Variable(witness)),
+                                    Bitvector32Term::Constant(1),
+                                )))),
+                            }),
+                            Box::new(equal(
+                                Bitvector32Term::Variable(Variable(outer)),
+                                Bitvector32Term::Constant(2),
+                            )),
+                        )),
+                        Box::new(Proposition::Not(Box::new(equal(
+                            Bitvector32Term::Variable(Variable(outer)),
+                            Bitvector32Term::Constant(3),
+                        )))),
+                    )),
+                ),
+            )
+        };
+        assert!(propositions_are_alpha_equal(
+            &make(1, 1, 1),
+            &make(11, 11, 11)
+        ));
+        assert!(!propositions_are_alpha_equal(
+            &make(1, 1, 1),
+            &make(11, 12, 11)
+        ));
+    }
+
+    #[test]
+    fn alpha_identity_keeps_memory_epochs_distinct() {
+        let pointer = Pointer {
+            block: "identity-epoch".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let left_memory = CMemory::new().with_block("identity-epoch", 8);
+        let right_memory = left_memory
+            .clone()
+            .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(9)));
+        let left = Proposition::CMemoryLoadable {
+            memory: left_memory.clone(),
+            base: pointer.clone(),
+            bytes: Bitvector32Term::Constant(1),
+        };
+        let same = Proposition::CMemoryLoadable {
+            memory: left_memory,
+            base: pointer.clone(),
+            bytes: Bitvector32Term::Constant(1),
+        };
+        let changed = Proposition::CMemoryLoadable {
+            memory: right_memory,
+            base: pointer,
+            bytes: Bitvector32Term::Constant(1),
+        };
+        assert!(propositions_are_alpha_equal(&left, &same));
+        assert!(!propositions_are_alpha_equal(&left, &changed));
+    }
+
+    #[test]
+    fn alpha_identity_matches_registered_and_spelled_load_at_one_epoch() {
+        let pointer = Pointer {
+            block: "identity-registered-load".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("identity-registered-load", 8);
+        let shared_memory = crate::kernel::intern_c_memory_ref(&memory);
+        let load = crate::kernel::load_variable_for_cell_with_origin(
+            &shared_memory,
+            &pointer,
+            &shared_memory,
+        );
+        let (load_memory, load_pointer) = crate::kernel::registered_load_for_variable(&load)
+            .expect("registered load should retain its exact epoch");
+        let spelled = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    load_memory,
+                    Box::new(load_pointer),
+                )),
+                Box::new(Bitvector32Term::Constant(7)),
+            ),
+            true,
+        );
+        let named = equal(
+            Bitvector32Term::Variable(load),
+            Bitvector32Term::Constant(7),
+        );
+        assert_eq!(
+            proposition_identity_key(&spelled),
+            proposition_identity_key(&named)
+        );
+
+        let changed_memory = memory
+            .clone()
+            .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(9)));
+        let changed_shared = crate::kernel::intern_c_memory_ref(&changed_memory);
+        let changed_load = crate::kernel::load_variable_for_cell_with_origin(
+            &changed_shared,
+            &pointer,
+            &changed_shared,
+        );
+        let (changed_memory, changed_pointer) =
+            crate::kernel::registered_load_for_variable(&changed_load)
+                .expect("changed registered load should retain its epoch");
+        let changed_spelled = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    changed_memory,
+                    Box::new(changed_pointer),
+                )),
+                Box::new(Bitvector32Term::Constant(7)),
+            ),
+            true,
+        );
+        let changed_named = equal(
+            Bitvector32Term::Variable(changed_load),
+            Bitvector32Term::Constant(7),
+        );
+        assert!(propositions_are_alpha_equal(
+            &changed_spelled,
+            &changed_named
+        ));
+        assert!(!propositions_are_alpha_equal(&spelled, &changed_named));
+    }
+
+    #[test]
+    fn alpha_identity_work_scales_with_nested_binder_depth() {
+        let make = |depth: u64, offset: u64| {
+            let mut proposition = equal(
+                Bitvector32Term::Variable(Variable(offset + depth - 1)),
+                Bitvector32Term::Constant(1),
+            );
+            for index in (0..depth).rev() {
+                proposition = forall(offset + index, proposition);
+            }
+            proposition
+        };
+        let mut work = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let left = make(depth, 20_000);
+            let right = make(depth, 30_000);
+            let (_, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(propositions_are_alpha_equal(&left, &right));
+            });
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(pair[1] <= pair[0] * 3 + 32, "alpha identity work: {work:?}");
+        }
+    }
+}
+
 /// Exact alpha identity for fold equalities whose C payload contains loads.
 /// Retained snapshot handles make each load part of the key while the
 /// pointer visitor canonicalizes fold-bound C variables by ordinal.
@@ -2255,14 +2616,11 @@ pub(crate) fn snapshot_quantified_alpha_equivalent(
     }
     let same_quantifier = match (left, right) {
         (Proposition::ForAll { .. }, Proposition::ForAll { .. }) => true,
-        (
-            Proposition::Exists {
-                name: left_name, ..
-            },
-            Proposition::Exists {
-                name: right_name, ..
-            },
-        ) => left_name == right_name,
+        // The display name is not part of proposition identity.  In
+        // particular, a root existential that carries an exact loadability
+        // payload must match after lowering chooses a different witness
+        // spelling, just as it does in the shared alpha key.
+        (Proposition::Exists { .. }, Proposition::Exists { .. }) => true,
         _ => false,
     };
     if !same_quantifier {

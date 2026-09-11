@@ -2065,20 +2065,19 @@ pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
         }
         (
             Proposition::Exists {
-                name: left_name,
                 var: left_var,
                 sort: left_sort,
                 body: left_body,
+                ..
             },
             Proposition::Exists {
-                name: right_name,
                 var: right_var,
                 sort: right_sort,
                 body: right_body,
+                ..
             },
         ) => {
-            left_name == right_name
-                && left_sort == right_sort
+            left_sort == right_sort
                 && substitute_int32_variable_in_proposition(
                     left_body,
                     *left_var,

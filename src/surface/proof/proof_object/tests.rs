@@ -1082,14 +1082,16 @@ fn proof_fact_forks_share_context_and_local_insertions_are_logarithmic() {
     }
     let (_, base_height, base_allocations) = allocation_samples[0];
     assert!(
-        base_allocations <= 48,
-        "small persistent fact insertion allocated {base_allocations} nodes"
+        base_allocations <= 50,
+        "small persistent fact insertion allocated {base_allocations} nodes (identity index included)"
     );
     for (size, height, allocations) in allocation_samples {
         // A condition fact updates the exact and normalized indexes, the
-        // kernel condition map, and the two endpoint maps in its signed
-        // order index. Every one is an AVL path copy; adding two tree
-        // levels may therefore add at most 24 nodes.
+        // kernel condition map, the two endpoint maps in its signed-order
+        // index, and the stated-requirement identity map plus its bucket.
+        // Every one is an AVL path copy. The identity map and bucket add two
+        // constant base nodes (50 rather than the former 48); adding two
+        // tree levels may therefore add at most 24 nodes.
         let allocation_bound = base_allocations + 12 * (height - base_height);
         assert!(
             allocations <= allocation_bound,

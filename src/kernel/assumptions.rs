@@ -1744,8 +1744,59 @@ impl PureFactContext {
             })
     }
 
+    fn adjust_stated_proposition_index(&mut self, proposition: &Proposition, insert: bool) {
+        let Some(key) = crate::kernel::proof::proposition_identity_key(proposition) else {
+            // A checked key walk may stop at an exhausted tactic budget after
+            // the source fact map has already changed. Drop the whole derived
+            // index in that case: a missing index only loses an optimization,
+            // while retaining an old entry could make a removed fact appear
+            // available. The next insertion/rebuild repopulates it.
+            if crate::instrumentation::deadline_exceeded_with_work(0) {
+                self.stated_proposition_index = crate::persistent::PersistentMap::default();
+            }
+            return;
+        };
+        let bucket = self
+            .stated_proposition_index
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        let bucket = if insert {
+            bucket.with_value(proposition.clone())
+        } else {
+            bucket.without_value(proposition)
+        };
+        self.stated_proposition_index = if bucket.is_empty() {
+            self.stated_proposition_index.without_key(&key)
+        } else {
+            self.stated_proposition_index.with_inserted(key, bucket)
+        };
+    }
+
+    fn rebuild_stated_proposition_index(&mut self) {
+        let mut index: crate::persistent::PersistentMap<
+            crate::kernel::proof::PropositionIdentityKey,
+            crate::persistent::PersistentSet<Proposition>,
+        > = crate::persistent::PersistentMap::default();
+        let mut add = |proposition: &Proposition| {
+            let Some(key) = crate::kernel::proof::proposition_identity_key(proposition) else {
+                return;
+            };
+            let bucket = index.get(&key).cloned().unwrap_or_default();
+            index = index.with_inserted(key, bucket.with_value(proposition.clone()));
+        };
+        for (condition, value) in self.condition_facts.iter() {
+            add(&Proposition::ConditionIs(condition.clone(), *value));
+        }
+        for proposition in self.prop_facts.iter() {
+            add(proposition);
+        }
+        self.stated_proposition_index = index;
+    }
+
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.rebuild_stated_proposition_index();
         self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
         self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
@@ -1762,6 +1813,7 @@ impl PureFactContext {
 
     pub(super) fn retain_proposition_facts(&mut self, keep: impl FnMut(&Proposition) -> bool) {
         std::sync::Arc::make_mut(&mut self.prop_facts).retain(keep);
+        self.rebuild_stated_proposition_index();
         self.disjunction_facts = std::sync::Arc::new(
             self.prop_facts
                 .iter()
@@ -2198,6 +2250,7 @@ impl PureFactContext {
             return;
         }
         if std::sync::Arc::make_mut(&mut self.prop_facts).insert(proposition.clone()) {
+            self.adjust_stated_proposition_index(&proposition, true);
             if matches!(proposition, Proposition::Or(_, _)) {
                 std::sync::Arc::make_mut(&mut self.disjunction_facts).insert(proposition.clone());
             }
@@ -2214,6 +2267,7 @@ impl PureFactContext {
 
     pub(super) fn remove_proposition_fact(&mut self, proposition: &Proposition) {
         if std::sync::Arc::make_mut(&mut self.prop_facts).remove(proposition) {
+            self.adjust_stated_proposition_index(proposition, false);
             if matches!(proposition, Proposition::Or(_, _)) {
                 std::sync::Arc::make_mut(&mut self.disjunction_facts).remove(proposition);
             }
@@ -2287,6 +2341,9 @@ impl PureFactContext {
                 &other.memory_load_condition_facts,
             )
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && self
+                .stated_proposition_index
+                .shares_root_with(&other.stated_proposition_index)
             && std::sync::Arc::ptr_eq(
                 &self.function_contract_facts,
                 &other.function_contract_facts,
@@ -2528,10 +2585,18 @@ impl PureFactContext {
         self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         if let Some(old) = old {
+            self.adjust_stated_proposition_index(
+                &Proposition::ConditionIs(condition.clone(), old),
+                false,
+            );
             self.adjust_bitvector64_equality(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
         }
+        self.adjust_stated_proposition_index(
+            &Proposition::ConditionIs(condition.clone(), value),
+            true,
+        );
         self.adjust_signed_order_bound(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
@@ -2585,6 +2650,28 @@ impl PureFactContext {
     /// The proposition facts of this context, in the index's own order.
     pub fn proposition_facts(&self) -> impl Iterator<Item = &Proposition> {
         self.prop_facts.iter()
+    }
+
+    /// Answers whether a requirement is already stated in this context.
+    /// Only an explicit fact or an explicit conjunction of such facts is
+    /// accepted; this query never selects a disjunction arm, instantiates a
+    /// universal, or invents an existential witness.
+    pub(crate) fn states_required_goal(&self, goal: &Proposition) -> bool {
+        if let Proposition::And(left, right) = goal {
+            return self.states_required_goal(left) && self.states_required_goal(right);
+        }
+        if let Some(key) = crate::kernel::proof::proposition_identity_key(goal)
+            && let Some(bucket) = self.stated_proposition_index.get(&key)
+            && let Some(candidate) = bucket.iter().next()
+        {
+            // The key narrows the lookup to one identity bucket; retain the
+            // relation as the final authority so future key representations
+            // cannot silently broaden this query.
+            return crate::kernel::proof::propositions_are_alpha_equal(candidate, goal);
+        }
+        // Unsupported proposition forms retain the old exact route.  This is
+        // still a named fact check and never scans for a related proposition.
+        self.contains_assumed_exact(goal)
     }
 
     /// One checked restriction: a context carrying exactly the named
@@ -2662,6 +2749,10 @@ impl PureFactContext {
 
     fn forget_condition_fact(&mut self, condition: &ConditionTerm, assumed: bool) {
         self.condition_facts = self.condition_facts.without_key(condition);
+        self.adjust_stated_proposition_index(
+            &Proposition::ConditionIs(condition.clone(), assumed),
+            false,
+        );
         self.adjust_signed_order_bound(condition, assumed, false);
         self.rebuild_memory_load_condition_facts();
         self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), assumed));
@@ -3967,5 +4058,153 @@ impl SymbolicCConditionEvaluationPath {
 
     pub fn theorem(&self) -> &Theorem {
         &self.theorem
+    }
+}
+
+#[cfg(test)]
+mod stated_requirement_tests {
+    use super::*;
+
+    fn requirement(var: u64, name: &str) -> Proposition {
+        Proposition::Exists {
+            name: name.into(),
+            var: Variable(var),
+            sort: Sort::Bitvector32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(var))),
+                    Box::new(Bitvector32Term::Constant(4)),
+                ),
+                true,
+            )),
+        }
+    }
+
+    #[test]
+    fn stated_quantified_requirement_survives_alpha_renaming_and_restriction() {
+        let fact = requirement(100, "fact");
+        let renamed = requirement(200, "goal");
+        let context = PureFactContext::new().assume_proposition(fact);
+        assert!(context.states_required_goal(&renamed));
+        assert!(
+            !context
+                .restricted_to_facts(&[], &[])
+                .states_required_goal(&renamed)
+        );
+        assert!(
+            !context
+                .without_exact_fact(&requirement(100, "fact"))
+                .states_required_goal(&renamed)
+        );
+
+        let sibling = PureFactContext::new();
+        assert!(!sibling.states_required_goal(&renamed));
+        assert!(context.states_required_goal(&renamed));
+    }
+
+    #[test]
+    fn stated_query_assembles_conjunction_but_not_disjunction() {
+        let left = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let right = Proposition::ConditionIs(ConditionTerm::Constant(false), false);
+        let context = PureFactContext::new()
+            .assume_proposition(left.clone())
+            .assume_proposition(right.clone());
+        let conjunction = Proposition::And(Box::new(left.clone()), Box::new(right.clone()));
+        let disjunction = Proposition::Or(Box::new(left.clone()), Box::new(right.clone()));
+        assert!(context.states_required_goal(&conjunction));
+        assert!(!context.states_required_goal(&disjunction));
+    }
+
+    #[test]
+    fn stated_query_work_is_independent_of_unrelated_facts() {
+        let goal = Proposition::Exists {
+            name: "goal".into(),
+            var: Variable(300),
+            sort: Sort::Bitvector32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(300))),
+                    Box::new(Bitvector32Term::Constant(5)),
+                ),
+                true,
+            )),
+        };
+        let small = PureFactContext::new().assume_proposition(requirement(301, "fact"));
+        let mut large = small.clone();
+        for index in 0..128 {
+            large = large.assume_proposition(requirement(10_000 + index, "unrelated"));
+            large = large.assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(20_000 + index))),
+                    Box::new(Bitvector32Term::Constant(index as u32)),
+                ),
+                true,
+            ));
+        }
+        let (_, small_work) = crate::instrumentation::measure_deterministic_work(|| {
+            small.states_required_goal(&goal)
+        });
+        let (_, large_work) = crate::instrumentation::measure_deterministic_work(|| {
+            large.states_required_goal(&goal)
+        });
+        assert_eq!(small_work, large_work);
+        // Keep the branch alive to pin persistent sibling independence.
+        assert!(!small.states_required_goal(&goal));
+    }
+
+    #[test]
+    fn stated_query_scaling_ignores_unrelated_same_sort_quantifiers() {
+        let goal = requirement(40_000, "goal");
+        let mut work = Vec::new();
+        for size in [4usize, 8, 16, 32] {
+            let mut context = PureFactContext::new().assume_proposition(goal.clone());
+            for index in 0..size {
+                context = context
+                    .assume_proposition(requirement(50_000 + index as u64, "same-sort-unrelated"));
+            }
+            let (available, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                context.states_required_goal(&goal)
+            });
+            assert!(available);
+            work.push(measured);
+        }
+        assert!(
+            work.windows(2).all(|pair| pair[0] == pair[1]),
+            "stated-query work scanned same-sort facts: {work:?}"
+        );
+    }
+
+    #[test]
+    fn exhausted_identity_maintenance_fails_closed_after_fact_removal() {
+        let fact = requirement(60_000, "fact");
+        let renamed = requirement(60_001, "goal");
+        let context = PureFactContext::new().assume_proposition(fact.clone());
+        assert!(context.states_required_goal(&renamed));
+        let tactic = crate::instrumentation::TacticEvent {
+            claim: "stated_requirement_index_budget".into(),
+            tactic_index: 0,
+            tactic_name: "stated_requirement_index_budget".into(),
+            class: "simple".into(),
+            statement_index: 0,
+            source_index: 0,
+        };
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 1,
+            smart: 1,
+            control: 1,
+        };
+        let (weakened, _) = crate::instrumentation::with_tactic_work_limits(limits, || {
+            crate::instrumentation::collect(|| {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticStarted(tactic.clone()),
+                );
+                let weakened = context.without_exact_fact(&fact);
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticFailed(tactic.clone()),
+                );
+                weakened
+            })
+        });
+        assert!(!weakened.states_required_goal(&renamed));
     }
 }
