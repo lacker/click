@@ -123,7 +123,8 @@ source and use the normal `cargo nextest` deterministic-work bounds.
 During this investigation `origin/master` advanced through
 `16fe83e4` (`Name a retained cell's load by the value it already holds`),
 which directly fixes G1. Its three new real-footprint witnesses are green on
-the integrated latest checkout (`0a613c3d`, a merge containing that commit):
+the integrated latest checkout (`f4f76f5c`, which contains that commit and
+the subsequent G1 status update `4597941b`):
 
 ```text
 MDTEST_FILTER=rb_augment_callbacks_helper_owns cargo nextest run --test mdtests --no-capture
