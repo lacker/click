@@ -399,6 +399,28 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
             }
             Ok(crate::kernel::AlgebraicValue::C(value))
         }
+        crate::kernel::ResourceFieldType::Integer => {
+            let spec = crate::surface::lowering::elaborate_fixed_state_integer_expression(
+                expression,
+                states.element_types,
+                &states.entry_state,
+                states.entry_values,
+                states.current_values,
+                None,
+                snapshots,
+                assumptions,
+                predicates,
+                functions,
+                BTreeSet::new(),
+            )?;
+            crate::kernel::capture_spec_integer_value(
+                &states.lowering_state,
+                &spec,
+                Some(&states.entry_state),
+                assumptions,
+            )
+            .map(crate::kernel::AlgebraicValue::Integer)
+        }
         crate::kernel::ResourceFieldType::Algebraic(_) => {
             let spec = crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
                 expression,

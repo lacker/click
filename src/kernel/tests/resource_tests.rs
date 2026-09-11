@@ -3428,3 +3428,26 @@ fn composite_exposure_finds_held_cells_by_structure_near_linearly() {
         );
     }
 }
+
+#[test]
+fn integer_resource_fields_require_mathematical_values() {
+    let schema =
+        ResourceFieldSchema::new(vec![("total".into(), ResourceFieldType::Integer)]).unwrap();
+    assert!(!schema.is_countable());
+    let make = |value| {
+        ResourceInstance::new(
+            Variable(1),
+            "account".into(),
+            vec![].into(),
+            schema.clone(),
+            vec![value].into(),
+        )
+    };
+    assert!(
+        make(AlgebraicValue::Integer(IntegerTerm::Constant(
+            "18446744073709551616".parse().unwrap()
+        )))
+        .is_some()
+    );
+    assert!(make(int32(1).into()).is_none());
+}

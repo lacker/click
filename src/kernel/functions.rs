@@ -1201,6 +1201,9 @@ fn execute_verified_function_templates(
                     let variable = variables.next();
                     budget.next_kernel_variable = variables.next;
                     match ty {
+                        ResourceFieldType::Integer => {
+                            AlgebraicValue::Integer(IntegerTerm::Variable(variable))
+                        }
                         ResourceFieldType::C(ty) => {
                             AlgebraicValue::C(symbolic_call_result(*ty, variable))
                         }
@@ -3611,7 +3614,7 @@ fn spec_integer_expression_reads_current_parameter(
     parameter_name: &str,
 ) -> bool {
     match expression {
-        SpecIntegerExpression::Term(_) => false,
+        SpecIntegerExpression::Term(_) | SpecIntegerExpression::ResourceField(_) => false,
         SpecIntegerExpression::FromMachine(machine) => {
             spec_expression_reads_current_parameter(machine, parameter_name)
         }
@@ -8811,6 +8814,7 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
                 instance.schema.fields().iter().zip(&child.field_bindings)
             {
                 let expected = match field_type {
+                    ResourceFieldType::Integer => AlgebraicValueType::Integer,
                     ResourceFieldType::C(ty) => AlgebraicValueType::C(*ty),
                     ResourceFieldType::Algebraic(ty) => ty.value_type(),
                 };

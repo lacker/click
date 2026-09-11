@@ -70,6 +70,37 @@ pub(crate) fn capture_spec_algebraic_value(
     Ok(path.value.clone())
 }
 
+/// Capture a symbolic Integer value without admitting case assumptions or
+/// unresolved memory reads into a resource initializer.
+pub(crate) fn capture_spec_integer_value(
+    state: &CState,
+    expression: &SpecIntegerExpression,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<IntegerTerm, String> {
+    let paths = evaluate_spec_integer_expression_paths(
+        state,
+        expression,
+        entry_state,
+        assumptions,
+        &BTreeMap::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|limit| format!("Integer initializer evaluation hit {limit:?}"))?;
+    let [path] = paths.as_slice() else {
+        return Err("Integer initializer must denote one symbolic value".into());
+    };
+    if !path.facts.is_empty()
+        || path
+            .obligations
+            .iter()
+            .any(|o| !assumptions.proves(o.proposition()))
+    {
+        return Err("Integer initializer has unproved evaluation obligations".into());
+    }
+    Ok(path.value.clone())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecAlgebraicCasePath {
     variant: String,
@@ -700,6 +731,24 @@ fn evaluate_spec_integer_expression_paths(
 ) -> ExecutionResult<Vec<SpecIntegerPath>> {
     budget.consume_expression_step()?;
     match expression {
+        SpecIntegerExpression::ResourceField(projection) => {
+            let snapshot = if projection.at_entry {
+                loop_entry_state.ok_or(ExecutionLimit::Paths)?
+            } else {
+                state
+            };
+            let Some(AlgebraicValue::Integer(value)) = snapshot
+                .resource_instance_at_path(projection.identity, &projection.children)
+                .and_then(|instance| instance.fields().get(projection.field_index))
+            else {
+                return Err(ExecutionLimit::Paths);
+            };
+            Ok(vec![SpecIntegerPath {
+                value: value.clone(),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
         SpecIntegerExpression::Term(term) => {
             if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(term)) {
                 return Err(ExecutionLimit::Deadline);
