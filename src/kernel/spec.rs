@@ -1035,7 +1035,9 @@ fn lower_spec_algebraic_comparison_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
-    if super::functions::spec_algebraic_expression_is_state_independent(left)
+    if super::functions::spec_algebraic_expression_is_obligation_free(left)
+        && super::functions::spec_algebraic_expression_is_obligation_free(right)
+        && super::functions::spec_algebraic_expression_is_state_independent(left)
         && super::functions::spec_algebraic_expression_is_state_independent(right)
         && (left == right
             || algebraic_match_reconstructs(left, right)
