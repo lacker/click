@@ -9556,6 +9556,14 @@ pub(super) fn expose_composite_resource_fact(
     // holds it by structure does each context, in the same order, answer
     // with the reasoning the resource algebra applies.
     let structural = target.memory_range().is_some();
+    // A token or composite target that the starting context already holds
+    // needs no unfolding, and the starting context is the first one the
+    // search below would accept. Answering from the index first keeps
+    // exposing each of a context's members from re-expanding every composite
+    // it still holds, which made exposing all of them quadratic.
+    if !structural && context.satisfies_fact(target, assumptions) {
+        return Some(context.clone());
+    }
     let mut visited = Vec::new();
     let mut seen = BTreeSet::new();
     let mut pending = VecDeque::from([context.clone()]);
