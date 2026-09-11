@@ -540,6 +540,7 @@ impl<'a> Proof<'a> {
                         self.refined_branch_state(facts.clone()),
                         kernel,
                         surface.or(original_surface),
+                        false,
                     )
                 })
             }
@@ -680,6 +681,7 @@ impl<'a> Proof<'a> {
                     self.refined_branch_state(checked.facts.clone()),
                     kernel,
                     surface,
+                    false,
                 )
             }
             Some(Obligation::Frontier(_) | Obligation::FunctionOutcome(_)) => {
@@ -781,7 +783,9 @@ impl<'a> Proof<'a> {
             execution: Some(Arc::new(execution)),
         };
         let goal = match refined_goal {
-            Some((kernel, surface)) => self.refined_proposition(goal_context, kernel, surface),
+            Some((kernel, surface)) => {
+                self.refined_proposition(goal_context, kernel, surface, false)
+            }
             None => self
                 .focused_branch()
                 .expect("execution unfold requires an open goal")

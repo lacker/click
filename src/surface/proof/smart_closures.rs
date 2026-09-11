@@ -1399,9 +1399,12 @@ impl<'a> Proof<'a> {
         let Some(goal) = self.goal() else {
             return Ok(None);
         };
-        if matches!(goal, Proposition::And(_, _))
-            && surface_logical_children(surface_goal, true).is_some()
-        {
+        if matches!(goal, Proposition::And(_, _)) {
+            // The split owns the checked Surface-to-kernel correspondence.
+            // In particular, a lowered existential body may be a conjunction
+            // whose written Surface spelling is only the body; do not gate
+            // this on a shape heuristic.
+            self.checked_both_surface_children()?;
             return self.try_structural_and_simp_closure(introduced_surfaces);
         }
         if matches!(goal, Proposition::Or(_, _))

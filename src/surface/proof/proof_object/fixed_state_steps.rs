@@ -646,7 +646,7 @@ impl<'a> Proof<'a> {
         let context = self.refined_branch_state(self.facts().clone());
         Ok(CheckedFocusedTransition::replacing(
             self.state().locals().clone(),
-            Some(self.refined_proposition(context, goal, surface_goal)),
+            Some(self.refined_proposition(context, goal, surface_goal, true)),
             Vec::new(),
             Vec::new(),
         ))
@@ -698,7 +698,7 @@ impl<'a> Proof<'a> {
         let context = self.refined_branch_state(self.facts().clone());
         Ok(CheckedFocusedTransition::replacing(
             self.state().locals().clone(),
-            Some(self.refined_proposition(context, proposition, surface_goal)),
+            Some(self.refined_proposition(context, proposition, surface_goal, true)),
             Vec::new(),
             Vec::new(),
         ))
@@ -1038,7 +1038,7 @@ impl<'a> Proof<'a> {
         let context = self.refined_branch_state(facts);
         Ok(CheckedFocusedTransition::replacing(
             self.state().locals().clone(),
-            Some(self.refined_proposition(context, rewritten, surface_goal)),
+            Some(self.refined_proposition(context, rewritten, surface_goal, false)),
             Vec::new(),
             Vec::new(),
         ))

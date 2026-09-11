@@ -896,6 +896,9 @@ pub(in crate::surface::proof) struct PropositionPresentation {
     /// proposition instead of re-lowering the written antecedent under the
     /// fact context the introduction changed.
     pub(in crate::surface::proof) introduced_antecedents: IntroducedAntecedents,
+    /// Exact kernel parent retained by a checked witness refinement when its
+    /// substituted Surface body cannot be lowered independently.
+    pub(in crate::surface::proof) witness_refinement_kernel: Option<Proposition>,
 }
 
 /// The head chain the kernel lowering recorded for one goal, and how much of
@@ -1292,6 +1295,7 @@ impl<'a> Proof<'a> {
         state: BranchState,
         kernel: Proposition,
         surface: Option<ClickProposition>,
+        witness_refinement: bool,
     ) -> OpenBranch {
         let outcome = match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => goal.outcome.clone(),
@@ -1308,9 +1312,11 @@ impl<'a> Proof<'a> {
                 surface_bindings: goal.surface_bindings.clone(),
                 introductions: GoalIntroductions::default(),
                 introduced_antecedents: goal.introduced_antecedents.clone(),
+                witness_refinement_kernel: witness_refinement.then(|| kernel.clone()),
             },
             _ => PropositionPresentation {
                 surface: surface.map(Arc::new),
+                witness_refinement_kernel: witness_refinement.then(|| kernel.clone()),
                 ..PropositionPresentation::default()
             },
         };

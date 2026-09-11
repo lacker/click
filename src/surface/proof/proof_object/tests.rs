@@ -406,6 +406,246 @@ fn both_and_preserves_exact_binders_and_saved_snapshots() {
 }
 
 #[test]
+fn both_surface_conjunction_is_positional_even_for_duplicate_or_reversed_children() {
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let context = pure_identity_fixture();
+    let equality = |value| ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(value))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+    };
+    let lower = |surface: &ClickProposition| {
+        lower_pure_theorem_proposition(
+            "positional both presentation",
+            surface,
+            &context.values,
+            &context.array_refs,
+            &context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("constant equality should lower")
+    };
+    let first = equality(1);
+    let second = equality(2);
+    let duplicate_surface = ClickProposition::And(Box::new(first.clone()), Box::new(first.clone()));
+    let duplicate_kernel = Proposition::And(Box::new(lower(&first)), Box::new(lower(&first)));
+    let duplicate = Proof::for_pure_surface_goal(
+        "duplicate both presentation",
+        &[],
+        duplicate_kernel,
+        duplicate_surface.clone(),
+        &context,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let (split, _, ids) = duplicate
+        .split_focused_both()
+        .expect("duplicate written conjuncts retain their positional spellings");
+    assert_eq!(
+        split.focus_branch(ids[0]).unwrap().surface_goal(),
+        Some(&first)
+    );
+    assert_eq!(
+        split.focus_branch(ids[1]).unwrap().surface_goal(),
+        Some(&first)
+    );
+
+    let reversed_surface = ClickProposition::And(Box::new(second.clone()), Box::new(first.clone()));
+    let reversed = Proof::for_pure_surface_goal(
+        "reversed both presentation",
+        &[],
+        Proposition::And(Box::new(lower(&first)), Box::new(lower(&second))),
+        reversed_surface,
+        &context,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let error = match reversed.split_focused_both() {
+        Ok(_) => panic!("reversed written children must not be remapped by a set-like match"),
+        Err(error) => error,
+    };
+    assert!(
+        error.message().contains("child order does not match"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
+    let parsed_function =
+        syntax::parse_function("void noop() {}").expect("test function should parse");
+    let state = CState::new();
+    let snapshots = RecordedSnapshots::new();
+    let surfaces = SurfacePropositionMap::default();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let guard = Proposition::ConditionIs(ConditionTerm::Constant(false), false);
+    let body_surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        operator: ComparisonOperator::LessEqual,
+        right: ContractExpression::CFragment(CExpression::Value(int32(2))),
+    };
+    let body = lower_fixed_state_proposition_with_assumptions(
+        &body_surface,
+        &PureFactContext::new(),
+        parsed_function.parameters(),
+        &[],
+        &state,
+        &state,
+        None,
+        &snapshots,
+        &predicates,
+        &functions,
+    )
+    .expect("body should lower");
+    let kernel = Proposition::And(Box::new(guard.clone()), Box::new(body));
+    let root = Proof::for_fixed_state_surface_goal(
+        "guarded both presentation",
+        0,
+        &[],
+        kernel,
+        body_surface.clone(),
+        parsed_function.parameters(),
+        &[],
+        &state,
+        &state,
+        &snapshots,
+        &surfaces,
+        &predicates,
+        &functions,
+        &theorems,
+        &[],
+        &[],
+    );
+    let (split, split_id, ids) = root
+        .split_focused_both()
+        .expect("checked body correspondence should cross the inserted guard");
+    assert!(split.focus_branch(ids[0]).unwrap().surface_goal().is_none());
+    assert_eq!(
+        split.focus_branch(ids[1]).unwrap().surface_goal(),
+        Some(&body_surface)
+    );
+    let marker = split.checkpoint();
+    let left = split
+        .focus_branch(ids[0])
+        .unwrap()
+        .apply_step(ProofStep::Normalize)
+        .expect("the required guard remains a checked obligation");
+    let joined = left
+        .focus_branch(ids[1])
+        .unwrap()
+        .apply_step(ProofStep::Normalize)
+        .expect("the written body should retain its Surface spelling")
+        .join_focused_both(&marker, split_id, ids)
+        .expect("both checked children should join");
+    assert!(joined.is_complete());
+    let certificate = joined.certificate();
+    let cold = root
+        .try_planned_linear_script(&certificate.to_proof_tactics())
+        .expect("the rendered guarded split should be accepted cold")
+        .expect("the rendered guarded split should close");
+    assert_eq!(cold.certificate(), certificate);
+    let missing_guard = ProofCertificate::from_steps(vec![ProofStep::Both {
+        left_proof: Box::new(ProofCertificate::from_steps(Vec::new()).unwrap()),
+        right_proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize]).unwrap()),
+    }])
+    .unwrap();
+    assert!(
+        root.try_planned_linear_script(&missing_guard.to_proof_tactics())
+            .expect("deleting a required guard proof should be a bounded rejection")
+            .is_none(),
+        "the guard child cannot be silently omitted"
+    );
+    let smart = root
+        .try_simp_closure()
+        .expect("hidden-guard simplification should remain bounded")
+        .expect("both normalized children should close");
+    assert!(smart.is_complete());
+}
+
+#[test]
+fn both_rejects_an_unsupported_written_child_correspondence_boundedly() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let context = pure_identity_fixture();
+    let guard = Proposition::ConditionIs(ConditionTerm::Constant(false), false);
+    let body = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let unsupported = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(2))),
+    };
+    let root = Proof::for_pure_surface_goal(
+        "unsupported both presentation",
+        &[],
+        Proposition::And(Box::new(guard), Box::new(body)),
+        unsupported,
+        &context,
+        &predicates,
+        &functions,
+        &theorems,
+    );
+    let retained = root.clone();
+    let error = match root.split_focused_both() {
+        Ok(_) => panic!("an unrelated written proposition must not attach to a child"),
+        Err(error) => error,
+    };
+    assert!(
+        error.message().contains("cannot preserve its written goal"),
+        "{error:?}"
+    );
+    assert!(root.state.shares_state_with(&retained.state));
+    assert!(Arc::ptr_eq(&root.node, &retained.node));
+    assert!(root.certificate().steps().is_empty());
+}
+
+#[test]
+fn both_rejects_unlowerable_child_without_exact_parent_metadata() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let context = pure_identity_fixture();
+    let kernel = Proposition::And(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true,
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            false,
+        )),
+    );
+    let root = Proof::for_pure_surface_goal(
+        "unlowerable both presentation",
+        &[],
+        kernel,
+        ClickProposition::PredicateCall {
+            name: "missing".to_string(),
+            arguments: Vec::new(),
+        },
+        &context,
+        &predicates,
+        &functions,
+        &theorems,
+    );
+    let error = match root.split_focused_both() {
+        Ok(_) => panic!("an unlowerable child must not receive a guessed spelling"),
+        Err(error) => error,
+    };
+    assert!(
+        error.message().contains("candidate did not lower"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     let equality = |value| ClickProposition::Comparison {
         left: ContractExpression::CFragment(CExpression::Value(int32(value))),

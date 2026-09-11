@@ -4,6 +4,203 @@ use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 impl<'a> Proof<'a> {
+    fn recorded_surface_matches(&self, surface: &ClickProposition, target: &Proposition) -> bool {
+        let matches = |map: &SurfacePropositionMap| {
+            map.available_kernel_matching(surface, |kernel| {
+                crate::kernel::proof::propositions_are_alpha_equal(kernel, target)
+            })
+            .is_some()
+        };
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => matches(&context.theorem_context.surface_requirements),
+            ProofContext::FixedState(context) => matches(context.surface_propositions),
+            ProofContext::Execution(_) => self
+                .execution()
+                .is_some_and(|execution| matches(&execution.presentation.surface_propositions)),
+        }
+    }
+
+    /// Computes the Surface spellings that may travel across a checked
+    /// `both` split.  Lowering can insert a conjunct (notably an existential
+    /// witness guard), so the written proposition is not necessarily shaped
+    /// like the kernel conjunction.  A child is retained only when its
+    /// candidate lowers alpha-equivalently to that actual kernel child.
+    ///
+    /// This is deliberately output-sized: there are at most two candidates
+    /// and two kernel children.  It never searches ambient facts or treats a
+    /// conjunct as a guard merely because it looks like one.
+    pub(in crate::surface::proof) fn checked_both_surface_children(
+        &self,
+    ) -> Result<[Option<ClickProposition>; 2], ClickError> {
+        let Some(surface) = self.surface_goal() else {
+            return Ok([None, None]);
+        };
+        let Some(Proposition::And(left, right)) = self.goal() else {
+            return Err(
+                self.step_error("`both` presentation correspondence requires a kernel conjunction")
+            );
+        };
+        let witness_refinement_kernel = self
+            .proposition_obligation()
+            .and_then(|goal| goal.presentation.witness_refinement_kernel.as_ref());
+        let kernel_children = [left.as_ref(), right.as_ref()];
+        if let Some((surface_left, surface_right)) = surface_logical_children(surface, true) {
+            // A written conjunction has ordered Surface children.  Preserve
+            // that order even when the children are alpha-equal (and reject
+            // a reversal), rather than treating it as an unordered match.
+            let mut children = [None, None];
+            let mut lowered_children = [None, None];
+            for (index, candidate) in [surface_left, surface_right].into_iter().enumerate() {
+                let Ok(lowered) =
+                    self.lower_surface_proposition(&candidate, "`both` presentation child")
+                else {
+                    continue;
+                };
+                lowered_children[index] = Some(lowered.clone());
+                if !crate::kernel::proof::propositions_are_alpha_equal(
+                    &lowered,
+                    kernel_children[index],
+                ) {
+                    continue;
+                }
+                children[index] = Some(candidate);
+            }
+            if children.iter().all(Option::is_some) {
+                return Ok(children);
+            }
+            // A fully lowerable reversal is a definite correspondence error;
+            // do not let a set-like fallback silently swap written children.
+            if lowered_children.iter().all(Option::is_some)
+                && crate::kernel::proof::propositions_are_alpha_equal(
+                    lowered_children[0].as_ref().unwrap(),
+                    kernel_children[1],
+                )
+                && crate::kernel::proof::propositions_are_alpha_equal(
+                    lowered_children[1].as_ref().unwrap(),
+                    kernel_children[0],
+                )
+            {
+                return Err(self.step_error(
+                    "`both` cannot preserve its written conjunction: child order does not match",
+                ));
+            }
+            if let Ok(children) = self.checked_whole_surface_child(surface, kernel_children) {
+                return Ok(children);
+            }
+            if witness_refinement_kernel.is_some_and(|recorded| {
+                crate::kernel::proof::propositions_are_alpha_equal(
+                    recorded,
+                    &Proposition::And(
+                        Box::new(kernel_children[0].clone()),
+                        Box::new(kernel_children[1].clone()),
+                    ),
+                )
+            }) {
+                return Ok([None, None]);
+            }
+            return Err(self.step_error(
+                "`both` cannot preserve its written conjunction: no checked child correspondence",
+            ));
+        }
+
+        // A non-conjunct written body can be the semantic child of a
+        // lowering-inserted guard.  It must match exactly one child: duplicate
+        // kernel children are intentionally rejected as ambiguous.
+        let Ok(lowered) = self.lower_surface_proposition(surface, "`both` presentation child")
+        else {
+            let parent = Proposition::And(
+                Box::new(kernel_children[0].clone()),
+                Box::new(kernel_children[1].clone()),
+            );
+            if self.recorded_surface_matches(surface, &parent) {
+                return Ok([None, None]);
+            }
+            if witness_refinement_kernel.is_some_and(|recorded| {
+                crate::kernel::proof::propositions_are_alpha_equal(
+                    recorded,
+                    &Proposition::And(
+                        Box::new(kernel_children[0].clone()),
+                        Box::new(kernel_children[1].clone()),
+                    ),
+                )
+            }) {
+                return Ok([None, None]);
+            }
+            return Err(self.step_error(
+                "`both` cannot preserve its written goal: the candidate did not lower",
+            ));
+        };
+        let matches = kernel_children
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| {
+                crate::kernel::proof::propositions_are_alpha_equal(&lowered, child)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            if crate::kernel::proof::propositions_are_alpha_equal(
+                &lowered,
+                &Proposition::And(
+                    Box::new(kernel_children[0].clone()),
+                    Box::new(kernel_children[1].clone()),
+                ),
+            ) {
+                // The written proposition accounts for the complete
+                // conjunction, not either child.  The checked split still
+                // proves both kernel obligations; no child spelling can be
+                // installed without changing the written claim.
+                return Ok([None, None]);
+            }
+            return Err(self.step_error(
+                "`both` cannot preserve its written goal: the kernel child correspondence is ambiguous",
+            ));
+        }
+        let mut children = [None, None];
+        children[matches[0]] = Some(surface.clone());
+        Ok(children)
+    }
+
+    fn checked_whole_surface_child(
+        &self,
+        surface: &ClickProposition,
+        kernel_children: [&Proposition; 2],
+    ) -> Result<[Option<ClickProposition>; 2], ClickError> {
+        let lowered = match self
+            .lower_surface_proposition(surface, "`both` presentation conjunction")
+        {
+            Ok(lowered) => lowered,
+            Err(_) => {
+                let parent = Proposition::And(
+                    Box::new(kernel_children[0].clone()),
+                    Box::new(kernel_children[1].clone()),
+                );
+                if self.recorded_surface_matches(surface, &parent) {
+                    return Ok([None, None]);
+                }
+                return Err(self.step_error(
+                    "`both` cannot preserve its written conjunction: no checked child correspondence",
+                ));
+            }
+        };
+        let matches = kernel_children
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| {
+                crate::kernel::proof::propositions_are_alpha_equal(&lowered, child)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(self.step_error(
+                "`both` cannot preserve its written conjunction: child order does not match",
+            ));
+        }
+        let mut children = [None, None];
+        children[matches[0]] = Some(surface.clone());
+        Ok(children)
+    }
+
     pub(in crate::surface::proof) fn apply_both_source(
         &self,
         both: &ProofBoth,
@@ -15,18 +212,12 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn split_focused_both(
         &self,
     ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
+        let surface_children = self.checked_both_surface_children()?;
         let (state, split, ids) = self
             .state
             .split_proposition_both(|parent, left| {
                 let mut child = parent.clone();
-                child.surface = match parent.surface.as_deref() {
-                    Some(ClickProposition::And(a, b)) => Some(Arc::new(if left {
-                        a.as_ref().clone()
-                    } else {
-                        b.as_ref().clone()
-                    })),
-                    _ => None,
-                };
+                child.surface = surface_children[usize::from(!left)].clone().map(Arc::new);
                 child
             })
             .map_err(|message| self.step_error(message))?
