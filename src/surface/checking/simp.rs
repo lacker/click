@@ -678,6 +678,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 | Bitvector32Term::RangeFold { .. }
                 | Bitvector32Term::ClickFunctionApplication { .. }
                 | Bitvector32Term::AlgebraicMatch { .. }
+                | Bitvector32Term::IntegerToMachine { .. }
                 | Bitvector32Term::Constant(_)
                 | Bitvector32Term::Int64Constant(_)
                 | Bitvector32Term::UInt64Constant(_) => term.clone(),
@@ -1254,7 +1255,8 @@ fn rewrite_atomic_proposition_by_exact_equality(
             Bitvector32Term::If { .. }
             | Bitvector32Term::RangeFold { .. }
             | Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. } => {
+            | Bitvector32Term::AlgebraicMatch { .. }
+            | Bitvector32Term::IntegerToMachine { .. } => {
                 super::algebraic_rewrite::AlgebraicRewrite::for_bits(from, to).bits(term)
             }
             Bitvector32Term::Constant(_)
@@ -2233,6 +2235,7 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
             true => simp_bitvector_const(then_term),
             false => simp_bitvector_const(else_term),
         },
+        Bitvector32Term::IntegerToMachine { .. } => None,
     }
 }
 
@@ -2242,6 +2245,7 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_)
         | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::IntegerToMachine { .. } => term.clone(),
         Bitvector32Term::Int64From32(value) => {
             Bitvector32Term::int64_from_32(simp_bitvector(value))
         }

@@ -3576,7 +3576,8 @@ pub(crate) fn term_is_shallow_structural_cache_key(term: &Bitvector32Term) -> bo
                     );
                 }
                 Bitvector32Term::ClickFunctionApplication { .. }
-                | Bitvector32Term::AlgebraicMatch { .. } => {}
+                | Bitvector32Term::AlgebraicMatch { .. }
+                | Bitvector32Term::IntegerToMachine { .. } => {}
             },
             Node::Condition(condition, depth) => match condition {
                 ConditionTerm::AlgebraicEqual(_, _) => return false,
@@ -4018,7 +4019,8 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                         }
                     }
                     Bitvector32Term::ClickFunctionApplication { .. }
-                    | Bitvector32Term::AlgebraicMatch { .. } => results.push(term.clone()),
+                    | Bitvector32Term::AlgebraicMatch { .. }
+                    | Bitvector32Term::IntegerToMachine { .. } => results.push(term.clone()),
                 }
             }
             AtomicCanonicalizationTask::VisitCondition(condition) => match condition {
@@ -4677,6 +4679,7 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
             | Bitvector32Term::Int64Constant(_)
             | Bitvector32Term::UInt64Constant(_)
             | Bitvector32Term::Variable(_) => false,
+            Bitvector32Term::IntegerToMachine { .. } => true,
         }
     }
     fn offset_has_memory(offset: &PointerOffsetTerm) -> bool {
@@ -4904,6 +4907,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<SharedC
             }
         }
         Bitvector32Term::ClickFunctionApplication { .. } => {}
+        Bitvector32Term::IntegerToMachine { .. } => {}
         Bitvector32Term::AlgebraicMatch { arms, .. } => {
             for arm in arms {
                 collect_bitvector_memories(&arm.body, memories);
@@ -5463,7 +5467,8 @@ fn transport_framed_atomic_bitvector(
             }
         }
         Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => term.clone(),
+        | Bitvector32Term::AlgebraicMatch { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => term.clone(),
     })
 }
 
@@ -5904,7 +5909,8 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                         }
                     }
                     Bitvector32Term::ClickFunctionApplication { .. }
-                    | Bitvector32Term::AlgebraicMatch { .. } => results.push(term),
+                    | Bitvector32Term::AlgebraicMatch { .. }
+                    | Bitvector32Term::IntegerToMachine { .. } => results.push(term),
                     Bitvector32Term::PointerAddress(_) => results.push(term),
                     load @ Bitvector32Term::MemoryLoad(_, _) => {
                         if !active_loads.insert(load.clone()) {

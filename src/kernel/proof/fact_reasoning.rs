@@ -210,7 +210,8 @@ fn signed_term_interval(
         | Bitvector32Term::UInt64BitwiseAnd(_, _)
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
-        | Bitvector32Term::UInt64BitwiseNot(_) => None,
+        | Bitvector32Term::UInt64BitwiseNot(_)
+        | Bitvector32Term::IntegerToMachine { .. } => None,
     }
 }
 
@@ -394,7 +395,8 @@ fn collect_signed_affine_terms(
         | Bitvector32Term::Float32Negate(_)
         | Bitvector32Term::Float32Binary { .. }
         | Bitvector32Term::Float64Negate(_)
-        | Bitvector32Term::Float64Binary { .. } => return None,
+        | Bitvector32Term::Float64Binary { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => return None,
     }
     Some(())
 }
@@ -590,7 +592,8 @@ fn signed_affine_term_is_defined(
         | Bitvector32Term::Float32Negate(_)
         | Bitvector32Term::Float32Binary { .. }
         | Bitvector32Term::Float64Negate(_)
-        | Bitvector32Term::Float64Binary { .. } => false,
+        | Bitvector32Term::Float64Binary { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => false,
     }
 }
 

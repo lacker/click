@@ -159,6 +159,7 @@ impl Bitvector32Term {
             Self::Variable(_)
             | Self::MemoryLoad(_, _)
             | Self::PointerAddress(_)
+            | Self::IntegerToMachine { .. }
             | Self::PureFunctionApplication { .. }
             | Self::ClickFunctionApplication { .. }
             | Self::AlgebraicMatch { .. }

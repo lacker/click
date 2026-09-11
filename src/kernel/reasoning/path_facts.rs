@@ -1009,18 +1009,10 @@ pub(in crate::kernel) fn merge_obligations(
             }
             obligations.push(obligation.clone());
         } else {
-            // A required obligation was already tested against the path
-            // context that created it.  Merging path fragments must preserve
-            // that verification condition, not rerun the general prover
-            // against an older base context.  The latter cannot discharge a
-            // new obligation and becomes catastrophically expensive as
-            // verified-call chains accumulate implication facts.
-            add_required_proof_obligation_without_search(
-                &mut obligations,
-                assumptions,
-                obligation.proposition().clone(),
-                obligation.context(),
-            );
+            // Preserve mandatory conditions as mandatory across composition.
+            // Rebuilding with `ProofObligation::new` would make an unresolved
+            // condition available as an assumption to later evaluation.
+            obligations.push(obligation.clone());
         }
     }
     Some(obligations)
@@ -1190,6 +1182,28 @@ mod sequence_equality_tests {
                 Term::Sequence(left_associated),
                 Term::Sequence(right_associated),
             )));
+        }
+    }
+}
+
+#[cfg(test)]
+mod mandatory_integer_obligation_tests {
+    use super::*;
+
+    #[test]
+    fn integer_conversion_obligation_merge_preserves_kind_and_context() {
+        let proposition = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
+        let required = ProofObligation::verification_condition(proposition.clone())
+            .with_context("Integer argument definedness");
+        let base = PureFactContext::new();
+        for (left, right) in [
+            (vec![required.clone()], vec![]),
+            (vec![], vec![required.clone()]),
+        ] {
+            let merged = merge_obligations(&left, &right, &base).unwrap();
+            assert_eq!(merged, vec![required.clone()]);
+            let context = assumptions_with_path_context(&base, &[], &merged);
+            assert!(!context.proves_exact(&proposition));
         }
     }
 }

@@ -559,6 +559,7 @@ enum AlphaBitvectorKey {
     },
     Load(Box<AlphaPointerKey>),
     Address(Box<AlphaPointerKey>),
+    IntegerToMachine(MachineIntegerType, AlphaIntegerKey),
     Int64From32(Box<Self>),
     UInt64From32(Box<Self>),
     UInt32From64(Box<Self>),
@@ -1069,6 +1070,12 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         Bitvector32Term::PointerAddress(pointer) => AlphaBitvectorKey::Address(Box::new(
             alpha_pointer_key::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
         )),
+        Bitvector32Term::IntegerToMachine { value, destination } => {
+            AlphaBitvectorKey::IntegerToMachine(
+                *destination,
+                alpha_integer_key(value.as_ref(), bindings)?,
+            )
+        }
         Bitvector32Term::Int64From32(value) => AlphaBitvectorKey::Int64From32(Box::new(
             alpha_bitvector_key::<ALLOW_LOADS>(value, bindings, next_binder)?,
         )),
@@ -1293,6 +1300,7 @@ pub(crate) fn memory_free_quantified_key(
 #[cfg(test)]
 mod integer_alpha_scaling_tests {
     use super::*;
+    use crate::kernel::SharedIntegerTerm;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -1319,5 +1327,28 @@ mod integer_alpha_scaling_tests {
             right.hash(&mut right_hash);
             assert_eq!(left_hash.finish(), right_hash.finish());
         }
+    }
+
+    #[test]
+    fn alpha_integer_to_machine_keys_rename_math_binders_and_include_destination() {
+        let make = |variable, destination| Bitvector32Term::IntegerToMachine {
+            value: SharedIntegerTerm::from(IntegerTerm::Variable(variable)),
+            destination,
+        };
+        let left = make(Variable(881), MachineIntegerType::Int32);
+        let right = make(Variable(882), MachineIntegerType::Int32);
+        let renamed_left =
+            alpha_bitvector_key::<false>(&left, &mut BTreeMap::from([(Variable(881), 0)]), &mut 1);
+        let renamed_right =
+            alpha_bitvector_key::<false>(&right, &mut BTreeMap::from([(Variable(882), 0)]), &mut 1);
+        assert_eq!(renamed_left, renamed_right);
+        assert_ne!(
+            renamed_left,
+            alpha_bitvector_key::<false>(
+                &make(Variable(882), MachineIntegerType::UInt32),
+                &mut BTreeMap::from([(Variable(882), 0)]),
+                &mut 1,
+            )
+        );
     }
 }

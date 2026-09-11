@@ -257,7 +257,8 @@ fn bitvector_term_exceeds_depth_limit(root: &Bitvector32Term) -> bool {
                 pending.extend(arguments.iter().map(|argument| (argument, depth + 1)));
             }
             Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. } => {}
+            | Bitvector32Term::AlgebraicMatch { .. }
+            | Bitvector32Term::IntegerToMachine { .. } => {}
             Bitvector32Term::MemoryLoad(_, pointer) => {
                 if let PointerOffsetTerm::Int32Scaled { value, .. }
                 | PointerOffsetTerm::Int64Scaled { value, .. } = &pointer.offset
@@ -1543,7 +1544,7 @@ fn synthesize_surface_bitvector(
             name,
             arguments: values,
         } => synthesize_surface_call(name, values, parameters, arguments, state, bound_variables),
-        Bitvector32Term::AlgebraicMatch { .. } => None,
+        Bitvector32Term::AlgebraicMatch { .. } | Bitvector32Term::IntegerToMachine { .. } => None,
     }
 }
 
@@ -1843,7 +1844,8 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
                 pending.extend(arguments);
             }
             Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. } => return false,
+            | Bitvector32Term::AlgebraicMatch { .. }
+            | Bitvector32Term::IntegerToMachine { .. } => return false,
         }
     }
     true
