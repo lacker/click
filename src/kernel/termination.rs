@@ -1380,9 +1380,7 @@ fn c_ranking_measure_term_unfolded(
         | PointerOffsetBytes { .. }
         | Load(_)
         | TypedLoad { .. }
-        | Index(_, _) => {
-            Err("termination measures may only use scalar int32 expressions".into())
-        }
+        | Index(_, _) => Err("termination measures may only use scalar int32 expressions".into()),
         LessThan(_, _)
         | LessEqual(_, _)
         | GreaterThan(_, _)
@@ -1426,9 +1424,9 @@ fn c_ranking_measure_condition_term(
             let (condition, value) = c_ranking_measure_condition_term(inner, state)?;
             Ok((condition, !value))
         }
-        And(_, _) | Or(_, _) => Err(
-            "compound boolean conditions are not atomic ranking measure conditions".into(),
-        ),
+        And(_, _) | Or(_, _) => {
+            Err("compound boolean conditions are not atomic ranking measure conditions".into())
+        }
         _ => Ok((
             ConditionTerm::equal(
                 c_ranking_measure_term_unfolded(expression, state)?,
@@ -1729,36 +1727,20 @@ fn check_loops(
     next_index: &mut usize,
 ) -> Result<bool, CTerminationError> {
     match statement {
-        CStatement::Seq(first, second) => Ok(check_loops(
-            first,
-            supplied,
-            certified,
-            function_name,
-            next_index,
-        )? && check_loops(
-            second,
-            supplied,
-            certified,
-            function_name,
-            next_index,
-        )?),
+        CStatement::Seq(first, second) => {
+            Ok(
+                check_loops(first, supplied, certified, function_name, next_index)?
+                    && check_loops(second, supplied, certified, function_name, next_index)?,
+            )
+        }
         CStatement::If {
             then_branch,
             else_branch,
             ..
-        } => Ok(check_loops(
-            then_branch,
-            supplied,
-            certified,
-            function_name,
-            next_index,
-        )? && check_loops(
-            else_branch,
-            supplied,
-            certified,
-            function_name,
-            next_index,
-        )?),
+        } => Ok(
+            check_loops(then_branch, supplied, certified, function_name, next_index)?
+                && check_loops(else_branch, supplied, certified, function_name, next_index)?,
+        ),
         CStatement::While { body, .. } => {
             let index = *next_index;
             *next_index += 1;

@@ -2133,7 +2133,11 @@ mod tests {
                     }
                 }
                 let stale = root(changed_facts, changed);
-                assert!(stale.validate_checked_invariant_lowerings(&checks, &[]).is_err());
+                assert!(
+                    stale
+                        .validate_checked_invariant_lowerings(&checks, &[])
+                        .is_err()
+                );
                 if variant < 3 {
                     assert!(
                         stale
@@ -2342,7 +2346,11 @@ mod tests {
             });
             result.unwrap();
             samples.push(work);
-            assert!(prepared.validate_checked_invariant_lowerings(&[], &[]).is_err());
+            assert!(
+                prepared
+                    .validate_checked_invariant_lowerings(&[], &[])
+                    .is_err()
+            );
             let changed_checks = vec![CLoopInvariantCheck::new(
                 SpecProposition::Comparison {
                     left: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),

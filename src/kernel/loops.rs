@@ -1959,13 +1959,11 @@ pub(super) fn collect_loop_preservation_summary(
                                 // ranking members the surface bundle spells.
                                 // Only a continuing edge is a back edge.
                                 if may_continue {
-                                    path_obligations.extend(
-                                        loop_ranking_obligations_or_refusal(
-                                            &next_state,
-                                            top_state,
-                                            ranking_measures,
-                                        ),
-                                    );
+                                    path_obligations.extend(loop_ranking_obligations_or_refusal(
+                                        &next_state,
+                                        top_state,
+                                        ranking_measures,
+                                    ));
                                 }
                                 let mut state_obligations = condition_obligations.clone();
                                 if may_continue

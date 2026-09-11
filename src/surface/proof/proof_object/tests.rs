@@ -8265,7 +8265,9 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
             )
             .unwrap()
             .unwrap();
-        let certified = prepared.certify_loop_invariant_bundle(&checks, &[]).unwrap();
+        let certified = prepared
+            .certify_loop_invariant_bundle(&checks, &[])
+            .unwrap();
         let execution = certified.execution().unwrap();
         let record = execution.core.checked_invariant_lowerings.as_ref().unwrap();
         assert_eq!(record.checks(), checks);
@@ -8361,10 +8363,12 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         )];
         let (body, scope) = root
             .state
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| PropositionPresentation {
-                surface: None,
-                surface_bindings: PersistentMap::default(),
-                ..PropositionPresentation::default()
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_| {
+                PropositionPresentation {
+                    surface: None,
+                    surface_bindings: PersistentMap::default(),
+                    ..PropositionPresentation::default()
+                }
             })
             .unwrap();
         let completed = body.apply_normalize().ok().unwrap();

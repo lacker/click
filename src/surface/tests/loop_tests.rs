@@ -151,7 +151,9 @@ fn lexicographic_ranking_bundle_prints_and_pins_its_pivot_arm() {
     verify_c0_sources(&wrong_first, &sources)
         .expect_err("the other pivot arm must be rejected on the `j > 0` path");
 
-    let last_left = expanded.rfind("left();").expect("a printed first-component arm");
+    let last_left = expanded
+        .rfind("left();")
+        .expect("a printed first-component arm");
     let mut wrong_last = expanded.clone();
     wrong_last.replace_range(last_left..last_left + "left();".len(), "right();");
     verify_c0_sources(&wrong_last, &sources)
