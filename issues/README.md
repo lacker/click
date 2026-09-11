@@ -66,7 +66,7 @@ C import and execution:
 
 Specification and proof:
 
-- [Give function-pointer values checked named contracts](function-contracts.md)
+- [Function-pointer contracts: residual gaps](function-contracts.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
