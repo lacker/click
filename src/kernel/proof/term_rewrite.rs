@@ -6,8 +6,11 @@ use crate::kernel::{
     AlgebraicBitvectorMatchArm, AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode,
     AlgebraicValue, PureFunctionArgument,
 };
+use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod spec_rewrite;
 
 #[derive(Clone, Default)]
 struct RewriteScope {
@@ -61,6 +64,7 @@ struct CarrierVariables {
     charge_work: bool,
     budgeted: bool,
     work_exhausted: bool,
+    registered_loads: BTreeSet<Variable>,
 }
 
 impl CarrierVariables {
@@ -597,6 +601,7 @@ fn collect_bitvector_carriers(term: &Bitvector32Term, variables: &mut CarrierVar
         | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::Variable(variable) => {
             variables.c.insert(*variable);
+            collect_registered_load_carriers(*variable, variables);
         }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
@@ -748,6 +753,19 @@ fn collect_bitvector_carriers(term: &Bitvector32Term, variables: &mut CarrierVar
     }
 }
 
+/// Extend the carrier summary through one registered load's selected
+/// pointer.  A per-walker load set prevents shared or cyclic registry edges
+/// from reopening the same pointer DAG; snapshots remain completely opaque.
+fn collect_registered_load_carriers(load: Variable, variables: &mut CarrierVariables) {
+    if !crate::kernel::is_load_variable(&load) || !variables.registered_loads.insert(load) {
+        return;
+    }
+    let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(&load) else {
+        return;
+    };
+    collect_pointer_carriers(&pointer, variables);
+}
+
 fn collect_pointer_offset_carriers(offset: &PointerOffsetTerm, variables: &mut CarrierVariables) {
     if !variables.visit() {
         return;
@@ -756,6 +774,7 @@ fn collect_pointer_offset_carriers(offset: &PointerOffsetTerm, variables: &mut C
         PointerOffsetTerm::Constant(_) => {}
         PointerOffsetTerm::Variable(variable) => {
             variables.c.insert(*variable);
+            collect_registered_load_carriers(*variable, variables);
         }
         PointerOffsetTerm::Add(left, right) => {
             collect_pointer_offset_carriers(left, variables);
@@ -798,39 +817,80 @@ fn collect_sequence_carriers(term: &SequenceTerm, variables: &mut CarrierVariabl
 /// substitution fragment.  Pure function ArrayRef snapshots are proof-state
 /// values, so their memory field is deliberately not traversed here; only the
 /// explicit pointer expression participates in lexical freshness.
-pub(crate) fn collect_integer_substitution_variables(
+pub(crate) struct IntegerSubstitutionVariableCollector {
+    carriers: CarrierVariables,
+}
+
+impl IntegerSubstitutionVariableCollector {
+    /// Construct the checked collector used by pure Integer substitution.
+    /// Registered-load identities remain memoized for the entire proposition,
+    /// so repeated loadability obligations do not reopen one pointer DAG.
+    pub(crate) fn checked() -> Self {
+        Self {
+            carriers: CarrierVariables::for_rewrite(true),
+        }
+    }
+
+    pub(crate) fn collect(&mut self, proposition: &Proposition) {
+        if !self.carriers.exhausted() {
+            collect_integer_substitution_variables_with_carriers(proposition, &mut self.carriers);
+        }
+    }
+
+    pub(crate) fn exhausted(&self) -> bool {
+        self.carriers.exhausted()
+    }
+
+    pub(crate) fn extend_into(&self, variables: &mut BTreeSet<Variable>) {
+        variables.extend(self.carriers.c.iter().copied());
+        variables.extend(self.carriers.integer.iter().copied());
+        variables.extend(self.carriers.algebraic.iter().copied());
+    }
+}
+
+fn collect_integer_substitution_variables_with_carriers(
     proposition: &Proposition,
-    variables: &mut BTreeSet<Variable>,
+    carriers: &mut CarrierVariables,
 ) {
-    let mut carriers = CarrierVariables::default();
     match proposition {
         Proposition::Equal(left, right) => {
-            collect_integer_substitution_term_variables(left, &mut carriers);
-            collect_integer_substitution_term_variables(right, &mut carriers);
+            collect_integer_substitution_term_variables(left, carriers);
+            if carriers.exhausted() {
+                return;
+            }
+            collect_integer_substitution_term_variables(right, carriers);
         }
         Proposition::ConditionIs(condition, _) => {
-            collect_condition_carriers(condition, &mut carriers);
+            collect_condition_carriers(condition, carriers);
+        }
+        // Loadability obligations produced while lowering a symbolic array
+        // read carry the selected pointer and byte-count terms directly.  The
+        // memory snapshot is intentionally opaque: only these expressions
+        // participate in capture reservation.
+        Proposition::CMemoryLoadable { base, bytes, .. } => {
+            collect_pointer_carriers(base, carriers);
+            if carriers.exhausted() {
+                return;
+            }
+            collect_bitvector_carriers(bytes, carriers);
         }
         Proposition::And(left, right)
         | Proposition::Or(left, right)
         | Proposition::Implies(left, right) => {
-            collect_integer_substitution_variables(left, variables);
-            collect_integer_substitution_variables(right, variables);
-            return;
+            collect_integer_substitution_variables_with_carriers(left, carriers);
+            if carriers.exhausted() {
+                return;
+            }
+            collect_integer_substitution_variables_with_carriers(right, carriers);
         }
         Proposition::Not(body) => {
-            collect_integer_substitution_variables(body, variables);
-            return;
+            collect_integer_substitution_variables_with_carriers(body, carriers);
         }
         Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
-            collect_integer_substitution_variables(body, variables);
-            return;
+            collect_integer_substitution_variables_with_carriers(body, carriers);
         }
-        _ => return,
+        _ => {}
     }
-    variables.extend(carriers.c);
-    variables.extend(carriers.integer);
-    variables.extend(carriers.algebraic);
 }
 
 fn collect_integer_substitution_term_variables(term: &Term, variables: &mut CarrierVariables) {
@@ -964,13 +1024,23 @@ pub(crate) struct IntegerSubstitutionScope {
     integer_shadowed: bool,
 }
 
+/// Saved lexical state for a C-carrier quantifier visited by the checked
+/// Integer proposition substitution walker.  C and Integer binders share the
+/// numeric variable namespace in the term representation, but their lexical
+/// mappings must remain separate.
+pub(crate) struct CSubstitutionScope {
+    variable: Variable,
+    previous: Option<Variable>,
+    scope_id: u64,
+}
+
 pub(crate) struct TermRewrite<'a> {
     algebraic: Option<(&'a AlgebraicTerm, &'a AlgebraicTerm)>,
     bitvector: Option<(&'a Bitvector32Term, &'a Bitvector32Term)>,
     pointer_variable: Option<(Variable, &'a Pointer)>,
     conditions: Option<&'a HashMap<ConditionTerm, bool>>,
     collected_conditions: Option<Vec<ConditionTerm>>,
-    integer_cache: HashMap<(u64, u64), IntegerTerm>,
+    integer_cache: HashMap<(u64, u64, bool), IntegerTerm>,
     scope_renaming_max: u64,
     integer_body_summaries: HashMap<u64, crate::kernel::prelude::IntegerScopeSummary>,
     integer_variables: Option<IntegerVariableRewrite<'a>>,
@@ -990,6 +1060,18 @@ pub(crate) struct TermRewrite<'a> {
     reserved_variables: BTreeSet<Variable>,
     fresh_next: u64,
     replacement_carriers: Option<CarrierVariables>,
+    /// Materialize registered load origins only while rewriting an Integer
+    /// fold body.  Ordinary rewrites keep load variables opaque and therefore
+    /// do not expand a registry DAG that is unrelated to the selected term.
+    resolve_registered_loads: bool,
+    /// Rewritten registered loads are memoized by load identity and lexical
+    /// scope.  A changed address is re-minted as a load variable for the
+    /// exact original snapshot, so a branching registry DAG stays shared
+    /// instead of expanding into owned `MemoryLoad` trees at every parent.
+    registered_load_cache: HashMap<(Variable, u64), Variable>,
+    /// A malformed registry cycle is rejected before recursive pointer
+    /// expansion can consume unbounded work.
+    registered_load_pointer_active: BTreeSet<Variable>,
     pub(crate) unsupported_integer_scope: bool,
     pub(crate) integer_work_exhausted: bool,
     pub(crate) changed: bool,
@@ -1026,6 +1108,9 @@ impl<'a> TermRewrite<'a> {
             reserved_variables: BTreeSet::new(),
             fresh_next: 0,
             replacement_carriers: None,
+            resolve_registered_loads: false,
+            registered_load_cache: HashMap::new(),
+            registered_load_pointer_active: BTreeSet::new(),
             unsupported_integer_scope: false,
             integer_work_exhausted: false,
             pointer_variable: None,
@@ -1037,31 +1122,28 @@ impl<'a> TermRewrite<'a> {
     }
     pub(crate) fn for_bits(from: &'a Bitvector32Term, to: &'a Bitvector32Term) -> Self {
         let _collection_scope = crate::instrumentation::CheckedCollectionScope::new();
-        let mut integer_replacement_variables = BTreeSet::new();
-        crate::kernel::prelude::collect_bitvector_integer_variables(
-            to,
-            &mut integer_replacement_variables,
-        );
-        let mut bitvector_replacement_variables = BTreeSet::new();
-        crate::kernel::prelude::collect_bitvector_capture_variables(
-            to,
-            &mut bitvector_replacement_variables,
-        );
-        let mut replacement_integer_binders = BTreeSet::new();
-        let mut replacement_bitvector_binders = BTreeSet::new();
-        crate::kernel::prelude::collect_bitvector_binder_variables(
-            to,
-            &mut replacement_integer_binders,
-            &mut replacement_bitvector_binders,
-        );
+        Self::for_bits_with_budget(from, to, false)
+    }
+
+    fn for_bits_with_budget(
+        from: &'a Bitvector32Term,
+        to: &'a Bitvector32Term,
+        budgeted: bool,
+    ) -> Self {
+        let mut replacement_carriers = CarrierVariables::for_rewrite(budgeted);
+        collect_bitvector_carriers(to, &mut replacement_carriers);
+        let CarrierVariables {
+            integer: integer_replacement_variables,
+            c: bitvector_replacement_variables,
+            work_exhausted: replacement_work_exhausted,
+            ..
+        } = replacement_carriers;
         let integer_replacement_variable_max = integer_replacement_variables
             .iter()
-            .chain(replacement_integer_binders.iter())
             .map(|variable| variable.0)
             .max();
         let bitvector_replacement_variable_max = bitvector_replacement_variables
             .iter()
-            .chain(replacement_bitvector_binders.iter())
             .map(|variable| variable.0)
             .max();
         let mut rewrite = Self {
@@ -1090,8 +1172,11 @@ impl<'a> TermRewrite<'a> {
             reserved_variables: BTreeSet::new(),
             fresh_next: 0,
             replacement_carriers: None,
+            resolve_registered_loads: false,
+            registered_load_cache: HashMap::new(),
+            registered_load_pointer_active: BTreeSet::new(),
             unsupported_integer_scope: false,
-            integer_work_exhausted: false,
+            integer_work_exhausted: replacement_work_exhausted,
             pointer_variable: None,
             #[cfg(test)]
             visits: 0,
@@ -1107,10 +1192,54 @@ impl<'a> TermRewrite<'a> {
     /// work state, so a partial term is never accepted as a checked result.
     pub(crate) fn for_bits_checked(from: &'a Bitvector32Term, to: &'a Bitvector32Term) -> Self {
         let _collection_scope = crate::instrumentation::CheckedCollectionScope::new();
-        let mut rewrite = Self::for_bits(from, to);
+        let mut rewrite = Self::for_bits_with_budget(from, to, true);
         rewrite.enforce_integer_work_limit = true;
         rewrite.integer_work_exhausted |= crate::instrumentation::checked_collection_exhausted();
         rewrite
+    }
+
+    /// Enable origin materialization for a checked fold-step substitution.
+    /// Ordinary machine rewrites keep registered load variables opaque; the
+    /// fold step is the narrow caller that must expose a binder-dependent
+    /// address so the selected snapshot load can be rewritten.
+    pub(crate) fn enable_registered_load_resolution(&mut self) {
+        self.resolve_registered_loads = true;
+    }
+
+    fn rewrite_registered_load(&mut self, variable: Variable) -> Option<Variable> {
+        if !self.registered_load_pointer_active.insert(variable) {
+            // A reserved load variable with a cyclic registry origin cannot
+            // be rewritten soundly.  Let checked callers reject the result
+            // instead of retaining an under-substituted pointer.
+            self.unsupported_integer_scope = true;
+            return None;
+        }
+        let cache_key = (variable, self.scope_id);
+        if let Some(rewritten) = self.registered_load_cache.get(&cache_key) {
+            let rewritten = *rewritten;
+            self.registered_load_pointer_active.remove(&variable);
+            self.changed |= rewritten != variable;
+            return Some(rewritten);
+        }
+        let Some((memory, pointer)) = crate::kernel::eval::registered_load_for_variable(&variable)
+        else {
+            self.registered_load_pointer_active.remove(&variable);
+            self.unsupported_integer_scope = true;
+            return None;
+        };
+        let rewritten = self.pointer(&pointer);
+        self.registered_load_pointer_active.remove(&variable);
+        if self.checked_work_exhausted() || self.unsupported_integer_scope {
+            return None;
+        }
+        let rewritten = if rewritten == pointer {
+            variable
+        } else {
+            crate::kernel::eval::load_variable_for_exact_cell(&memory, &rewritten)
+        };
+        self.changed |= rewritten != variable;
+        self.registered_load_cache.insert(cache_key, rewritten);
+        Some(rewritten)
     }
 
     pub(crate) fn for_conditions(conditions: &'a HashMap<ConditionTerm, bool>) -> Self {
@@ -1140,6 +1269,9 @@ impl<'a> TermRewrite<'a> {
             reserved_variables: BTreeSet::new(),
             fresh_next: 0,
             replacement_carriers: None,
+            resolve_registered_loads: false,
+            registered_load_cache: HashMap::new(),
+            registered_load_pointer_active: BTreeSet::new(),
             unsupported_integer_scope: false,
             integer_work_exhausted: false,
             pointer_variable: None,
@@ -1176,6 +1308,9 @@ impl<'a> TermRewrite<'a> {
             reserved_variables: BTreeSet::new(),
             fresh_next: 0,
             replacement_carriers: None,
+            resolve_registered_loads: false,
+            registered_load_cache: HashMap::new(),
+            registered_load_pointer_active: BTreeSet::new(),
             unsupported_integer_scope: false,
             integer_work_exhausted: false,
             changed: false,
@@ -1253,6 +1388,9 @@ impl<'a> TermRewrite<'a> {
             reserved_variables: BTreeSet::new(),
             fresh_next: 0,
             replacement_carriers: None,
+            resolve_registered_loads: false,
+            registered_load_cache: HashMap::new(),
+            registered_load_pointer_active: BTreeSet::new(),
             unsupported_integer_scope: false,
             integer_work_exhausted: false,
             changed: false,
@@ -1340,6 +1478,50 @@ impl<'a> TermRewrite<'a> {
         self.integer_shadowed = scope.integer_shadowed;
     }
 
+    /// Return whether the checked replacement contains a variable in the
+    /// requested carrier.  The carrier summary follows registered load
+    /// origins through their selected pointer expressions while keeping memory
+    /// snapshots opaque.  It is computed once and shared by all nested
+    /// proposition binders.
+    pub(crate) fn replacement_contains_integer_variable(&mut self, variable: Variable) -> bool {
+        self.ensure_replacement_carriers();
+        self.replacement_carriers
+            .as_ref()
+            .is_some_and(|replacement| replacement.integer.contains(&variable))
+    }
+
+    pub(crate) fn replacement_contains_c_variable(&mut self, variable: Variable) -> bool {
+        self.ensure_replacement_carriers();
+        self.replacement_carriers
+            .as_ref()
+            .is_some_and(|replacement| replacement.c.contains(&variable))
+    }
+
+    /// Install a C-carrier binder mapping without changing the Integer
+    /// shadowing state.  The scope token restores only the previous C mapping
+    /// and the cache scope ID.
+    pub(crate) fn push_c_substitution_scope(
+        &mut self,
+        variable: Variable,
+        mapped: Variable,
+    ) -> CSubstitutionScope {
+        let previous = self.scope.c.insert(variable, mapped);
+        let scope_id = self.scope_id;
+        if previous != Some(mapped) {
+            self.bump_scope_id();
+        }
+        CSubstitutionScope {
+            variable,
+            previous,
+            scope_id,
+        }
+    }
+
+    pub(crate) fn pop_c_substitution_scope(&mut self, scope: CSubstitutionScope) {
+        restore_mapping(&mut self.scope.c, scope.variable, scope.previous);
+        self.scope_id = scope.scope_id;
+    }
+
     /// Rewrites a constructor body with all field substitutions installed at
     /// once.  The replacement terms are inserted unchanged, so a field that
     /// mentions another binder is not rewritten by the later field mapping.
@@ -1378,6 +1560,9 @@ impl<'a> TermRewrite<'a> {
             reserved_variables: BTreeSet::new(),
             fresh_next: 0,
             replacement_carriers: None,
+            resolve_registered_loads: false,
+            registered_load_cache: HashMap::new(),
+            registered_load_pointer_active: BTreeSet::new(),
             unsupported_integer_scope: false,
             integer_work_exhausted: false,
             changed: false,
@@ -1908,7 +2093,7 @@ impl<'a> TermRewrite<'a> {
         if self.checked_work_exhausted() {
             return exhausted_integer(shared.as_ref());
         }
-        let cache_key = (shared.id(), self.scope_key());
+        let cache_key = (shared.id(), self.scope_key(), self.resolve_registered_loads);
         if let Some(result) = self.integer_cache.get(&cache_key) {
             return result.clone();
         }
@@ -2173,7 +2358,7 @@ impl<'a> TermRewrite<'a> {
             });
 
         let body = if !changed_scope {
-            self.integer_shared(body).into()
+            self.integer_fold_body(body)
         } else {
             let parent_scope = self.scope_id;
             let parent_shadowed = self.integer_shadowed;
@@ -2213,7 +2398,7 @@ impl<'a> TermRewrite<'a> {
             if mapping_shadows_integer_source {
                 self.integer_shadowed = true;
             }
-            let body = self.integer_shared(body).into();
+            let body = self.integer_fold_body(body);
             self.restore_fold_scope_mappings(&changes);
             self.integer_shadowed = parent_shadowed;
             self.scope_id = parent_scope;
@@ -2225,8 +2410,16 @@ impl<'a> TermRewrite<'a> {
             initial,
             accumulator,
             item,
-            body,
+            body: body.into(),
         }
+    }
+
+    fn integer_fold_body(&mut self, body: &SharedIntegerTerm) -> IntegerTerm {
+        let previous = self.resolve_registered_loads;
+        self.resolve_registered_loads = true;
+        let body = self.integer_shared(body);
+        self.resolve_registered_loads = previous;
+        body
     }
 
     fn scope_key(&self) -> u64 {
@@ -2791,25 +2984,57 @@ impl<'a> TermRewrite<'a> {
             return exhausted_offset();
         }
         let result = match v {
-            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => v.clone(),
+            PointerOffsetTerm::Constant(_) => v.clone(),
+            PointerOffsetTerm::Variable(variable)
+                if self.resolve_registered_loads && crate::kernel::is_load_variable(variable) =>
+            {
+                self.rewrite_registered_load(*variable)
+                    .map_or_else(|| v.clone(), PointerOffsetTerm::Variable)
+            }
+            PointerOffsetTerm::Variable(_) => v.clone(),
             PointerOffsetTerm::Add(a, b) => {
-                PointerOffsetTerm::Add(Box::new(self.offset(a)), Box::new(self.offset(b)))
+                let left = self.offset(a);
+                let right = self.offset(b);
+                if self.resolve_registered_loads {
+                    PointerOffsetTerm::add(left, right)
+                } else {
+                    PointerOffsetTerm::Add(Box::new(left), Box::new(right))
+                }
             }
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-                PointerOffsetTerm::Int32Scaled {
-                    value: Box::new(self.bits(value)),
-                    byte_width: *byte_width,
+                let value = self.bits(value);
+                if self.resolve_registered_loads {
+                    PointerOffsetTerm::scale_int32(
+                        canonicalize_integer_to_machine_constant(value),
+                        *byte_width,
+                    )
+                } else {
+                    PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(value),
+                        byte_width: *byte_width,
+                    }
                 }
             }
             PointerOffsetTerm::Int64Scaled {
                 value,
                 byte_width,
                 unsigned,
-            } => PointerOffsetTerm::Int64Scaled {
-                value: Box::new(self.bits(value)),
-                byte_width: *byte_width,
-                unsigned: *unsigned,
-            },
+            } => {
+                let value = self.bits(value);
+                if self.resolve_registered_loads {
+                    PointerOffsetTerm::scale_int64(
+                        canonicalize_integer_to_machine_constant(value),
+                        *byte_width,
+                        *unsigned,
+                    )
+                } else {
+                    PointerOffsetTerm::Int64Scaled {
+                        value: Box::new(value),
+                        byte_width: *byte_width,
+                        unsigned: *unsigned,
+                    }
+                }
+            }
         };
         if self.checked_work_exhausted() {
             exhausted_offset()
@@ -3070,6 +3295,25 @@ impl<'a> TermRewrite<'a> {
         {
             self.changed = true;
             return to.clone();
+        }
+        if self.resolve_registered_loads
+            && let Bitvector32Term::Variable(variable) = v
+            && crate::kernel::is_load_variable(variable)
+        {
+            // Keep the load's snapshot exact and rewrite only its selected
+            // address.  Re-materializing the registered variable would hide
+            // a binder-dependent pointer from the fold substitution, while
+            // scanning or rewriting the memory snapshot would change an
+            // unrelated proof-state value.
+            if let Some(rewritten) = self.rewrite_registered_load(*variable) {
+                return Bitvector32Term::Variable(rewritten);
+            }
+            if self.checked_work_exhausted() {
+                return Bitvector32Term::Constant(0);
+            }
+            if self.unsupported_integer_scope {
+                return Bitvector32Term::Variable(*variable);
+            }
         }
         let result = match v {
             Bitvector32Term::Constant(_)
@@ -3388,6 +3632,41 @@ impl<'a> TermRewrite<'a> {
     }
 }
 
+/// A checked pointer rewrite may expose a constant `IntegerToMachine` cast
+/// after witness substitution. Pointer offsets use the canonical constant
+/// form, while ordinary Integer-to-machine observations remain symbolic so
+/// their surrounding range obligations are still visible to proof checking.
+fn canonicalize_integer_to_machine_constant(value: Bitvector32Term) -> Bitvector32Term {
+    let Bitvector32Term::IntegerToMachine { value, destination } = value else {
+        return value;
+    };
+    let Some(constant) = value.as_ref().as_const() else {
+        return Bitvector32Term::IntegerToMachine { value, destination };
+    };
+    let converted = match destination {
+        MachineIntegerType::Int16 => constant
+            .to_i16()
+            .map(|value| Bitvector32Term::Constant(value as i32 as u32)),
+        MachineIntegerType::Int32 => constant
+            .to_i32()
+            .map(|value| Bitvector32Term::Constant(value as u32)),
+        MachineIntegerType::UInt8 => constant
+            .to_u8()
+            .map(|value| Bitvector32Term::Constant(u32::from(value))),
+        MachineIntegerType::UInt16 => constant
+            .to_u16()
+            .map(|value| Bitvector32Term::Constant(u32::from(value))),
+        MachineIntegerType::UInt32 => constant.to_u32().map(Bitvector32Term::Constant),
+        MachineIntegerType::Int64 => constant.to_i64().map(Bitvector32Term::Int64Constant),
+        MachineIntegerType::UInt64 => constant.to_u64().map(Bitvector32Term::UInt64Constant),
+    };
+    converted.unwrap_or(Bitvector32Term::IntegerToMachine { value, destination })
+}
+
+#[cfg(test)]
+#[path = "term_rewrite/registered_load_tests.rs"]
+mod registered_load_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3652,6 +3931,193 @@ mod tests {
         }) if matches!(value.as_ref(), IntegerTerm::Machine(machine)
             if machine.value() == &Bitvector32Term::Variable(Variable(881))))
         );
+    }
+
+    #[test]
+    fn checked_integer_witness_canonicalizes_pointer_cast_constant() {
+        let source = Variable(3_103_900);
+        let replacement = IntegerTerm::constant_i64(0);
+        let renamings = BTreeMap::new();
+        let mut rewrite =
+            TermRewrite::for_integer_variables(source, &replacement, false, &renamings);
+        rewrite.enable_registered_load_resolution();
+        let offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::IntegerToMachine {
+                value: IntegerTerm::var(source).into(),
+                destination: MachineIntegerType::Int32,
+            }),
+            byte_width: 4,
+        };
+        let rewritten = rewrite.term(&Term::PointerOffset(offset));
+        assert_eq!(
+            rewritten,
+            Term::PointerOffset(PointerOffsetTerm::Constant(0))
+        );
+    }
+
+    #[test]
+    fn checked_integer_witness_keeps_out_of_range_pointer_cast_wrapped() {
+        let source = Variable(3_103_901);
+        let replacement = IntegerTerm::constant_i64(2_147_483_648);
+        let renamings = BTreeMap::new();
+        let mut rewrite =
+            TermRewrite::for_integer_variables(source, &replacement, false, &renamings);
+        rewrite.enable_registered_load_resolution();
+        let offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::IntegerToMachine {
+                value: IntegerTerm::var(source).into(),
+                destination: MachineIntegerType::Int32,
+            }),
+            byte_width: 4,
+        };
+        let rewritten = rewrite.term(&Term::PointerOffset(offset));
+        assert!(matches!(
+            rewritten,
+            Term::PointerOffset(PointerOffsetTerm::Int32Scaled { value, .. })
+                if matches!(value.as_ref(), Bitvector32Term::IntegerToMachine {
+                    value,
+                    destination: MachineIntegerType::Int32,
+                } if value.as_ref().as_const().and_then(|value| value.to_i64())
+                    == Some(2_147_483_648))
+        ));
+    }
+
+    #[test]
+    fn checked_integer_witness_keeps_symbolic_pointer_cast_wrapped() {
+        let source = Variable(3_103_902);
+        let replacement = IntegerTerm::var(Variable(3_103_903));
+        let renamings = BTreeMap::new();
+        let mut rewrite =
+            TermRewrite::for_integer_variables(source, &replacement, false, &renamings);
+        rewrite.enable_registered_load_resolution();
+        let offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::IntegerToMachine {
+                value: IntegerTerm::var(source).into(),
+                destination: MachineIntegerType::Int32,
+            }),
+            byte_width: 4,
+        };
+        let rewritten = rewrite.term(&Term::PointerOffset(offset));
+        assert!(matches!(
+            rewritten,
+            Term::PointerOffset(PointerOffsetTerm::Int32Scaled { value, .. })
+                if matches!(value.as_ref(), Bitvector32Term::IntegerToMachine {
+                    value,
+                    destination: MachineIntegerType::Int32,
+                } if matches!(value.as_ref(), IntegerTerm::Variable(Variable(3_103_903))))
+        ));
+    }
+
+    #[test]
+    fn checked_integer_witness_canonicalizes_negative_pointer_cast_constant() {
+        let source = Variable(3_103_904);
+        let replacement = IntegerTerm::constant_i64(-1);
+        let renamings = BTreeMap::new();
+        let mut rewrite =
+            TermRewrite::for_integer_variables(source, &replacement, false, &renamings);
+        rewrite.enable_registered_load_resolution();
+        let offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::IntegerToMachine {
+                value: IntegerTerm::var(source).into(),
+                destination: MachineIntegerType::Int32,
+            }),
+            byte_width: 4,
+        };
+        let rewritten = rewrite.term(&Term::PointerOffset(offset));
+        assert_eq!(
+            rewritten,
+            Term::PointerOffset(PointerOffsetTerm::Constant(-4))
+        );
+    }
+
+    #[test]
+    fn registered_load_rewrite_keeps_branching_pointer_dag_compact() {
+        let source = Variable(3_104_000);
+        let source_term = Bitvector32Term::Variable(source);
+        let replacement = Bitvector32Term::Constant(9);
+        let mut work = Vec::new();
+        let mut last_load = None;
+        for depth in [8usize, 16, 32, 64] {
+            let memory = crate::kernel::intern_c_memory(
+                CMemory::new().with_block(format!("branch-{depth}"), 64),
+            );
+            let block = format!("branch-{depth}");
+            let mut load = crate::kernel::eval::load_variable_for_exact_cell(
+                &memory,
+                &Pointer {
+                    block: PointerBlock::Concrete(block.clone()),
+                    offset: PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(source_term.clone()),
+                        byte_width: 4,
+                    },
+                },
+            );
+            for _ in 0..depth {
+                load = crate::kernel::eval::load_variable_for_exact_cell(
+                    &memory,
+                    &Pointer {
+                        block: PointerBlock::Concrete(block.clone()),
+                        offset: PointerOffsetTerm::Add(
+                            Box::new(PointerOffsetTerm::Int32Scaled {
+                                value: Box::new(Bitvector32Term::Variable(load)),
+                                byte_width: 4,
+                            }),
+                            Box::new(PointerOffsetTerm::Int32Scaled {
+                                value: Box::new(Bitvector32Term::Variable(load)),
+                                byte_width: 4,
+                            }),
+                        ),
+                    },
+                );
+            }
+            let body = IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
+                crate::kernel::MachineIntegerType::Int32,
+                Bitvector32Term::Variable(load),
+            ));
+            let (output, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut rewrite = TermRewrite::for_bits_checked(&source_term, &replacement);
+                rewrite.enable_registered_load_resolution();
+                let output = rewrite.term(&Term::Integer(body.clone()));
+                assert!(!rewrite.unsupported_integer_scope);
+                assert!(!rewrite.integer_work_exhausted);
+                output
+            });
+            let Term::Integer(IntegerTerm::Machine(machine)) = output else {
+                panic!("registered load carrier changed shape")
+            };
+            let Bitvector32Term::Variable(rewritten_load) = machine.value() else {
+                panic!("rewritten load expanded into an owned memory tree")
+            };
+            assert_ne!(*rewritten_load, load);
+            let Some((snapshot, pointer)) =
+                crate::kernel::eval::registered_load_for_variable(rewritten_load)
+            else {
+                panic!("rewritten load was not registered")
+            };
+            assert_eq!(snapshot, memory);
+            assert!(
+                pointer
+                    .offset
+                    .scaled_values()
+                    .iter()
+                    .all(|value| matches!(value, Bitvector32Term::Variable(_)))
+            );
+            last_load = Some(load);
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3 + 64,
+                "registered load DAG rewrite grew superlinearly: {work:?}"
+            );
+        }
+
+        let load = last_load.expect("branching load was constructed");
+        let mut cycle_rewrite = TermRewrite::for_bits_checked(&source_term, &replacement);
+        cycle_rewrite.enable_registered_load_resolution();
+        cycle_rewrite.registered_load_pointer_active.insert(load);
+        let _ = cycle_rewrite.bits(&Bitvector32Term::Variable(load));
+        assert!(cycle_rewrite.unsupported_integer_scope);
     }
 
     #[test]
@@ -4541,6 +5007,35 @@ mod tests {
             "checked rewrite kept traversing after exhaustion: {} visits",
             result.1
         );
+    }
+
+    #[test]
+    fn checked_machine_replacement_collection_stops_before_rewrite() {
+        let source = Bitvector32Term::Variable(Variable(3_025_000));
+        let mut replacement = Bitvector32Term::Variable(Variable(3_025_001));
+        for _ in 0..128 {
+            replacement = Bitvector32Term::Add(
+                Box::new(replacement),
+                Box::new(Bitvector32Term::Constant(1)),
+            );
+        }
+        let (output, visits, exhausted) = with_checked_simple_budget(4, || {
+            let mut rewrite = TermRewrite::for_bits_checked(&source, &replacement);
+            let output = rewrite.term(&Term::Bitvector32(source.clone()));
+            (output, rewrite.visits, rewrite.integer_work_exhausted)
+        });
+        assert!(
+            exhausted,
+            "replacement collection ignored its checked budget"
+        );
+        assert!(
+            visits <= 1,
+            "rewrite traversed after collection exhaustion: {visits}"
+        );
+        assert!(matches!(
+            output,
+            Term::Bitvector32(Bitvector32Term::Constant(0))
+        ));
     }
 
     #[test]
@@ -5561,5 +6056,98 @@ mod tests {
             output,
             Term::Integer(IntegerTerm::Constant(value)) if value == 0.into()
         ));
+    }
+
+    #[test]
+    fn checked_substitution_collector_reuses_registered_load_dag() {
+        let source = Variable(3_104_000);
+        let mut work = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("array", 16));
+            let leaf_pointer = Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::IntegerToMachine {
+                        value: IntegerTerm::var(source).into(),
+                        destination: MachineIntegerType::Int32,
+                    }),
+                    byte_width: 4,
+                },
+            };
+            let mut load =
+                crate::kernel::eval::load_variable_for_exact_cell(&memory, &leaf_pointer);
+            for _ in 0..depth {
+                load = crate::kernel::eval::load_variable_for_exact_cell(
+                    &memory,
+                    &Pointer {
+                        block: PointerBlock::Concrete("array".into()),
+                        offset: PointerOffsetTerm::Variable(load),
+                    },
+                );
+            }
+            let atom = Proposition::CMemoryLoadable {
+                memory: memory.as_ref().clone(),
+                base: Pointer {
+                    block: PointerBlock::Concrete("array".into()),
+                    offset: PointerOffsetTerm::Variable(load),
+                },
+                bytes: Bitvector32Term::Constant(4),
+            };
+            let mut proposition = atom.clone();
+            for _ in 0..depth {
+                proposition = Proposition::And(Box::new(proposition), Box::new(atom.clone()));
+            }
+            let ((contains_source, nodes, exhausted), measured) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    let mut collector = IntegerSubstitutionVariableCollector::checked();
+                    collector.collect(&proposition);
+                    (
+                        collector.carriers.integer.contains(&source),
+                        collector.carriers.nodes,
+                        collector.exhausted(),
+                    )
+                });
+            assert!(
+                contains_source,
+                "registered pointer carrier was not collected"
+            );
+            assert!(!exhausted, "collector exhausted at depth {depth}");
+            assert!(nodes > depth, "collector skipped the selected pointer DAG");
+            work.push(measured);
+        }
+        for pair in work.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3,
+                "registered-load collector expanded a shared DAG: {work:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn checked_substitution_collector_rejects_work_exhaustion() {
+        let source = Variable(3_104_100);
+        let atom = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(source)),
+                    byte_width: 4,
+                },
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let mut proposition = atom.clone();
+        for _ in 0..64 {
+            proposition = Proposition::And(Box::new(proposition), Box::new(atom.clone()));
+        }
+
+        let (exhausted, nodes) = with_checked_simple_budget(4, || {
+            let mut collector = IntegerSubstitutionVariableCollector::checked();
+            collector.collect(&proposition);
+            (collector.exhausted(), collector.carriers.nodes)
+        });
+        assert!(exhausted, "checked collection must reject exhausted work");
+        assert!(nodes <= 8, "collector continued after exhaustion: {nodes}");
     }
 }

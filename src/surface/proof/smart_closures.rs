@@ -2,10 +2,13 @@
 
 use super::*;
 use crate::kernel::proof::integer_arithmetic::{
-    IntegerArithmeticCertificate, IntegerArithmeticNode, integer_affine_claim,
+    IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
+    integer_affine_claim,
 };
 use crate::kernel::{CFloatClassification, CFloatCondition};
 use crate::surface::planning::proposition_search::PropositionSearch;
+use num_bigint::BigInt;
+use num_traits::{Signed, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 fn integer_plan_to_surface_certificate(
@@ -14,37 +17,211 @@ fn integer_plan_to_surface_certificate(
     surface_goal: &ClickProposition,
 ) -> Option<IntegerCertificate> {
     let mut source_indices = BTreeMap::new();
-    let nodes = plan
-        .nodes
-        .iter()
-        .map(|node| match node {
+    let mut node_surfaces = Vec::with_capacity(plan.nodes.len());
+    let mut nodes = Vec::with_capacity(plan.nodes.len());
+    for (node_index, node) in plan.nodes.iter().enumerate() {
+        let (surface, certificate_node) = match node {
             IntegerArithmeticNode::Premise { index, .. } => {
                 let surface = premise_pairs.get(*index)?.1.clone();
-                Some(IntegerCertificateNode::Premise {
-                    index: {
-                        let next = source_indices.len();
-                        *source_indices.entry(*index).or_insert(next)
-                    },
+                let source_index = {
+                    let next = source_indices.len();
+                    *source_indices.entry(*index).or_insert(next)
+                };
+                let certificate = IntegerCertificateNode::Premise {
+                    index: source_index,
                     proposition: surface.clone(),
-                    result: surface,
-                })
+                    result: surface.clone(),
+                };
+                (surface, certificate)
+            }
+            IntegerArithmeticNode::Scale {
+                source,
+                coefficient,
+                ..
+            } => {
+                let source_surface = node_surfaces.get(*source)?;
+                let surface = integer_surface_scale(source_surface, coefficient)?;
+                let certificate = IntegerCertificateNode::Scale {
+                    source: *source,
+                    coefficient: ContractExpression::IntegerLiteral(coefficient.to_string()),
+                    result: surface.clone(),
+                };
+                (surface, certificate)
+            }
+            IntegerArithmeticNode::Add { left, right, .. } => {
+                let left_surface = node_surfaces.get(*left)?;
+                let right_surface = node_surfaces.get(*right)?;
+                let surface = integer_surface_add(left_surface, right_surface)?;
+                let certificate = IntegerCertificateNode::Add {
+                    left: *left,
+                    right: *right,
+                    result: surface.clone(),
+                };
+                (surface, certificate)
+            }
+            IntegerArithmeticNode::EqualityToLessEqual {
+                source, reverse, ..
+            } => {
+                let source_surface = node_surfaces.get(*source)?;
+                let surface = integer_surface_equality_to_less_equal(source_surface, *reverse)?;
+                let certificate = IntegerCertificateNode::EqualityToLessEqual {
+                    source: *source,
+                    reverse: *reverse,
+                    result: surface.clone(),
+                };
+                (surface, certificate)
             }
             IntegerArithmeticNode::EqualityFromBounds { lower, upper, .. } => {
-                Some(IntegerCertificateNode::EqualityFromBounds {
+                let lower_surface = node_surfaces.get(*lower)?;
+                let upper_surface = node_surfaces.get(*upper)?;
+                let surface = integer_surface_equality_from_bounds(lower_surface, upper_surface)?;
+                let certificate = IntegerCertificateNode::EqualityFromBounds {
                     lower: *lower,
                     upper: *upper,
-                    result: surface_goal.clone(),
-                })
+                    result: surface.clone(),
+                };
+                (surface, certificate)
             }
-            IntegerArithmeticNode::Trivial { .. } => Some(IntegerCertificateNode::Trivial {
-                result: surface_goal.clone(),
-            }),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
+            IntegerArithmeticNode::Trivial { result } => {
+                let surface = if node_index == plan.conclusion {
+                    surface_goal.clone()
+                } else {
+                    integer_surface_trivial(result)?
+                };
+                let certificate = IntegerCertificateNode::Trivial {
+                    result: surface.clone(),
+                };
+                (surface, certificate)
+            }
+        };
+        node_surfaces.push(surface);
+        nodes.push(certificate_node);
+    }
     Some(IntegerCertificate {
         nodes,
         conclusion: plan.conclusion,
+    })
+}
+
+fn integer_surface_ordered_parts(
+    proposition: &ClickProposition,
+) -> Option<(ContractExpression, ComparisonOperator, ContractExpression)> {
+    let ClickProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    match operator {
+        ComparisonOperator::Equal | ComparisonOperator::LessEqual => {
+            Some((left.clone(), *operator, right.clone()))
+        }
+        ComparisonOperator::GreaterEqual => {
+            Some((right.clone(), ComparisonOperator::LessEqual, left.clone()))
+        }
+        // Strict inequalities carry a hidden +1 in the checked affine claim;
+        // preserving that source spelling requires a separate constant
+        // normalization path.  Decline them here rather than manufacture a
+        // surface proposition whose claim differs from the kernel node.
+        ComparisonOperator::LessThan
+        | ComparisonOperator::GreaterThan
+        | ComparisonOperator::NotEqual
+        | ComparisonOperator::In => None,
+    }
+}
+
+fn integer_surface_scale(
+    proposition: &ClickProposition,
+    coefficient: &BigInt,
+) -> Option<ClickProposition> {
+    let (left, operator, right) = integer_surface_ordered_parts(proposition)?;
+    if operator == ComparisonOperator::LessEqual && coefficient.is_negative() {
+        return None;
+    }
+    let coefficient = ContractExpression::IntegerLiteral(coefficient.to_string());
+    let multiply = |expression| {
+        ContractExpression::Multiply(Box::new(coefficient.clone()), Box::new(expression))
+    };
+    Some(ClickProposition::Comparison {
+        left: multiply(left),
+        operator,
+        right: multiply(right),
+    })
+}
+
+fn integer_surface_add(
+    left: &ClickProposition,
+    right: &ClickProposition,
+) -> Option<ClickProposition> {
+    let (left_left, operator, left_right) = integer_surface_ordered_parts(left)?;
+    let (right_left, right_operator, right_right) = integer_surface_ordered_parts(right)?;
+    if operator != right_operator {
+        return None;
+    }
+    Some(ClickProposition::Comparison {
+        left: ContractExpression::Add(Box::new(left_left), Box::new(right_left)),
+        operator,
+        right: ContractExpression::Add(Box::new(left_right), Box::new(right_right)),
+    })
+}
+
+fn integer_surface_equality_to_less_equal(
+    proposition: &ClickProposition,
+    reverse: bool,
+) -> Option<ClickProposition> {
+    let (left, operator, right) = integer_surface_ordered_parts(proposition)?;
+    if operator != ComparisonOperator::Equal {
+        return None;
+    }
+    let (left, right) = if reverse {
+        (right, left)
+    } else {
+        (left, right)
+    };
+    Some(ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::LessEqual,
+        right,
+    })
+}
+
+fn integer_surface_equality_from_bounds(
+    lower: &ClickProposition,
+    upper: &ClickProposition,
+) -> Option<ClickProposition> {
+    let (lower_left, lower_operator, lower_right) = integer_surface_ordered_parts(lower)?;
+    let (upper_left, upper_operator, upper_right) = integer_surface_ordered_parts(upper)?;
+    if lower_operator != ComparisonOperator::LessEqual
+        || upper_operator != ComparisonOperator::LessEqual
+        || lower_left != upper_right
+        || lower_right != upper_left
+    {
+        return None;
+    }
+    Some(ClickProposition::Comparison {
+        left: lower_left,
+        operator: ComparisonOperator::Equal,
+        right: lower_right,
+    })
+}
+
+fn integer_surface_trivial(claim: &IntegerAffineClaim) -> Option<ClickProposition> {
+    if !claim.terms.is_empty() {
+        return None;
+    }
+    let operator = match claim.relation {
+        IntegerAffineRelation::LessEqual if claim.constant <= BigInt::zero() => {
+            ComparisonOperator::LessEqual
+        }
+        IntegerAffineRelation::Equal if claim.constant.is_zero() => ComparisonOperator::Equal,
+        _ => return None,
+    };
+    Some(ClickProposition::Comparison {
+        left: ContractExpression::IntegerLiteral(claim.constant.to_string()),
+        operator,
+        right: ContractExpression::IntegerLiteral("0".into()),
     })
 }
 
@@ -3196,11 +3373,12 @@ impl<'a> Proof<'a> {
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
         if let Some(surface_goal) = proof.surface_goal()
-            && let Some(integer_values) = match proof.context.as_ref() {
-                ProofContext::Pure(context) => Some(&context.theorem_context.integer_values),
-                _ => None,
-            }
-            && super::surface_lowering::proposition_uses_integer(surface_goal, integer_values)
+            // The kernel lowering has already established the exact carrier
+            // and checked terms for this goal.  Use that fact as the routing
+            // predicate so fixed-state and execution proofs receive the same
+            // certificate path; source-side guesses would miss converted C
+            // values and could route a machine comparison incorrectly.
+            && integer_affine_claim(goal).is_some()
             && restricted
                 .iter()
                 .all(|premise| integer_affine_claim(premise).is_some())
@@ -3706,12 +3884,30 @@ impl<'a> Proof<'a> {
                 }
                 ProofTactic::Simp => {
                     let Some(closed) = proof.try_simp_closure()? else {
+                        if authoritative
+                            && tactics[..index].iter().any(|previous| {
+                                matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
+                            })
+                        {
+                            return Err(proof.step_error(
+                                "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
+                            ));
+                        }
                         return Ok(None);
                     };
                     proof = closed;
                 }
                 ProofTactic::SimpUsing(simp) => {
                     let Some(closed) = proof.try_restricted_simp_closure(&simp.premises) else {
+                        if authoritative
+                            && tactics[..index].iter().any(|previous| {
+                                matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
+                            })
+                        {
+                            return Err(proof.step_error(
+                                "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
+                            ));
+                        }
                         return Ok(None);
                     };
                     proof = closed;

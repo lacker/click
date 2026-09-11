@@ -8687,6 +8687,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut evaluation = instance_body_evaluation(state, instance, definition)?;
     let mut budget = ExecutionBudget::default();
     let mut algebraic_bindings = BTreeMap::new();
+    let mut integer_bindings = BTreeMap::new();
     let mut constructor_fields = Vec::new();
     let selected = if definition.matched.is_some() {
         let (arm, constructor) = selected_instance_match_arm(instance, definition, assumptions)?;
@@ -8694,18 +8695,33 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             unreachable!()
         };
         constructor_fields = fields.clone();
-        for (name, value) in arm.bindings.iter().zip(fields) {
-            match value {
-                AlgebraicValue::C(value) => {
+        for (index, value) in fields.iter().enumerate() {
+            let name = arm
+                .bindings
+                .get(index)
+                .ok_or("resource match binding count mismatch")?;
+            let binding_type = arm
+                .binding_types
+                .get(index)
+                .ok_or("resource match binding type count mismatch")?;
+            let binding_variable = arm
+                .binding_variables
+                .get(index)
+                .ok_or("resource match Integer binding identity count mismatch")?;
+            match (binding_type, binding_variable, value) {
+                (AlgebraicValueType::C(_), None, AlgebraicValue::C(value)) => {
                     let ty = value.c_type();
-                    evaluation.locals.set_typed(name.clone(), value, ty);
+                    evaluation.locals.set_typed(name.clone(), value.clone(), ty);
                 }
-                AlgebraicValue::Integer(_) => {
-                    return Err("Integer algebraic resource fields are not supported here");
+                (AlgebraicValueType::Integer, Some(variable), AlgebraicValue::Integer(value)) => {
+                    if integer_bindings.insert(*variable, value.clone()).is_some() {
+                        return Err("resource match Integer bindings reuse an identity");
+                    }
                 }
-                AlgebraicValue::Algebraic(value) => {
-                    algebraic_bindings.insert(name.clone(), value);
+                (AlgebraicValueType::Algebraic { .. }, None, AlgebraicValue::Algebraic(value)) => {
+                    algebraic_bindings.insert(name.clone(), value.clone());
                 }
+                _ => return Err("resource match constructor binding type mismatch"),
             }
         }
         Some(arm)
@@ -8944,31 +8960,52 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
     }
-    for fact in selected
-        .map_or(&definition.facts, |arm| &arm.facts)
-        .iter()
-        .filter(|_| active)
-    {
+    let c_replacements = BTreeMap::new();
+    let algebraic_replacements = BTreeMap::new();
+    let mut fact_rewrite =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_checked_typed_variables(
+            &c_replacements,
+            &integer_bindings,
+            &algebraic_replacements,
+        );
+    // A matched Integer binding may occur inside the pointer offset of a
+    // registered load in a body fact.  Resolve that selected load origin
+    // while rewriting the fact so the replacement is applied to the pointer
+    // and the result is re-minted in the same memory snapshot.  The checked
+    // TermRewrite path keeps the registry DAG bounded and rejects cycles.
+    fact_rewrite.enable_registered_load_resolution();
+    let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
+    fact_rewrite
+        .reserve_spec_proposition_sources(facts_to_rewrite.iter())
+        .map_err(|_| "resource match Integer binding substitution exceeded its checked scope")?;
+    for fact in facts_to_rewrite.iter().filter(|_| active) {
+        let fact = fact_rewrite.spec_proposition(fact).map_err(
+            |_| "resource match Integer binding substitution exceeded its checked scope",
+        )?;
         let paths = crate::kernel::spec::lower_spec_proposition_at_state_with_algebraic_bindings(
             &evaluation,
-            fact,
+            &fact,
             None,
             &body_assumptions,
             &algebraic_bindings,
             &mut budget,
         )
         .map_err(|_| "could not evaluate instance body fact")?;
-        if paths.len() != 1
-            || paths[0].facts.iter().any(|fact| {
-                !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
-            })
-            || paths[0].obligations.iter().any(|goal| {
-                !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
-            })
-        {
+        if paths.len() != 1 {
             return Err("instance body fact needs an unsupported conditional proof");
         }
-        let proposition = paths[0].proposition.clone();
+        let path = paths
+            .into_iter()
+            .next()
+            .ok_or("instance body fact produced no evaluation path")?;
+        if path.facts.iter().any(|fact| {
+            !required_obligation_is_exactly_discharged(&body_assumptions, fact.proposition())
+        }) || path.obligations.iter().any(|goal| {
+            !required_obligation_is_exactly_discharged(&body_assumptions, goal.proposition())
+        }) {
+            return Err("instance body fact needs an unsupported conditional proof");
+        }
+        let proposition = path.proposition;
         // The fold prerequisite is a rewrite precondition with no obligation
         // vector of its own; the exact routes decide it or the fold is
         // refused with this diagnostic.
@@ -9029,17 +9066,33 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
             || schema_variants
                 .get(arm.variant.as_str())
                 .is_none_or(|fields| {
-                    **fields != arm.binding_types || fields.len() != arm.bindings.len()
+                    **fields != arm.binding_types
+                        || fields.len() != arm.bindings.len()
+                        || arm.binding_variables.len() != arm.bindings.len()
                 })
             || arm.bindings.iter().any(|name| {
                 name.is_empty() || !names.insert(name) || reserved.contains(name.as_str())
             })
+            || arm.binding_variables.iter().zip(&arm.binding_types).any(
+                |(variable, binding_type)| match binding_type {
+                    AlgebraicValueType::Integer => variable.is_none(),
+                    _ => variable.is_some(),
+                },
+            )
             || arm
                 .contains
                 .iter()
                 .any(|resource| !matches!(resource, CResourceSpec::OwnMemory(_)))
         {
             return Err("invalid resource match arm");
+        }
+        let mut integer_binding_variables = BTreeSet::new();
+        for (variable, binding_type) in arm.binding_variables.iter().zip(&arm.binding_types) {
+            if binding_type == &AlgebraicValueType::Integer
+                && !integer_binding_variables.insert(variable.expect("checked above"))
+            {
+                return Err("resource match Integer bindings reuse an identity");
+            }
         }
         let mut child_names = BTreeSet::new();
         let mut child_bindings = BTreeSet::new();

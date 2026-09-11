@@ -4550,18 +4550,18 @@ fn forall_integer_application_renames_nested_forall_and_exists_once() {
 }
 
 #[test]
-fn forall_integer_application_rejects_unsupported_carriers_and_nested_sorts() {
+fn forall_integer_application_supports_nested_machine_sorts_and_rejects_unsupported_carriers() {
     let binder = Variable(630);
     let unsupported = Proposition::ForAll {
         var: binder,
         sort: Sort::Integer,
-        body: Box::new(Proposition::Equal(
-            Term::Bitvector32(Bitvector32Term::Constant(1)),
-            Term::Bitvector32(Bitvector32Term::Constant(1)),
-        )),
+        body: Box::new(Proposition::Predicate {
+            name: "unsupported_integer_application".into(),
+            arguments: vec![],
+        }),
     };
     assert!(
-        prove_forall_integer_application(&unsupported, IntegerTerm::constant_i64(1), &[]).is_some()
+        prove_forall_integer_application(&unsupported, IntegerTerm::constant_i64(1), &[]).is_none()
     );
     let nested_machine_sort = Proposition::ForAll {
         var: binder,
@@ -4580,7 +4580,7 @@ fn forall_integer_application_rejects_unsupported_carriers_and_nested_sorts() {
     };
     assert!(
         prove_forall_integer_application(&nested_machine_sort, IntegerTerm::constant_i64(1), &[])
-            .is_none()
+            .is_some()
     );
 
     let true_body = Proposition::ForAll {

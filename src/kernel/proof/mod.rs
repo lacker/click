@@ -28,8 +28,8 @@ pub(crate) use execution::{
     old_reference_state,
 };
 pub(crate) use fact_keys::{
-    QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,
-    snapshot_blind_proposition_key,
+    IntegerEqualityAlphaKey, QuantifiedEquivalenceKey, SnapshotBlindPropositionKey,
+    integer_equality_alpha_key, quantified_equivalence_index_key, snapshot_blind_proposition_key,
 };
 #[cfg(test)]
 pub(crate) use fact_keys::{alpha_proposition_key_visits, reset_alpha_proposition_key_visits};

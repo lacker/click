@@ -2185,6 +2185,11 @@ pub struct CResourceMatchArm {
     pub variant: String,
     pub bindings: Vec<String>,
     pub binding_types: Vec<AlgebraicValueType>,
+    /// Kernel identities for mathematical Integer constructor bindings.
+    /// C and algebraic bindings carry `None`; the identities are fresh
+    /// lowering atoms that the selected constructor fields replace after the
+    /// kernel has checked the arm schema.
+    pub binding_variables: Vec<Option<Variable>>,
     pub contains: Vec<CResourceSpec>,
     pub facts: Vec<SpecProposition>,
     pub children: Vec<CResourceChildSpec>,

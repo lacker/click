@@ -1,14 +1,9 @@
 use super::*;
-use crate::kernel::proof::integer_arithmetic::{
-    IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
-    integer_affine_claim,
-};
 use crate::kernel::{
-    AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, PureFunctionArgument,
+    AlgebraicResultMatchArm, AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, IntegerTerm,
+    PureFunctionArgument, SharedIntegerTerm, SharedMachineIntegerTerm,
 };
 use crate::surface::planning::proposition_search::PropositionSearch;
-use num_bigint::BigInt;
-use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface) enum SimpProposition {
@@ -1295,6 +1290,32 @@ fn rewrite_atomic_proposition_by_exact_equality(
         }
     }
 
+    // A mathematical observation of a machine value is still congruent under
+    // a checked equality for that machine value.  Keep this bridge narrow:
+    // only the root machine observation is exposed, so arbitrary Integer
+    // arithmetic does not acquire a new rewrite/search path.  Re-interning
+    // through `from_machine` also folds a rewritten constant to the ordinary
+    // mathematical constant while retaining the carrier when it remains
+    // symbolic.
+    fn rewrite_integer_observation(
+        term: &SharedIntegerTerm,
+        from: &Bitvector32Term,
+        to: &Bitvector32Term,
+    ) -> SharedIntegerTerm {
+        let IntegerTerm::Machine(machine) = term.as_ref() else {
+            return term.clone();
+        };
+        let value = rewrite_term(machine.value(), from, to);
+        if value == *machine.value() {
+            return term.clone();
+        }
+        IntegerTerm::from_machine(machine.ty(), value.clone())
+            .unwrap_or_else(|| {
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(machine.ty(), value))
+            })
+            .into()
+    }
+
     let rewrite_resource_term = |resource: &CResource| match resource {
         CResource::Memory(range) => CResource::Memory(range.with_bounds(
             Pointer {
@@ -1407,6 +1428,14 @@ fn rewrite_atomic_proposition_by_exact_equality(
                         Box::new(rewrite_term(goal_right, left, right)),
                     )
                 }
+                // `to_integer(machine)` is represented as an Integer machine
+                // observation.  Rewrite its selected machine payload through
+                // the already checked C equality, then let the normal
+                // Integer constructor fold a constant observation.
+                ConditionTerm::IntegerEqual(goal_left, goal_right) => ConditionTerm::IntegerEqual(
+                    rewrite_integer_observation(goal_left, left, right),
+                    rewrite_integer_observation(goal_right, left, right),
+                ),
                 // Pointer goals contain the same int32 terms inside their
                 // offsets; substituting the proven equality there is the same
                 // exact term congruence, with work bounded by the goal.
@@ -1698,94 +1727,6 @@ pub(in crate::surface) fn check_simp_certificate(
             derivation.conclusion() == proposition && derivation.check(assumptions)
         }
     }
-}
-
-/// Plan the first context-free and bound-closing fragment of Integer `simp`.
-///
-/// The caller must pass only propositions already selected from the current
-/// proof context. This function performs no ambient fact lookup; the proof
-/// object wrapper remains responsible for exact availability checks before
-/// applying the returned certificate.
-pub(in crate::surface) fn plan_integer_affine_certificate(
-    goal: &Proposition,
-    premises: &[Proposition],
-) -> Option<IntegerArithmeticCertificate> {
-    let expected = integer_affine_claim(goal)?;
-    if claim_is_integer_trivial(&expected) {
-        return Some(IntegerArithmeticCertificate {
-            nodes: vec![IntegerArithmeticNode::Trivial { result: expected }],
-            conclusion: 0,
-        });
-    }
-    if let Some(index) = premises.iter().position(|premise| premise == goal) {
-        return Some(IntegerArithmeticCertificate {
-            nodes: vec![IntegerArithmeticNode::Premise {
-                index,
-                result: expected,
-            }],
-            conclusion: 0,
-        });
-    }
-    if expected.relation != IntegerAffineRelation::Equal {
-        return None;
-    }
-
-    // Index normalized non-strict premise forms once. The key contains only
-    // Variable identities and exact coefficients, never deep Integer terms.
-    let mut bounds = BTreeMap::new();
-    for (index, premise) in premises.iter().enumerate() {
-        let Some(claim) = integer_affine_claim(premise) else {
-            continue;
-        };
-        if claim.relation == IntegerAffineRelation::LessEqual {
-            bounds
-                .entry((claim.terms.clone(), claim.constant.clone()))
-                .or_insert(index);
-        }
-    }
-    let lower_key = (expected.terms.clone(), expected.constant.clone());
-    let mut opposite_terms = BTreeMap::new();
-    for (variable, coefficient) in &expected.terms {
-        opposite_terms.insert(variable.clone(), -coefficient);
-    }
-    let upper_key = (opposite_terms, -expected.constant.clone());
-    let lower = *bounds.get(&lower_key)?;
-    let upper = *bounds.get(&upper_key)?;
-    let lower_claim = IntegerAffineClaim {
-        relation: IntegerAffineRelation::LessEqual,
-        terms: lower_key.0,
-        constant: lower_key.1,
-    };
-    Some(IntegerArithmeticCertificate {
-        nodes: vec![
-            IntegerArithmeticNode::Premise {
-                index: lower,
-                result: lower_claim,
-            },
-            IntegerArithmeticNode::Premise {
-                index: upper,
-                result: IntegerAffineClaim {
-                    relation: IntegerAffineRelation::LessEqual,
-                    terms: upper_key.0,
-                    constant: upper_key.1,
-                },
-            },
-            IntegerArithmeticNode::EqualityFromBounds {
-                lower: 0,
-                upper: 1,
-                result: expected,
-            },
-        ],
-        conclusion: 2,
-    })
-}
-
-fn claim_is_integer_trivial(claim: &IntegerAffineClaim) -> bool {
-    claim.terms.is_empty()
-        && match claim.relation {
-            IntegerAffineRelation::LessEqual => claim.constant <= BigInt::from(0),
-            IntegerAffineRelation::Equal => claim.constant == BigInt::from(0),
-        }
 }
 
 pub(in crate::surface) fn simp_proposition(
@@ -2463,7 +2404,7 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::IntegerTerm;
+    use crate::kernel::{IntegerTerm, MachineIntegerType};
 
     #[test]
     fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
@@ -2619,5 +2560,73 @@ mod tests {
         certificate
             .check(&goal, &[lower, upper])
             .expect("the planned certificate should pass the kernel checker");
+    }
+    #[test]
+    fn integer_observation_rewrite_requires_an_available_machine_equality() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("rewrite-cell", 4));
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
+        let observed = IntegerTerm::from_machine(MachineIntegerType::Int32, load.clone())
+            .expect("a symbolic int32 load is a mathematical observation");
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(IntegerTerm::constant_i64(0).into(), observed.into()),
+            true,
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(load), Box::new(Bitvector32Term::Constant(0))),
+            true,
+        );
+
+        let error = rewrite_proposition_by_exact_equality(&goal, &equality, &[])
+            .expect_err("an equality absent from the checked facts must be rejected");
+        assert!(error.contains("exact available fact"), "{error}");
+    }
+
+    #[test]
+    fn integer_observation_rewrite_does_not_cross_memory_snapshots() {
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("rewrite-cell".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let first_memory = crate::kernel::intern_c_memory(
+            CMemory::new()
+                .with_block("rewrite-cell", 4)
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(0))),
+        );
+        let second_memory = crate::kernel::intern_c_memory(
+            CMemory::new()
+                .with_block("rewrite-cell", 4)
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(7))),
+        );
+        assert_ne!(first_memory, second_memory);
+        let first_load = Bitvector32Term::MemoryLoad(first_memory, Box::new(pointer.clone()));
+        let second_load = Bitvector32Term::MemoryLoad(second_memory, Box::new(pointer));
+        let observed = IntegerTerm::from_machine(MachineIntegerType::Int32, second_load)
+            .expect("a symbolic int32 load is a mathematical observation");
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(IntegerTerm::constant_i64(0).into(), observed.into()),
+            true,
+        );
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(first_load),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+
+        let error = rewrite_proposition_by_exact_equality(
+            &goal,
+            &equality,
+            std::slice::from_ref(&equality),
+        )
+        .expect_err("a checked equality from another memory snapshot must not rewrite this load");
+        assert!(
+            error.contains("does not occur in the current goal"),
+            "{error}"
+        );
     }
 }

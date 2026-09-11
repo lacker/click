@@ -641,37 +641,44 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             name,
             variable,
             body,
-        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
-            state,
-            body,
-            loop_entry_state,
-            assumptions,
-            algebraic_bindings,
-            budget,
-        )?
-        .into_iter()
-        .map(|path| {
-            if !path.facts.is_empty() || !path.obligations.is_empty() {
-                return Err(ExecutionLimit::UnsupportedIntegerExistentialBody);
-            }
-            Ok(SpecPropositionPath {
-                // The body's own chain describes nodes under this binder,
-                // not this path's head; an introduction reaches none of
-                // them before a `witness`. This arm refuses a body with
-                // path facts or obligations outright, so there is no guard
-                // to place.
-                introductions: Vec::new(),
+        } => {
+            let body_paths = lower_spec_proposition_at_state_with_algebraic_bindings(
+                state,
+                body,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+
+            // Evaluation guards and verification conditions belong to the
+            // witness selected by this existential. Keeping them in the
+            // surrounding path would either leave the bound variable free or
+            // let different obligations choose different witnesses. Build
+            // one conjunction for each evaluation path and put all paths
+            // under one Exists, so every condition uses the same witness.
+            let branches = body_paths
+                .iter()
+                .map(existential_body_branch)
+                .collect::<Vec<_>>();
+            let existential_body = proposition_or_all(branches);
+            Ok(vec![SpecPropositionPath {
+                // An existential is consumed by witness/choose. Any
+                // introduction recorded inside the body is hidden below the
+                // binder and must be rediscovered after the witness refines
+                // the goal. Nothing below an existential is reachable from
+                // the head before that witness, even on a pure single path.
+                introductions: LoweringIntroductions::new(),
                 proposition: Proposition::Exists {
                     name: name.clone(),
                     var: *variable,
                     sort: Sort::Integer,
-                    body: Box::new(path.proposition),
+                    body: Box::new(existential_body),
                 },
                 facts: Vec::new(),
                 obligations: Vec::new(),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?),
+            }])
+        }
         SpecProposition::ExistsInt32 {
             name,
             variable,
@@ -836,12 +843,14 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
                 proposition_and_all(
                     path.facts
                         .into_iter()
-                        .map(|fact| fact.proposition().clone())
-                        .chain(
-                            path.obligations
-                                .into_iter()
-                                .map(|obligation| obligation.proposition().clone()),
-                        )
+                        .filter_map(|fact| {
+                            drop_verified_load_definition_conjuncts(fact.proposition().clone())
+                        })
+                        .chain(path.obligations.into_iter().filter_map(|obligation| {
+                            drop_verified_load_definition_conjuncts(
+                                obligation.proposition().clone(),
+                            )
+                        }))
                         .collect(),
                 )
             });
@@ -861,6 +870,27 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             }])
         }
     }
+}
+
+/// Combines alternative evaluation paths without moving an existential across
+/// the disjunction. Each branch may carry a different definedness guard, but
+/// all branches still describe the same witness.
+fn proposition_or_all(mut propositions: Vec<Proposition>) -> Proposition {
+    if propositions.is_empty() {
+        return Proposition::ConditionIs(ConditionTerm::Constant(false), true);
+    }
+    while propositions.len() > 1 {
+        let mut next = Vec::with_capacity(propositions.len().div_ceil(2));
+        let mut pairs = propositions.into_iter();
+        while let Some(left) = pairs.next() {
+            next.push(match pairs.next() {
+                Some(right) => Proposition::Or(Box::new(left), Box::new(right)),
+                None => left,
+            });
+        }
+        propositions = next;
+    }
+    propositions.pop().expect("nonempty disjunction level")
 }
 
 fn retain_required_conversion_obligation(
@@ -1079,36 +1109,110 @@ fn evaluate_spec_integer_expression_paths(
                     };
                     let body_assumptions =
                         assumptions_with_path_context(assumptions, &facts, &obligations);
-                    for body_path in evaluate_spec_integer_expression_paths(
+                    let (_, body_guard) = integer_range_fold_item_domain(&index, *item);
+                    if integer_range_fold_index_is_empty(&index) {
+                        // Keep one symbolic body value for fold capture and
+                        // theorem shape, but do not let a concrete empty
+                        // range make an unavailable load a live obligation.
+                        // Symbolic-load mode preserves the load term while
+                        // the half-open guard makes every body obligation
+                        // vacuous.
+                        let empty_body_assumptions = body_assumptions
+                            .assume_proposition(body_guard.clone())
+                            .keep_spec_loads_symbolic();
+                        let body_paths = evaluate_spec_integer_expression_paths(
+                            state,
+                            body,
+                            loop_entry_state,
+                            &empty_body_assumptions,
+                            algebraic_bindings,
+                            budget,
+                        )?;
+                        let body_value = match body_paths.as_slice() {
+                            [body_path]
+                                if !body_path.facts.iter().any(|fact| {
+                                    !assumptions.proves_exact(fact.proposition())
+                                        && !is_verified_load_variable_defining_fact(
+                                            fact.proposition(),
+                                        )
+                                }) =>
+                            {
+                                Some(body_path.value.clone())
+                            }
+                            _ => None,
+                        };
+                        if let Some(body_value) = body_value {
+                            result.push(SpecIntegerPath {
+                                value: IntegerTerm::range_fold(
+                                    index.clone(),
+                                    initial_path.value.clone(),
+                                    *accumulator,
+                                    *item,
+                                    body_value,
+                                ),
+                                facts,
+                                obligations,
+                            });
+                        } else {
+                            result.push(SpecIntegerPath {
+                                value: initial_path.value.clone(),
+                                facts,
+                                obligations,
+                            });
+                        }
+                        continue;
+                    }
+                    let body_assumptions = body_assumptions.assume_proposition(body_guard);
+                    let body_paths = evaluate_spec_integer_expression_paths(
                         state,
                         body,
                         loop_entry_state,
                         &body_assumptions,
                         algebraic_bindings,
                         budget,
-                    )? {
+                    )?;
+                    // A fold body is one symbolic iteration under its two
+                    // binders.  Case splits are not universally valid for
+                    // every item, so retain only a single non-branching path;
+                    // unresolved alternatives are rejected rather than
+                    // exporting one branch's assumptions to the fold.
+                    let [body_path] = body_paths.as_slice() else {
+                        continue;
+                    };
+                    {
                         // The fold body is under its accumulator/item binders.
                         // Its branch facts and definedness obligations therefore
                         // cannot be exported as ambient facts for the fold
-                        // result.  A symbolic evaluator may retain a body
-                        // only when those requirements are already established
-                        // by the outer context; otherwise the path is rejected
-                        // instead of manufacturing a vacuous certificate.
-                        if body_path
-                            .facts
-                            .iter()
-                            .any(|fact| !assumptions.proves_exact(fact.proposition()))
-                            || body_path.obligations.iter().any(|obligation| {
-                                !assumptions.proves_exact(obligation.proposition())
-                            })
-                        {
+                        // result.  Load-defining facts are represented by the
+                        // registered snapshot load itself and may be dropped;
+                        // all other body facts must already be ambient.
+                        if body_path.facts.iter().any(|fact| {
+                            !assumptions.proves_exact(fact.proposition())
+                                && !is_verified_load_variable_defining_fact(fact.proposition())
+                        }) {
                             continue;
                         }
+                        let body_obligations = body_path
+                            .obligations
+                            .iter()
+                            .filter_map(|obligation| {
+                                let proposition = drop_verified_load_definition_conjuncts(
+                                    obligation.proposition().clone(),
+                                )?;
+                                let scoped = integer_range_fold_body_obligation(
+                                    proposition,
+                                    &index,
+                                    *accumulator,
+                                    *item,
+                                );
+                                Some(obligation.clone().map_proposition(|_| scoped))
+                            })
+                            .collect::<Vec<_>>();
                         let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                             &facts,
                             &obligations,
                             &[],
-                            &[],
+                            &body_obligations,
                             assumptions,
                         ) else {
                             continue;
@@ -1119,7 +1223,7 @@ fn evaluate_spec_integer_expression_paths(
                                 initial_path.value.clone(),
                                 *accumulator,
                                 *item,
-                                body_path.value,
+                                body_path.value.clone(),
                             ),
                             facts,
                             obligations,
@@ -1129,6 +1233,505 @@ fn evaluate_spec_integer_expression_paths(
             }
             Ok(result)
         }
+    }
+}
+
+/// A load definition is trusted only when its descriptor is the exact
+/// registered snapshot and pointer for the reserved variable. Comparing
+/// interned snapshots uses their O(1) identity equality; arbitrary memory
+/// contents are never traversed here.
+fn is_verified_load_variable_defining_fact(proposition: &Proposition) -> bool {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = proposition
+    else {
+        return false;
+    };
+    let (Bitvector32Term::Variable(variable), Bitvector32Term::MemoryLoad(memory, pointer)) =
+        (left.as_ref(), right.as_ref())
+    else {
+        return false;
+    };
+    if !crate::kernel::is_load_variable(variable) {
+        return false;
+    }
+    let Some((registered_memory, registered_pointer)) =
+        crate::kernel::eval::registered_load_for_variable(variable)
+    else {
+        return false;
+    };
+    registered_memory == *memory && registered_pointer == *pointer.as_ref()
+}
+
+/// Removes only kernel-certified load definitions from a conjunction. The
+/// defining equation is metadata for a registered load; its exact descriptor
+/// has already been checked against the registry above. Other equalities,
+/// including a tampered load definition, remain obligations.
+fn drop_verified_load_definition_conjuncts(proposition: Proposition) -> Option<Proposition> {
+    if is_verified_load_variable_defining_fact(&proposition) {
+        return None;
+    }
+    match proposition {
+        Proposition::And(left, right) => {
+            let left = drop_verified_load_definition_conjuncts(*left);
+            let right = drop_verified_load_definition_conjuncts(*right);
+            match (left, right) {
+                (Some(left), Some(right)) => {
+                    Some(Proposition::And(Box::new(left), Box::new(right)))
+                }
+                (Some(proposition), None) | (None, Some(proposition)) => Some(proposition),
+                (None, None) => None,
+            }
+        }
+        proposition => Some(proposition),
+    }
+}
+
+fn verified_load_obligation_without_definition(
+    obligation: &ProofObligation,
+) -> Option<ProofObligation> {
+    let proposition = drop_verified_load_definition_conjuncts(obligation.proposition().clone())?;
+    Some(obligation.clone().map_proposition(|_| proposition))
+}
+
+/// Build one Integer-existential branch while removing only exact registered
+/// load definitions. The path facts and obligations can both contain the
+/// same certified equation; loadability, range guards, and all user written
+/// conditions remain in the conjunction.
+fn existential_body_branch(path: &SpecPropositionPath) -> Proposition {
+    let facts = path
+        .facts
+        .iter()
+        .filter_map(|fact| {
+            drop_verified_load_definition_conjuncts(fact.proposition().clone())
+                .map(|proposition| fact.clone().with_proposition(proposition))
+        })
+        .map(|fact| fact.proposition().clone());
+    let obligations = path
+        .obligations
+        .iter()
+        .filter_map(verified_load_obligation_without_definition)
+        .map(|obligation| obligation.proposition().clone());
+    proposition_and_all(
+        facts
+            .chain(obligations)
+            .chain(std::iter::once(path.proposition.clone()))
+            .collect(),
+    )
+}
+
+/// Turn one non-branching body requirement into a requirement for every
+/// iteration in the fold's half-open range.  The accumulator is quantified
+/// only when the requirement actually contains a mathematical Integer with
+/// that identity; the item is always quantified so an empty or reversed
+/// range makes the body requirement vacuous.
+fn integer_range_fold_body_obligation(
+    proposition: Proposition,
+    index: &IntegerRangeFoldIndex,
+    accumulator: Variable,
+    item: Variable,
+) -> Proposition {
+    let (item_sort, guard) = integer_range_fold_item_domain(index, item);
+    let body = Proposition::Implies(Box::new(guard), Box::new(proposition.clone()));
+    let body = Proposition::ForAll {
+        var: item,
+        sort: item_sort,
+        body: Box::new(body),
+    };
+    if proposition_mentions_integer_variable(&proposition, accumulator) {
+        Proposition::ForAll {
+            var: accumulator,
+            sort: Sort::Integer,
+            body: Box::new(body),
+        }
+    } else {
+        body
+    }
+}
+
+fn integer_range_fold_item_domain(
+    index: &IntegerRangeFoldIndex,
+    item: Variable,
+) -> (Sort, Proposition) {
+    let (item_sort, guard) = match index {
+        IntegerRangeFoldIndex::Int32 { start, end } => {
+            let item_term = Bitvector32Term::Variable(item);
+            let guard = Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(item_term.clone(), start.value().clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(item_term, end.value().clone()),
+                    true,
+                )),
+            );
+            (Sort::CInt32, guard)
+        }
+        IntegerRangeFoldIndex::Integer { start, end } => {
+            let item_term = IntegerTerm::Variable(item);
+            let guard = Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::integer_greater_equal(item_term.clone(), start.as_ref().clone()),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::integer_less_than(item_term, end.as_ref().clone()),
+                    true,
+                )),
+            );
+            (Sort::Integer, guard)
+        }
+    };
+
+    (item_sort, guard)
+}
+
+fn integer_range_fold_index_is_empty(index: &IntegerRangeFoldIndex) -> bool {
+    match index {
+        IntegerRangeFoldIndex::Int32 { start, end } => {
+            let Some(start) = start.value().as_const().map(|value| value as i32) else {
+                return false;
+            };
+            let Some(end) = end.value().as_const().map(|value| value as i32) else {
+                return false;
+            };
+            start >= end
+        }
+        IntegerRangeFoldIndex::Integer { start, end } => match (start.as_const(), end.as_const()) {
+            (Some(start), Some(end)) => start >= end,
+            _ => false,
+        },
+    }
+}
+
+fn integer_carrier_in_pointer(pointer: &Pointer, variable: Variable) -> bool {
+    integer_carrier_in_pointer_offset(&pointer.offset, variable)
+}
+
+fn integer_carrier_in_pointer_offset(offset: &PointerOffsetTerm, variable: Variable) -> bool {
+    match offset {
+        PointerOffsetTerm::Constant(_) => false,
+        PointerOffsetTerm::Variable(load) => {
+            integer_carrier_in_bitvector(&Bitvector32Term::Variable(*load), variable)
+        }
+        PointerOffsetTerm::Add(left, right) => {
+            integer_carrier_in_pointer_offset(left, variable)
+                || integer_carrier_in_pointer_offset(right, variable)
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
+            integer_carrier_in_bitvector(value, variable)
+        }
+    }
+}
+
+/// A registered load may use another registered load directly as an offset.
+/// `scaled_values` intentionally reports only scaled bitvector payloads, so
+/// it cannot see `Add(..., Variable(load))` or a direct `Variable(load)` leaf.
+/// Keep this query conservative for those selected pointer leaves: retaining
+/// the accumulator quantifier is sound, while expanding the registry here
+/// would duplicate the checked carrier collector and reopen its DAG.
+fn pointer_offset_contains_registered_load(offset: &PointerOffsetTerm) -> bool {
+    match offset {
+        PointerOffsetTerm::Constant(_) => false,
+        PointerOffsetTerm::Variable(variable) => crate::kernel::is_load_variable(variable),
+        PointerOffsetTerm::Add(left, right) => {
+            pointer_offset_contains_registered_load(left)
+                || pointer_offset_contains_registered_load(right)
+        }
+        PointerOffsetTerm::Int32Scaled { .. } | PointerOffsetTerm::Int64Scaled { .. } => false,
+    }
+}
+
+/// Use the checked carrier collector for ordinary machine payloads, then
+/// inspect only a registered load's selected pointer.  The memory snapshot is
+/// deliberately never traversed.  Unknown registry entries are treated as a
+/// dependency so a missing pointer cannot drop an accumulator quantifier.
+fn integer_carrier_in_bitvector(term: &Bitvector32Term, variable: Variable) -> bool {
+    let mut variables = BTreeSet::new();
+    collect_bitvector_integer_variables(term, &mut variables);
+    if variables.contains(&variable) {
+        return true;
+    }
+    let Bitvector32Term::Variable(load) = term else {
+        // The shared collector covers known Integer-to-machine payloads.  A
+        // composite machine expression can still hide a registered load
+        // whose pointer carries an Integer, so retain the scope rather than
+        // returning an unsound negative for that opaque case.
+        return !matches!(
+            term,
+            Bitvector32Term::Constant(_)
+                | Bitvector32Term::Int64Constant(_)
+                | Bitvector32Term::UInt64Constant(_)
+        );
+    };
+    if !crate::kernel::is_load_variable(load) {
+        return false;
+    }
+    let Some((memory, pointer)) = crate::kernel::eval::registered_load_for_variable(load) else {
+        return true;
+    };
+    if pointer_offset_contains_registered_load(&pointer.offset) {
+        return true;
+    }
+    if pointer
+        .offset
+        .scaled_values()
+        .iter()
+        .any(|value| match value {
+            Bitvector32Term::Variable(variable) => crate::kernel::is_load_variable(variable),
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_) => false,
+            _ => true,
+        })
+    {
+        // A nested registered load is an opaque pointer payload here.  Its
+        // own selected address may carry the accumulator, so keep the scope
+        // conservatively without expanding the registry DAG.
+        return true;
+    }
+    let selected_load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
+    let mut pointer_variables = BTreeSet::new();
+    collect_bitvector_integer_variables(&selected_load, &mut pointer_variables);
+    if pointer_variables.contains(&variable) {
+        true
+    } else {
+        // The shared collector intentionally does not expand registered
+        // variables nested below an arbitrary machine expression.  Keep
+        // those opaque payloads sound by retaining the accumulator scope;
+        // direct registered roots above still get the precise pointer query.
+        false
+    }
+}
+
+fn integer_carrier_in_c_value(value: &CValue, variable: Variable) -> bool {
+    match value {
+        CValue::Pointer(pointer) => integer_carrier_in_pointer(pointer, variable),
+        CValue::Void => false,
+        CValue::Bool(term)
+        | CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => integer_carrier_in_bitvector(term, variable),
+    }
+}
+
+fn integer_carrier_in_integer(term: &IntegerTerm, variable: Variable) -> bool {
+    let mut variables = BTreeSet::new();
+    collect_integer_carrier_variables(term, &mut variables);
+    if variables.contains(&variable) {
+        return true;
+    }
+    match term {
+        IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => false,
+        IntegerTerm::Machine(machine) => integer_carrier_in_bitvector(machine.value(), variable),
+        // A composite Integer payload may contain a registered machine load
+        // hidden below the shared carrier collector.  Preserve soundness
+        // conservatively rather than recursively duplicating the full term
+        // language here.
+        IntegerTerm::Negate(_)
+        | IntegerTerm::Add(_, _)
+        | IntegerTerm::Subtract(_, _)
+        | IntegerTerm::Multiply(_, _)
+        | IntegerTerm::PureFunctionApplication(_)
+        | IntegerTerm::AlgebraicMatch { .. }
+        | IntegerTerm::RangeFold { .. } => true,
+    }
+}
+
+fn integer_carrier_in_algebraic(value: &AlgebraicTerm, _variable: Variable) -> bool {
+    match &value.node {
+        AlgebraicTermNode::Variable(_) => false,
+        // Algebraic values are immutable DAG payloads and may contain
+        // registered loads through constructor fields, match bindings, or
+        // pure-function arguments.  A full recursive scan here would repeat
+        // shared branches for every fold obligation.  Keep the dependency
+        // sound with one conservative answer for every non-atomic payload.
+        AlgebraicTermNode::Constructor { .. }
+        | AlgebraicTermNode::Match { .. }
+        | AlgebraicTermNode::PureFunctionApplication { .. } => true,
+    }
+}
+
+fn sequence_contains_integer_variable(sequence: &SequenceTerm, variable: Variable) -> bool {
+    match sequence.node.as_ref() {
+        SequenceTermNode::Literal(values) => values
+            .iter()
+            .any(|value| integer_carrier_in_c_value(value, variable)),
+        // Sequence concatenations are shared DAGs.  Their elements can carry
+        // a registered pointer load, so preserving the accumulator scope for
+        // the opaque composite is the bounded, sound choice.
+        SequenceTermNode::Concat(_, _) => true,
+    }
+}
+
+/// The fold evaluator only needs this typed query for the accumulator.  The
+/// general proposition collector deliberately combines carriers for source
+/// freshness, which would confuse an Integer accumulator with an Int32 item
+/// carrying the same numeric identity.  Keep the query narrow and
+/// conservative for unsupported proposition payloads: an uncertain payload
+/// causes the extra Integer quantifier, never an under-quantified obligation.
+fn proposition_mentions_integer_variable(proposition: &Proposition, variable: Variable) -> bool {
+    fn term_contains(term: &Term, variable: Variable) -> bool {
+        match term {
+            Term::Integer(term) => integer_carrier_in_integer(term, variable),
+            Term::Bitvector32(term) => integer_carrier_in_bitvector(term, variable),
+            Term::Condition(condition) => condition_contains(condition, variable),
+            Term::CValue(value) => integer_carrier_in_c_value(value, variable),
+            Term::Sequence(sequence) => sequence_contains_integer_variable(sequence, variable),
+            Term::PointerOffset(offset) => integer_carrier_in_pointer_offset(offset, variable),
+            Term::Algebraic(value) => integer_carrier_in_algebraic(value, variable),
+            Term::CExpressionOutcome(CExpressionOutcome::Value(value)) => {
+                integer_carrier_in_c_value(value, variable)
+            }
+            // A state or an execution outcome may carry a mathematical
+            // machine conversion in a nested local.  Keep this conservative
+            // rather than silently dropping the accumulator scope; memory
+            // snapshots themselves remain opaque below.
+            Term::CStatementOutcome(_) | Term::CFunctionOutcome(_) | Term::CState(_) => true,
+            Term::CExpressionOutcome(_) | Term::CMemory(_) => false,
+        }
+    }
+
+    fn condition_contains(condition: &ConditionTerm, variable: Variable) -> bool {
+        match condition {
+            ConditionTerm::IntegerLessThan(left, right)
+            | ConditionTerm::IntegerLessEqual(left, right)
+            | ConditionTerm::IntegerGreaterThan(left, right)
+            | ConditionTerm::IntegerGreaterEqual(left, right)
+            | ConditionTerm::IntegerEqual(left, right)
+            | ConditionTerm::IntegerNotEqual(left, right) => {
+                integer_carrier_in_integer(left.as_ref(), variable)
+                    || integer_carrier_in_integer(right.as_ref(), variable)
+            }
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedLessThan(left, right)
+            | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+            | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right)
+            | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
+                integer_carrier_in_bitvector(left, variable)
+                    || integer_carrier_in_bitvector(right, variable)
+            }
+            ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
+            ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
+                let mut found = false;
+                float_condition.for_each_bitvector_term(|term| {
+                    found |= integer_carrier_in_bitvector(term, variable);
+                });
+                found
+            }
+            ConditionTerm::AlgebraicEqual(left, right) => {
+                integer_carrier_in_algebraic(left, variable)
+                    || integer_carrier_in_algebraic(right, variable)
+            }
+            ConditionTerm::PointerOffsetEqual(left, right) => {
+                integer_carrier_in_pointer_offset(left, variable)
+                    || integer_carrier_in_pointer_offset(right, variable)
+            }
+            ConditionTerm::PointerEqual(left, right) => {
+                integer_carrier_in_pointer(left, variable)
+                    || integer_carrier_in_pointer(right, variable)
+            }
+        }
+    }
+
+    match proposition {
+        Proposition::Equal(left, right) => {
+            term_contains(left, variable) || term_contains(right, variable)
+        }
+        Proposition::ConditionIs(condition, _) => condition_contains(condition, variable),
+        Proposition::Predicate { arguments, .. } => {
+            arguments.iter().any(|term| term_contains(term, variable))
+        }
+        Proposition::CMemoryLoads {
+            pointer, outcome, ..
+        } => {
+            integer_carrier_in_pointer(pointer, variable)
+                || matches!(outcome, CExpressionOutcome::Value(value) if integer_carrier_in_c_value(value, variable))
+        }
+        Proposition::CMemoryCanStore { pointer, .. } => {
+            integer_carrier_in_pointer(pointer, variable)
+        }
+        Proposition::CMemoryLoadable { base, bytes, .. } => {
+            integer_carrier_in_bitvector(bytes, variable)
+                || integer_carrier_in_pointer(base, variable)
+        }
+        Proposition::CMemoryDisjoint {
+            left_base,
+            right_base,
+            left_start,
+            left_end,
+            right_start,
+            right_end,
+            ..
+        } => {
+            [left_start, left_end, right_start, right_end]
+                .iter()
+                .any(|term| integer_carrier_in_bitvector(term, variable))
+                || integer_carrier_in_pointer(left_base, variable)
+                || integer_carrier_in_pointer(right_base, variable)
+        }
+        Proposition::CMemoryMutatesOnly { pointers, .. } => pointers
+            .iter()
+            .any(|pointer| integer_carrier_in_pointer(pointer, variable)),
+        Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
+            mutable_ranges.iter().any(|range| {
+                integer_carrier_in_bitvector(&range.start, variable)
+                    || integer_carrier_in_bitvector(&range.end, variable)
+                    || integer_carrier_in_pointer(&range.base, variable)
+            })
+        }
+        Proposition::CHeapAllocationFreed {
+            allocation_base,
+            bytes,
+            ..
+        } => {
+            integer_carrier_in_bitvector(bytes, variable)
+                || integer_carrier_in_pointer(allocation_base, variable)
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            proposition_mentions_integer_variable(left, variable)
+                || proposition_mentions_integer_variable(right, variable)
+        }
+        Proposition::Not(body) => proposition_mentions_integer_variable(body, variable),
+        Proposition::ForAll { var, sort, body }
+        | Proposition::Exists {
+            var, sort, body, ..
+        } => {
+            (*var != variable || *sort != Sort::Integer)
+                && proposition_mentions_integer_variable(body, variable)
+        }
+        // These proposition forms can contain machine payloads in their C
+        // state/outcome terms.  A conservative answer prevents dropping a
+        // needed accumulator scope, while CMemory remains intentionally
+        // opaque in the explicit forms above.
+        _ => true,
     }
 }
 
@@ -5969,6 +6572,99 @@ mod integer_budget_tests {
     }
 
     #[test]
+    fn integer_existential_scopes_definedness_with_its_witness() {
+        fn contains(proposition: &Proposition, wanted: &Proposition) -> bool {
+            if proposition == wanted {
+                return true;
+            }
+            match proposition {
+                Proposition::And(left, right)
+                | Proposition::Or(left, right)
+                | Proposition::Implies(left, right) => {
+                    contains(left, wanted) || contains(right, wanted)
+                }
+                Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
+                    contains(body, wanted)
+                }
+                _ => false,
+            }
+        }
+
+        let left = Variable(701);
+        let right = Variable(702);
+        let witness = Variable(703);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let body = SpecProposition::ExistsInteger {
+            name: "z".to_string(),
+            variable: witness,
+            body: Box::new(SpecProposition::IntegerComparison {
+                left: SpecIntegerExpression::Term(IntegerTerm::var(witness)),
+                operator: IntegerComparisonOperator::Equal,
+                right: SpecIntegerExpression::FromMachine(Box::new(SpecExpression::CExpression(
+                    c_add(c_variable("left"), c_variable("right")),
+                ))),
+            }),
+        };
+
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &state,
+            &body,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("the Integer existential should lower");
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].facts.is_empty());
+        assert!(paths[0].obligations.is_empty());
+        let Proposition::Exists {
+            var,
+            sort: Sort::Integer,
+            body,
+            ..
+        } = &paths[0].proposition
+        else {
+            panic!("the lowered proposition must retain its Integer existential");
+        };
+        assert_eq!(*var, witness);
+        let overflow = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(
+                Box::new(left_bits.clone()),
+                Box::new(right_bits.clone()),
+            ),
+            false,
+        );
+        assert!(
+            contains(body, &overflow),
+            "the C definedness guard must stay inside the existential body: {body:?}"
+        );
+        assert!(
+            contains(
+                body,
+                &Proposition::ConditionIs(
+                    ConditionTerm::IntegerEqual(
+                        IntegerTerm::var(witness).into(),
+                        IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                            MachineIntegerType::Int32,
+                            Bitvector32Term::Add(
+                                Box::new(Bitvector32Term::Variable(left)),
+                                Box::new(Bitvector32Term::Variable(right)),
+                            ),
+                        ))
+                        .into(),
+                    ),
+                    true,
+                )
+            ),
+            "the existential body must still compare the selected witness"
+        );
+    }
+
+    #[test]
     fn from_machine_keeps_signed_and_unsigned_values_distinct() {
         let signed = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
             CValue::Int32(Bitvector32Term::Constant(u32::MAX)),
@@ -6038,6 +6734,568 @@ mod integer_budget_tests {
         )
         .unwrap();
         assert_eq!(paths[0].value, IntegerTerm::constant_i64(7));
+    }
+
+    #[test]
+    fn integer_fold_loadable_obligation_keeps_carriers_separate() {
+        let shared_id = Variable(71_100);
+        let index = IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(4)),
+        };
+        let integer_address = Bitvector32Term::IntegerToMachine {
+            value: IntegerTerm::var(shared_id).into(),
+            destination: MachineIntegerType::Int32,
+        };
+        let integer_address_requirement = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(integer_address),
+                    byte_width: 4,
+                },
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let wrapped = integer_range_fold_body_obligation(
+            integer_address_requirement,
+            &index,
+            shared_id,
+            shared_id,
+        );
+        let Proposition::ForAll {
+            var: accumulator,
+            sort: Sort::Integer,
+            body: item_body,
+        } = wrapped
+        else {
+            panic!("an Integer address must retain its Integer binder");
+        };
+        assert_eq!(accumulator, shared_id);
+        assert!(matches!(
+            item_body.as_ref(),
+            Proposition::ForAll {
+                var,
+                sort: Sort::CInt32,
+                ..
+            } if *var == shared_id
+        ));
+
+        let c_address_requirement = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(shared_id)),
+                    byte_width: 4,
+                },
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let wrapped =
+            integer_range_fold_body_obligation(c_address_requirement, &index, shared_id, shared_id);
+        let Proposition::ForAll {
+            var,
+            sort: Sort::CInt32,
+            ..
+        } = wrapped
+        else {
+            panic!("a C item with the same numeric id must not bind an Integer");
+        };
+        assert_eq!(var, shared_id);
+    }
+
+    #[test]
+    fn integer_fold_loadable_obligation_sees_integer_in_registered_pointer() {
+        let accumulator = Variable(71_106);
+        let item = Variable(71_107);
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("array", 16));
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("array".into()),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::IntegerToMachine {
+                    value: IntegerTerm::var(accumulator).into(),
+                    destination: MachineIntegerType::Int32,
+                }),
+                byte_width: 4,
+            },
+        };
+        let load = crate::kernel::eval::load_variable_for_cell(&memory, &pointer);
+        let requirement = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(load)),
+                    byte_width: 4,
+                },
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let index = IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(4)),
+        };
+        let wrapped = integer_range_fold_body_obligation(requirement, &index, accumulator, item);
+        assert!(matches!(
+            wrapped,
+            Proposition::ForAll {
+                var,
+                sort: Sort::Integer,
+                ..
+            } if var == accumulator
+        ));
+
+        let direct_requirement = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Variable(load),
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let direct_wrapped =
+            integer_range_fold_body_obligation(direct_requirement, &index, accumulator, item);
+        assert!(matches!(
+            direct_wrapped,
+            Proposition::ForAll {
+                var,
+                sort: Sort::Integer,
+                ..
+            } if var == accumulator
+        ));
+    }
+
+    #[test]
+    fn integer_fold_loadable_obligation_keeps_accumulator_for_two_hop_direct_offset() {
+        let accumulator = Variable(71_108);
+        let item = Variable(71_109);
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("array", 16));
+        let inner = crate::kernel::eval::load_variable_for_cell(
+            &memory,
+            &Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::IntegerToMachine {
+                        value: IntegerTerm::var(accumulator).into(),
+                        destination: MachineIntegerType::Int32,
+                    }),
+                    byte_width: 4,
+                },
+            },
+        );
+        let outer = crate::kernel::eval::load_variable_for_cell(
+            &memory,
+            &Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Add(
+                    Box::new(PointerOffsetTerm::Constant(0)),
+                    Box::new(PointerOffsetTerm::Variable(inner)),
+                ),
+            },
+        );
+        let requirement = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: PointerBlock::Concrete("array".into()),
+                offset: PointerOffsetTerm::Variable(outer),
+            },
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let index = IntegerRangeFoldIndex::Int32 {
+            start: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(0)),
+            end: SharedIntegerRangeEndpoint::intern(Bitvector32Term::Constant(4)),
+        };
+        let wrapped = integer_range_fold_body_obligation(requirement, &index, accumulator, item);
+        assert!(matches!(
+            wrapped,
+            Proposition::ForAll {
+                var,
+                sort: Sort::Integer,
+                ..
+            } if var == accumulator
+        ));
+    }
+
+    #[test]
+    fn fold_body_drops_only_exact_registered_load_definition_conjuncts() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("array", 16));
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("array".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load = crate::kernel::eval::load_variable_for_cell(&memory, &pointer);
+        let (registered_memory, registered_pointer) =
+            crate::kernel::eval::registered_load_for_variable(&load)
+                .expect("the load variable must retain its exact descriptor");
+        let defining = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(load)),
+                Box::new(Bitvector32Term::MemoryLoad(
+                    registered_memory.clone(),
+                    Box::new(registered_pointer.clone()),
+                )),
+            ),
+            true,
+        );
+        let loadable = Proposition::CMemoryLoadable {
+            memory: registered_memory.as_ref().clone(),
+            base: registered_pointer.clone(),
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let exact = drop_verified_load_definition_conjuncts(Proposition::And(
+            Box::new(defining.clone()),
+            Box::new(loadable.clone()),
+        ))
+        .expect("the loadability conjunct must remain");
+        assert!(matches!(exact, Proposition::CMemoryLoadable { .. }));
+
+        let guarded = Proposition::Implies(Box::new(defining), Box::new(loadable.clone()));
+        let retained_guard = drop_verified_load_definition_conjuncts(guarded.clone())
+            .expect("a guarded definition must remain a guarded obligation");
+        assert_eq!(retained_guard, guarded);
+
+        let tampered_pointer = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(load)),
+                Box::new(Bitvector32Term::MemoryLoad(
+                    registered_memory.clone(),
+                    Box::new(Pointer {
+                        offset: PointerOffsetTerm::Constant(4),
+                        ..registered_pointer.clone()
+                    }),
+                )),
+            ),
+            true,
+        );
+        let retained_pointer = drop_verified_load_definition_conjuncts(Proposition::And(
+            Box::new(tampered_pointer),
+            Box::new(loadable),
+        ))
+        .expect("a tampered definition must remain an obligation");
+        assert!(matches!(retained_pointer, Proposition::And(_, _)));
+
+        let tampered_memory =
+            crate::kernel::intern_c_memory(CMemory::new().with_block("other", 16));
+        let tampered_snapshot = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(load)),
+                Box::new(Bitvector32Term::MemoryLoad(
+                    tampered_memory,
+                    Box::new(registered_pointer.clone()),
+                )),
+            ),
+            true,
+        );
+        let retained_snapshot = drop_verified_load_definition_conjuncts(Proposition::And(
+            Box::new(tampered_snapshot),
+            Box::new(Proposition::CMemoryLoadable {
+                memory: registered_memory.as_ref().clone(),
+                base: registered_pointer.clone(),
+                bytes: Bitvector32Term::Constant(4),
+            }),
+        ))
+        .expect("a tampered snapshot must remain an obligation");
+        assert!(matches!(retained_snapshot, Proposition::And(_, _)));
+
+        let unknown = Variable((1u64 << 40) + 123_456_789);
+        let unknown_definition = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(unknown)),
+                Box::new(Bitvector32Term::MemoryLoad(
+                    registered_memory,
+                    Box::new(registered_pointer),
+                )),
+            ),
+            true,
+        );
+        let retained_unknown = drop_verified_load_definition_conjuncts(Proposition::And(
+            Box::new(unknown_definition),
+            Box::new(Proposition::CMemoryLoadable {
+                memory: memory.as_ref().clone(),
+                base: pointer,
+                bytes: Bitvector32Term::Constant(4),
+            }),
+        ))
+        .expect("an unknown reserved variable must remain an obligation");
+        assert!(matches!(retained_unknown, Proposition::And(_, _)));
+    }
+
+    #[test]
+    fn defined_memory_load_retains_loadability_after_dropping_registry_metadata() {
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("array".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let proposition = SpecProposition::Defined(SpecExpression::MemoryLoad {
+            memory: SpecMemory::Fixed(CMemory::new()),
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(CPointerValue::new(
+                pointer,
+                CType::Int32Pointer,
+            )))),
+            value_type: CType::Int32,
+        });
+
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &CState::default(),
+            &proposition,
+            None,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("a symbolic load should lower to a definedness obligation");
+        assert_eq!(paths.len(), 1);
+        assert!(matches!(
+            &paths[0].proposition,
+            Proposition::CMemoryLoadable { .. }
+        ));
+        assert!(!matches!(
+            &paths[0].proposition,
+            Proposition::ConditionIs(ConditionTerm::Constant(true), true)
+        ));
+    }
+
+    #[test]
+    fn integer_existential_branch_filters_exact_load_definitions_only() {
+        fn contains(proposition: &Proposition, wanted: &Proposition) -> bool {
+            if proposition == wanted {
+                return true;
+            }
+            match proposition {
+                Proposition::And(left, right)
+                | Proposition::Or(left, right)
+                | Proposition::Implies(left, right) => {
+                    contains(left, wanted) || contains(right, wanted)
+                }
+                Proposition::Not(body)
+                | Proposition::ForAll { body, .. }
+                | Proposition::Exists { body, .. } => contains(body, wanted),
+                _ => false,
+            }
+        }
+
+        let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("array", 16));
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("array".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load = crate::kernel::eval::load_variable_for_exact_cell(&memory, &pointer);
+        let (registered_memory, registered_pointer) =
+            crate::kernel::eval::registered_load_for_variable(&load)
+                .expect("the exact load must have a registry descriptor");
+        let defining = |memory: SharedCMemory, pointer: Pointer, variable: Variable| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(variable)),
+                    Box::new(Bitvector32Term::MemoryLoad(memory, Box::new(pointer))),
+                ),
+                true,
+            )
+        };
+        let exact = defining(registered_memory.clone(), registered_pointer.clone(), load);
+        let loadable = Proposition::CMemoryLoadable {
+            memory: registered_memory.as_ref().clone(),
+            base: registered_pointer.clone(),
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let marker = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let exact_path = SpecPropositionPath {
+            proposition: marker.clone(),
+            facts: vec![ExecutionPureFact::certified(exact.clone())],
+            obligations: vec![ProofObligation::verification_condition(Proposition::And(
+                Box::new(exact.clone()),
+                Box::new(loadable.clone()),
+            ))],
+            introductions: LoweringIntroductions::new(),
+        };
+        let exact_branch = existential_body_branch(&exact_path);
+        assert!(!contains(&exact_branch, &exact));
+        assert!(contains(&exact_branch, &loadable));
+        assert!(contains(&exact_branch, &marker));
+
+        let tampered_pointer = Pointer {
+            offset: PointerOffsetTerm::Constant(4),
+            ..registered_pointer.clone()
+        };
+        let tampered_pointer_definition =
+            defining(registered_memory.clone(), tampered_pointer, load);
+        let tampered_pointer_path = SpecPropositionPath {
+            proposition: marker.clone(),
+            facts: vec![ExecutionPureFact::certified(
+                tampered_pointer_definition.clone(),
+            )],
+            obligations: vec![ProofObligation::verification_condition(Proposition::And(
+                Box::new(tampered_pointer_definition.clone()),
+                Box::new(loadable.clone()),
+            ))],
+            introductions: LoweringIntroductions::new(),
+        };
+        let tampered_pointer_branch = existential_body_branch(&tampered_pointer_path);
+        assert!(contains(
+            &tampered_pointer_branch,
+            &tampered_pointer_definition
+        ));
+        assert!(contains(&tampered_pointer_branch, &loadable));
+
+        let other_memory = crate::kernel::intern_c_memory(CMemory::new().with_block("other", 16));
+        let tampered_snapshot_definition = defining(other_memory, registered_pointer.clone(), load);
+        let tampered_snapshot_path = SpecPropositionPath {
+            proposition: marker.clone(),
+            facts: vec![ExecutionPureFact::certified(
+                tampered_snapshot_definition.clone(),
+            )],
+            obligations: vec![ProofObligation::verification_condition(Proposition::And(
+                Box::new(tampered_snapshot_definition.clone()),
+                Box::new(loadable.clone()),
+            ))],
+            introductions: LoweringIntroductions::new(),
+        };
+        let tampered_snapshot_branch = existential_body_branch(&tampered_snapshot_path);
+        assert!(contains(
+            &tampered_snapshot_branch,
+            &tampered_snapshot_definition
+        ));
+
+        let unknown = Variable((1u64 << 40) + 123_456_789);
+        let unknown_definition = defining(registered_memory, registered_pointer, unknown);
+        let unknown_path = SpecPropositionPath {
+            proposition: marker.clone(),
+            facts: vec![ExecutionPureFact::certified(unknown_definition.clone())],
+            obligations: vec![ProofObligation::verification_condition(Proposition::And(
+                Box::new(unknown_definition.clone()),
+                Box::new(loadable.clone()),
+            ))],
+            introductions: LoweringIntroductions::new(),
+        };
+        let unknown_branch = existential_body_branch(&unknown_path);
+        assert!(contains(&unknown_branch, &unknown_definition));
+
+        // The normalizer does not manufacture a source memory guard. A path
+        // carrying only a registered definition therefore retains no
+        // CMemoryLoadable evidence and cannot satisfy a missing-guard goal.
+        let missing_loadability_path = SpecPropositionPath {
+            proposition: marker,
+            facts: vec![ExecutionPureFact::certified(exact.clone())],
+            obligations: vec![ProofObligation::verification_condition(exact)],
+            introductions: LoweringIntroductions::new(),
+        };
+        let missing_loadability_branch = existential_body_branch(&missing_loadability_path);
+        assert!(!contains(&missing_loadability_branch, &loadable));
+    }
+
+    #[test]
+    fn empty_integer_fold_preserves_shape_without_live_load_obligation() {
+        let missing_pointer = Pointer {
+            block: PointerBlock::Concrete("missing".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let body = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::MemoryLoad {
+            memory: SpecMemory::Fixed(CMemory::new()),
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(CPointerValue::new(
+                missing_pointer.clone(),
+                CType::Int32Pointer,
+            )))),
+            value_type: CType::Int32,
+        }));
+        let expression = SpecIntegerExpression::RangeFold {
+            index: SpecIntegerRangeFoldIndex::Int32 {
+                start: Box::new(SpecExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(4),
+                ))),
+                end: Box::new(SpecExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(4),
+                ))),
+            },
+            initial: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant_i64(19))),
+            accumulator: Variable(71_101),
+            item: Variable(71_102),
+            body: Box::new(body),
+        };
+        let paths = evaluate_spec_integer_expression_paths(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("an empty range still typechecks its body");
+        assert_eq!(paths.len(), 1);
+        let IntegerTerm::RangeFold { body, .. } = &paths[0].value else {
+            panic!("empty fold capture lost the fold shape");
+        };
+        let IntegerTerm::Machine(machine) = body.as_ref() else {
+            panic!("empty fold body lost its symbolic load")
+        };
+        let load_pointer = match machine.value() {
+            Bitvector32Term::MemoryLoad(_, pointer) => pointer.as_ref().clone(),
+            Bitvector32Term::Variable(load) => {
+                crate::kernel::eval::registered_load_for_variable(load)
+                    .map(|(_, pointer)| pointer)
+                    .expect("registered symbolic load must retain its pointer")
+            }
+            _ => panic!("empty fold body lost its symbolic load"),
+        };
+        assert_eq!(load_pointer, missing_pointer);
+        assert!(paths[0].obligations.is_empty());
+    }
+
+    #[test]
+    fn nonempty_integer_fold_load_keeps_scoped_ownership_obligation() {
+        let item = Variable(71_103);
+        let pointer = SpecExpression::PointerOffset {
+            pointer: Box::new(SpecExpression::Value(CValue::Pointer(CPointerValue::new(
+                Pointer {
+                    block: PointerBlock::Symbolic(Variable(71_104)),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                CType::Int32Pointer,
+            )))),
+            elements: Box::new(SpecExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(item),
+            ))),
+            byte_width: 4,
+        };
+        let body = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::MemoryLoad {
+            memory: SpecMemory::Fixed(CMemory::new()),
+            pointer: Box::new(pointer),
+            value_type: CType::Int32,
+        }));
+        let expression = SpecIntegerExpression::RangeFold {
+            index: SpecIntegerRangeFoldIndex::Int32 {
+                start: Box::new(SpecExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(0),
+                ))),
+                end: Box::new(SpecExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(4),
+                ))),
+            },
+            initial: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant_i64(0))),
+            accumulator: Variable(71_105),
+            item,
+            body: Box::new(body),
+        };
+        let paths = evaluate_spec_integer_expression_paths(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("a symbolic body load should produce one scoped path");
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].obligations.iter().any(|obligation| {
+            matches!(
+                obligation.proposition(),
+                Proposition::ForAll {
+                    var,
+                    sort: Sort::CInt32,
+                    body,
+                } if *var == item && matches!(body.as_ref(), Proposition::Implies(_, _))
+            )
+        }));
     }
 
     #[test]
@@ -6416,5 +7674,34 @@ mod lowering_provenance_tests {
         // The head chain describes what an introduction reaches first. The
         // guard is not there, so the chain must not claim it is.
         assert_eq!(recorded, Vec::new());
+    }
+
+    #[test]
+    fn an_integer_existential_does_not_expose_nested_introductions_at_its_head() {
+        let body = SpecProposition::ForAllInt32 {
+            name: "k".to_string(),
+            variable: Variable(42),
+            body: Box::new(positive(binder("k"))),
+        };
+        let proposition = SpecProposition::ExistsInteger {
+            name: "z".to_string(),
+            variable: Variable(43),
+            body: Box::new(body),
+        };
+
+        let (_, _, _, recorded) = crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+            &CState::new(),
+            &proposition,
+            None,
+            &PureFactContext::new(),
+        )
+        .expect("the nested quantified proposition lowers on one path");
+
+        // The `witness`/`choose` step must consume the existential before any
+        // introduction below its body becomes reachable.
+        assert!(
+            recorded.is_empty(),
+            "unexpected existential head chain: {recorded:?}"
+        );
     }
 }

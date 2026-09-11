@@ -2221,18 +2221,38 @@ pub(crate) fn load_variable_for_cell(memory: &SharedCMemory, pointer: &Pointer) 
     load_variable_for_cell_with_origin(memory, pointer, memory)
 }
 
+/// Mint the load identity for exactly this snapshot and pointer.
+///
+/// Fold substitution uses this after rewriting a registered load's address.
+/// The ordinary cell helper first projects a snapshot through memory
+/// provenance, which is correct for a newly observed load but would change
+/// the snapshot identity carried by an existing defining fact.  Keeping this
+/// narrow helper separate makes the selected snapshot explicit and avoids
+/// traversing or rewriting any of its contents.
+pub(crate) fn load_variable_for_exact_cell(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
+    mint_load_variable_identity(memory, pointer, memory)
+}
+
 pub(crate) fn load_variable_for_cell_with_origin(
     memory: &SharedCMemory,
     pointer: &Pointer,
     origin: &SharedCMemory,
 ) -> Variable {
-    use std::hash::{Hash, Hasher};
     // Derive the variable from the cell's DAG epoch when one is recorded:
     // snapshots that differ only by effects provably disjoint from this
     // cell then share the variable, so bookkeeping drift and unrelated
     // stores do not mint new identities for one load.
     let epoch = crate::kernel::memory_provenance::cell_epoch_for_load_variable(memory, pointer);
     let memory = epoch.as_ref().unwrap_or(memory);
+    mint_load_variable_identity(memory, pointer, origin)
+}
+
+fn mint_load_variable_identity(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    origin: &SharedCMemory,
+) -> Variable {
+    use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     memory.hash(&mut hasher);
     pointer.hash(&mut hasher);

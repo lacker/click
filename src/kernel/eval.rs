@@ -45,6 +45,7 @@ pub(crate) use memory_loads::is_load_variable_defining_fact;
 pub(crate) use memory_loads::load_variable_for_cell;
 #[cfg(test)]
 pub(crate) use memory_loads::load_variable_for_cell_with_origin;
+pub(crate) use memory_loads::load_variable_for_exact_cell;
 pub(crate) use memory_loads::load_variable_for_term;
 pub(crate) use memory_loads::offsets_have_same_canonical_form;
 pub(crate) use memory_loads::proposition_mentions_registered_load_variable;

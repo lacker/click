@@ -2681,20 +2681,6 @@ pub(in crate::kernel) fn collect_bitvector_variables(
     }
 }
 
-/// Collect the C-carrier variables that a bitvector substitution can actually
-/// reach.  Memory snapshots are deliberately opaque: a load contributes its
-/// pointer (and the variables in that pointer), but never the snapshot's
-/// blocks or cells.  This is the capture analysis used by `TermRewrite`; the
-/// general-purpose collector above retains its historical snapshot behavior
-/// for proof-state analyses that need it.
-pub(crate) fn collect_bitvector_capture_variables(
-    term: &Bitvector32Term,
-    variables: &mut BTreeSet<Variable>,
-) {
-    let mut integer_seen = BTreeSet::new();
-    collect_bitvector_capture_variables_seen(term, variables, &mut integer_seen);
-}
-
 fn collect_bitvector_capture_variables_seen(
     term: &Bitvector32Term,
     variables: &mut BTreeSet<Variable>,
@@ -4248,20 +4234,6 @@ fn collect_bitvector_binder_variables_seen(
             }
         }
     }
-}
-
-pub(crate) fn collect_bitvector_binder_variables(
-    term: &Bitvector32Term,
-    integer_variables: &mut BTreeSet<Variable>,
-    bitvector_variables: &mut BTreeSet<Variable>,
-) {
-    let mut integer_seen = BTreeSet::new();
-    collect_bitvector_binder_variables_seen(
-        term,
-        integer_variables,
-        bitvector_variables,
-        &mut integer_seen,
-    );
 }
 
 fn collect_condition_binder_variables(

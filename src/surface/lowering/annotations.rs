@@ -333,6 +333,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         predicate_environment,
         click_function_environment,
         &[],
+        &BTreeMap::new(),
     )
 }
 
@@ -341,6 +342,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     bindings: &[(String, ClickType)],
+    integer_binding_variables: &BTreeMap<String, crate::kernel::Variable>,
 ) -> Result<Vec<SpecProposition>, ClickError> {
     let body = definition
         .composite_body()
@@ -382,6 +384,13 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         .cloned()
         .collect::<Vec<_>>();
     let mut facts = Vec::new();
+    let mut environment = SpecElaborationContext::default();
+    for (name, variable) in integer_binding_variables {
+        environment.integer_values.insert(
+            name.clone(),
+            crate::kernel::SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(*variable)),
+        );
+    }
     for (name, ty) in bindings {
         if let ClickType::Algebraic(application) = ty {
             lowerer.algebraic_variables.insert(
@@ -410,16 +419,13 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         if &unfolded != fact {
             facts.push(
                 lowerer
-                    .click_proposition_to_spec_proposition(fact, &SpecElaborationContext::default())
+                    .click_proposition_to_spec_proposition(fact, &environment)
                     .map_err(ClickError::new)?,
             );
         }
         facts.push(
             lowerer
-                .click_proposition_to_spec_proposition(
-                    &unfolded,
-                    &SpecElaborationContext::default(),
-                )
+                .click_proposition_to_spec_proposition(&unfolded, &environment)
                 .map_err(ClickError::new)?,
         );
     }

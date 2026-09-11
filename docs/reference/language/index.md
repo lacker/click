@@ -311,12 +311,26 @@ comparisons. General multiplication is a valid expression; it does not imply
 a general nonlinear arithmetic solver. Expanded proofs retain the arithmetic
 evidence for ordinary verification to check.
 
+Fold terms are checked opaque atoms in the supported linear certificate
+fragment. An empty-range or append law supplies the fold step explicitly, and
+the certificate retains the exact fold carrier, endpoints, body, and memory
+snapshot identity. Alpha-equivalent loads from one retained snapshot may
+match; a different snapshot or a changed endpoint, body, or carrier does not.
+The bounded affine planner uses selected checked premises and explicit
+constant coefficients. It does not enumerate a range or introduce an
+unchecked arithmetic assumption.
+
 Integer values have no C storage or runtime representation. Datatype fields and
 generic arguments such as `Box<Integer>` are supported, as is extraction from
-known constructors. Symbolic Integer-valued datatype matches remain unsupported.
+known constructors. Symbolic Integer-valued datatype matches are supported when
+the matched result has one consistent carrier; contextual Integer literals in
+their arms inherit that result type. Mixed C and Integer arithmetic remains
+rejected unless an explicit conversion is present.
 Resources may declare `field total: Integer;`: folding checks the resource's
 facts, and `old(model.total)` retains the entry value across updates.
-See [resource field examples](https://github.com/lacker/click/blob/master/mdtests/integer_resource_fields.md).
+Checked resource pattern bindings retain each field's declared carrier, name,
+entry/current snapshot, and definedness while the pattern is lowered and
+rechecked. See [resource field examples](https://github.com/lacker/click/blob/master/mdtests/integer_resource_fields.md).
 
 Pure functions with Integer parameters and results are supported. Calls remain
 opaque until an explicit `unfold(function(args))` exposes the defining equation.
@@ -326,9 +340,19 @@ General function argument types and arguments requiring deferred evaluation are
 still being implemented.
 See [the function example](https://github.com/lacker/click/blob/master/mdtests/integer_function_successor.md).
 
-Integer quantifiers, folds, and conversions to `Nat` are still being implemented. Division,
-remainder, and bitwise operators are also unavailable. `Nat` remains the
-existing [structural natural-number datatype](../library/index.md#natural-numbers).
+Integer and mixed C/Integer quantifiers support checked introduction and
+instantiation over their logical, unbounded domains. Integer range folds support
+typed scalar bodies and checked empty and append laws for `Int32` and `Integer`;
+expansion preserves those checked applications. Array- and memory-reading fold
+bodies use scoped definedness and exact snapshot identity. Integer existential
+witnesses may contain indexed reads when their loadability and conversion
+obligations are checked. A complete C loop proof still needs its own prefix,
+intermediate definedness, and loop-invariant obligations; range folds do not
+enumerate a symbolic array to discharge those obligations.
+Checked conversions between `Nat` and `Integer` are available; implicit
+conversions to C integers are not.
+Division, remainder, and bitwise operators are also unavailable. `Nat` remains
+the existing [structural natural-number datatype](../library/index.md#natural-numbers).
 
 ## Pure theorems
 

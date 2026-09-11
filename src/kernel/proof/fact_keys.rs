@@ -475,14 +475,22 @@ fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlin
 }
 
 /// Alpha-invariant key for the quantified logical/condition fragment used by
-/// checked premises. Bound variables use structural ordinals; free variables
-/// retain their kernel identities, and memory snapshots in loads are omitted.
+/// checked premises. Bound variables use structural ordinals and free
+/// variables retain their kernel identities. Raw bitvector loads outside a
+/// loadability atom remain snapshot-blind on this selection path, while a
+/// `CMemoryLoadable` atom retains the exact snapshot that is part of its
+/// checked premise.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct QuantifiedEquivalenceKey(AlphaPropositionKey);
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPropositionKey {
     Condition(AlphaConditionKey, bool),
+    CMemoryLoadable {
+        memory: AlphaSnapshotKey,
+        base: AlphaPointerKey,
+        bytes: AlphaBitvectorKey,
+    },
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
@@ -492,44 +500,44 @@ enum AlphaPropositionKey {
 }
 
 #[derive(Clone)]
-pub(crate) struct IntegerEqualityAlphaKey {
+pub(crate) struct IntegerConditionAlphaKey {
     key: AlphaPropositionKey,
     work_units: usize,
 }
 
-impl fmt::Debug for IntegerEqualityAlphaKey {
+impl fmt::Debug for IntegerConditionAlphaKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.key.fmt(formatter)
     }
 }
 
-impl PartialEq for IntegerEqualityAlphaKey {
+impl PartialEq for IntegerConditionAlphaKey {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key
     }
 }
 
-impl Eq for IntegerEqualityAlphaKey {}
+impl Eq for IntegerConditionAlphaKey {}
 
-impl PartialOrd for IntegerEqualityAlphaKey {
+impl PartialOrd for IntegerConditionAlphaKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for IntegerEqualityAlphaKey {
+impl Ord for IntegerConditionAlphaKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.key.cmp(&other.key)
     }
 }
 
-impl Hash for IntegerEqualityAlphaKey {
+impl Hash for IntegerConditionAlphaKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.key.hash(state);
     }
 }
 
-impl IntegerEqualityAlphaKey {
+impl IntegerConditionAlphaKey {
     pub(crate) fn fingerprint(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.hash(&mut hasher);
@@ -553,22 +561,37 @@ impl IntegerEqualityAlphaKey {
     }
 }
 
-/// Alpha key used by the checked fact index for Integer equality atoms.
+/// Backwards-compatible name for callers that only consume equality keys.
+/// The underlying key is now shared by all root range-fold Integer
+/// comparisons, so the persistent fact index can reuse the same checked,
+/// snapshot-aware alpha boundary for equality and inequality premises.
+pub(crate) type IntegerEqualityAlphaKey = IntegerConditionAlphaKey;
+
+/// Alpha key used by the checked fact index for root range-fold Integer
+/// comparison atoms.
 ///
 /// Integer range-fold binders are canonicalized by a typed alpha environment.
 /// Load-bearing C payloads retain their exact `SharedCMemory` identities, so
-/// this index is authoritative only for equalities whose loads name the same
-/// snapshots. The entry point is deliberately narrow: only a true
-/// `IntegerEqual` condition with a range-fold operand at its root is eligible.
-/// Scalar arithmetic equalities remain on their existing exact/certificate
-/// path, so indexing them cannot turn a sequence of growing arithmetic facts
-/// into repeated deep walks.
-pub(crate) fn integer_equality_alpha_key(
+/// this index is authoritative only for comparisons whose loads name the same
+/// snapshots. The entry point is deliberately narrow: only a true Integer
+/// comparison with a range-fold operand at its root is eligible. Scalar
+/// arithmetic comparisons remain on their existing exact/certificate path, so
+/// indexing them cannot turn a sequence of growing arithmetic facts into
+/// repeated deep walks.
+pub(crate) fn integer_condition_alpha_key(
     proposition: &Proposition,
-) -> Option<IntegerEqualityAlphaKey> {
-    let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) = proposition
-    else {
+) -> Option<IntegerConditionAlphaKey> {
+    let Proposition::ConditionIs(condition, true) = proposition else {
         return None;
+    };
+    let (left, right) = match condition {
+        ConditionTerm::IntegerLessThan(left, right)
+        | ConditionTerm::IntegerLessEqual(left, right)
+        | ConditionTerm::IntegerGreaterThan(left, right)
+        | ConditionTerm::IntegerGreaterEqual(left, right)
+        | ConditionTerm::IntegerEqual(left, right)
+        | ConditionTerm::IntegerNotEqual(left, right) => (left, right),
+        _ => return None,
     };
     if !matches!(left.as_ref(), IntegerTerm::RangeFold { .. })
         && !matches!(right.as_ref(), IntegerTerm::RangeFold { .. })
@@ -576,7 +599,21 @@ pub(crate) fn integer_equality_alpha_key(
         return None;
     }
     snapshot_alpha_proposition_key(proposition)
-        .map(|(key, work_units)| IntegerEqualityAlphaKey { key, work_units })
+        .map(|(key, work_units)| IntegerConditionAlphaKey { key, work_units })
+}
+
+/// Alpha key used by equality-specific callers. Keep this narrow wrapper so
+/// equality normalization does not accidentally start accepting inequalities
+/// as rewrite premises.
+pub(crate) fn integer_equality_alpha_key(
+    proposition: &Proposition,
+) -> Option<IntegerEqualityAlphaKey> {
+    matches!(
+        proposition,
+        Proposition::ConditionIs(ConditionTerm::IntegerEqual(_, _), true)
+    )
+    .then(|| integer_condition_alpha_key(proposition))
+    .flatten()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -2058,6 +2095,41 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
             alpha_condition_key_with_bindings::<ALLOW_LOADS>(condition, bindings, next_binder)?,
             *value,
         ),
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => {
+            if !ALLOW_LOADS {
+                return None;
+            }
+            // Loadability is an explicit checked premise, so its memory
+            // snapshot is part of the alpha identity.  Raw MemoryLoad terms
+            // keep the existing snapshot-blind selection behavior above;
+            // only this atom temporarily enables the exact registered-load
+            // representation for its selected pointer and width.
+            let prior_snapshot_aware = bindings.snapshot_aware;
+            bindings.snapshot_aware = true;
+            let key = (|| -> Option<AlphaPropositionKey> {
+                alpha_work_checkpoint(bindings, 1)?;
+                let snapshot = crate::kernel::intern_c_memory_ref(memory);
+                Some(AlphaPropositionKey::CMemoryLoadable {
+                    memory: AlphaSnapshotKey::new(&snapshot),
+                    base: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
+                        base,
+                        bindings,
+                        next_binder,
+                    )?,
+                    bytes: alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(
+                        bytes,
+                        bindings,
+                        next_binder,
+                    )?,
+                })
+            })();
+            bindings.snapshot_aware = prior_snapshot_aware;
+            key?
+        }
         Proposition::And(left, right) => {
             let (left, right) = binary(left, right, bindings, next_binder)?;
             AlphaPropositionKey::And(left, right)
@@ -2162,6 +2234,69 @@ pub(crate) fn quantified_equivalence_index_key(
     }
     alpha_proposition_key::<true>(proposition, &mut BTreeMap::new(), &mut 0)
         .map(QuantifiedEquivalenceKey)
+}
+
+/// Compare only quantified propositions containing a loadability atom using
+/// the checked, snapshot-aware alpha representation. `None` means neither
+/// proposition needs this path; `Some(false)` is a fail-closed mismatch,
+/// including unsupported or exhausted key construction.
+pub(crate) fn snapshot_quantified_alpha_equivalent(
+    left: &Proposition,
+    right: &Proposition,
+) -> Option<bool> {
+    let left_has = checked_proposition_contains_memory_loadability(left);
+    let right_has = checked_proposition_contains_memory_loadability(right);
+    match (left_has, right_has) {
+        (Ok(false), Ok(false)) => return None,
+        (Ok(false), Ok(true)) | (Ok(true), Ok(false)) | (Err(()), _) | (_, Err(())) => {
+            return Some(false);
+        }
+        (Ok(true), Ok(true)) => {}
+    }
+    let same_quantifier = match (left, right) {
+        (Proposition::ForAll { .. }, Proposition::ForAll { .. }) => true,
+        (
+            Proposition::Exists {
+                name: left_name, ..
+            },
+            Proposition::Exists {
+                name: right_name, ..
+            },
+        ) => left_name == right_name,
+        _ => false,
+    };
+    if !same_quantifier {
+        return Some(false);
+    }
+    let Some((left_key, left_work)) = snapshot_alpha_proposition_key(left) else {
+        return Some(false);
+    };
+    let Some((right_key, right_work)) = snapshot_alpha_proposition_key(right) else {
+        return Some(false);
+    };
+    if crate::instrumentation::deadline_exceeded_with_work(left_work.saturating_add(right_work)) {
+        return Some(false);
+    }
+    Some(left_key == right_key)
+}
+
+fn checked_proposition_contains_memory_loadability(proposition: &Proposition) -> Result<bool, ()> {
+    if crate::instrumentation::deadline_exceeded_with_work(1) {
+        return Err(());
+    }
+    match proposition {
+        Proposition::CMemoryLoadable { .. } => Ok(true),
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            Ok(checked_proposition_contains_memory_loadability(left)?
+                || checked_proposition_contains_memory_loadability(right)?)
+        }
+        Proposition::Not(body)
+        | Proposition::ForAll { body, .. }
+        | Proposition::Exists { body, .. } => checked_proposition_contains_memory_loadability(body),
+        _ => Ok(false),
+    }
 }
 
 /// Exact alpha identity for the memory-free logical fragment. Unlike the

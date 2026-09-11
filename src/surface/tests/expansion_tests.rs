@@ -61,6 +61,181 @@ theorem integer_exists_choose() {
 }
 
 #[test]
+fn integer_existential_keeps_definedness_under_one_witness() {
+    let source = r#"
+theorem guarded_integer_exists(value: int32) {
+    requires defined(value + 1);
+    requires candidate: exists (z: Integer) {
+        z == to_integer(if value > 0 { value } else { value + 1 })
+    };
+    ensures branched: exists (k: Integer) {
+        k == to_integer(if value > 0 { value } else { value + 1 })
+    } by {
+        choose(candidate from requirement 1);
+        witness(k = candidate);
+        assumption();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("guarded Integer existentials should verify");
+    let expanded = expand_c0_claim_source_by_label(source, &[], "guarded_integer_exists.branched")
+        .expect("guarded Integer existential should expand");
+    verify_c0_sources(&expanded, &[]).expect("expanded guarded Integer existential should recheck");
+
+    let fixed_witness = r#"
+theorem fixed_integer_witness(value: int32) {
+    requires defined(value + 1);
+    ensures witness_fixed: exists (z: Integer) {
+        z == 0 and to_integer(value + 1) == to_integer(value + 1)
+    } by {
+        witness(z = 0);
+        both {
+            both {
+                assumption();
+            } and {
+                assumption();
+            }
+        } and {
+            both {
+                normalize();
+            } and {
+                normalize();
+            }
+        }
+    }
+}
+"#;
+    verify_c0_sources(fixed_witness, &[])
+        .expect("a fixed Integer witness should retain its definedness obligation");
+    let fixed_expanded =
+        expand_c0_claim_source_by_label(fixed_witness, &[], "fixed_integer_witness.witness_fixed")
+            .expect("fixed Integer witness should expand");
+    assert!(fixed_expanded.contains("both {"), "{fixed_expanded}");
+    verify_c0_sources(&fixed_expanded, &[]).expect("expanded fixed Integer witness should recheck");
+
+    let missing_definedness = r#"
+theorem missing_integer_definedness(value: int32) {
+    ensures exists (z: Integer) {
+        z == 0 and to_integer(value + 1) == to_integer(value + 1)
+    } by {
+        witness(z = 0);
+        simp();
+    }
+}
+"#;
+    let missing_error = verify_c0_sources(missing_definedness, &[])
+        .expect_err("an Integer existential may not discard its definedness obligation");
+    assert!(
+        missing_error
+            .message()
+            .contains("checked `simp` after witness/choose"),
+        "the checked post-witness failure should identify the remaining proof step: {}",
+        missing_error.message()
+    );
+    assert!(
+        !missing_error
+            .message()
+            .contains("witness` is not available"),
+        "legacy fallback must not misreport a successful witness: {}",
+        missing_error.message()
+    );
+}
+
+#[test]
+fn integer_range_fold_array_contract_verifies_expands_and_rechecks() {
+    let c_source = r#"int32 array_fold_append_at_zero(int32 a[]) {
+    return 0;
+}"#;
+    let click_source = r#"verifying "integer_range_fold_array_body.c";
+
+int32 array_fold_append_at_zero(int32 a[]) {
+    requires loadable(a[0..1]);
+    views a[0..1];
+    ensures (0..1).fold(0, |acc, k| { acc + to_integer(a[k]) }) ==
+        (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) + to_integer(a[0]) by {
+        execute();
+        have 0 <= 0 by { simp(); }
+        have 0 < 2147483647 by { simp(); }
+        apply(integer_range_fold_append(
+            (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) })
+        )) using {
+            0 <= 0;
+            0 < 2147483647;
+        }
+        simp();
+    }
+}"#;
+
+    let sources = [("integer_range_fold_array_body.c", c_source)];
+    verify_c0_sources(click_source, &sources)
+        .expect("the array range-fold append contract should verify");
+    let expanded = expand_c0_claim_source_by_label(
+        click_source,
+        &sources,
+        "array_fold_append_at_zero.ensures_0",
+    )
+    .expect("the array range-fold append contract should expand");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded array range-fold append contract should recheck");
+}
+
+#[test]
+fn integer_pure_function_array_argument_expands_and_rechecks() {
+    let source = r#"
+function first_integer(values: int32[]) -> Integer {
+    to_integer(values[0])
+}
+
+theorem first_integer_unfolds(values: int32[]) {
+    requires defined(values[0]);
+    ensures first_integer(values) == to_integer(values[0]) by {
+        unfold(first_integer(values));
+        normalize();
+    }
+}
+"#;
+    verify_c0_sources(source, &[]).expect("Integer array arguments should lower");
+    let expanded = expand_c0_claim_source_by_label(source, &[], "first_integer_unfolds.ensures_0")
+        .expect("Integer array argument function should expand");
+    verify_c0_sources(&expanded, &[])
+        .expect("expanded Integer array argument function should recheck");
+}
+
+#[test]
+fn integer_existential_rewrites_array_index_through_to_int32() {
+    let source = r#"
+theorem indexed_integer_exists(values: int32[]) {
+    requires defined(values[0]);
+    requires values[0] == 0;
+    ensures exists (z: Integer) {
+        z == to_integer(values[to_int32(z)])
+    } by {
+        witness(z = 0);
+        both {
+            both {
+                both { simp(); } and { simp(); }
+            } and {
+                both { assumption(); } and {
+                    both { simp(); } and {
+                        both { simp(); } and { assumption(); }
+                    }
+                }
+            }
+        } and {
+            rewrite(values[0] == 0);
+            simp();
+        }
+    }
+}
+"#;
+    verify_c0_sources(source, &[])
+        .expect("Integer witness substitution should reach an array index");
+    let expanded = expand_c0_claim_source_by_label(source, &[], "indexed_integer_exists.ensures_0")
+        .expect("indexed Integer existential should expand");
+    verify_c0_sources(&expanded, &[]).expect("expanded indexed Integer existential should recheck");
+}
+
+#[test]
 fn integer_range_fold_surface_typing_and_unfolding() {
     let source = r#"
 function sum_machine_range(n: int32) -> Integer {

@@ -3956,6 +3956,10 @@ pub(in crate::surface) fn composite_resource_definitions(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<CCompositeResourceDefinition>, ClickError> {
     let mut definitions = Vec::new();
+    // Resource-match Integer binders are logical atoms in the lowered arm
+    // facts. Allocate them once for the complete function environment so
+    // unrelated resources cannot accidentally share a carrier identity.
+    let mut next_integer_binding_variable = 9_100_000_000u64;
     for definition in resource_environment.definitions.values() {
         // Field-bearing definitions retain their schema; only checked
         // instance exchanges may expose their bodies without erasing identity.
@@ -4049,6 +4053,22 @@ pub(in crate::surface) fn composite_resource_definitions(
             })?;
             let mut arms = Vec::new();
             for (variant, bindings, arm) in scopes {
+                let mut integer_binding_variables = BTreeMap::new();
+                let mut binding_variables = Vec::with_capacity(bindings.len());
+                for (name, ty) in &bindings {
+                    if *ty == ClickType::Integer {
+                        let variable = crate::kernel::Variable(next_integer_binding_variable);
+                        next_integer_binding_variable = next_integer_binding_variable
+                            .checked_add(1)
+                            .ok_or_else(|| {
+                                ClickError::new("resource match Integer binding identity exhausted")
+                            })?;
+                        integer_binding_variables.insert(name.clone(), variable);
+                        binding_variables.push(Some(variable));
+                    } else {
+                        binding_variables.push(None);
+                    }
+                }
                 let parameters = arm
                     .parameters()
                     .iter()
@@ -4078,6 +4098,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                     predicate_environment,
                     click_function_environment,
                     &bindings,
+                    &integer_binding_variables,
                 )?;
                 let binding_types = algebraic_type
                     .variants
@@ -4108,6 +4129,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                     variant,
                     bindings: bindings.into_iter().map(|(name, _)| name).collect(),
                     binding_types,
+                    binding_variables,
                     contains,
                     facts,
                 });

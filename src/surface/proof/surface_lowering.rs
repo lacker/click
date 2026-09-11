@@ -151,62 +151,6 @@ pub(super) fn promote_integer_comparison(
     }
 }
 
-pub(super) fn proposition_uses_integer(
-    proposition: &ClickProposition,
-    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
-) -> bool {
-    match proposition {
-        ClickProposition::Comparison { left, right, .. } => {
-            expression_uses_integer(left, integer_values)
-                || expression_uses_integer(right, integer_values)
-        }
-        ClickProposition::And(left, right)
-        | ClickProposition::Or(left, right)
-        | ClickProposition::Implies(left, right) => {
-            proposition_uses_integer(left, integer_values)
-                || proposition_uses_integer(right, integer_values)
-        }
-        ClickProposition::Not(body)
-        | ClickProposition::At {
-            proposition: body, ..
-        }
-        | ClickProposition::RangeAll { body, .. }
-        | ClickProposition::RangeAny { body, .. }
-        | ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. } => proposition_uses_integer(body, integer_values),
-        _ => false,
-    }
-}
-
-fn expression_uses_integer(
-    expression: &ContractExpression,
-    integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
-) -> bool {
-    match expression {
-        ContractExpression::Binding(name) => integer_values.get(name).is_some(),
-        ContractExpression::Negate(inner)
-        | ContractExpression::Old(inner)
-        | ContractExpression::Index(_, inner) => expression_uses_integer(inner, integer_values),
-        ContractExpression::Add(left, right)
-        | ContractExpression::Subtract(left, right)
-        | ContractExpression::Multiply(left, right) => {
-            expression_uses_integer(left, integer_values)
-                || expression_uses_integer(right, integer_values)
-        }
-        ContractExpression::Let {
-            click_type,
-            value,
-            body,
-            ..
-        } => {
-            matches!(click_type, Some(ClickType::Integer))
-                || expression_uses_integer(value, integer_values)
-                || expression_uses_integer(body, integer_values)
-        }
-        _ => false,
-    }
-}
-
 fn integer_values_for_surface_proposition(
     proposition: &ClickProposition,
     theorem_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,

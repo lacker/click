@@ -263,10 +263,15 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             theorem_application_error(claim_label, path_index, tactic_index, message)
         })?;
         lowered = lowered.clone();
-        if !available.iter().any(|fact| {
-            let fact = fact.clone();
-            fact == lowered || condition_polarity_equivalent(&fact, &lowered)
-        }) && !matches!(normalize_proposition(&lowered), SimpProposition::True)
+        // A named `using` premise may be a checked conjunction, such as the
+        // `defined(x + y)` fact emitted for a C addition.  The theorem may
+        // require one of that fact's proper conjuncts (the no-overflow
+        // condition), so select it through the same exact structural rule as
+        // the kernel `extract` step.  This does not derive or normalize a
+        // weaker proposition: the complete conjunction remains the supplied
+        // evidence and only its checked conjunct satisfies this requirement.
+        if !exact_fact_is_available(&lowered, available)
+            && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
             return Err(theorem_application_error(
                 claim_label,
@@ -275,7 +280,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 format!(
                     "required exact fact for theorem `{}` is unavailable: {}",
                     theorem.name(),
-                    describe_missing_pure_fact(&lowered, available, &[], &[], &[], &[])
+                    describe_pure_fact(&lowered, &[], &[])
                 ),
             ));
         }
@@ -418,14 +423,12 @@ fn instantiate_integer_range_fold_theorem_application(
     let mut required = Vec::new();
     collect_conjunctive_guard_facts(guard, &mut required);
     for premise in required {
-        if !available
-            .iter()
-            .any(|fact| fact == premise || condition_polarity_equivalent(fact, premise))
+        if !exact_fact_is_available(premise, available)
             && !matches!(normalize_proposition(premise), SimpProposition::True)
         {
             return Err(error(format!(
                 "required exact fold guard is unavailable: {}",
-                describe_missing_pure_fact(premise, available, &[], &[], &[], &[])
+                describe_pure_fact(premise, &[], &[])
             )));
         }
     }

@@ -778,13 +778,13 @@ fn lower_ensure_under_completion_binders(
     entry_state: &CState,
     lowering_assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-    checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
+    checked_propositions: &CheckedPropositionIndex<'_>,
 ) -> Result<Vec<crate::kernel::spec::SpecPropositionPath>, ExecutionLimit> {
     let mut spec_binders = Vec::new();
     spec_quantifier_binders(ensure, &mut spec_binders);
     if !spec_binders.is_empty() {
         let mut tried = std::collections::BTreeSet::new();
-        for key in checked_propositions.keys() {
+        for key in checked_propositions.exact.keys() {
             let mut key_binders = Vec::new();
             proposition_quantifier_binders(key, &mut key_binders);
             if key_binders.len() != spec_binders.len()
@@ -811,7 +811,7 @@ fn lower_ensure_under_completion_binders(
             if !paths.is_empty()
                 && paths
                     .iter()
-                    .all(|path| checked_propositions.contains_key(&path.proposition))
+                    .all(|path| checked_propositions.exact.contains_key(&path.proposition))
             {
                 return Ok(paths);
             }
@@ -1035,7 +1035,7 @@ fn function_claim_holds_on_prepared_path(
     function: &CFunction,
     claim: &CFunctionContractClaim,
     path: &CertifiedFunctionClaimPath,
-    checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
+    checked_propositions: &CheckedPropositionIndex<'_>,
     completion_origin_state: Option<&CState>,
 ) -> bool {
     let CertifiedFunctionClaimPath {
@@ -1071,79 +1071,96 @@ fn function_claim_holds_on_prepared_path(
             // One completion match rule for every form the ensure is compared
             // in: its lowering, and its registered predicate identity.
             let completion_certifies = |candidate: &Proposition| {
-                checked_propositions
-                    .get(&completion_key(candidate))
-                    .into_iter()
-                    .flatten()
-                    .any(|proof| {
-                        // Cheapest checks first: a completion from another
-                        // path or function is rejected before any proving.
-                        // A completion made at the state the artifact's
-                        // proof ran at certifies a path rebased from it.
-                        let completion_state = proof.specification.state();
-                        if proof.function != *function
-                            || (completion_state != caller_state
-                                && Some(completion_state) != completion_origin_state)
-                            || proof.specification.arguments() != arguments
-                            || !c_function_outcomes_definitionally_equal(
-                                function,
-                                proof.specification.outcome(),
-                                outcome,
-                                assumptions,
-                            )
-                        {
-                            return false;
-                        }
+                let certifies = |proof: &&CCheckedFunctionProposition| {
+                    // Cheapest checks first: a completion from another
+                    // path or function is rejected before any proving.
+                    // A completion made at the state the artifact's
+                    // proof ran at certifies a path rebased from it.
+                    let completion_state = proof.specification.state();
+                    if proof.function != *function
+                        || (completion_state != caller_state
+                            && Some(completion_state) != completion_origin_state)
+                        || proof.specification.arguments() != arguments
+                        || !c_function_outcomes_definitionally_equal(
+                            function,
+                            proof.specification.outcome(),
+                            outcome,
+                            assumptions,
+                        )
+                    {
+                        return false;
+                    }
 
-                        proof.specification.requires().iter().all(|requirement| {
-                            certification_proves_proposition(assumptions, requirement)
-                                || match requirement {
-                                    Proposition::CResourceComposition(required) => {
-                                        resource_context_definitionally_contains(
-                                            required_resources,
-                                            required,
-                                            function.composite_resource_definitions(),
-                                            entry_state.memory(),
-                                            assumptions,
-                                        )
-                                    }
-                                    Proposition::Predicate { .. } => {
-                                        function.predicate_unfoldings().iter().any(|unfolding| {
-                                            let mut budget = ExecutionBudget::default();
-                                            let Some((
-                                        predicate,
-                                        predicate_obligations,
-                                        body,
-                                        body_obligations,
-                                    )) = instantiate_contract_predicate_unfolding_with_obligations(
-                                        entry_state,
-                                        None,
-                                        unfolding,
+                    proof.specification.requires().iter().all(|requirement| {
+                        certification_proves_proposition(assumptions, requirement)
+                            || match requirement {
+                                Proposition::CResourceComposition(required) => {
+                                    resource_context_definitionally_contains(
+                                        required_resources,
+                                        required,
+                                        function.composite_resource_definitions(),
+                                        entry_state.memory(),
                                         assumptions,
-                                        &mut budget,
                                     )
-                                    else {
-                                        return false;
-                                    };
-                                            predicate == *requirement
-                                                && predicate_obligations
-                                                    .iter()
-                                                    .chain(&body_obligations)
-                                                    .all(|obligation| {
-                                                        certification_proves_proposition(
-                                                            assumptions,
-                                                            obligation,
-                                                        )
-                                                    })
-                                                && certification_proves_proposition(
-                                                    assumptions,
-                                                    &body,
-                                                )
-                                        })
-                                    }
-                                    _ => certification_proves_proposition(assumptions, requirement),
                                 }
-                        })
+                                Proposition::Predicate { .. } => {
+                                    function.predicate_unfoldings().iter().any(|unfolding| {
+                                        let mut budget = ExecutionBudget::default();
+                                        let Some((
+                                            predicate,
+                                            predicate_obligations,
+                                            body,
+                                            body_obligations,
+                                        )) = instantiate_contract_predicate_unfolding_with_obligations(
+                                            entry_state,
+                                            None,
+                                            unfolding,
+                                            assumptions,
+                                            &mut budget,
+                                        )
+                                        else {
+                                            return false;
+                                        };
+                                        predicate == *requirement
+                                            && predicate_obligations
+                                                .iter()
+                                                .chain(&body_obligations)
+                                                .all(|obligation| {
+                                                    certification_proves_proposition(
+                                                        assumptions,
+                                                        obligation,
+                                                    )
+                                                })
+                                            && certification_proves_proposition(assumptions, &body)
+                                    })
+                                }
+                                _ => certification_proves_proposition(assumptions, requirement),
+                            }
+                    })
+                };
+                let exact_key = completion_key(candidate);
+                if checked_propositions
+                    .exact
+                    .get(&exact_key)
+                    .is_some_and(|proofs| proofs.iter().any(certifies))
+                {
+                    return true;
+                }
+                let Some(alpha_key) = crate::kernel::proof::integer_equality_alpha_key(candidate)
+                else {
+                    return false;
+                };
+                let Some(fingerprint) = alpha_key.checked_fingerprint() else {
+                    return false;
+                };
+                let Some(proofs) = checked_propositions.integer_alpha.get(&fingerprint) else {
+                    return false;
+                };
+                proofs
+                    .iter()
+                    .any(|proof| match proof.key.checked_eq(&alpha_key) {
+                        Some(true) => certifies(&proof.proposition),
+                        Some(false) | None => false,
                     })
             };
             let registered_predicate_ensure_holds = function
@@ -1220,7 +1237,7 @@ fn function_claim_holds_on_prepared_path(
                         "contract claim",
                         "obligation discharge",
                         || {
-                            path.obligations.iter().all(|obligation| {
+                            let obligation_holds = |obligation: &ProofObligation| {
                                 contract_endpoints_certify_loadability(
                                     entry_state,
                                     entry_resources,
@@ -1241,7 +1258,8 @@ fn function_claim_holds_on_prepared_path(
                                         assumptions,
                                         obligation.proposition(),
                                     )
-                            })
+                            };
+                            path.obligations.iter().all(obligation_holds)
                         },
                     );
                     // A lowering that folded the ensure to a constant truth
@@ -1828,15 +1846,37 @@ pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
 
 fn checked_proposition_index(
     checked_propositions: &[CCheckedFunctionProposition],
-) -> BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>> {
-    let mut index = BTreeMap::new();
+) -> CheckedPropositionIndex<'_> {
+    let mut index = CheckedPropositionIndex::default();
     for checked in checked_propositions {
         index
+            .exact
             .entry(completion_key(&checked.proposition))
             .or_insert_with(Vec::new)
             .push(checked);
+        if let Some(key) = crate::kernel::proof::integer_equality_alpha_key(&checked.proposition)
+            && let Some(fingerprint) = key.checked_fingerprint()
+        {
+            index.integer_alpha.entry(fingerprint).or_default().push(
+                CheckedIntegerAlphaCandidate {
+                    key,
+                    proposition: checked,
+                },
+            );
+        }
     }
     index
+}
+
+#[derive(Default)]
+struct CheckedPropositionIndex<'a> {
+    exact: BTreeMap<Proposition, Vec<&'a CCheckedFunctionProposition>>,
+    integer_alpha: BTreeMap<u64, Vec<CheckedIntegerAlphaCandidate<'a>>>,
+}
+
+struct CheckedIntegerAlphaCandidate<'a> {
+    key: crate::kernel::proof::IntegerEqualityAlphaKey,
+    proposition: &'a CCheckedFunctionProposition,
 }
 
 /// Certifies contract claims while reusing proposition judgments already
@@ -1984,7 +2024,7 @@ fn claim_holds_on_some_path_set_of_every_case(
     function: &CFunction,
     claim: &CFunctionContractClaim,
     cases: &[Vec<ContractPathSetView<'_>>],
-    checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
+    checked_propositions: &CheckedPropositionIndex<'_>,
 ) -> bool {
     cases.iter().all(|alternatives| {
         alternatives.iter().any(|view| {
@@ -2213,4 +2253,171 @@ fn missing_function_contract_claim_keys(function: &CFunction) -> Vec<CFunctionCo
         missing.push(CFunctionContractClaimKey::Effect(0));
     }
     missing
+}
+
+#[cfg(test)]
+mod checked_proposition_index_tests {
+    use super::*;
+
+    fn fold(accumulator: Variable, item: Variable) -> IntegerTerm {
+        IntegerTerm::range_fold(
+            IntegerRangeFoldIndex::Integer {
+                start: IntegerTerm::constant_i64(0).into(),
+                end: IntegerTerm::constant_i64(1).into(),
+            },
+            IntegerTerm::constant_i64(0),
+            accumulator,
+            item,
+            IntegerTerm::var(accumulator),
+        )
+    }
+
+    fn checked(
+        proposition: Proposition,
+        function_name: &str,
+        state: CState,
+    ) -> CCheckedFunctionProposition {
+        let function = CFunction::new(CType::Void, function_name, Vec::new(), CStatement::Skip);
+        let specification = CFunctionSpecification::new(
+            state.clone(),
+            Vec::new(),
+            Vec::new(),
+            CFunctionOutcome::Return {
+                value: CValue::Void,
+                state,
+            },
+        );
+        CCheckedFunctionProposition {
+            function,
+            specification,
+            proposition,
+        }
+    }
+
+    #[test]
+    fn alpha_index_keeps_equal_propositions_from_distinct_contexts() {
+        let proposition = |base| {
+            Proposition::ConditionIs(
+                ConditionTerm::integer_equal(
+                    fold(Variable(base), Variable(base + 1)),
+                    fold(Variable(base + 2), Variable(base + 3)),
+                ),
+                true,
+            )
+        };
+        let first_state = CState::new().with_memory(
+            crate::kernel::intern_c_memory(CMemory::new().with_block("first", 16))
+                .as_ref()
+                .clone(),
+        );
+        let second_state = CState::new().with_memory(
+            crate::kernel::intern_c_memory(CMemory::new().with_block("second", 16))
+                .as_ref()
+                .clone(),
+        );
+        let checked = vec![
+            checked(proposition(71_200), "alpha-index-first", first_state),
+            checked(proposition(81_200), "alpha-index-second", second_state),
+        ];
+        let index = checked_proposition_index(&checked);
+        let key = crate::kernel::proof::integer_equality_alpha_key(&checked[0].proposition)
+            .expect("range-fold equality should be alpha-indexed");
+        let fingerprint = key.checked_fingerprint().expect("fingerprint budget");
+        let bucket = index.integer_alpha.get(&fingerprint).expect("alpha bucket");
+        assert_eq!(bucket.len(), 2, "proof contexts must not be deduplicated");
+        assert_ne!(
+            bucket[0].proposition.specification.state(),
+            bucket[1].proposition.specification.state(),
+            "distinct memory snapshots must remain distinct proof contexts"
+        );
+    }
+
+    #[test]
+    fn alpha_index_distinguishes_integer_equalities_with_load_snapshots() {
+        let pointer = Pointer {
+            block: PointerBlock::Concrete("array".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let first_memory = crate::kernel::intern_c_memory(
+            CMemory::new()
+                .with_block("array", 16)
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(1))),
+        );
+        let second_memory = crate::kernel::intern_c_memory(
+            CMemory::new()
+                .with_block("array", 16)
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(2))),
+        );
+        let folded = |memory: &SharedCMemory, accumulator, item| {
+            let load = crate::kernel::eval::load_variable_for_exact_cell(memory, &pointer);
+            IntegerTerm::range_fold(
+                IntegerRangeFoldIndex::Integer {
+                    start: IntegerTerm::constant_i64(0).into(),
+                    end: IntegerTerm::constant_i64(1).into(),
+                },
+                IntegerTerm::constant_i64(0),
+                accumulator,
+                item,
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(load),
+                )),
+            )
+        };
+        let first = Proposition::ConditionIs(
+            ConditionTerm::integer_equal(
+                folded(&first_memory, Variable(71_300), Variable(71_301)),
+                IntegerTerm::constant_i64(0),
+            ),
+            true,
+        );
+        let second = Proposition::ConditionIs(
+            ConditionTerm::integer_equal(
+                folded(&second_memory, Variable(71_300), Variable(71_301)),
+                IntegerTerm::constant_i64(0),
+            ),
+            true,
+        );
+        let first_key = crate::kernel::proof::integer_equality_alpha_key(&first)
+            .expect("load-bearing fold equality should be alpha-indexed");
+        let second_key = crate::kernel::proof::integer_equality_alpha_key(&second)
+            .expect("load-bearing fold equality should be alpha-indexed");
+        assert_eq!(
+            first_key.checked_eq(&second_key),
+            Some(false),
+            "different load snapshots must not share an alpha completion"
+        );
+    }
+
+    #[test]
+    fn integer_range_fold_array_contract_smoke_uses_surface_verifier() {
+        let c_source = r#"int32 array_fold_append_at_zero(int32 a[]) {
+    return 0;
+}"#;
+        let click_source = r#"verifying "integer_range_fold_array_body.c";
+
+int32 array_fold_append_at_zero(int32 a[]) {
+    requires loadable(a[0..1]);
+    views a[0..1];
+    ensures (0..1).fold(0, |acc, k| { acc + to_integer(a[k]) }) ==
+        (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) + to_integer(a[0]) by {
+        execute();
+        have 0 <= 0 by { simp(); }
+        have 0 < 2147483647 by { simp(); }
+        apply(integer_range_fold_append(
+            (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) })
+        )) using {
+            0 <= 0;
+            0 < 2147483647;
+        }
+        simp();
+    }
+}"#;
+
+        crate::surface::verify_c0_sources(
+            click_source,
+            &[("integer_range_fold_array_body.c", c_source)],
+        )
+        .unwrap_or_else(|error| panic!("array fold surface smoke failed: {error:?}"));
+    }
 }

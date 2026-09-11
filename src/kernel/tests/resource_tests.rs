@@ -128,6 +128,7 @@ fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
                 variant: "Clear".into(),
                 bindings: vec![],
                 binding_types: vec![],
+                binding_variables: vec![],
                 contains: vec![],
                 facts: vec![],
                 children: vec![],
@@ -136,6 +137,7 @@ fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
                 variant: "Set".into(),
                 bindings: vec!["lp".into(), "lm".into(), "rp".into(), "rm".into()],
                 binding_types: ty.variants[1].fields.clone(),
+                binding_variables: vec![None, None, None, None],
                 contains: std::mem::take(&mut definition.contains),
                 facts: vec![],
                 children: vec![
@@ -693,6 +695,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
                 variant: "Clear".into(),
                 bindings: vec![],
                 binding_types: vec![],
+                binding_variables: vec![],
                 contains: vec![],
                 facts: vec![],
             },
@@ -701,6 +704,7 @@ fn resource_match_kernel_checks_schema_case_and_ownership() {
                 children: vec![],
                 bindings: vec![],
                 binding_types: vec![],
+                binding_variables: vec![],
                 contains: std::mem::take(&mut definition.contains),
                 facts: vec![],
             },
@@ -3454,6 +3458,212 @@ fn integer_resource_fields_require_mathematical_values() {
         .is_some()
     );
     assert!(make(int32(1).into()).is_none());
+}
+
+#[test]
+fn matched_resource_integer_binding_is_checked_and_substituted() {
+    let ty = resource_index_type("IntegerModel", vec![AlgebraicValueType::Integer]);
+    let model = resource_index_variable(&ty, 991_001);
+    let constructor = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![AlgebraicValue::Integer(IntegerTerm::constant_i64(7))],
+        },
+    };
+    let schema = ResourceFieldSchema::new(vec![(
+        "model".into(),
+        ResourceFieldType::Algebraic(ty.clone()),
+    )])
+    .unwrap();
+    let instance = ResourceInstance::new(
+        Variable(991_000),
+        "integer_box".into(),
+        vec![].into(),
+        schema.clone(),
+        vec![AlgebraicValue::Algebraic(model.clone())].into(),
+    )
+    .unwrap();
+    let binding = Variable(9_100_000_000);
+    let mut definition =
+        CCompositeResourceDefinition::new("integer_box", vec![], None, false, vec![], vec![])
+            .with_instance_schema(Some(schema));
+    definition.matched = Some(CResourceMatchBody {
+        field_index: 0,
+        algebraic_type: ty.clone(),
+        arms: vec![
+            CResourceMatchArm {
+                variant: "Clear".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                binding_variables: vec![],
+                contains: vec![],
+                facts: vec![],
+                children: vec![],
+            },
+            CResourceMatchArm {
+                variant: "Set".into(),
+                bindings: vec!["value".into()],
+                binding_types: vec![AlgebraicValueType::Integer],
+                binding_variables: vec![Some(binding)],
+                contains: vec![],
+                facts: vec![SpecProposition::IntegerComparison {
+                    left: SpecIntegerExpression::Term(IntegerTerm::var(binding)),
+                    operator: IntegerComparisonOperator::GreaterEqual,
+                    right: SpecIntegerExpression::Term(IntegerTerm::constant_i64(0)),
+                }],
+                children: vec![],
+            },
+        ],
+    });
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::Equal(
+        Term::Algebraic(model),
+        Term::Algebraic(constructor),
+    ));
+    assert!(
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).is_ok(),
+        "the selected Integer constructor field should discharge its arm fact"
+    );
+
+    let mut malformed = definition.clone();
+    malformed.matched.as_mut().unwrap().arms[1].binding_variables = vec![None];
+    assert!(
+        rewrite_resource_instance(&state, &instance, &malformed, &assumptions, true).is_err(),
+        "an Integer arm without a checked kernel identity must be rejected"
+    );
+}
+
+#[test]
+fn matched_resource_integer_binding_does_not_capture_free_integer_field() {
+    let ty = resource_index_type("IntegerCaptureModel", vec![AlgebraicValueType::Integer]);
+    let model = resource_index_variable(&ty, 991_101);
+    let binding = Variable(9_100_000_001);
+    let constructor = AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Set".into(),
+            fields: vec![AlgebraicValue::Integer(IntegerTerm::constant_i64(7))],
+        },
+    };
+    let schema = ResourceFieldSchema::new(vec![
+        ("model".into(), ResourceFieldType::Algebraic(ty.clone())),
+        ("other".into(), ResourceFieldType::Integer),
+    ])
+    .unwrap();
+    // The second field deliberately contains a free term with the same
+    // numeric identity used by the selected constructor binding. It must
+    // remain free when the arm's `value` placeholder is instantiated.
+    let instance = ResourceInstance::new(
+        Variable(991_100),
+        "integer_capture_box".into(),
+        vec![].into(),
+        schema.clone(),
+        vec![
+            AlgebraicValue::Algebraic(model.clone()),
+            AlgebraicValue::Integer(IntegerTerm::var(binding)),
+        ]
+        .into(),
+    )
+    .unwrap();
+    let field = SpecIntegerExpression::ResourceField(ResourceFieldProjection {
+        // Resource body facts refer to the matched instance through the
+        // placeholder binding installed by `instance_body_evaluation`, not
+        // through the concrete instance identity.  Keep the field payload's
+        // free Integer identity independent from that resource placeholder.
+        identity: Variable(u64::MAX),
+        children: vec![],
+        field_index: 1,
+        at_entry: false,
+    });
+    let mut definition = CCompositeResourceDefinition::new(
+        "integer_capture_box",
+        vec![],
+        None,
+        false,
+        vec![],
+        vec![],
+    )
+    .with_instance_schema(Some(schema));
+    definition.matched = Some(CResourceMatchBody {
+        field_index: 0,
+        algebraic_type: ty.clone(),
+        arms: vec![
+            CResourceMatchArm {
+                variant: "Clear".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                binding_variables: vec![],
+                contains: vec![],
+                facts: vec![],
+                children: vec![],
+            },
+            CResourceMatchArm {
+                variant: "Set".into(),
+                bindings: vec!["value".into()],
+                binding_types: vec![AlgebraicValueType::Integer],
+                binding_variables: vec![Some(binding)],
+                contains: vec![],
+                facts: vec![SpecProposition::IntegerComparison {
+                    left: field,
+                    operator: IntegerComparisonOperator::Equal,
+                    right: SpecIntegerExpression::Term(IntegerTerm::var(binding)),
+                }],
+                children: vec![],
+            },
+        ],
+    });
+    let state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance.clone()))),
+    );
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::Equal(
+        Term::Algebraic(model),
+        Term::Algebraic(constructor),
+    ));
+    let (_, unfolded_facts) =
+        rewrite_resource_instance(&state, &instance, &definition, &assumptions, true).unwrap();
+    let free_field_fact = unfolded_facts.iter().any(|fact| {
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, right), true) = fact else {
+            return false;
+        };
+        (left.as_ref() == &IntegerTerm::var(binding)
+            && right.as_ref() == &IntegerTerm::constant_i64(7))
+            || (right.as_ref() == &IntegerTerm::var(binding)
+                && left.as_ref() == &IntegerTerm::constant_i64(7))
+    });
+    assert!(
+        free_field_fact,
+        "the free field term must survive arm binding substitution: {unfolded_facts:?}"
+    );
+
+    let fold_state = CState::new();
+    assert!(
+        rewrite_resource_instance(&fold_state, &instance, &definition, &assumptions, false)
+            .is_err(),
+        "folding must require the free field equality rather than reducing it to 7 == 7"
+    );
+    let valid_fold_assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::IntegerEqual(
+            IntegerTerm::var(binding).into(),
+            IntegerTerm::constant_i64(7).into(),
+        ),
+        true,
+    ));
+    assert!(
+        rewrite_resource_instance(
+            &fold_state,
+            &instance,
+            &definition,
+            &valid_fold_assumptions,
+            false,
+        )
+        .is_ok(),
+        "the explicit free field equality should discharge the fold prerequisite"
+    );
 }
 
 /// Builds a fact context of `size` unrelated bounded variables, then adds the

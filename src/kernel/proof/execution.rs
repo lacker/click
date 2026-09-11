@@ -5611,6 +5611,7 @@ mod tests {
                             variant: variant.into(),
                             bindings: vec![],
                             binding_types: vec![],
+                            binding_variables: vec![],
                             contains: vec![],
                             facts: vec![],
                         })

@@ -196,9 +196,15 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::NotProposition => {
                     self.step_error("`assumption` requires a proposition goal")
                 }
-                PropositionCloseError::Unavailable => self.step_error(
-                    "`assumption` requires the current goal as an available semantic fact",
-                ),
+                PropositionCloseError::Unavailable => {
+                    let detail = self
+                        .goal()
+                        .map(|goal| format!(": current goal is {}", describe_assumption_goal(goal)))
+                        .unwrap_or_default();
+                    self.step_error(format!(
+                        "`assumption` requires the current goal as an available semantic fact{detail}"
+                    ))
+                }
                 _ => unreachable!("kernel returned an unrelated assumption error"),
             })
     }
@@ -339,8 +345,19 @@ impl<'a> Proof<'a> {
             premises.push(premise);
         }
 
-        let claim = |proof: &Self, proposition: &ClickProposition, description: &str| {
-            let proposition = proof.lower_integer_surface_proposition(proposition, description)?;
+        let claim = |proof: &Self,
+                     proposition: &ClickProposition,
+                     description: &str,
+                     preserve_constant_relation: bool| {
+            let proposition = if preserve_constant_relation {
+                if let Some(raw) = lower_integer_constant_comparison(proposition) {
+                    raw
+                } else {
+                    proof.lower_integer_surface_proposition(proposition, description)?
+                }
+            } else {
+                proof.lower_integer_surface_proposition(proposition, description)?
+            };
             integer_affine_claim(&proposition).ok_or_else(|| {
                 proof.step_error(format!(
                     "{description} must be a supported mathematical Integer affine proposition"
@@ -369,7 +386,12 @@ impl<'a> Proof<'a> {
                     }
                     IntegerArithmeticNode::Premise {
                         index: *index,
-                        result: claim(self, result, "integer certificate premise result")?,
+                        result: claim(
+                            self,
+                            result,
+                            "integer certificate premise result",
+                            false,
+                        )?,
                     }
                 }
                 IntegerCertificateNode::Scale {
@@ -383,13 +405,13 @@ impl<'a> Proof<'a> {
                             "integer certificate scale coefficient must be a constant Integer expression",
                         )
                     })?,
-                    result: claim(self, result, "integer certificate scale result")?,
+                    result: claim(self, result, "integer certificate scale result", false)?,
                 },
                 IntegerCertificateNode::Add { left, right, result } => {
                     IntegerArithmeticNode::Add {
                         left: *left,
                         right: *right,
-                        result: claim(self, result, "integer certificate addition result")?,
+                        result: claim(self, result, "integer certificate addition result", false)?,
                     }
                 }
                 IntegerCertificateNode::EqualityToLessEqual {
@@ -399,7 +421,7 @@ impl<'a> Proof<'a> {
                 } => IntegerArithmeticNode::EqualityToLessEqual {
                     source: *source,
                     reverse: *reverse,
-                    result: claim(self, result, "integer certificate equality bound")?,
+                    result: claim(self, result, "integer certificate equality bound", false)?,
                 },
                 IntegerCertificateNode::EqualityFromBounds {
                     lower,
@@ -408,10 +430,15 @@ impl<'a> Proof<'a> {
                 } => IntegerArithmeticNode::EqualityFromBounds {
                     lower: *lower,
                     upper: *upper,
-                    result: claim(self, result, "integer certificate equality")?,
+                    result: claim(self, result, "integer certificate equality", false)?,
                 },
                 IntegerCertificateNode::Trivial { result } => IntegerArithmeticNode::Trivial {
-                    result: claim(self, result, "integer certificate trivial result")?,
+                    result: claim(
+                        self,
+                        result,
+                        "integer certificate trivial result",
+                        node_index != certificate.conclusion,
+                    )?,
                 },
             };
             if nodes.len() != node_index {
@@ -962,6 +989,70 @@ impl<'a> Proof<'a> {
             _ => unreachable!("kernel returned an unrelated enumerate error"),
         })
     }
+}
+
+fn describe_assumption_goal(goal: &Proposition) -> &'static str {
+    match goal {
+        Proposition::And(..) => "a conjunction",
+        Proposition::Or(..) => "a disjunction",
+        Proposition::Implies(..) => "an implication",
+        Proposition::Not(..) => "a negation",
+        Proposition::ForAll { .. } => "a universal proposition",
+        Proposition::Exists { .. } => "an existential proposition",
+        Proposition::CMemoryLoadable { .. } => "a memory-loadability fact",
+        Proposition::ConditionIs(condition, _) => match condition {
+            ConditionTerm::IntegerLessThan(..) => "an Integer less-than fact",
+            ConditionTerm::IntegerLessEqual(..) => "an Integer less-or-equal fact",
+            ConditionTerm::IntegerGreaterThan(..) => "an Integer greater-than fact",
+            ConditionTerm::IntegerGreaterEqual(..) => "an Integer greater-or-equal fact",
+            ConditionTerm::IntegerEqual(..) => "an Integer equality fact",
+            ConditionTerm::IntegerNotEqual(..) => "an Integer disequality fact",
+            _ => "a condition fact",
+        },
+        Proposition::Equal(Term::Integer(_), Term::Integer(_)) => "an Integer equality fact",
+        Proposition::Equal(..) => "an equality fact",
+        _ => "a proposition fact",
+    }
+}
+
+/// Preserve the relation shape of an intermediate constant certificate node.
+///
+/// The ordinary Integer condition constructors intentionally evaluate two
+/// constants immediately.  That is correct for a goal (whose checked claim
+/// is then the canonical `Equal(0)` truth claim), but an intermediate
+/// weakening node carries a nonzero affine constant that the arithmetic
+/// certificate must validate before it is added to another claim.  Construct
+/// the raw checked condition only at this certificate boundary; source
+/// premise lowering continues to use the ordinary contextual lowerer.
+fn lower_integer_constant_comparison(
+    proposition: &ClickProposition,
+) -> Option<crate::kernel::Proposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    let left = crate::kernel::IntegerTerm::constant(integer_constant_expression(left)?).into();
+    let right = crate::kernel::IntegerTerm::constant(integer_constant_expression(right)?).into();
+    let condition = match operator {
+        ComparisonOperator::Equal => crate::kernel::ConditionTerm::IntegerEqual(left, right),
+        ComparisonOperator::NotEqual => crate::kernel::ConditionTerm::IntegerNotEqual(left, right),
+        ComparisonOperator::LessThan => crate::kernel::ConditionTerm::IntegerLessThan(left, right),
+        ComparisonOperator::LessEqual => {
+            crate::kernel::ConditionTerm::IntegerLessEqual(left, right)
+        }
+        ComparisonOperator::GreaterThan => {
+            crate::kernel::ConditionTerm::IntegerGreaterThan(left, right)
+        }
+        ComparisonOperator::GreaterEqual => {
+            crate::kernel::ConditionTerm::IntegerGreaterEqual(left, right)
+        }
+        ComparisonOperator::In => return None,
+    };
+    Some(crate::kernel::Proposition::ConditionIs(condition, true))
 }
 
 fn integer_constant_expression(expression: &ContractExpression) -> Option<num_bigint::BigInt> {

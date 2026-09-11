@@ -1107,6 +1107,14 @@ pub(crate) fn normalize_using_conditions(
     facts: &super::ProofFacts,
 ) -> Result<(), ConditionalNormalizationError> {
     let mut conditions = std::collections::HashMap::new();
+    // Integer equality is symmetric.  Keep the exact reverse spelling in
+    // this selected-condition map so `normalize using` can close a goal
+    // whose operands were lowered in the opposite order.  This is deliberately
+    // built from the cited premises only; it never searches ambient facts.
+    let mut integer_alpha_conditions: std::collections::HashMap<
+        u64,
+        Vec<(super::fact_keys::IntegerEqualityAlphaKey, bool)>,
+    > = std::collections::HashMap::new();
     for (index, premise) in premises.iter().enumerate() {
         if !facts.contains(premise)
             && !condition_polarity_forms(premise)
@@ -1117,10 +1125,77 @@ pub(crate) fn normalize_using_conditions(
         }
         let (condition, value) = crate::kernel::spec::proposition_as_single_condition(premise)
             .ok_or(ConditionalNormalizationError::UnsupportedPremise(index))?;
-        if let Some(previous) = conditions.insert(condition, value)
+        if let Some(previous) = conditions.insert(condition.clone(), value)
             && previous != value
         {
             return Err(ConditionalNormalizationError::UnsupportedPremise(index));
+        }
+        let reverse = match &condition {
+            ConditionTerm::IntegerEqual(left, right) => {
+                Some(ConditionTerm::IntegerEqual(right.clone(), left.clone()))
+            }
+            ConditionTerm::IntegerNotEqual(left, right) => {
+                Some(ConditionTerm::IntegerNotEqual(right.clone(), left.clone()))
+            }
+            _ => None,
+        };
+        if let Some(reverse) = reverse
+            && let Some(previous) = conditions.insert(reverse, value)
+            && previous != value
+        {
+            return Err(ConditionalNormalizationError::UnsupportedPremise(index));
+        }
+        // Exact condition lookup above handles ordinary scalar terms.  Fold
+        // binders can be freshly allocated while lowering the cited premise
+        // and the goal, so retain a checked snapshot-aware alpha index for
+        // the same two orientations.  The fingerprint is charged before it
+        // becomes a map key; collision candidates are checked with the
+        // bounded key comparator below.
+        if value && let ConditionTerm::IntegerEqual(left, right) = &condition {
+            for condition in [
+                ConditionTerm::IntegerEqual(left.clone(), right.clone()),
+                ConditionTerm::IntegerEqual(right.clone(), left.clone()),
+            ] {
+                let proposition = Proposition::ConditionIs(condition, true);
+                let Some(key) = super::fact_keys::integer_equality_alpha_key(&proposition) else {
+                    continue;
+                };
+                let Some(fingerprint) = key.checked_fingerprint() else {
+                    continue;
+                };
+                integer_alpha_conditions
+                    .entry(fingerprint)
+                    .or_default()
+                    .push((key, value));
+            }
+        }
+    }
+    // A single reverse-key lookup is enough for the common case.  If the
+    // separately lowered fold has fresh binder IDs, use the checked alpha
+    // bucket instead of scanning all cited conditions.  Only a top-level
+    // atomic goal is admitted here; compound goals still follow the ordinary
+    // explicit structural normalizer below.
+    if let Some((condition, goal_value)) =
+        crate::kernel::spec::proposition_as_single_condition(goal)
+        && goal_value
+        && let ConditionTerm::IntegerEqual(_, _) = &condition
+        && !conditions.contains_key(&condition)
+    {
+        let proposition = Proposition::ConditionIs(condition.clone(), true);
+        if let Some(key) = super::fact_keys::integer_equality_alpha_key(&proposition)
+            && let Some(fingerprint) = key.checked_fingerprint()
+            && let Some(candidates) = integer_alpha_conditions.get(&fingerprint)
+        {
+            for (candidate, value) in candidates {
+                match candidate.checked_eq(&key) {
+                    Some(true) => {
+                        conditions.insert(condition.clone(), *value);
+                        break;
+                    }
+                    Some(false) => {}
+                    None => break,
+                }
+            }
         }
     }
     let reduced = super::term_rewrite::TermRewrite::for_conditions(&conditions).proposition(goal);
@@ -1953,6 +2028,12 @@ pub(crate) fn quantified_equivalent_available_fact(
 }
 
 pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    // A loadability premise carries an exact memory snapshot. Compare the
+    // selected typed alpha keys before falling back to int32 substitution;
+    // the latter would clone and rewrite the entire opaque memory snapshot.
+    if let Some(equivalent) = super::fact_keys::snapshot_quantified_alpha_equivalent(left, right) {
+        return equivalent;
+    }
     // A supported structural mismatch is definitive; do not substitute or
     // search to turn it into an equivalence. Loads and unsupported fragments
     // retain the existing one-binder, memory-aware structural check below.
@@ -3221,8 +3302,8 @@ fn separations_equal_modulo_proven_snapshots(
 mod integer_reflexivity_tests {
     use super::*;
     use crate::kernel::{
-        Bitvector32Term, IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType,
-        SharedIntegerRangeEndpoint, SharedMachineIntegerTerm, Variable,
+        Bitvector32Term, CMemory, CValue, IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType,
+        Pointer, PointerOffsetTerm, SharedIntegerRangeEndpoint, SharedMachineIntegerTerm, Variable,
     };
 
     #[test]
@@ -3359,6 +3440,124 @@ mod integer_reflexivity_tests {
             Some(true)
         );
         assert!(normalizes_context_free(&equality));
+    }
+
+    #[test]
+    fn normalize_using_accepts_reversed_alpha_renamed_integer_fold_equality() {
+        let source = integer_fold(
+            integer_index(),
+            Variable(93_100),
+            Variable(93_101),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(93_100)),
+                IntegerTerm::var(Variable(93_101)),
+            ),
+        );
+        let renamed = integer_fold(
+            integer_index(),
+            Variable(94_100),
+            Variable(94_101),
+            IntegerTerm::add(
+                IntegerTerm::var(Variable(94_100)),
+                IntegerTerm::var(Variable(94_101)),
+            ),
+        );
+        let source: SharedIntegerTerm = source.into();
+        let renamed: SharedIntegerTerm = renamed.into();
+        assert_eq!(
+            crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent(&source, &renamed),
+            Some(true)
+        );
+        let premise = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(source.clone(), IntegerTerm::constant_i64(0).into()),
+            true,
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(IntegerTerm::constant_i64(0).into(), renamed),
+            true,
+        );
+        let facts = crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&premise));
+        assert!(normalize_using_conditions(&goal, &[premise], &facts).is_ok());
+    }
+
+    #[test]
+    fn normalize_using_alpha_reverse_keeps_snapshot_identity_and_premise_scope() {
+        let pointer = Pointer {
+            block: "normalize-fold-snapshot".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before =
+            crate::kernel::intern_c_memory(CMemory::new().with_block("normalize-fold-snapshot", 8));
+        let after = crate::kernel::intern_c_memory(
+            before
+                .as_ref()
+                .clone()
+                .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(1))),
+        );
+        let load_fold = |memory: &crate::kernel::SharedCMemory, accumulator, item| {
+            integer_fold(
+                int32_index(),
+                accumulator,
+                item,
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer.clone())),
+                )),
+            )
+        };
+        let source = load_fold(&before, Variable(94_200), Variable(94_201));
+        let changed_snapshot = load_fold(&after, Variable(95_200), Variable(95_201));
+        let premise = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(source.into(), IntegerTerm::constant_i64(0).into()),
+            true,
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(
+                IntegerTerm::constant_i64(0).into(),
+                changed_snapshot.into(),
+            ),
+            true,
+        );
+        let facts = crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&premise));
+        assert!(matches!(
+            normalize_using_conditions(&goal, &[premise], &facts),
+            Err(ConditionalNormalizationError::DoesNotNormalize)
+        ));
+
+        let missing_facts = crate::kernel::proof::ProofFacts::from_ordered(&[]);
+        let missing = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(
+                IntegerTerm::constant_i64(0).into(),
+                IntegerTerm::constant_i64(0).into(),
+            ),
+            true,
+        );
+        assert!(matches!(
+            normalize_using_conditions(&missing, std::slice::from_ref(&missing), &missing_facts),
+            Err(ConditionalNormalizationError::UnavailablePremise(0))
+        ));
+    }
+
+    #[test]
+    fn normalize_using_reverses_scalar_integer_equalities_and_disequalities() {
+        let left = IntegerTerm::var(Variable(95_300));
+        let right = IntegerTerm::var(Variable(95_301));
+        for (condition, reversed) in [
+            (
+                ConditionTerm::IntegerEqual(left.clone().into(), right.clone().into()),
+                ConditionTerm::IntegerEqual(right.clone().into(), left.clone().into()),
+            ),
+            (
+                ConditionTerm::IntegerNotEqual(left.clone().into(), right.clone().into()),
+                ConditionTerm::IntegerNotEqual(right.into(), left.into()),
+            ),
+        ] {
+            let premise = Proposition::ConditionIs(condition, true);
+            let goal = Proposition::ConditionIs(reversed, true);
+            let facts =
+                crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&premise));
+            assert!(normalize_using_conditions(&goal, &[premise], &facts).is_ok());
+        }
     }
 
     #[test]

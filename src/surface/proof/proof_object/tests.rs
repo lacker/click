@@ -6912,6 +6912,147 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
 }
 
 #[test]
+fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() {
+    let click_file = crate::surface::parse("")
+        .expect("an empty source should still admit the standard theorem prelude");
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_definitions =
+        combined_theorem_definitions(&click_file).expect("standard theorem prelude should load");
+    let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+    let memory = CMemory::new();
+    let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_210_000)));
+    let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_210_001)));
+    let premise = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+        operator: ComparisonOperator::LessThan,
+        right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+    };
+    let other = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(right.clone())),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+    };
+    let selected = ClickProposition::And(Box::new(premise.clone()), Box::new(other.clone()));
+    let wrong_conjunction = ClickProposition::And(Box::new(other.clone()), Box::new(other.clone()));
+    let disjunction = ClickProposition::Or(Box::new(premise.clone()), Box::new(other.clone()));
+    let implication = ClickProposition::Implies(Box::new(other.clone()), Box::new(premise.clone()));
+    let kernel_premise = lower_pure_theorem_proposition(
+        "checked conjunct theorem application",
+        &premise,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the theorem requirement should lower");
+    let kernel_selected = lower_pure_theorem_proposition(
+        "checked conjunct theorem application",
+        &selected,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the conjunction should lower");
+    let kernel_disjunction = lower_pure_theorem_proposition(
+        "checked conjunct theorem application",
+        &disjunction,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the disjunction should lower");
+    let kernel_wrong_conjunction = lower_pure_theorem_proposition(
+        "checked conjunct theorem application",
+        &wrong_conjunction,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the unrelated conjunction should lower");
+    let kernel_implication = lower_pure_theorem_proposition(
+        "checked conjunct theorem application",
+        &implication,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the implication should lower");
+    assert!(exact_fact_is_available(
+        &kernel_premise,
+        std::slice::from_ref(&kernel_selected)
+    ));
+    assert!(!exact_fact_is_available(
+        &kernel_premise,
+        &[kernel_disjunction]
+    ));
+    assert!(!exact_fact_is_available(
+        &kernel_premise,
+        &[kernel_wrong_conjunction]
+    ));
+    assert!(!exact_fact_is_available(
+        &kernel_premise,
+        &[kernel_implication]
+    ));
+
+    let conclusion = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+        operator: ComparisonOperator::LessEqual,
+        right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+    };
+    let kernel_conclusion = lower_pure_theorem_proposition(
+        "checked conjunct theorem application",
+        &conclusion,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the theorem conclusion should lower");
+    let theorem_context = PureTheoremContext {
+        integer_values: crate::persistent::PersistentMap::default(),
+        memory,
+        values: BTreeMap::new(),
+        array_refs: BTreeMap::new(),
+        requires: vec![kernel_selected],
+        surface_requirements: SurfacePropositionMap::default(),
+    };
+    let root = Proof::for_pure_goal(
+        "checked conjunct theorem application",
+        &theorem_context.requires,
+        kernel_conclusion,
+        &theorem_context,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let application = TheoremApplication {
+        name: "int32_lt_implies_le".to_string(),
+        arguments: vec![
+            ContractExpression::CFragment(CExpression::Value(left)),
+            ContractExpression::CFragment(CExpression::Value(right)),
+        ],
+    };
+    let closed = root
+        .apply_step(ProofStep::ApplyTheoremUsing {
+            application,
+            premises: vec![selected],
+        })
+        .expect("a checked conjunct should satisfy the theorem requirement");
+    assert!(closed.is_complete());
+}
+
+#[test]
 fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
     let click_file = crate::surface::parse(
         r#"

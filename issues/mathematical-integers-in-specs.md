@@ -227,11 +227,16 @@ serialize the shared graph with local child indices so equality and hashing
 also avoid tree expansion. Certificate lowering borrows the mathematical
 bindings without cloning unrelated C state for each evidence node.
 
-This is a staged implementation, not completion of this issue. Symbolic reverse
-conversions, checked machine-operation relationships, source quantifiers, pure functions,
-datatype/resource fields, `Nat` relationships, typed folds, and the unchanged C
-summation regression remain to be completed. The user documentation states the
-current scalar boundary; the full acceptance criteria below remain open.
+This is a staged implementation, not completion of this issue. This paragraph
+records the scalar boundary before the later checkpoints below; it is not a
+current inventory of the implementation. The current landed boundary and the
+remaining array, resource-pattern, existential, and summation work are recorded
+in the 2026-09-11 status checkpoint at the end of this document.
+
+**Current status:** dated checkpoints below are historical. The final
+`Current merge-candidate status (2026-09-11)` section is authoritative for what
+is retained in the merge candidate, what remains open in unchanged-C summation,
+and the review gate before any new feature work.
 
 ## Quantifier review checkpoint (2026-09-10)
 
@@ -338,14 +343,20 @@ claim those paths are implemented.
 
 Integer fields and generic arguments such as `Box<Integer>` are integrated in
 `f7570a38`. Known-constructor matches extract correctly typed fields and shadow
-outer bindings. Symbolic Integer-valued datatype matches still reject explicitly;
-they require a checked representation of each arm and are not complete.
+outer bindings. The contemporaneous note that symbolic Integer-valued datatype
+matches rejected is historical: the shared-body, carrier-aware match work is
+covered by the 2026-09-11 integration checkpoint below and landed in
+`7543105f`.
 
 Resource schemas now accept Integer fields, which carry exact mathematical values
 without adding C storage. Named instances preserve current and entry snapshots;
 unfolding and folding check declared resource facts. Regressions cover large
 values, updates distinct from `old(...)`, invalid machine-typed initializers,
 negative initializers violating a nonnegative fact, and expansion/rechecking.
+Resource initializer coverage includes Integer fields and must retain their
+declared carrier and definedness obligations. Resource pattern bindings are a
+separate checked surface: each bound field must keep its declared name, type,
+and snapshot while the pattern is lowered and later rechecked.
 An unchanged C memory read verifies against a field related to memory by
 `to_integer(p[0]) == value`. Variable collection traverses observed machine
 expressions inside deferred Integer arithmetic and algebraic field values.
@@ -376,9 +387,11 @@ regressions distinguish those behaviors and expanded proofs independently rechec
 Application argument storage is shared, node identities never repeat, and bounded
 cleanup revisits live entries so their arguments can be released after they die.
 Direct tests cover C and nested Integer argument substitution, cleanup lifetime,
-and deterministic DAG rewriting at depths 8/16/32/64. General parameter types and
-deferred arguments remain a separate call-lowering stage, needed for Nat and array
-functions; this checkpoint does not claim those complete.
+and deterministic DAG rewriting at depths 8/16/32/64. The earlier caveat that
+Nat and general argument types remained a separate call-lowering stage is
+historical; scalar folds and ADT/Nat coverage are established by `77bd9f82`,
+while the reviewed snapshot/affine support is landed in `7543105f`. Array-ref
+acceptance and resource pattern bindings remain pending as recorded below.
 
 ## Implementation and integration sequence
 
@@ -500,9 +513,10 @@ use checked expression capture and retain conversion definedness obligations.
 Expanded function applications promote introduced Integer names inside arguments;
 their generated certificates independently reverify.
 
-This checkpoint still rejects internal match/fold scopes and array snapshots in
-this substitution path, and nested quantifiers of other sorts. Those paths must
-use reviewed scoped traversal before this issue can claim complete coverage.
+The older rejection of internal match/fold scopes is superseded by the scoped
+match/fold work landed in `7543105f`. At this earlier checkpoint, array
+snapshots and their source-level obligations were still pending, as were nested
+quantifiers of other sorts; the current staged status is recorded below.
 
 ## Memory incident during isolated match review (2026-09-10)
 
@@ -514,8 +528,10 @@ roughly 442 MiB before its five-second CPU limit stopped it.
 
 Match arms now hold shared Integer bodies; keys, substitution, variable collection,
 and diagnostics preserve that sharing. The same depth-8/16/32/64 regression
-finishes in about 0.02 seconds at 19 MiB. This is an experimental-branch fix;
-these match changes have not been integrated into the primary branch.
+finishes in about 0.02 seconds at 19 MiB. This was the experimental fix that was
+subsequently reviewed and landed with the current snapshot/affine checkpoint;
+the old statement that it was not integrated is retained only as incident
+history.
 
 For the remainder of this implementation, the coordinator runs only one build
 or verification job at a time, with one build job and one test worker. Unreviewed
@@ -524,12 +540,12 @@ The interrupted combined gate is not a passing result and must be rerun.
 
 ## Integration checkpoint (2026-09-11)
 
-This checkpoint records experimental task work separately from landed primary
-history. The primary branch remains `72b19a3d`; the current upstream base is
-`3ef8c81a`. The earlier Integer-match checkpoint passed the full gate with
-2,284 unit and binary tests plus 14 fixtures. Subsequent bounded-work and
-contextual-numeral changes have focused coverage, but the combined gate and
-merge remain pending.
+The main scalar/match checkpoint is `77bd9f82`; it established the scalar-fold,
+ADT, and Nat coverage. The reviewed snapshot and affine continuation are landed
+in `7543105f`. Root verified that checkpoint's full gate at 2,356 unit and
+binary tests plus 14 fixtures. It extends the earlier coverage with exact
+snapshot identity and affine-fold checks. This section supersedes the earlier
+experimental-branch status above.
 
 The reviewed match design keeps arm bodies as shared Integer terms, performs
 capture analysis by carrier, treats memory snapshots as opaque, and stops
@@ -537,20 +553,79 @@ actual traversal on exhaustion while measuring attempted visits independently.
 Contextual numeral typing is retained: numerals in an Integer match context
 are mathematical Integers, while machine values remain explicitly typed.
 Fold coverage includes guarded empty-range and append/next-element laws.
-Alpha matching is restricted to load-free expressions.
+Fold terms are supported as opaque atoms in linear certificates. Alpha matching
+uses exact snapshot-aware identities, so alpha-equivalent loads from one retained
+snapshot can match while unrelated snapshots remain distinct.
 
-Remaining acceptance work includes scoped obligations for array-ref bodies,
-snapshot-aware alpha matching, fold terms as opaque atoms in linear
-certificates, and acceptance of the unchanged summation loop. Quadratic work
-in deeply nested universal-quantifier introduction remains deferred; quantifier
-support itself is implemented.
+At this checkpoint, the remaining acceptance work was scoped definedness for
+array-ref bodies, guarded existential post-witness proofs, resource pattern
+bindings, and acceptance of the unchanged summation loop. The order bridge is
+landed in `c5c29afa`; `scripts/check.sh` passed with 2,359 unit and binary tests
+plus 14 fixtures. The approved Euclidean division/remainder deferral is
+unchanged. Quadratic work in deeply nested universal-quantifier introduction
+also remains deferred; quantifier support itself is implemented. The staged
+status of those slices is recorded below.
 
-## Source and gate review checkpoint (2026-09-11)
+## Current merge-candidate status (2026-09-11)
 
-Typed multi-map capture now uses carrier-safe freshening, and the mixed
-match/fold source regressions expand and independently reverify. The current
-full gate reached the shared-replacement universal-quantifier regression before
-timing out: the binder collector lost its DAG memo guard, and per-atom
-replacement rescans were also observed. Those are active integration fixes.
-They are separate from the user-deferred quadratic behavior of deeply nested
-universal-quantifier introduction. The full gate and merge remain pending.
+The clean merge candidate retains the previously unit-green scalar, datatype,
+quantifier, fold-law, resource-pattern, indexed-witness, snapshot-alpha,
+order-bridge, and bounded affine-certificate work. The mixed match/fold source
+cases, shared replacement universal-quantifier regression, and binder-collector
+memo fix are included in the reviewed work landed in `7543105f`. It also retains
+the negative
+summation fixtures for missing element bounds and intermediate machine overflow:
+`integer_sum_range_fold_missing_bounds.md` and
+`integer_sum_range_fold_intermediate_overflow.md`.
+
+The focused slices retained in the candidate are:
+
+- Array-ref fold bodies preserve opaque snapshots and scoped definedness. The
+  focused source cases pass ordinary verification, expansion, and independent
+  re-verification.
+- Guarded and fixed-witness Integer existentials pass their positive cases,
+  missing-definedness negative, expansion, and re-verification, including the
+  indexed memory-bearing witness.
+- Resource pattern bindings have 13 focused kernel/resource checks and the
+  corresponding source cases passing. Integer resource initializers and
+  pattern bindings retain declared field carriers, names, snapshots, and
+  definedness through expansion.
+- Fold terms are exact snapshot-aware opaque affine atoms. The bounded planner
+  accepts only checked selected premises, explicit constant scaling, and the
+  reviewed one- and two-premise combinations; atom identity is recomputed by
+  the kernel and is never taken from a raw term ID or fingerprint alone.
+
+The candidate intentionally omits the failing positive
+`integer_sum_range_fold.md` fixture, its unvalidated expansion regression, and
+the recent loop-closure patch with its two tests. Those files are not evidence
+that unchanged-C summation acceptance is complete. The remaining acceptance
+work is to reduce the smallest failing generated bundle to a bounded leaf
+diagnostic, repair that checked closure, and then verify the positive source
+ordinarily, expand it, and independently re-verify the expanded proof.
+
+The unmerged diagnostic run established all five individual invariant `have`
+steps under ordinary checking, but not the combined generated-bundle closure or
+expansion. The first diagnostic confirmed a presentation gap: the generated
+loop-close bundle had no representable Surface syntax for its
+mathematical-Integer comparison goals. A subsequent narrow patch removed the
+gate failure, but the same generated bundle still failed, so the actual
+remaining leaf is not yet diagnosed. The failing reproduction remains in
+`/tmp/click-integer-sum-integration`, with the omitted positive fixture at
+`mdtests/integer_sum_range_fold.md`. The next step is a bounded reduction of
+the smallest failing bundle with explicit leaf facts and source provenance;
+this is a diagnostic step, not a broad Surface implementation.
+
+The process diagnosis is that merge was made dependent on whole-sum acceptance
+before the smallest failing bundle had been isolated, reduction happened too
+late, and intermediate integration checkpoints were not recorded. No new
+feature work should begin until this closure is reduced and reviewed. The
+candidate remains unmerged, and the current full gate is still running; no
+green result is claimed.
+
+This checkpoint preserves the approved design: existing C remains unchanged;
+fold atoms use exact snapshot-aware identities rather than raw IDs or
+fingerprints; certificates use explicit checked premises and bounded work; and
+range enumeration, unchecked assumptions, whole-state scans, and general
+unbounded affine search remain out of scope. The user-approved deferral of
+deeply nested universal-quantifier scaling remains in force, as does the
+Euclidean division/remainder deferral.

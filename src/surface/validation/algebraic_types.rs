@@ -86,11 +86,12 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
                 ClickType::Parameter(_) => {
                     return Err(ClickError::new("unresolved resource match binding type"));
                 }
-                ClickType::Integer => {
-                    return Err(ClickError::new(
-                        "Integer resource match bindings are not available in this slice",
-                    ));
-                }
+                // Mathematical bindings are carried into the kernel as
+                // checked Integer identities alongside the arm schema.  C
+                // parameter lowering is handled separately below; keeping
+                // this branch empty preserves the source binding's carrier
+                // without pretending it is a machine value.
+                ClickType::Integer => {}
             }
             bindings.push((name.clone(), ty));
         }

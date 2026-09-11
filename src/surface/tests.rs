@@ -239,6 +239,32 @@ fn tree_node_init_fixture() -> (&'static str, Vec<(&'static str, &'static str)>)
 }
 
 #[test]
+fn integer_resource_match_binding_verifies_and_expands() {
+    let fixture = include_str!("../../mdtests/integer_resource_match_binding.md");
+    let source = fixture
+        .split("```click\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    let c = fixture
+        .split("```c filename=integer_resource_match_binding.c\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    let sources = [("integer_resource_match_binding.c", c)];
+
+    verify_c0_sources(source, &sources).expect("matched Integer resource should verify");
+    let expanded = expand_c0_claim_source(source, &sources, "keep", CProofClaim::Grouped)
+        .expect("matched Integer resource should expand");
+    verify_c0_sources(&expanded, &sources)
+        .expect("expanded matched Integer resource should re-verify");
+}
+
+#[test]
 fn tree_node_init_and_stored_child_links_expand() {
     let (source, c) = tree_node_init_fixture();
     verify_c0_sources(source, &c).unwrap();
@@ -1890,6 +1916,171 @@ fn contract_substitution_renames_colliding_range_fold_and_let_binders() {
             Box::new(current_var("i")),
             Box::new(ContractExpression::CBinding(name)),
         )
+    );
+}
+
+#[test]
+fn integer_affine_fixed_execution_constant_weakening_expands_and_rechecks() {
+    let source = r#"
+verifying "integer_affine_fixed_execution.c";
+
+int32 keep(int32 x, int32 y) {
+    requires 0 <= to_integer(x) + to_integer(y);
+    ensures weakened: -1 <= to_integer(x) + to_integer(y) by {
+        execute();
+        have -1 <= to_integer(x) + to_integer(y) by {
+            simp() using {
+                0 <= to_integer(x) + to_integer(y);
+            }
+        }
+        assumption();
+    }
+}
+"#;
+    let c_sources = [(
+        "integer_affine_fixed_execution.c",
+        "int32 keep(int32 x, int32 y) { return x; }",
+    )];
+    verify_c0_sources(source, &c_sources)
+        .expect("execution-context Integer weakening should verify");
+    let expanded = expand_c0_claim_source_by_label(source, &c_sources, "keep.weakened")
+        .expect("Integer weakening should expand to a checked certificate");
+    assert!(
+        expanded.contains("integer_certificate"),
+        "execution-context expansion should contain its checked certificate: {expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("expanded execution-context Integer weakening should recheck");
+}
+
+#[test]
+fn integer_affine_two_premise_constant_weakening_expands_and_rechecks() {
+    let source = r#"
+theorem integer_affine_two_premise_constant_weakening(x: Integer, y: Integer) {
+    requires 0 <= x;
+    requires 0 <= y;
+    ensures -1 <= x + y by {
+        simp() using {
+            0 <= x;
+            0 <= y;
+        }
+    }
+}
+"#;
+    verify_click_theorems(source)
+        .expect("two Integer premises should lower through the surface mapper");
+    let expanded = expand_c0_claim_source_by_label(
+        source,
+        &[],
+        "integer_affine_two_premise_constant_weakening.ensures_0",
+    )
+    .expect("two-premise Integer weakening should expand");
+    assert!(
+        expanded.contains("integer_certificate"),
+        "two-premise expansion should contain its checked certificate: {expanded}"
+    );
+    verify_click_theorems(&expanded)
+        .expect("expanded two-premise Integer weakening should recheck");
+}
+
+#[test]
+fn integer_affine_fixed_execution_scaled_two_premise_lower_bound_expands_and_rechecks() {
+    let source = r#"
+verifying "integer_affine_fixed_scaled.c";
+
+int32 fixed_c_params(int32 i, int32 total, int32 value) {
+    requires -1000 * to_integer(i) - 1000 <= to_integer(total) + to_integer(value);
+    requires to_integer(i) <= 1000;
+    ensures bounded: -2147483648 <= to_integer(total) + to_integer(value) by {
+        execute();
+        have -2147483648 <= to_integer(total) + to_integer(value) by {
+            simp() using {
+                -1000 * to_integer(i) - 1000 <= to_integer(total) + to_integer(value);
+                to_integer(i) <= 1000;
+            }
+        }
+        assumption();
+    }
+}
+"#;
+    let c_sources = [(
+        "integer_affine_fixed_scaled.c",
+        "int32 fixed_c_params(int32 i, int32 total, int32 value) { return total; }",
+    )];
+    verify_c0_sources(source, &c_sources)
+        .expect("fixed execution scaled lower bound should verify");
+    let expanded = expand_c0_claim_source_by_label(source, &c_sources, "fixed_c_params.bounded")
+        .expect("fixed execution scaled lower bound should expand");
+    assert!(
+        expanded.contains("integer_certificate"),
+        "scaled lower bound expansion should contain its checked certificate: {expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("expanded fixed execution scaled lower bound should recheck");
+}
+
+#[test]
+fn integer_affine_terminal_constant_certificate_preserves_true_goal() {
+    let source = r#"
+theorem integer_affine_terminal_constant(x: Integer) {
+    ensures x == x by {
+        integer_certificate {
+            trivial => 0 <= 1;
+            conclusion 0;
+        }
+    }
+}
+"#;
+    verify_click_theorems(source).expect("a true terminal constant should close an Integer goal");
+    let expanded =
+        expand_c0_claim_source_by_label(source, &[], "integer_affine_terminal_constant.ensures_0")
+            .expect("the terminal constant certificate should expand");
+    verify_click_theorems(&expanded)
+        .expect("expanded terminal constant certificate should recheck");
+}
+
+#[test]
+fn integer_affine_terminal_false_constant_certificate_is_rejected() {
+    let source = r#"
+theorem integer_affine_terminal_false_constant(x: Integer) {
+    ensures x == x by {
+        integer_certificate {
+            trivial => 1 <= 0;
+            conclusion 0;
+        }
+    }
+}
+"#;
+    let error = verify_click_theorems(source)
+        .expect_err("a false terminal constant must not close an Integer goal");
+    assert!(
+        error.message().contains("NodeResultMismatch") || error.message().contains("DoesNotFollow"),
+        "unexpected false-constant diagnostic: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn integer_affine_intermediate_false_constant_certificate_is_rejected() {
+    let source = r#"
+theorem integer_affine_intermediate_false_constant(x: Integer) {
+    requires 0 <= x;
+    ensures 0 <= x by {
+        integer_certificate {
+            premise 0: 0 <= x => 0 <= x;
+            trivial => 1 <= 0;
+            add 0, 1 => 0 <= x;
+            conclusion 2;
+        }
+    }
+}
+"#;
+    let error = verify_click_theorems(source)
+        .expect_err("a false intermediate constant must not enter an Integer certificate");
+    assert!(
+        error.message().contains("NodeResultMismatch") || error.message().contains("DoesNotFollow"),
+        "unexpected false-intermediate diagnostic: {}",
+        error.message()
     );
 }
 
