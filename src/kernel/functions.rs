@@ -3085,12 +3085,43 @@ fn prove_contract_propositions(
     Ok(true)
 }
 
+/// The exact routes a refinement check may use on one leaf proposition:
+/// builtin propositions, indexed exact membership in the assumed facts, and
+/// the frozen condition decision procedure on a bare condition. It performs
+/// no logical search — it never assumes an antecedent, enumerates ambient
+/// candidates, or recursively constructs a derivation. `Not` of a bare
+/// condition is the same bare condition with the opposite value, which is how
+/// `contains_assumed_exact` and `evaluate_guarded_contract_condition` already
+/// read it.
+fn refinement_route_proves(assumptions: &PureFactContext, proposition: &Proposition) -> bool {
+    if assumptions.proves_exact(proposition) {
+        return true;
+    }
+    match proposition {
+        Proposition::ConditionIs(condition, value) => assumptions.decide(condition) == Some(*value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => {
+                assumptions.decide(condition) == Some(!*value)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Checks one lowered contract clause against the refinement assumptions.
+///
+/// This walks the two named contracts' own structure — sequence elements,
+/// `and`, `or`, and `implies` — and decides each leaf with
+/// [`refinement_route_proves`]. The walk is bounded by the clause it was
+/// given; it does not assume an antecedent into a cloned context, and it does
+/// not fall back to general proof search.
 fn contract_refinement_proves(
     assumptions: &PureFactContext,
     proposition: &Proposition,
     allow_stateful_memory: bool,
 ) -> bool {
-    if assumptions.proves(proposition) {
+    if refinement_route_proves(assumptions, proposition) {
         return true;
     }
     if !allow_stateful_memory {
@@ -3126,13 +3157,14 @@ fn contract_refinement_proves(
                 && contract_refinement_proves(assumptions, right, true);
         }
         Proposition::Implies(left, right) => {
-            if assumptions.proves(&Proposition::Not(left.clone())) {
+            // An implication clause holds when its antecedent is exactly
+            // refuted here, or when its consequent holds on its own. Assuming
+            // the antecedent into a cloned context and re-proving the
+            // consequent would be proof construction, not checking.
+            if refinement_route_proves(assumptions, &Proposition::Not(left.clone())) {
                 return true;
             }
-            let assumptions = assumptions
-                .clone()
-                .assume_proposition(left.as_ref().clone());
-            return contract_refinement_proves(&assumptions, right, true);
+            return contract_refinement_proves(assumptions, right, true);
         }
         _ => {}
     }
@@ -3159,23 +3191,26 @@ fn contract_refinement_proves(
         ConditionTerm::Bitvector32Equal(left, right) => (left, right, ConditionTerm::equal),
         _ => return false,
     };
+    // Each side's recorded-equality class is one indexed walk bounded by that
+    // class. Every rewritten comparison is a bare condition, so it is decided
+    // by the exact routes only.
     assumptions
         .recorded_equality_class(left)
         .into_iter()
         .any(|equal| {
-            assumptions.proves(&Proposition::ConditionIs(
-                rebuild(equal, right.clone()),
-                *value,
-            ))
+            refinement_route_proves(
+                assumptions,
+                &Proposition::ConditionIs(rebuild(equal, right.clone()), *value),
+            )
         })
         || assumptions
             .recorded_equality_class(right)
             .into_iter()
             .any(|equal| {
-                assumptions.proves(&Proposition::ConditionIs(
-                    rebuild(left.clone(), equal),
-                    *value,
-                ))
+                refinement_route_proves(
+                    assumptions,
+                    &Proposition::ConditionIs(rebuild(left.clone(), equal), *value),
+                )
             })
 }
 
