@@ -2234,11 +2234,28 @@ pub struct CFunctionSpecification {
     pub(super) outcome: CFunctionOutcome,
 }
 
+/// One checked binder transport selected at an ordinary C call site.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CCallBinderTransport {
+    /// The callee the step named. A call to any other function is refused.
+    pub(crate) function: std::sync::Arc<str>,
+    /// How many arguments the step wrote, checked against the call it selects.
+    pub(crate) arity: usize,
+    /// Every instance binder of that callee, mapped to the caller instance
+    /// that supplies it. A `produces` binder maps to the fresh identity the
+    /// caller's `let` introduced.
+    pub(crate) bindings: std::sync::Arc<BTreeMap<Variable, Variable>>,
+}
+
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
     // A proof-local rule choice. This is not installed in the project environment.
     pub(crate) selected_call_contract: Option<std::sync::Arc<str>>,
     pub(crate) selected_call_resource_arguments: Option<std::sync::Arc<[Variable]>>,
+    /// A proof-local binder map for one ordinary C call: the callee named by
+    /// the step, and one caller instance per instance binder the callee
+    /// declares. Binding is a lookup per entry; nothing is searched for.
+    pub(crate) selected_call_binders: Option<std::sync::Arc<CCallBinderTransport>>,
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
     pub(super) function_contracts: std::sync::Arc<BTreeMap<String, CFunctionContract>>,
     pub(super) external_function_rules: std::sync::Arc<BTreeMap<String, CExternalFunctionRule>>,
@@ -2258,6 +2275,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 "selected_call_resource_arguments",
                 &self.selected_call_resource_arguments,
             )
+            .field("selected_call_binders", &self.selected_call_binders)
             .field("functions", &self.functions)
             .field("function_contracts", &self.function_contracts)
             .field("external_function_rules", &self.external_function_rules)
@@ -2275,6 +2293,7 @@ impl PartialEq for CExecutionEnvironment {
     fn eq(&self, other: &Self) -> bool {
         self.selected_call_contract == other.selected_call_contract
             && self.selected_call_resource_arguments == other.selected_call_resource_arguments
+            && self.selected_call_binders == other.selected_call_binders
             && self.functions == other.functions
             && self.function_contracts == other.function_contracts
             && self.external_function_rules == other.external_function_rules

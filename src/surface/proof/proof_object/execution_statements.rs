@@ -308,6 +308,33 @@ impl<'a> Proof<'a> {
                 &selected_environment,
             );
             &selected_context
+        } else if let ProofStep::StepCall(transport) = &step {
+            let callee = transport.callee();
+            // One lookup per written entry builds the whole binding; the
+            // kernel consults nothing else at this call.
+            let mut bindings = BTreeMap::new();
+            for binding in transport.binders().iter().chain(transport.produced()) {
+                crate::instrumentation::record_deterministic_work(1);
+                if bindings
+                    .insert(binding.binder_identity(), binding.identity())
+                    .is_some()
+                {
+                    return Err(self.step_error(format!(
+                        "duplicate binder `{}` in the call map",
+                        binding.binder()
+                    )));
+                }
+            }
+            selected_environment = context
+                .function_environment
+                .clone()
+                .with_selected_call_binders(callee, transport.arguments().len(), bindings);
+            selected_context = context.with_loop_binding(
+                context.function_block,
+                context.function,
+                &selected_environment,
+            );
+            &selected_context
         } else {
             context
         };

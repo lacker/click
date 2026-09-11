@@ -363,6 +363,17 @@ tactic statements. Tactic arguments use the expression and proposition forms
 documented for that tactic. The exhaustive surface-spelling inventory is in
 [Tactics](../tactics/index.md).
 
+One tactic carries syntax beyond an argument list: a `step` on an ordinary C
+call writes the call as it appears in the source, maps the callee's instance
+binders to the caller's instances, and introduces a produced instance with
+`let`.
+
+```text
+call-step  := ("let" identifier "=")? "step" "(" c-call "," binder-map ")" ";"
+binder-map := "{" (identifier ":" identifier
+               ("," identifier ":" identifier)* ","?)? "}"
+```
+
 Omitting a proof and writing `by auto` request smart proof construction. Smart
 search can advance proof state only through checked operations. Use
 [`click expand`](../cli/expand.md) to replace expandable smart proof sites with

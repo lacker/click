@@ -1582,6 +1582,14 @@ fn execute_step_from_frontier_position_selecting_path(
             "step(Contract) requires a call at the current frontier",
         ));
     }
+    if let Some(transport) = &function_environment.selected_call_binders
+        && !matches!(source_region.kind, SourceStatementKind::Plain)
+    {
+        return Err(ClickError::new(format!(
+            "`step({}(...), {{ ... }})` requires a call to `{}` at the current frontier",
+            transport.function, transport.function
+        )));
+    }
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
         let entered = execute_branch_step_from_frontier_position(
             execution,
@@ -1659,6 +1667,39 @@ fn execute_step_from_frontier_position_selecting_path(
         return Err(ClickError::new(
             "step(Contract) requires a call at the current frontier",
         ));
+    }
+    // The step names the call it binds, so the statement the frontier is about
+    // to run has to be that call: one comparison against the statement, not a
+    // search for a matching call.
+    if let Some(transport) = &function_environment.selected_call_binders {
+        let called = match &step_statement {
+            CStatement::Call {
+                function_name,
+                arguments,
+            }
+            | CStatement::CallAssign {
+                function_name,
+                arguments,
+                ..
+            } => Some((function_name.as_str(), arguments.len())),
+            _ => None,
+        };
+        match called {
+            Some((name, arity)) if name == transport.function.as_ref() => {
+                if arity != transport.arity {
+                    return Err(ClickError::new(format!(
+                        "`{name}` is called with {arity} argument(s) here, but the step writes {}",
+                        transport.arity
+                    )));
+                }
+            }
+            _ => {
+                return Err(ClickError::new(format!(
+                    "`step({}(...), {{ ... }})` requires a call to `{}` at the current frontier",
+                    transport.function, transport.function
+                )));
+            }
+        }
     }
 
     // The surface step for this statement is written from the proof state

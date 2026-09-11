@@ -132,6 +132,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Mark(name) => line(output, &prefix, &format!("mark {name};")),
         ProofTactic::Step => line(output, &prefix, "step();"),
         ProofTactic::StepContract(name) => line(output, &prefix, &format!("step({name});")),
+        ProofTactic::StepCall(transport) => line(output, &prefix, &format!("{transport};")),
         ProofTactic::UnfoldPredicate(name) => {
             line(output, &prefix, &format!("unfold({name});"));
         }

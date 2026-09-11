@@ -625,6 +625,96 @@ pub struct ContractResourceArgument {
     identity: Variable,
 }
 
+/// One entry of a call step's binder map: a binder the callee declared, and
+/// the caller instance it is bound to. The `produces` form reuses the same
+/// shape, with `instance` the name introduced by `let`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallBinderBinding {
+    /// The callee's binder name, written on the left of the map entry.
+    binder: String,
+    /// The identity the callee's own contract gave that binder.
+    binder_identity: Variable,
+    /// The caller's instance name.
+    instance: String,
+    /// The caller's instance identity.
+    identity: Variable,
+}
+
+impl CallBinderBinding {
+    pub fn binder(&self) -> &str {
+        &self.binder
+    }
+
+    pub fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    pub(crate) fn binder_identity(&self) -> Variable {
+        self.binder_identity
+    }
+
+    pub(crate) fn identity(&self) -> Variable {
+        self.identity
+    }
+}
+
+/// `step(callee(arguments), { binder: instance, ... })`: one ordinary C call
+/// with every instance binder of the callee bound explicitly. A callee
+/// `produces` binder is introduced by the surrounding
+/// `let name = step(...)` and is carried in `produced`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallBinderTransport {
+    callee: String,
+    arguments: Vec<ContractExpression>,
+    binders: Vec<CallBinderBinding>,
+    produced: Option<CallBinderBinding>,
+}
+
+impl CallBinderTransport {
+    pub fn callee(&self) -> &str {
+        &self.callee
+    }
+
+    pub fn arguments(&self) -> &[ContractExpression] {
+        &self.arguments
+    }
+
+    pub fn binders(&self) -> &[CallBinderBinding] {
+        &self.binders
+    }
+
+    pub fn produced(&self) -> Option<&CallBinderBinding> {
+        self.produced.as_ref()
+    }
+}
+
+impl std::fmt::Display for CallBinderTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(produced) = &self.produced {
+            write!(f, "let {} = ", produced.instance)?;
+        }
+        write!(f, "step({}(", self.callee)?;
+        for (index, argument) in self.arguments.iter().enumerate() {
+            if index != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", diagnostics::describe_contract_expression(argument))?;
+        }
+        write!(f, ")")?;
+        if !self.binders.is_empty() {
+            write!(f, ", {{ ")?;
+            for (index, binding) in self.binders.iter().enumerate() {
+                if index != 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}: {}", binding.binder, binding.instance)?;
+            }
+            write!(f, " }}")?;
+        }
+        write!(f, ")")
+    }
+}
+
 impl From<String> for ContractApplication {
     fn from(name: String) -> Self {
         Self {
@@ -2339,6 +2429,7 @@ pub enum ProofTactic {
     Mark(String),
     Step,
     StepContract(ContractApplication),
+    StepCall(CallBinderTransport),
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
@@ -2505,6 +2596,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "step-contract-application",
         syntax: "step(Contract(...))",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "step-call",
+        syntax: "step(callee(...), { binder: instance })",
         class: "simple",
     },
     PublicTacticForm {
@@ -2765,6 +2861,7 @@ pub enum ProofStep {
     Mark(String),
     Step,
     StepContract(ContractApplication),
+    StepCall(CallBinderTransport),
     UnfoldPredicate(String),
     UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
@@ -2969,6 +3066,7 @@ impl ProofStep {
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
             ProofTactic::StepContract(name) => Self::StepContract(name.clone()),
+            ProofTactic::StepCall(transport) => Self::StepCall(transport.clone()),
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
             ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
@@ -3185,6 +3283,7 @@ impl ProofStep {
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
             Self::StepContract(name) => ProofTactic::StepContract(name.clone()),
+            Self::StepCall(transport) => ProofTactic::StepCall(transport.clone()),
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
             Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
@@ -3358,7 +3457,7 @@ impl CertificateError {
 fn certificate_step_class(step: &ProofStep) -> TacticClass {
     match step {
         ProofStep::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
-        ProofStep::Step | ProofStep::StepContract(_) => {
+        ProofStep::Step | ProofStep::StepContract(_) | ProofStep::StepCall(_) => {
             TacticClass::Simple(SimpleTactic::StatementTransition)
         }
         ProofStep::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
@@ -3638,7 +3737,7 @@ impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
             Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
-            Self::Step | Self::StepContract(_) => {
+            Self::Step | Self::StepContract(_) | Self::StepCall(_) => {
                 TacticClass::Simple(SimpleTactic::StatementTransition)
             }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),

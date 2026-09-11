@@ -940,11 +940,17 @@ fn execute_verified_function_rule(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    // A `step(callee(...), { binder: instance })` names exactly this call.
+    // The map is the whole binding: every instance binder the callee declares
+    // is looked up once, and nothing else is consulted.
+    let binder_application = selected_call_binder_application(&rule.function, environment);
     execute_verified_function_templates(
         caller_state,
         &[&rule.function],
         None,
-        None,
+        binder_application
+            .as_ref()
+            .map(|application| (0, application)),
         arguments,
         assumptions,
         environment,
@@ -952,29 +958,65 @@ fn execute_verified_function_rule(
     )
 }
 
+/// The binder transport the proof selected for a call to `function`, if the
+/// step named this callee. The transported instances are exactly the
+/// function's own `owns`, `consumes`, and `produces` binders.
+fn selected_call_binder_application(
+    function: &CFunction,
+    environment: &CExecutionEnvironment,
+) -> Option<ResourceCallApplication> {
+    let transport = environment.selected_call_binders.as_ref()?;
+    if transport.function.as_ref() != function.name() {
+        return None;
+    }
+    // Only the binders required at entry are checked here; a `produces`
+    // binder has no instance to check until the call returns.
+    let parameters = function
+        .resource_requires()
+        .iter()
+        .filter(|resource| matches!(resource, CResourceSpec::Instance { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
+    Some(ResourceCallApplication {
+        parameters: parameters.into(),
+        bindings: transport.bindings.clone(),
+    })
+}
+
 fn execute_verified_function_templates(
     caller_state: &CState,
     functions: &[&CFunction],
     selected_contract: Option<usize>,
-    resource_application: Option<&ResourceCallApplication>,
+    resource_application: Option<(usize, &ResourceCallApplication)>,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = functions[0];
-    if functions.iter().enumerate().any(|(index, function)| {
-        !(selected_contract == Some(index) && resource_application.is_some())
-            && function
-                .resource_requires()
-                .iter()
-                .chain(function.resource_ensures())
-                .any(|resource| matches!(resource, CResourceSpec::Instance { .. }))
+    // Every named instance the callee declares must be bound by the selected
+    // application. The check is one map lookup per declared binder, so an
+    // unbound binder is refused here rather than transported silently.
+    if let Some(unbound) = functions.iter().enumerate().find_map(|(index, function)| {
+        let bindings = resource_application
+            .filter(|(selected, _)| *selected == index)
+            .map(|(_, application)| &application.bindings);
+        function
+            .resource_requires()
+            .iter()
+            .chain(function.resource_ensures())
+            .find(|resource| match resource {
+                CResourceSpec::Instance { identity, .. } => {
+                    !bindings.is_some_and(|bindings| bindings.contains_key(identity))
+                }
+                _ => false,
+            })
+            .map(|_| function.name().to_string())
     }) {
         return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                "calls with named resource instances require checked binder transport, which is not supported yet".into(),
-            )),
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "calls with named resource instances require checked binder transport: `{unbound}` has an unbound instance binder"
+            ))),
             facts: vec![],
             obligations: vec![],
         }]);
@@ -1031,7 +1073,9 @@ fn execute_verified_function_templates(
                 assumptions,
                 environment,
                 budget,
-                resource_application.filter(|_| selected_contract == Some(index)),
+                resource_application
+                    .filter(|(selected, _)| *selected == index)
+                    .map(|(_, application)| application),
             )?;
             match prepared {
                 Ok(prepared) => {
@@ -1096,6 +1140,7 @@ fn execute_verified_function_templates(
             obligations,
             effective_assumptions,
             mutable_ranges,
+            bindings: selected_bindings,
         } = primary;
         let additional_calls = applicable.into_iter();
         let memory = if mutable_ranges.is_empty() {
@@ -1122,9 +1167,97 @@ fn execute_verified_function_templates(
         if function.return_type() != CType::Void {
             set_function_result(&mut post_state, function, result.clone());
         }
-        let mut transition_state = post_state
-            .clone()
-            .with_resource_context(transfer.callee_resources.clone());
+        // A `produces` binder owns nothing at entry: the call creates the
+        // instance under the identity the caller's `let` introduced. It is
+        // built once, here, so the population transition and the returned
+        // resources agree on its fresh fields.
+        let mut produced_instances = BTreeMap::new();
+        for (ensure_index, resource) in function.resource_ensures().iter().enumerate() {
+            let CResourceSpec::Instance {
+                identity,
+                schema,
+                resource: instance_resource,
+                ..
+            } = resource
+            else {
+                continue;
+            };
+            if function.resource_ensure_is_borrowed(ensure_index)
+                || entry_contract_state
+                    .owned_resource_instance(*identity)
+                    .is_some()
+            {
+                continue;
+            }
+            let Some(produced) = selected_bindings
+                .as_ref()
+                .and_then(|bindings| bindings.get(identity).copied())
+            else {
+                continue;
+            };
+            let (name, arguments) = match evaluate_function_resource_spec(
+                &post_state,
+                instance_resource,
+                &effective_assumptions,
+                budget,
+            )? {
+                Ok(CResourceFact::Own(CResource::Composite { name, arguments }, quantity))
+                    if quantity.as_const() == Some(1) =>
+                {
+                    (name, arguments)
+                }
+                Ok(_) => {
+                    return Ok(vec![resource_call_failure(
+                        "a produced resource instance requires an owned resource definition",
+                    )]);
+                }
+                Err(error) => {
+                    return Ok(vec![CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(error),
+                        facts,
+                        obligations,
+                    }]);
+                }
+            };
+            let fields = schema
+                .fields()
+                .iter()
+                .map(|(_, ty)| {
+                    variables.next = budget.next_kernel_variable;
+                    let variable = variables.next();
+                    budget.next_kernel_variable = variables.next;
+                    match ty {
+                        ResourceFieldType::Integer => {
+                            AlgebraicValue::Integer(IntegerTerm::Variable(variable))
+                        }
+                        ResourceFieldType::C(ty) => {
+                            AlgebraicValue::C(symbolic_call_result(*ty, variable))
+                        }
+                        ResourceFieldType::Algebraic(ty) => {
+                            AlgebraicValue::Algebraic(AlgebraicTerm {
+                                algebraic_type: ty.clone(),
+                                node: AlgebraicTermNode::Variable(variable),
+                            })
+                        }
+                    }
+                })
+                .collect();
+            produced_instances.insert(
+                *identity,
+                ResourceInstance::new(produced, name, arguments, schema.clone(), fields)
+                    .expect("fresh symbolic fields have their declared types"),
+            );
+        }
+        let callee_resources = if produced_instances.is_empty() {
+            transfer.callee_resources.clone()
+        } else {
+            transfer.callee_resources.clone().unchecked_with_facts(
+                produced_instances
+                    .values()
+                    .map(|instance| CResourceFact::own(CResource::Instance(instance.clone()))),
+            )
+        };
+        let mut transition_state = post_state.clone().with_resource_context(callee_resources);
         let population_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
@@ -1187,43 +1320,47 @@ fn execute_verified_function_templates(
             let CResourceSpec::Instance { identity, .. } = resource else {
                 continue;
             };
-            let Some(before) = entry_contract_state.owned_resource_instance(*identity) else {
-                return Ok(vec![resource_call_failure(
-                    "returned resource parameter is not owned at call entry",
-                )]);
+            let after = if let Some(produced) = produced_instances.get(identity) {
+                produced.clone()
+            } else {
+                let Some(before) = entry_contract_state.owned_resource_instance(*identity) else {
+                    return Ok(vec![resource_call_failure(
+                        "returned resource parameter is not owned at call entry",
+                    )]);
+                };
+                let fields = before
+                    .schema()
+                    .fields()
+                    .iter()
+                    .map(|(_, ty)| {
+                        variables.next = budget.next_kernel_variable;
+                        let variable = variables.next();
+                        budget.next_kernel_variable = variables.next;
+                        match ty {
+                            ResourceFieldType::Integer => {
+                                AlgebraicValue::Integer(IntegerTerm::Variable(variable))
+                            }
+                            ResourceFieldType::C(ty) => {
+                                AlgebraicValue::C(symbolic_call_result(*ty, variable))
+                            }
+                            ResourceFieldType::Algebraic(ty) => {
+                                AlgebraicValue::Algebraic(AlgebraicTerm {
+                                    algebraic_type: ty.clone(),
+                                    node: AlgebraicTermNode::Variable(variable),
+                                })
+                            }
+                        }
+                    })
+                    .collect();
+                ResourceInstance::new(
+                    before.identity,
+                    before.name.clone(),
+                    before.arguments.clone(),
+                    before.schema.clone(),
+                    fields,
+                )
+                .expect("fresh symbolic fields have their declared types")
             };
-            let fields = before
-                .schema()
-                .fields()
-                .iter()
-                .map(|(_, ty)| {
-                    variables.next = budget.next_kernel_variable;
-                    let variable = variables.next();
-                    budget.next_kernel_variable = variables.next;
-                    match ty {
-                        ResourceFieldType::Integer => {
-                            AlgebraicValue::Integer(IntegerTerm::Variable(variable))
-                        }
-                        ResourceFieldType::C(ty) => {
-                            AlgebraicValue::C(symbolic_call_result(*ty, variable))
-                        }
-                        ResourceFieldType::Algebraic(ty) => {
-                            AlgebraicValue::Algebraic(AlgebraicTerm {
-                                algebraic_type: ty.clone(),
-                                node: AlgebraicTermNode::Variable(variable),
-                            })
-                        }
-                    }
-                })
-                .collect();
-            let after = ResourceInstance::new(
-                before.identity,
-                before.name.clone(),
-                before.arguments.clone(),
-                before.schema.clone(),
-                fields,
-            )
-            .expect("fresh symbolic fields have their declared types");
             post_state.resources = match post_state
                 .resources
                 .clone()
@@ -1417,6 +1554,9 @@ struct PreparedVerifiedFunctionCall<'a> {
     obligations: Vec<ProofObligation>,
     effective_assumptions: PureFactContext,
     mutable_ranges: Vec<CMemoryRange>,
+    /// The binder map this interface was selected with, if any. A `produces`
+    /// binder reads its caller-side identity from exactly this map.
+    bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
 }
 
 fn prepare_verified_function_call<'a>(
@@ -1765,6 +1905,7 @@ fn prepare_verified_function_call<'a>(
         obligations,
         effective_assumptions,
         mutable_ranges,
+        bindings: resource_application.map(|application| application.bindings.clone()),
     }))
 }
 
@@ -1846,7 +1987,7 @@ pub(super) fn execute_c_function_contracts_paths(
         caller_state,
         &functions,
         selected_index,
-        resource_application.as_ref(),
+        selected_index.zip(resource_application.as_ref()),
         arguments,
         assumptions,
         environment,

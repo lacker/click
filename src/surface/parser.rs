@@ -214,6 +214,30 @@ struct Parser {
     current_integer_params: BTreeSet<String>,
     current_integer_lets: BTreeSet<String>,
     integer_literal_context: bool,
+    /// Instance binders declared by each C function block already parsed,
+    /// keyed by function name. A call step reads exactly the entry for its
+    /// callee, so binding a call site costs one lookup per written entry.
+    callee_resource_binders: BTreeMap<String, BTreeMap<String, CalleeResourceBinder>>,
+    /// Set while a `contract` block's embedded function block is parsed: its
+    /// signature names an interface, not a callable C function.
+    in_contract_definition: bool,
+}
+
+/// One `owns`, `consumes`, or `produces` instance binder of a C function
+/// block, recorded so a caller's `step(callee(...), { ... })` can bind it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CalleeResourceBinder {
+    identity: Variable,
+    family: String,
+    kind: CalleeResourceBinderKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CalleeResourceBinderKind {
+    /// `owns` and `consumes`: the caller supplies the instance through the map.
+    Supplied,
+    /// `produces`: the caller introduces the instance with `let`.
+    Produced,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -417,6 +441,8 @@ impl Parser {
             current_contract_bindings: BTreeSet::new(),
             current_integer_params: BTreeSet::new(),
             current_integer_lets: BTreeSet::new(),
+            callee_resource_binders: BTreeMap::new(),
+            in_contract_definition: false,
             integer_literal_context: false,
         })
     }
@@ -550,7 +576,10 @@ impl Parser {
         } else {
             None
         };
-        let function_block = self.parse_function_block(false)?;
+        let previous_in_contract = std::mem::replace(&mut self.in_contract_definition, true);
+        let function_block = self.parse_function_block(false);
+        self.in_contract_definition = previous_in_contract;
+        let function_block = function_block?;
         if let Some(parameters) = &proof_parameters {
             let identities = parameters
                 .iter()
@@ -1703,6 +1732,11 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
+                    self.record_callee_resource_binder(
+                        signature.name(),
+                        &resource,
+                        CalleeResourceBinderKind::Supplied,
+                    );
                     requires.push(
                         apply_contract_lets_to_requirement(
                             Requirement::Resource(resource.clone()),
@@ -1739,6 +1773,11 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     self.expect(Token::Semicolon)?;
+                    self.record_callee_resource_binder(
+                        signature.name(),
+                        &resource,
+                        CalleeResourceBinderKind::Supplied,
+                    );
                     requires.push(
                         apply_contract_lets_to_requirement(
                             Requirement::Resource(resource),
@@ -1751,6 +1790,11 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
+                    self.record_callee_resource_binder(
+                        signature.name(),
+                        &resource,
+                        CalleeResourceBinderKind::Produced,
+                    );
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
                             EnsureClause {
@@ -2632,6 +2676,197 @@ impl Parser {
         })
     }
 
+    /// A `step(` argument that opens the chunk-5 call form: an identifier, a
+    /// parenthesized argument list, and a comma introducing the binder map.
+    /// The closing parenthesis comes from the precomputed nesting table, so
+    /// the decision costs one lookup rather than a scan.
+    fn call_binder_transport_follows(&self) -> bool {
+        if !matches!(self.peek(), Some(Token::Ident(_))) || self.peek_next() != Some(&Token::LParen)
+        {
+            return false;
+        }
+        let Some(close) = self
+            .matching_parentheses
+            .get(self.position + 1)
+            .cloned()
+            .flatten()
+        else {
+            return false;
+        };
+        self.tokens.get(close + 1) == Some(&Token::Comma)
+    }
+
+    /// `callee(arguments), { binder: instance, ... }`, positioned after the
+    /// opening parenthesis of `step(`. `produced` is the name a surrounding
+    /// `let` introduces for the callee's `produces` binder.
+    fn parse_call_binder_transport(
+        &mut self,
+        produced: Option<String>,
+    ) -> Result<CallBinderTransport, ClickError> {
+        let callee = self.expect_ident("call step callee")?;
+        self.expect(Token::LParen)?;
+        let mut arguments = Vec::new();
+        while self.peek() != Some(&Token::RParen) {
+            arguments.push(self.parse_contract_expression()?);
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::RParen)?;
+        self.expect(Token::Comma)?;
+        let declared = self
+            .callee_resource_binders
+            .get(&callee)
+            .cloned()
+            .unwrap_or_default();
+        self.expect(Token::LBrace)?;
+        let mut binders: Vec<CallBinderBinding> = Vec::new();
+        let mut bound = BTreeSet::new();
+        let mut instances = BTreeSet::new();
+        while self.peek() != Some(&Token::RBrace) {
+            let binder = self.expect_ident("callee resource binder")?;
+            self.expect(Token::Colon)?;
+            let instance = self.expect_ident("caller resource instance")?;
+            crate::instrumentation::record_deterministic_work(1);
+            let Some(declaration) = declared.get(&binder) else {
+                return Err(self.error(format!(
+                    "`{callee}` declares no resource instance binder `{binder}`"
+                )));
+            };
+            if declaration.kind == CalleeResourceBinderKind::Produced {
+                return Err(self.error(format!(
+                    "`{callee}` produces `{binder}`; introduce it with `let {binder} = step(...)`"
+                )));
+            }
+            if !bound.insert(binder.clone()) {
+                return Err(self.error(format!("duplicate binder `{binder}` in the call map")));
+            }
+            let Some((identity, family)) = self.current_resource_bindings.get(&instance).cloned()
+            else {
+                return Err(self.error(format!("unknown resource instance `{instance}`")));
+            };
+            if family != declaration.family {
+                return Err(self.error(format!(
+                    "binder `{binder}` expects resource `{}`, but `{instance}` is `{family}`",
+                    declaration.family
+                )));
+            }
+            if !instances.insert(identity) {
+                return Err(self.error(format!(
+                    "resource instance `{instance}` cannot supply two binders of `{callee}`"
+                )));
+            }
+            binders.push(CallBinderBinding {
+                binder,
+                binder_identity: declaration.identity,
+                instance,
+                identity,
+            });
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::RBrace)?;
+        if let Some((missing, _)) = declared.iter().find(|(name, entry)| {
+            entry.kind == CalleeResourceBinderKind::Supplied && !bound.contains(*name)
+        }) {
+            return Err(self.error(format!("call map omits `{callee}` binder `{missing}`")));
+        }
+        let mut produced_declarations = declared
+            .iter()
+            .filter(|(_, entry)| entry.kind == CalleeResourceBinderKind::Produced);
+        let produced_declaration = produced_declarations.next();
+        if produced_declarations.next().is_some() {
+            return Err(self.error(format!(
+                "`{callee}` produces more than one resource instance; a call step introduces one"
+            )));
+        }
+        let produced = match (produced, produced_declaration) {
+            (None, None) => None,
+            (None, Some((produced, _))) => {
+                return Err(self.error(format!(
+                    "`{callee}` produces `{produced}`; introduce it with `let {produced} = step(...)`"
+                )));
+            }
+            (Some(name), None) => {
+                return Err(self.error(format!(
+                    "`{callee}` produces no resource instance, so `let {name} = step(...)` introduces nothing"
+                )));
+            }
+            (Some(name), Some((produced, declaration))) => {
+                if self.current_contract_bindings.contains(&name)
+                    || self.current_integer_params.contains(&name)
+                    || self.current_integer_lets.contains(&name)
+                {
+                    return Err(self.error("produced instance conflicts with a C or pure binding"));
+                }
+                let identity = match self.current_resource_bindings.get(&name) {
+                    Some((identity, family)) => {
+                        if *family != declaration.family {
+                            return Err(
+                                self.error("produced instance changes the named resource family")
+                            );
+                        }
+                        *identity
+                    }
+                    None => {
+                        let identity = Variable(self.next_resource_identity);
+                        self.next_resource_identity += 1;
+                        identity
+                    }
+                };
+                self.current_resource_bindings
+                    .insert(name.clone(), (identity, declaration.family.clone()));
+                Some(CallBinderBinding {
+                    binder: produced.clone(),
+                    binder_identity: declaration.identity,
+                    instance: name,
+                    identity,
+                })
+            }
+        };
+        Ok(CallBinderTransport {
+            callee,
+            arguments,
+            binders,
+            produced,
+        })
+    }
+
+    /// Records one instance binder of the C function block being parsed, so a
+    /// later `step(callee(...), { ... })` can bind it by name. Contract blocks
+    /// name an interface rather than a callable function and are skipped.
+    fn record_callee_resource_binder(
+        &mut self,
+        function: &str,
+        resource: &ResourceClause,
+        kind: CalleeResourceBinderKind,
+    ) {
+        if self.in_contract_definition {
+            return;
+        }
+        let ResourceClause::Named { binding, resource } = resource else {
+            return;
+        };
+        let ResourceClause::Declared { name: family, .. } = resource.as_ref() else {
+            return;
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        self.callee_resource_binders
+            .entry(function.to_string())
+            .or_default()
+            .insert(
+                binding.name.clone(),
+                CalleeResourceBinder {
+                    identity: binding.identity,
+                    family: family.clone(),
+                    kind,
+                },
+            );
+    }
+
     fn parse_owned_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
         if let Some(name) = self.peek_ident()
             && self.peek_next() != Some(&Token::Colon)
@@ -3441,6 +3676,19 @@ impl Parser {
             "let" => {
                 let name = self.expect_ident("fold result name")?;
                 self.expect(Token::Equal)?;
+                if self.peek_ident() == Some("step") {
+                    self.position += 1;
+                    self.expect(Token::LParen)?;
+                    if !self.call_binder_transport_follows() {
+                        return Err(self.error(
+                            "`let name = step(...)` requires a call and a binder map: `step(callee(...), { binder: instance })`",
+                        ));
+                    }
+                    let transport = self.parse_call_binder_transport(Some(name))?;
+                    self.expect(Token::RParen)?;
+                    self.expect(Token::Semicolon)?;
+                    return Ok(ProofTactic::StepCall(transport));
+                }
                 self.expect_ident_spelling("fold")?;
                 self.expect(Token::LParen)?;
                 let resource = self.parse_resource_target(ResourceAccessMode::Own)?;
@@ -3816,6 +4064,8 @@ impl Parser {
                 self.expect(Token::LParen)?;
                 let step = if self.peek() == Some(&Token::RParen) {
                     ProofTactic::Step
+                } else if self.call_binder_transport_follows() {
+                    ProofTactic::StepCall(self.parse_call_binder_transport(None)?)
                 } else {
                     let name = self.expect_ident("call contract name")?;
                     let arguments = if self.peek() == Some(&Token::LParen) {

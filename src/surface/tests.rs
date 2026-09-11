@@ -1249,6 +1249,109 @@ fn explicit_contract_applications_preserve_arguments_when_printed() {
 }
 
 #[test]
+fn call_binder_transport_prints_and_expands_its_map_unchanged() {
+    let printed_source = r#"
+        resource Counter() { field revision: int32; }
+        void increment(int32* state) {
+            owns first: Counter();
+            ensures first.revision == 1;
+        }
+        void caller(int32* state) {
+            owns c: Counter();
+            ensures c.revision == 1;
+        } by { step(increment(state), { first: c }); }
+    "#;
+    let file = parser::parse(printed_source).unwrap();
+    let SourceProof::Script(tactics) = file.function_blocks()[1].grouped_proof().unwrap() else {
+        panic!("expected script")
+    };
+    let printed = printing::format_proof_tactics(tactics).unwrap();
+    assert!(
+        printed.contains("step(increment(state), { first: c });"),
+        "{printed}"
+    );
+    let ProofTactic::StepCall(transport) = &tactics[0] else {
+        panic!("expected a call binder transport")
+    };
+    assert_eq!(transport.callee(), "increment");
+    assert_eq!(transport.binders()[0].binder(), "first");
+    assert_eq!(transport.binders()[0].instance(), "c");
+    assert!(transport.produced().is_none());
+
+    let source = r#"verifying "increment.c";
+        resource Counter() { field revision: int32; }
+        void increment(int32* state) {
+            owns first: Counter();
+            ensures first.revision == 1;
+        } by {
+            unfold(first);
+            execute();
+            let first = fold(Counter(), { revision: 1 });
+            simp();
+        }
+        void caller(int32* state) {
+            owns c: Counter();
+            ensures c.revision == 1;
+        } by { step(increment(state), { first: c }); execute(); simp(); }
+    "#;
+    let c = [(
+        "increment.c",
+        "void increment(int32* state) { }\nvoid caller(int32* state) { increment(state); }",
+    )];
+    let verified = verify_c0_sources(source, &c).unwrap();
+    let expanded = verified
+        .iter()
+        .filter_map(|claim| claim.expanded_proof_source().ok())
+        .find(|expanded| expanded.contains("step(increment"))
+        .unwrap_or_else(|| panic!("no expanded proof kept the call step"));
+    assert!(
+        expanded.contains("step(increment(state), { first: c });"),
+        "{expanded}"
+    );
+    verify_c0_sources(
+        &source.replace(
+            "by { step(increment(state), { first: c }); execute(); simp(); }",
+            &expanded,
+        ),
+        &c,
+    )
+    .unwrap();
+}
+
+#[test]
+fn call_binder_transport_rejects_a_frontier_call_to_another_function() {
+    let source = r#"verifying "increment.c";
+        resource Counter() { field revision: int32; }
+        void increment(int32* state) {
+            owns first: Counter();
+            ensures first.revision == 1;
+        } by {
+            unfold(first);
+            execute();
+            let first = fold(Counter(), { revision: 1 });
+            simp();
+        }
+        void other(int32* state) { ensures 0 == 0; }
+        void caller(int32* state) {
+            owns c: Counter();
+            ensures c.revision == 1;
+        } by { step(increment(state), { first: c }); execute(); simp(); }
+    "#;
+    let c = [(
+        "increment.c",
+        "void increment(int32* state) { }\nvoid other(int32* state) { }\nvoid caller(int32* state) { other(state); increment(state); }",
+    )];
+    let error = verify_c0_sources(source, &c).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("requires a call to `increment` at the current frontier"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn explicit_contract_empty_application_verifies_and_expands() {
     let source = r#"verifying "invoke.c";
         contract Identity() for int32(int32 x) { ensures result == x; }

@@ -957,7 +957,8 @@ Pure-function applications remain symbolic;
 fold checks the resource relation against the proposed value. Initializer
 memory reads must be justified. A consumed name does not supply a current
 field value; use an entry snapshot when that is the intended model.
-Ordinary call transport of newly constructed resources remains deferred.
+An ordinary C call transports constructed resources through the explicit
+binder map described under "Calls that transport named instances".
 
 Guarded and constructor-matched memory-only bodies support explicit construction
 and field updates with the same `let c = fold(...)` syntax. No earlier unfold
@@ -1062,8 +1063,47 @@ Mixed resource families, witnesses, nested resource matches/guards, arbitrary
 match scrutinees, and passing child paths as contract arguments remain
 unsupported. No operation automatically unfolds an entire recursive structure.
 
-Ordinary inline-call transport remains incomplete. A declaration alone grants no ownership, and binding an instance
-does not implicitly expose its memory body.
+A declaration alone grants no ownership, and binding an instance does not
+implicitly expose its memory body.
+
+### Calls that transport named instances
+
+A C function whose sidecar declares instance binders is called with an
+explicit map from each of those binders to an instance the caller owns:
+
+<!-- verified-example: mdtests/c_call_binder_transport.md -->
+```click
+step(increment(state), { first: c });
+```
+
+The first argument is the call as written in the source, so the step still
+selects one call statement: the frontier must be a call to that function with
+that many arguments. The map is required whenever the callee declares any
+`owns`, `consumes`, or `produces` binder, and a callee with none takes no map.
+It is the only source of bindings; nothing is matched by name, by position, or
+by search. Missing, duplicate, unknown, wrong-family, and unowned entries are
+rejected where they are written.
+
+The transition is the one a named contract's proof arguments already take.
+A `consumes` binder removes the caller's instance. An `owns` binder returns
+the same identity with fresh post-call fields, related to its entry fields
+only by the callee's guarantees, so a field the callee does not mention is
+unknown afterwards. Caller instances the map does not mention frame unchanged.
+
+An instance the callee `produces` does not exist before the call, so the
+caller introduces it with `let`:
+
+<!-- verified-example: mdtests/c_call_binder_transport_produces.md -->
+```click
+let node = step(init(p, left, right, value), { l: a, r: b });
+```
+
+The introduced name is an ordinary owned instance afterwards: it can be folded
+into a parent as a child, or returned by the caller's own `produces` clause.
+A `produces` binder that no `let` introduces is an error, and so is a `let` on
+a call that produces nothing. A callee that produces more than one instance is
+not yet callable this way. The callee's binder names come from its own
+sidecar, so that sidecar must be declared before the proof that calls it.
 
 A composite body may instead have one top-level guard:
 

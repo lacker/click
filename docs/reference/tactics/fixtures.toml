@@ -33,6 +33,11 @@ path = "mdtests/contract_explicit_empty_application.md"
 needle = "step(Identity());"
 
 [[form]]
+id = "step-call"
+path = "mdtests/c_call_binder_transport.md"
+needle = "step(increment(state), { first: c });"
+
+[[form]]
 id = "execute"
 path = "mdtests/tactic_execute.md"
 needle = "execute();"

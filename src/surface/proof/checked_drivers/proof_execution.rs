@@ -28,6 +28,7 @@ fn arm_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
     match tactic {
         ProofTactic::Step => Some(ProofStep::Step),
         ProofTactic::StepContract(name) => Some(ProofStep::StepContract(name.clone())),
+        ProofTactic::StepCall(transport) => Some(ProofStep::StepCall(transport.clone())),
         tactic => linear_execution_proof_step(tactic),
     }
 }
@@ -37,6 +38,7 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
         ProofTactic::Mark(name) => Some(ProofStep::Mark(name.clone())),
         ProofTactic::Step => Some(ProofStep::Step),
         ProofTactic::StepContract(name) => Some(ProofStep::StepContract(name.clone())),
+        ProofTactic::StepCall(transport) => Some(ProofStep::StepCall(transport.clone())),
         ProofTactic::TransportUsing {
             source,
             target,
@@ -148,7 +150,7 @@ fn checked_execution_arm_tactics_end(
         }
         if matches!(
             indexed.tactic,
-            ProofTactic::Step | ProofTactic::StepContract(_)
+            ProofTactic::Step | ProofTactic::StepContract(_) | ProofTactic::StepCall(_)
         ) {
             may_exit = true;
             continue;
@@ -2952,6 +2954,7 @@ fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<ClickError> 
     let name = match tactic {
         ProofTactic::Step => "step()".to_string(),
         ProofTactic::StepContract(name) => format!("step({name})"),
+        ProofTactic::StepCall(transport) => transport.to_string(),
         ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => "execute()".to_string(),
         ProofTactic::ExecuteUntil(region) => format!(
             "execute_until({})",

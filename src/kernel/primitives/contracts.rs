@@ -1583,6 +1583,22 @@ impl CExecutionEnvironment {
         self.selected_call_resource_arguments = Some(arguments.into());
         self
     }
+
+    /// Selects the binder transport for one ordinary C call to `function`.
+    /// The map is the only source of bindings for that call.
+    pub(crate) fn with_selected_call_binders(
+        mut self,
+        function: &str,
+        arity: usize,
+        bindings: BTreeMap<Variable, Variable>,
+    ) -> Self {
+        self.selected_call_binders = Some(std::sync::Arc::new(CCallBinderTransport {
+            function: std::sync::Arc::from(function),
+            arity,
+            bindings: std::sync::Arc::new(bindings),
+        }));
+        self
+    }
     pub fn new() -> Self {
         Self::default()
     }
