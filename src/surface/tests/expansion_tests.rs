@@ -15,6 +15,14 @@ theorem integer_exists_simp(x: Integer) {
 theorem integer_forall_logical_simp() {
     ensures logical: forall (z: Integer) { z == z and z == z } by { simp(); }
 }
+theorem integer_exists_choose() {
+    requires exists (z: Integer) { z == z };
+    ensures chosen: exists (k: Integer) { k == k } by {
+        choose(candidate from requirement 0);
+        witness(k = candidate);
+        assumption();
+    }
+}
 "#;
     verify_c0_sources(source, &[]).expect("Integer quantifier smart proofs should verify");
 
@@ -22,6 +30,7 @@ theorem integer_forall_logical_simp() {
         "integer_forall_simp.ordered",
         "integer_exists_simp.witnessed",
         "integer_forall_logical_simp.logical",
+        "integer_exists_choose.chosen",
     ] {
         let expanded = expand_c0_claim_source_by_label(source, &[], label)
             .expect("the Integer quantifier claim should expand");
@@ -32,9 +41,18 @@ theorem integer_forall_logical_simp() {
             );
         } else if label.ends_with("witnessed") {
             assert!(expanded.contains("normalize();"), "{label}: {expanded}");
-        } else {
+        } else if label.ends_with("logical") {
             assert!(expanded.contains("intro();"), "{label}: {expanded}");
             assert!(expanded.contains("both {"), "{label}: {expanded}");
+        } else {
+            assert!(
+                expanded.contains("choose(candidate from requirement 0);"),
+                "{label}: {expanded}"
+            );
+            assert!(
+                expanded.contains("witness(k = candidate);"),
+                "{label}: {expanded}"
+            );
         }
         verify_c0_sources(&expanded, &[]).unwrap_or_else(|error| {
             panic!("{label} expansion should recheck: {}", error.message())

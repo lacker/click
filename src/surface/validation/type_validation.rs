@@ -819,6 +819,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Rewrite(_)
             | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::Witness(_)
+            | ProofTactic::Choose(_)
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
             ProofTactic::Match(proof_match) => {
@@ -867,8 +868,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::TransportUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
-            | ProofTactic::ConstructResource(_)
-            | ProofTactic::Choose(_) => {
+            | ProofTactic::ConstructResource(_) => {
                 return Err(ClickError::new(format!(
                     "tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)

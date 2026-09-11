@@ -318,6 +318,9 @@ impl<'a> Proof<'a> {
         &self,
         choice: &ProofChoice,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
+            return self.apply_pure_integer_choose(choice);
+        }
         let frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
@@ -432,6 +435,75 @@ impl<'a> Proof<'a> {
         };
         let facts = self.facts().with_kernel_checked_fact(chosen_fact.clone());
         Ok(self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]))
+    }
+
+    fn apply_pure_integer_choose(
+        &self,
+        choice: &ProofChoice,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            unreachable!()
+        };
+        if context
+            .theorem_context
+            .integer_values
+            .get(&choice.name)
+            .is_some()
+            || context.theorem_context.values.contains_key(&choice.name)
+            || self
+                .state()
+                .locals()
+                .integer_values
+                .get(&choice.name)
+                .is_some()
+            || self.state().locals().values.get(&choice.name).is_some()
+        {
+            return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
+        }
+        let index = match &choice.source {
+            ProofFactSource::Requirement(index) => *index,
+            ProofFactSource::RequirementLabel(label) => {
+                return Err(self.step_error(format!(
+                    "pure `choose` does not support requirement labels (`{label}`)"
+                )));
+            }
+        };
+        let source = context
+            .theorem_context
+            .requires
+            .get(index)
+            .cloned()
+            .ok_or_else(|| self.step_error(format!("requirement {index} is out of range")))?;
+        let Proposition::Exists {
+            var,
+            sort: Sort::Integer,
+            body,
+            ..
+        } = source
+        else {
+            return Err(self.step_error(
+                "pure `choose` currently requires an Integer existential requirement",
+            ));
+        };
+        let chosen =
+            crate::kernel::IntegerTerm::var(Variable(self.state().locals().next_choice_variable));
+        let fact =
+            crate::kernel::substitute_integer_variable_in_pure_proposition(&body, var, &chosen)
+                .map_err(|error| {
+                    self.step_error(format!("could not apply Integer choice: {error:?}"))
+                })?;
+        let mut locals = self.state().locals().clone();
+        locals.integer_values = locals.integer_values.with_inserted(
+            choice.name.clone(),
+            crate::kernel::SpecIntegerExpression::Term(chosen),
+        );
+        locals.next_choice_variable += 1;
+        let added = (!self.facts().contains_top_level(&fact))
+            .then(|| fact.clone())
+            .into_iter()
+            .collect();
+        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
     }
 
     pub(super) fn apply_fixed_state_witness(
@@ -598,13 +670,16 @@ impl<'a> Proof<'a> {
         for (name, value) in self.state().locals().integer_values.iter() {
             integer_values = integer_values.with_inserted(name.clone(), value.clone());
         }
-        let value = crate::surface::lowering::lower_contract_integer_to_spec(
+        let promoted = crate::surface::proof::surface_lowering::promote_integer_expression(
             &witness.value,
             &integer_values,
-        )
-        .map_err(|message| {
-            self.step_error(format!("could not lower Integer witness: {message}"))
-        })?;
+            &crate::persistent::PersistentMap::default(),
+        );
+        let value =
+            crate::surface::lowering::lower_contract_integer_to_spec(&promoted, &integer_values)
+                .map_err(|message| {
+                    self.step_error(format!("could not lower Integer witness: {message}"))
+                })?;
         let crate::kernel::SpecIntegerExpression::Term(value) = value else {
             return Err(
                 self.step_error("pure `witness` currently supports only lowered Integer terms")

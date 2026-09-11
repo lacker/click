@@ -3,7 +3,7 @@
 use super::pure_theorems::lower_pure_theorem_proposition_with_algebraic_and_integer_values;
 use super::*;
 
-fn promote_integer_expression(
+pub(super) fn promote_integer_expression(
     expression: &ContractExpression,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     surface_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
