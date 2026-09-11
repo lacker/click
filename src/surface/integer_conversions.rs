@@ -131,6 +131,69 @@ mod tests {
     }
 
     #[test]
+    fn integer_function_let_aliases_preserve_shared_expression_scaling() {
+        let mut measured = Vec::new();
+        for depth in [8, 16, 32, 64] {
+            let mut source = String::from(
+                "function f(x: Integer, y: Integer) -> Integer { x + y }\n\
+                 theorem aliases(z: Integer) { let a0: Integer = z;\n",
+            );
+            for index in 1..=depth {
+                source.push_str(&format!(
+                    "let a{index}: Integer = f(a{}, a{});\n",
+                    index - 1,
+                    index - 1
+                ));
+            }
+            source.push_str(&format!(
+                "requires a{depth} == a{depth}; ensures a{depth} == a{depth} by {{ assumption(); }} }}"
+            ));
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &[])
+            });
+            result.unwrap_or_else(|error| panic!("depth {depth}: {}", error.message()));
+            measured.push(work);
+        }
+        for pair in measured.windows(2) {
+            assert!(
+                pair[1] <= 3 * pair[0],
+                "Integer aliases expanded: {measured:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_integer_function_high_arity_scales_with_arguments() {
+        let mut measured = Vec::new();
+        for arity in [8, 16, 32, 64] {
+            let parameters = (0..arity)
+                .map(|index| format!("x{index}: int32"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let arguments = (0..arity)
+                .map(|index| format!("x{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let source = format!(
+                "function mix({parameters}) -> Integer {{ to_integer(x0) }}\n\
+                 theorem call({parameters}) {{\n\
+                 ensures mix({arguments}) == mix({arguments}) by {{ simp(); }} }}"
+            );
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &[])
+            });
+            result.unwrap_or_else(|error| panic!("arity {arity}: {}", error.message()));
+            measured.push(work);
+        }
+        for pair in measured.windows(2) {
+            assert!(
+                pair[1] <= 3 * pair[0],
+                "deferred arity expanded: {measured:?}"
+            );
+        }
+    }
+
+    #[test]
     fn integer_conversion_proofs_expand_and_recheck() {
         for source in [
             "theorem conversion(x: int32) { ensures to_integer(x) == to_integer(x) by simp; }",
