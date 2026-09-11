@@ -2,7 +2,7 @@
 // `src/surface/planning/proposition_search.rs`. The kernel itself never
 // calls it, so the tests import the planner explicitly.
 use super::*;
-use crate::kernel::{IntegerRangeFoldIndex, IntegerTerm, SharedIntegerTerm};
+use crate::kernel::{IntegerRangeFoldIndex, IntegerTerm, LoweringIntroduction, SharedIntegerTerm};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 fn indexed_fact(index: u32) -> Proposition {
@@ -848,6 +848,287 @@ fn have_scope_publishes_only_a_completed_checked_body() {
             ProofStep::Assumption,
         ]
     );
+}
+
+fn pure_have_presentation_root(surface: ClickProposition) -> Proof<'static> {
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let theorem_context = Box::leak(Box::new(PureTheoremContext {
+        integer_values: crate::persistent::PersistentMap::default(),
+        memory: CMemory::new(),
+        values: BTreeMap::new(),
+        array_refs: BTreeMap::new(),
+        requires: Vec::new(),
+        surface_requirements: SurfacePropositionMap::default(),
+    }));
+    let kernel = lower_pure_theorem_proposition(
+        "reported have",
+        &surface,
+        &theorem_context.values,
+        &theorem_context.array_refs,
+        &theorem_context.memory,
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("test proposition should lower");
+    // The environments and context are intentionally leaked for this small
+    // presentation-only test so the returned Proof can retain its borrowed
+    // construction inputs without introducing a second fixture harness.
+    let predicate_environment = Box::leak(Box::new(predicate_environment));
+    let click_function_environment = Box::leak(Box::new(click_function_environment));
+    let theorem_environment = Box::leak(Box::new(theorem_environment));
+    Proof::for_pure_goal(
+        "reported have",
+        &[],
+        kernel,
+        theorem_context,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    )
+}
+
+#[test]
+fn have_scope_accepts_matching_reported_goal_and_records_introductions() {
+    let binder = "written".to_string();
+    let surface = ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: binder.clone(),
+        body: Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable(binder.clone())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable(binder.clone())),
+        }),
+    };
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).expect("have should open");
+    let reported = scope
+        .body()
+        .goal()
+        .expect("have body should have a lowered goal")
+        .clone();
+    let introductions = vec![LoweringIntroduction::WrittenUniversal {
+        name: binder,
+        variable: Variable(7_654_321),
+        pointer: false,
+        integer: false,
+    }];
+    let adapted = scope
+        .with_reported_goal_introductions(&reported, Some(introductions))
+        .expect("matching reported goal should be accepted");
+    let actual_variable = match &reported {
+        Proposition::ForAll { var, .. } => *var,
+        other => panic!("expected a universal reported goal, got {other:?}"),
+    };
+    assert!(matches!(
+        adapted
+            .body()
+            .proposition_obligation()
+            .expect("body proposition")
+            .introductions
+            .head(),
+        Some(LoweringIntroduction::WrittenUniversal {
+            name,
+            variable,
+            pointer: false,
+            integer: false,
+        }) if name == "written" && *variable == actual_variable
+    ));
+    assert!(adapted.body().certificate().steps().is_empty());
+    assert_eq!(
+        scope.body().state.locals().values,
+        adapted.body().state.locals().values
+    );
+    assert_eq!(
+        scope.body().state.locals().integer_values,
+        adapted.body().state.locals().integer_values
+    );
+    assert_eq!(
+        scope.body().state.locals().next_choice_variable,
+        adapted.body().state.locals().next_choice_variable
+    );
+    assert_eq!(
+        scope.body().state.added_facts(),
+        adapted.body().state.added_facts()
+    );
+    assert_eq!(
+        scope.body().state.checked_facts(),
+        adapted.body().state.checked_facts()
+    );
+    assert_eq!(scope.body().goal(), adapted.body().goal());
+    assert!(Arc::ptr_eq(&scope.body().node, &adapted.body().node));
+
+    // The recorded binder id above is deliberately foreign. The adapter
+    // rebounded it to the actual goal binder, and the checked
+    // intro must use the kernel's already-lowered binder, then the ordinary
+    // normalizer and join must recheck the resulting certificate.
+    let introduced = adapted
+        .apply_step(ProofStep::Intro)
+        .expect("recorded universal should consume through checked intro");
+    let completed = introduced
+        .apply_step(ProofStep::Normalize)
+        .expect("the renamed universal body should normalize");
+    let enclosing = completed
+        .join()
+        .expect("the checked intro certificate should join")
+        .apply_step(ProofStep::Assumption)
+        .expect("the joined have fact should close the enclosing goal");
+    assert!(enclosing.is_complete());
+}
+
+#[test]
+fn have_scope_rejects_mismatched_reported_goal_transactionally() {
+    let surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).expect("have should open");
+    let before = scope.body().clone();
+    let wrong = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Constant(0)),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    let error = match scope.with_reported_goal_introductions(&wrong, Some(Vec::new())) {
+        Ok(_) => panic!("a mismatched reported goal must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .raw_summary()
+            .contains("does not match its reported requirement")
+    );
+    assert!(scope.body().certificate().steps().is_empty());
+    assert!(before.state.shares_state_with(&scope.body().state));
+    assert!(Arc::ptr_eq(&before.node, &scope.body().node));
+}
+
+#[test]
+fn have_scope_rejects_inconsistent_universal_binder_flags() {
+    let binder = "written".to_string();
+    let surface = ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: binder.clone(),
+        body: Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable(binder.clone())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable(binder)),
+        }),
+    };
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).expect("have should open");
+    let reported = scope.body().goal().expect("lowered goal").clone();
+    let error = match scope.with_reported_goal_introductions(
+        &reported,
+        Some(vec![LoweringIntroduction::WrittenUniversal {
+            name: "written".to_string(),
+            variable: Variable(9_876_543),
+            pointer: true,
+            integer: false,
+        }]),
+    ) {
+        Ok(_) => panic!("a pointer binder flag must not apply to an int32 goal"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .raw_summary()
+            .contains("inconsistent `have` binder flags")
+    );
+}
+
+#[test]
+fn have_scope_matches_renamed_existential_display_name_and_binder() {
+    let surface = ClickProposition::Exists {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "chosen".to_string(),
+        body: Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("chosen".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(7))),
+        }),
+    };
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).expect("have should open");
+    let reported = Proposition::Exists {
+        name: "different_display_name".to_string(),
+        var: Variable(8_765_432),
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(8_765_432))),
+                Box::new(Bitvector32Term::Constant(7)),
+            ),
+            true,
+        )),
+    };
+    scope
+        .with_reported_goal_introductions(&reported, None)
+        .expect("alpha-renamed existential should match");
+}
+
+#[test]
+fn have_scope_rejects_unreachable_universal_introduction() {
+    let quantified = ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "branch_local".to_string(),
+        body: Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("branch_local".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable("branch_local".to_string())),
+        }),
+    };
+    let surface = ClickProposition::Or(
+        Box::new(quantified),
+        Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        }),
+    );
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).expect("have should open");
+    let reported = scope.body().goal().expect("lowered goal").clone();
+    let error = match scope.with_reported_goal_introductions(
+        &reported,
+        Some(vec![LoweringIntroduction::WrittenUniversal {
+            name: "branch_local".to_string(),
+            variable: Variable(9_876_543),
+            pointer: false,
+            integer: false,
+        }]),
+    ) {
+        Ok(_) => panic!("an unreachable branch binder must not be selected"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .raw_summary()
+            .contains("do not match the nested `have` binders")
+    );
+}
+
+#[test]
+fn have_scope_with_no_reported_introductions_is_presentation_noop() {
+    let surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+    };
+    let root = pure_have_presentation_root(surface.clone());
+    let scope = root.begin_have(surface).expect("have should open");
+    let reported = scope.body().goal().expect("lowered goal").clone();
+    let adapted = scope
+        .with_reported_goal_introductions(&reported, None)
+        .expect("matching goal without metadata should be accepted");
+    assert!(scope.body().state.shares_state_with(&adapted.body().state));
+    assert!(Arc::ptr_eq(&scope.body().node, &adapted.body().node));
+    assert!(adapted.body().proposition_obligation().is_some());
 }
 
 #[test]

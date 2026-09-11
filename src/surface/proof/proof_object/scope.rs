@@ -46,6 +46,117 @@ impl<'a> ProofScope<'a> {
         self.body.begin_have(proposition)
     }
 
+    /// Associates the checked lowering metadata reported by a refused
+    /// requirement with an already-open `have` body.
+    ///
+    /// The requirement is checked against the body's actual lowered kernel
+    /// goal before any presentation is installed.  This keeps a synthesized
+    /// spelling from becoming proof authority: a mismatch is rejected while
+    /// the scope (including its semantic state and provenance) remains
+    /// unchanged.  The introduction chain is presentation-only and may be
+    /// absent when the lowering did not record one.
+    pub(in crate::surface::proof) fn with_reported_goal_introductions(
+        &self,
+        reported: &Proposition,
+        introductions: Option<crate::kernel::LoweringIntroductions>,
+    ) -> Result<Self, ClickError> {
+        let actual = self.body.goal().ok_or_else(|| {
+            self.root
+                .step_error("reported requirement has no proposition goal")
+        })?;
+        if !crate::kernel::proof::propositions_are_alpha_equal(actual, reported) {
+            return Err(self
+                .root
+                .step_error("synthesized `have` goal does not match its reported requirement"));
+        }
+        let Some(introductions) = introductions else {
+            return Ok(self.clone());
+        };
+        // Walk the focused introduction path, rather than collecting every
+        // quantifier in the proposition. A quantifier in an unrelated
+        // connective branch is not reachable by `intro` and must not be used
+        // to bind a reported introduction.
+        let mut cursor = actual;
+        let introductions = introductions
+            .into_iter()
+            .map(|introduction| match introduction {
+                crate::kernel::LoweringIntroduction::PathFactGuard
+                | crate::kernel::LoweringIntroduction::ObligationGuard
+                | crate::kernel::LoweringIntroduction::WrittenImplication => {
+                    let Proposition::Implies(_, body) = cursor else {
+                        return Err(self.root.step_error(
+                            "reported introductions do not match the nested `have` path",
+                        ));
+                    };
+                    cursor = body;
+                    Ok(introduction)
+                }
+                crate::kernel::LoweringIntroduction::WrittenNegation => {
+                    let Proposition::Not(body) = cursor else {
+                        return Err(self.root.step_error(
+                            "reported introductions do not match the nested `have` path",
+                        ));
+                    };
+                    cursor = body;
+                    Ok(introduction)
+                }
+                crate::kernel::LoweringIntroduction::WrittenUniversal {
+                    name,
+                    pointer,
+                    integer,
+                    ..
+                } => {
+                    let Proposition::ForAll {
+                        var: variable,
+                        sort,
+                        body,
+                        ..
+                    } = cursor
+                    else {
+                        return Err(self.root.step_error(
+                            "reported introductions do not match the nested `have` binders",
+                        ));
+                    };
+                    let expected = match sort {
+                        crate::kernel::Sort::Integer => (false, true),
+                        crate::kernel::Sort::CInt32 => (false, false),
+                        crate::kernel::Sort::CPointer(_) => (true, false),
+                        _ => {
+                            return Err(self.root.step_error(
+                                "reported introductions use an unsupported `have` binder sort",
+                            ));
+                        }
+                    };
+                    if (pointer, integer) != expected {
+                        return Err(self.root.step_error(
+                            "reported introductions use inconsistent `have` binder flags",
+                        ));
+                    }
+                    cursor = body;
+                    Ok(crate::kernel::LoweringIntroduction::WrittenUniversal {
+                        name,
+                        variable: *variable,
+                        pointer,
+                        integer,
+                    })
+                }
+            })
+            .collect::<Result<crate::kernel::LoweringIntroductions, ClickError>>()?;
+        if matches!(
+            cursor,
+            Proposition::Implies(_, _) | Proposition::Not(_) | Proposition::ForAll { .. }
+        ) {
+            return Err(self
+                .root
+                .step_error("reported introductions omit a reachable nested `have` step"));
+        }
+        let mut next = self.clone();
+        next.body = next
+            .body
+            .with_recorded_goal_introductions(Some(introductions));
+        Ok(next)
+    }
+
     /// Incorporates one completed proposition or resource scope rooted at the
     /// current body as the outer scope's next checked structural node.
     ///

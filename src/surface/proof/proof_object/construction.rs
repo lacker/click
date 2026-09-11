@@ -22,7 +22,7 @@ impl<'a> Proof<'a> {
         let Some(state) = self
             .state
             .with_focused_proposition_presentation(|presentation| PropositionPresentation {
-                introductions: GoalIntroductions::recorded(introductions.clone()),
+                introductions: GoalIntroductions::from_lowering(Some(introductions)),
                 ..presentation.clone()
             })
         else {

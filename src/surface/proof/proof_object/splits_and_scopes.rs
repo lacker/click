@@ -730,18 +730,15 @@ impl<'a> Proof<'a> {
             ),
             None => OpenBranch::surface_proposition_in(
                 body_context,
-                body_kernel,
+                body_kernel.clone(),
                 structural_proposition,
             ),
         };
-        if let Obligation::Proposition(body) = &mut body_goal.obligation {
-            // The nested goal was lowered here, so it owns the head chain
-            // that lowering recorded for it.
-            body.introductions = GoalIntroductions::from_lowering(body_introductions);
-            if let Some(Obligation::Proposition(parent)) = self.focused_obligation() {
-                body.surface_bindings = parent.surface_bindings.clone();
-                body.introduced_antecedents = parent.introduced_antecedents.clone();
-            }
+        if let Obligation::Proposition(body) = &mut body_goal.obligation
+            && let Some(Obligation::Proposition(parent)) = self.focused_obligation()
+        {
+            body.surface_bindings = parent.surface_bindings.clone();
+            body.introduced_antecedents = parent.introduced_antecedents.clone();
         }
         let body = Proof {
             site: self.site.nested(ProofStepBlock::Have),
@@ -754,7 +751,7 @@ impl<'a> Proof<'a> {
                 depth: 0,
             }),
         };
-        Ok(ProofScope {
+        let scope = ProofScope {
             root: self.clone(),
             structure: Box::new(ProofScopeStructure::Have {
                 proposition,
@@ -763,7 +760,11 @@ impl<'a> Proof<'a> {
             }),
             body,
             introduced_facts: Vec::new(),
-        })
+        };
+        // The lowering result is also the checked report used by the
+        // presentation adapter. Validate it against the fresh body's actual
+        // kernel goal before installing its presentation-only metadata.
+        scope.with_reported_goal_introductions(&body_kernel, body_introductions)
     }
 
     /// Opens one composite resource body as an execution scope. Entry is an
