@@ -5479,6 +5479,37 @@ impl Parser {
             .unwrap_or_else(|| source_name.to_string())
     }
 
+    /// Whether `name`, already resolved by [`Self::resolve_name`], is an
+    /// object this translation unit declares. `resolve_name` falls back to the
+    /// source spelling for a name it does not know, so the only way to tell a
+    /// declared object from an undeclared identifier is to look the resolved
+    /// name back up. This walks every declaration, so call it only on a path
+    /// that is already reporting an error.
+    fn declares_resolved_object(&self, name: &str) -> bool {
+        self.variable_types.contains_key(name)
+            || self
+                .scopes
+                .iter()
+                .flat_map(|scope| scope.iter())
+                .any(|binding| binding.kernel_name == name)
+            || self
+                .globals
+                .values()
+                .any(|global| global.kernel_name() == name)
+            || self
+                .global_arrays
+                .values()
+                .any(|global| global.kernel_name() == name)
+            || self
+                .global_aggregates
+                .values()
+                .any(|global| global.kernel_name() == name)
+            || self
+                .global_aggregate_arrays
+                .values()
+                .any(|global| global.kernel_name() == name)
+    }
+
     fn resolve_object_name(
         &self,
         source_name: &str,
@@ -5830,6 +5861,27 @@ impl Parser {
 
     fn function_declaration(&self, name: &str) -> Option<&C0FunctionHeader> {
         self.function_declaration_for_call(name)
+    }
+
+    /// C decays a bare function designator to a pointer to that function in
+    /// every position where a value is expected, so `f` and `&f` denote the
+    /// same address. Only a name this translation unit declares as a function
+    /// decays; a name it knows as an object, a name whose declaration has gone
+    /// out of scope, and a name it does not know at all stay object references
+    /// so they keep their ordinary diagnostics. Call positions never reach
+    /// here, so `f(x)` remains a call.
+    fn bare_function_designator(&self, source_name: &str) -> Option<C0Expression> {
+        if self.out_of_scope_names.contains(source_name)
+            || self
+                .variable_types
+                .contains_key(&self.resolve_name(source_name))
+            || !self.function_declarations.contains_key(source_name)
+        {
+            return None;
+        }
+        Some(C0Expression::FunctionAddress(
+            self.resolve_function_name(source_name),
+        ))
     }
 
     /// Records a parameter or local declaration in the innermost scope. A
@@ -13504,7 +13556,18 @@ impl Parser {
                 describe_function_pointer_signature(&actual)
             ))),
             None if matches!(expression, C0Expression::FunctionAddress(_)) => Ok(()),
-            None => Err(self.error_here("expected a compatible function pointer")),
+            None => {
+                // A bare name here decayed to a function address when this
+                // translation unit declared it as a function. If it names no
+                // object either, the identifier is simply undeclared, and
+                // saying so beats reporting an incompatible pointer.
+                if let C0Expression::Variable(name) = expression
+                    && !self.declares_resolved_object(name)
+                {
+                    return Err(self.error_here(format!("use of undeclared identifier `{name}`")));
+                }
+                Err(self.error_here("expected a compatible function pointer"))
+            }
         }
     }
 
@@ -15249,6 +15312,8 @@ impl Parser {
                             // different C source. The translation-unit linker
                             // resolves that name after each source is parsed.
                             Ok(C0Expression::Variable(self.resolve_name(&name)))
+                        } else if let Some(address) = self.bare_function_designator(&name) {
+                            Ok(address)
                         } else {
                             Ok(C0Expression::Variable(
                                 self.resolve_object_name(&name, at.position)?,
