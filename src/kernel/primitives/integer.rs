@@ -61,58 +61,62 @@ struct SharedIntegerApplicationNode {
     arguments: Vec<PureFunctionArgument>,
 }
 
+struct IntegerApplicationInterner {
+    buckets: HashMap<
+        u64,
+        Vec<(
+            String,
+            Vec<PureFunctionArgument>,
+            Weak<SharedIntegerApplicationNode>,
+        )>,
+    >,
+    cleanup: VecDeque<(u64, usize)>,
+    next_id: u64,
+}
+
 impl SharedIntegerApplication {
     #[allow(dead_code)]
     pub(crate) fn intern(name: String, arguments: Vec<PureFunctionArgument>) -> Self {
-        static INTERNER: OnceLock<
-            Mutex<
-                HashMap<
-                    u64,
-                    Vec<(
-                        String,
-                        Vec<PureFunctionArgument>,
-                        Weak<SharedIntegerApplicationNode>,
-                    )>,
-                >,
-            >,
-        > = OnceLock::new();
-        static CLEANUP: OnceLock<Mutex<VecDeque<(u64, usize)>>> = OnceLock::new();
-        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static INTERNER: OnceLock<Mutex<IntegerApplicationInterner>> = OnceLock::new();
         let mut hasher = DefaultHasher::new();
         name.hash(&mut hasher);
         arguments.hash(&mut hasher);
         let key = hasher.finish();
-        let interner = INTERNER.get_or_init(|| Mutex::new(HashMap::new()));
+        let interner = INTERNER.get_or_init(|| {
+            Mutex::new(IntegerApplicationInterner {
+                buckets: HashMap::new(),
+                cleanup: VecDeque::new(),
+                next_id: 0,
+            })
+        });
         let mut interner = interner
             .lock()
             .expect("Integer application interner lock poisoned");
-        let cleanup = CLEANUP.get_or_init(|| Mutex::new(VecDeque::new()));
-        let cleanup_limit = cleanup.lock().expect("cleanup lock poisoned").len().min(8);
+        let cleanup_limit = interner.cleanup.len().min(8);
         for _ in 0..cleanup_limit {
-            let Some((fingerprint, pointer)) =
-                cleanup.lock().expect("cleanup lock poisoned").pop_front()
-            else {
+            let Some((fingerprint, pointer)) = interner.cleanup.pop_front() else {
                 break;
             };
-            if let Some(bucket) = interner.get_mut(&fingerprint) {
+            let mut requeue = false;
+            if let Some(bucket) = interner.buckets.get_mut(&fingerprint) {
                 let live = bucket.iter().any(|(_, _, node)| {
                     node.as_ptr() as usize == pointer && node.strong_count() != 0
                 });
                 if live {
-                    cleanup
-                        .lock()
-                        .expect("cleanup lock poisoned")
-                        .push_back((fingerprint, pointer));
+                    requeue = true;
                 }
                 bucket.retain(|(_, _, node)| {
                     node.as_ptr() as usize != pointer || node.strong_count() != 0
                 });
                 if bucket.is_empty() {
-                    interner.remove(&fingerprint);
+                    interner.buckets.remove(&fingerprint);
                 }
             }
+            if requeue {
+                interner.cleanup.push_back((fingerprint, pointer));
+            }
         }
-        if let Some(bucket) = interner.get(&key) {
+        if let Some(bucket) = interner.buckets.get(&key) {
             for (old_name, old_arguments, node) in bucket {
                 if old_name == &name
                     && old_arguments == &arguments
@@ -122,12 +126,10 @@ impl SharedIntegerApplication {
                 }
             }
         }
-        let id = NEXT_ID
-            .fetch_update(
-                std::sync::atomic::Ordering::Relaxed,
-                std::sync::atomic::Ordering::Relaxed,
-                |id| id.checked_add(1),
-            )
+        let id = interner.next_id;
+        interner.next_id = interner
+            .next_id
+            .checked_add(1)
             .expect("Integer application interner ID exhausted");
         let node = Arc::new(SharedIntegerApplicationNode {
             id,
@@ -135,12 +137,12 @@ impl SharedIntegerApplication {
             arguments: arguments.clone(),
         });
         interner
+            .buckets
             .entry(key)
             .or_default()
             .push((name, arguments, Arc::downgrade(&node)));
-        cleanup
-            .lock()
-            .expect("cleanup lock poisoned")
+        interner
+            .cleanup
             .push_back((key, Arc::as_ptr(&node) as usize));
         Self(node)
     }
