@@ -2014,7 +2014,7 @@ fn validate_contract_expression_calls(
             validate_contract_expression_calls(body, click_functions, context)
         }
         ContractExpression::Call { name, arguments } => {
-            let builtin_arity = is_integer_conversion(name).then_some(1);
+            let builtin_arity = (is_integer_conversion(name) || name == "to_nat").then_some(1);
             let Some(arity) = builtin_arity.as_ref().or_else(|| click_functions.get(name)) else {
                 return Err(ClickError::new(format!(
                     "unknown function `{name}` in {context}"

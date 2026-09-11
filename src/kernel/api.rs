@@ -1308,6 +1308,40 @@ pub fn c_lower_spec_proposition_at_state_with_provenance(
     ),
     String,
 > {
+    let (goal, facts, obligations, introductions) =
+        c_lower_spec_proposition_with_checked_obligations(
+            state,
+            proposition,
+            entry_state,
+            assumptions,
+        )?;
+    Ok((
+        goal,
+        facts,
+        obligations
+            .into_iter()
+            .map(|obligation| obligation.proposition().clone())
+            .collect(),
+        introductions,
+    ))
+}
+
+/// Proof-side lowering keeps mandatory verification conditions distinct from
+/// assumable evaluation obligations until the caller checks their evidence.
+pub(crate) fn c_lower_spec_proposition_with_checked_obligations(
+    state: &CState,
+    proposition: &SpecProposition,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<
+    (
+        Proposition,
+        Vec<Proposition>,
+        Vec<ProofObligation>,
+        LoweringIntroductions,
+    ),
+    String,
+> {
     let lowering_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -1334,10 +1368,7 @@ pub fn c_lower_spec_proposition_at_state_with_provenance(
             .iter()
             .map(|fact| fact.proposition().clone())
             .collect(),
-        path.obligations
-            .iter()
-            .map(|obligation| obligation.proposition().clone())
-            .collect(),
+        path.obligations.clone(),
         path.introductions.clone(),
     ))
 }
@@ -1352,6 +1383,28 @@ pub fn c_evaluate_spec_expression_at_state(
     entry_state: Option<&CState>,
     assumptions: &PureFactContext,
 ) -> Result<(CValue, Vec<Proposition>), String> {
+    let (value, obligations) = c_evaluate_spec_expression_with_checked_obligations(
+        state,
+        expression,
+        entry_state,
+        assumptions,
+    )?;
+    Ok((
+        value,
+        obligations
+            .into_iter()
+            .map(|obligation| obligation.proposition().clone())
+            .collect(),
+    ))
+}
+
+/// Retains mandatory conversion conditions for proof-side expression capture.
+pub(crate) fn c_evaluate_spec_expression_with_checked_obligations(
+    state: &CState,
+    expression: &SpecExpression,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<(CValue, Vec<ProofObligation>), String> {
     let lowering_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
@@ -1372,13 +1425,7 @@ pub fn c_evaluate_spec_expression_at_state(
             paths.len()
         ));
     };
-    Ok((
-        path.value.clone(),
-        path.obligations
-            .iter()
-            .map(|obligation| obligation.proposition().clone())
-            .collect(),
-    ))
+    Ok((path.value.clone(), path.obligations.clone()))
 }
 
 pub fn c_function_entry_state(
@@ -5061,7 +5108,8 @@ fn rewrite_int32_term_by_exact_equality(
         | Bitvector32Term::UInt64BitwiseOr(_, _)
         | Bitvector32Term::UInt64BitwiseXor(_, _)
         | Bitvector32Term::UInt64BitwiseNot(_)
-        | Bitvector32Term::RangeFold { .. } => term.clone(),
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => term.clone(),
     }
 }
 
