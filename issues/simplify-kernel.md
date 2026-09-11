@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 6, 7, 11 (first slice), 14,
-and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10): packages 1, 2, 3, 6, 7, 11 (first slice), 12,
+14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -896,6 +896,21 @@ slice.
 
 ### Package 12: loop-rule prerequisite selection
 
+**Landed** 2026-09-10 ("Select verified loop rules by exact prerequisites
+only"). The `proves` leg and the `pure_facts().contains` materialization are
+gone; each required assumption must be `proves_exact`-available. A probe
+over the whole mdtest corpus showed the site is a discharge, not a
+selection: `CLoopInvariantCheck` labels make every source loop a distinct
+statement, so `(entry state, loop statement)` already keys exactly one
+rule, and no disjunction lowering or `using` clause is warranted. Scaling
+regression: 155/299/587/1163 work before, 0 at every size after. Left
+undone with reason: an end-to-end fixture where a rule is rejected for a
+missing prerequisite needs one source loop planned on two proof paths, and
+a `loop` tactic inside a `branch` arm is rejected today (the arm's
+interface trace names the pre-binding source while the loop tactic rebinds
+it), a goal-identity gap in package 7's family; the kernel unit tests cover
+the rejection instead.
+
 **Entry point.** `src/kernel/primitives/contracts.rs::applicable_verified_loop_rule`
 (about line 1683). Selects a verified loop rule by iterating all rules and
 asking `proves` whether each rule's required assumptions hold.
@@ -1010,8 +1025,8 @@ regression and the deletion becomes an explicit obligation instead.
 
 ### Dependency order
 
-Landed: 0, 1, 2, 3, 6, 7, 11 first slice, 14, 16. One owner in sequence,
-in flight: 4, then 13, then 8.
+Landed: 0, 1, 2, 3, 6, 7, 11 first slice, 12, 14, 16. In flight: 5, 9, and
+one owner in sequence for 4, then 13, then 8.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
