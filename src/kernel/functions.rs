@@ -2713,6 +2713,24 @@ fn framed_resource_transition_refines(
     ))
 }
 
+/// Checks that every segment the callback may write lies inside one segment
+/// the named contract declares mutable.
+///
+/// Both guard questions are decided by [`refinement_route_proves`]: exact
+/// membership in the refinement assumptions, or the frozen condition checker
+/// on a bare condition. A guard this cannot settle is treated as unsettled,
+/// which refuses the refinement rather than widening the checked footprint.
+/// There is no proof site here to receive an obligation instead: this is a
+/// boolean gate on a kernel-formed contract fact, so refusing is the
+/// conservative equivalent of emitting one.
+///
+/// The walk over the contract's declared segments is not a selection. Its only
+/// result is whether some declared segment covers the required range; no later
+/// check consults which one, and a corpus probe (both fixture harnesses, plus
+/// `c_named_contract_refinement_selects_guarded_segment`) found exactly one
+/// covering segment at every reached site. So this is a discharge, and a
+/// finite disjunction over the declared segments would spell a choice that
+/// nothing consumes.
 fn mutable_footprint_is_compatible(
     contract: &CFunction,
     function: &CFunction,
@@ -2739,8 +2757,13 @@ fn mutable_footprint_is_compatible(
     for (required_segment, required_guard) in
         function.contract_mutable().iter().zip(&function_guards)
     {
+        // A segment whose guard is exactly refuted here contributes no write,
+        // so it needs no cover. Anything weaker leaves the segment required.
         if required_guard.as_ref().is_some_and(|guard| {
-            guard_assumptions.proves(&Proposition::Not(Box::new(guard.clone())))
+            refinement_route_proves(
+                &guard_assumptions,
+                &Proposition::Not(Box::new(guard.clone())),
+            )
         }) {
             continue;
         }
@@ -2762,8 +2785,10 @@ fn mutable_footprint_is_compatible(
         for (available_segment, available_guard) in
             contract.contract_mutable().iter().zip(&contract_guards)
         {
+            // A contract segment counts as available only where its own guard
+            // is exactly established under the required segment's guard.
             if let Some(guard) = available_guard
-                && !active_assumptions.proves(guard)
+                && !refinement_route_proves(&active_assumptions, guard)
             {
                 continue;
             }
@@ -2967,6 +2992,68 @@ mod guarded_mutable_refinement_tests {
             "function",
             segment(Some(guard(CComparisonOperator::LessThan, 0)), 0, 1),
         );
+        assert!(!compatible(&contract, &function));
+    }
+
+    fn active_is_zero(value: bool) -> PureFactContext {
+        PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(980_001)),
+                Bitvector32Term::Constant(0),
+            ),
+            value,
+        ))
+    }
+
+    /// An available guard that only logical search could discharge is treated
+    /// as unsettled, so its segment is not available. The same footprint with
+    /// the guard spelled as the exactly available condition is accepted, so
+    /// the difference is the route rather than the content.
+    #[test]
+    fn disjunctive_available_guard_is_not_discharged_by_search() {
+        let exact = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 2),
+        );
+        let disjunctive = function_with_segment(
+            "contract",
+            segment(
+                Some(SpecProposition::Or(
+                    Box::new(guard(CComparisonOperator::NotEqual, 0)),
+                    Box::new(guard(CComparisonOperator::Equal, 5)),
+                )),
+                0,
+                2,
+            ),
+        );
+        let function = function_with_segment("function", segment(None, 0, 1));
+        let assumptions = active_is_zero(false);
+        assert!(compatible_with_assumptions(&exact, &function, &assumptions));
+        assert!(!compatible_with_assumptions(
+            &disjunctive,
+            &function,
+            &assumptions
+        ));
+    }
+
+    /// A required segment whose guard is exactly refuted contributes no write,
+    /// so nothing has to cover it. Without that refutation the same footprint
+    /// is wider than the contract's and is rejected.
+    #[test]
+    fn exactly_refuted_required_guard_needs_no_cover() {
+        let contract = function_with_segment(
+            "contract",
+            segment(Some(guard(CComparisonOperator::Equal, 1)), 0, 1),
+        );
+        let function = function_with_segment(
+            "function",
+            segment(Some(guard(CComparisonOperator::NotEqual, 0)), 0, 2),
+        );
+        assert!(compatible_with_assumptions(
+            &contract,
+            &function,
+            &active_is_zero(true)
+        ));
         assert!(!compatible(&contract, &function));
     }
 
