@@ -1904,7 +1904,6 @@ fn is_nat_integer_law_name(name: &str) -> bool {
             | "nat_integer_round_trip"
             | "integer_nat_round_trip"
             | "integer_to_nat_zero"
-            | "integer_to_nat_succ"
     )
 }
 
@@ -1966,7 +1965,7 @@ fn verify_kernel_standard_theorem_axiom(
     let (parameter_count, requirement_count) = match theorem.name() {
         "nat_integer_zero" | "integer_to_nat_zero" => (0, 0),
         "nat_integer_succ" | "nat_integer_nonnegative" | "nat_integer_round_trip" => (1, 0),
-        "integer_nat_round_trip" | "integer_to_nat_succ" => (1, 1),
+        "integer_nat_round_trip" => (1, 1),
         name if integer_round_trip_destination(name).is_some() => (1, 2),
         "int32_add_defined_by_integer_bounds" => (2, 2),
         "int32_add_to_integer" | "int32_subtract_to_integer" => (2, 1),

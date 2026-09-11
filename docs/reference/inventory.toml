@@ -3033,3 +3033,7 @@ path = "reference/library/index.md#integer_nat_round_trip"
 [[item]]
 id = "stdlib.theorem.integer_to_nat_zero"
 path = "reference/library/index.md#integer_to_nat_zero"
+
+[[item]]
+id = "stdlib.theorem.nat_integer_add"
+path = "reference/library/index.md#nat_integer_add"

@@ -2271,3 +2271,61 @@ fn builtin_nat_integer_laws_expand_and_reject_invalid_conversions() {
         assert!(verify_c0_sources(source, &[]).is_err(), "{source}");
     }
 }
+
+#[test]
+fn nat_addition_agrees_with_integer_addition_and_rechecks_expansion() {
+    let source = "theorem client(a: Nat, b: Nat) { ensures to_integer(nat_add(a, b)) == to_integer(a) + to_integer(b) by { apply(nat_integer_add(a, b)); } }";
+    verify_c0_sources(source, &[]).unwrap();
+    let expanded = expand_c0_claim_source_by_label(source, &[], "client.ensures_0").unwrap();
+    verify_c0_sources(&expanded, &[]).unwrap();
+    assert!(
+        verify_c0_sources(
+            &source.replace("+ to_integer(b)", "+ to_integer(b) + 1"),
+            &[]
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn integer_certificates_accept_checked_mixed_atoms_without_erasing_domains() {
+    for (parameters, requirements, term) in [
+        ("x: int32", "", "to_integer(x)"),
+        ("x: int32", "requires defined(x + 1);", "to_integer(x + 1)"),
+        ("x: int32", "requires defined(x + 1);", "f(x + 1)"),
+        ("n: Nat", "", "to_integer(n)"),
+    ] {
+        let source = format!(
+            "function f(x: int32) -> Integer {{ to_integer(x) }} theorem client({parameters}) {{ {requirements} ensures {term} == {term} by {{ integer_certificate {{ trivial => {term} == {term}; conclusion 0; }} }} }}"
+        );
+        verify_c0_sources(&source, &[])
+            .unwrap_or_else(|error| panic!("{source}\n{}", error.message()));
+        if !requirements.is_empty() {
+            assert!(verify_c0_sources(&source.replace(requirements, ""), &[]).is_err());
+        }
+    }
+}
+
+#[test]
+fn integer_certificate_mixed_atom_lowering_scales_with_selected_inputs() {
+    let mut work = Vec::new();
+    for width in [8, 16, 32, 64] {
+        let mut parameters = vec!["x: int32".to_string()];
+        parameters.extend((0..width).map(|i| format!("unused{i}: int32")));
+        let nodes = "trivial => to_integer(x) == to_integer(x);\n".repeat(width);
+        let source = format!(
+            "theorem selected({}) {{ ensures to_integer(x) == to_integer(x) by {{ integer_certificate {{ {nodes} conclusion 0; }} }} }}",
+            parameters.join(", ")
+        );
+        let (result, measured) =
+            crate::instrumentation::measure_deterministic_work(|| verify_c0_sources(&source, &[]));
+        result.unwrap();
+        work.push(measured);
+    }
+    for pair in work.windows(2) {
+        assert!(
+            pair[1] <= 3 * pair[0],
+            "mixed certificate lowering grew superlinearly: {work:?}"
+        );
+    }
+}

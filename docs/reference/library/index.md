@@ -180,6 +180,44 @@ theorem nat_add_succ_left(n: Nat, m: Nat) {
 
 **Verified use:** [`mdtests/stdlib_nat.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_nat.md).
 
+### `nat_integer_add`
+
+The ordinary structural addition agrees with exact Integer addition. Its proof
+uses Nat induction and explicit, locally checked linear certificates.
+
+```click
+theorem nat_integer_add(n: Nat, m: Nat) {
+    ensures to_integer(nat_add(n, m)) == to_integer(n) + to_integer(m) by {
+        induct(n) as ih {
+            Nat::Zero => {
+                unfold(nat_add(Nat::Zero, m));
+                apply(nat_integer_zero());
+                integer_certificate {
+                    premise 0: to_integer(Nat::Zero) == 0 => to_integer(Nat::Zero) == 0;
+                    scale 0 by -1 => to_integer(m) == to_integer(Nat::Zero) + to_integer(m);
+                    conclusion 1;
+                }
+            }
+            Nat::Succ(previous) => {
+                unfold(nat_add(Nat::Succ(previous), m));
+                apply(nat_integer_succ(nat_add(previous, m)));
+                apply(ih(previous));
+                apply(nat_integer_succ(previous));
+                integer_certificate {
+                    premise 0: to_integer(Nat::Succ(nat_add(previous, m))) == to_integer(nat_add(previous, m)) + 1 => to_integer(Nat::Succ(nat_add(previous, m))) == to_integer(nat_add(previous, m)) + 1;
+                    premise 1: to_integer(nat_add(previous, m)) == to_integer(previous) + to_integer(m) => to_integer(nat_add(previous, m)) == to_integer(previous) + to_integer(m);
+                    premise 2: to_integer(Nat::Succ(previous)) == to_integer(previous) + 1 => to_integer(Nat::Succ(previous)) == to_integer(previous) + 1;
+                    add 0, 1 => to_integer(Nat::Succ(nat_add(previous, m))) == to_integer(previous) + to_integer(m) + 1;
+                    scale 2 by -1 => to_integer(previous) + 1 == to_integer(Nat::Succ(previous));
+                    add 3, 4 => to_integer(Nat::Succ(nat_add(previous, m))) == to_integer(Nat::Succ(previous)) + to_integer(m);
+                    conclusion 5;
+                }
+            }
+        }
+    }
+}
+```
+
 ### `nat_add_right_identity`
 
 ```click

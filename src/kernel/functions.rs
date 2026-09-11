@@ -3550,9 +3550,6 @@ fn spec_value_is_obligation_free(value: &SpecExpression) -> bool {
 fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
     match value {
         SpecIntegerExpression::Term(_) => true,
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().all(spec_argument_is_obligation_free)
-        }
         SpecIntegerExpression::Negate(inner) => spec_integer_is_obligation_free(inner),
         SpecIntegerExpression::Add(left, right)
         | SpecIntegerExpression::Subtract(left, right)

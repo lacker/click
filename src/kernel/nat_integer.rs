@@ -97,15 +97,6 @@ pub(crate) fn check_nat_integer_law(name: &str, proposition: &Proposition) -> Op
                 && right.algebraic_type == left.algebraic_type
                 && matches!(&right.node, AlgebraicTermNode::Constructor { variant, fields } if variant == "Zero" && fields.is_empty())
         }
-        ("integer_to_nat_succ", Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right))) => {
-            let value = converted_integer(left)?;
-            let AlgebraicTermNode::Constructor { variant, fields } = &right.node else { return None };
-            let [AlgebraicValue::Algebraic(previous)] = fields.as_slice() else { return None };
-            let z = converted_integer(previous)?;
-            variant == "Succ" && right.is_well_formed() && right.algebraic_type == left.algebraic_type
-                && value == &IntegerTerm::add(z.clone(), IntegerTerm::constant_i64(1))
-                && guard == Some(&nonnegative(z.clone()))
-        }
         _ => false,
     };
     valid.then(|| Theorem::new(proposition.clone()))

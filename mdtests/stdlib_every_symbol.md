@@ -50,6 +50,7 @@ theorem builtin_integer_nat_laws(z: Integer) {
 }
 
 theorem nat_laws(a: Nat, b: Nat, c: Nat) {
+    ensures to_integer(nat_add(a, b)) == to_integer(a) + to_integer(b) by { apply(nat_integer_add(a, b)); }
     ensures nat_add(Nat::Zero, a) == a by { apply(nat_add_left_identity(a)); }
     ensures nat_add(a, Nat::Zero) == a by { apply(nat_add_right_identity(a)); }
     ensures nat_add(Nat::Succ(a), b) == Nat::Succ(nat_add(a, b)) by { apply(nat_add_succ_left(a, b)); }

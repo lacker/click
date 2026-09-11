@@ -481,3 +481,10 @@ intrinsically for a checked Nat observation; other inputs require established
 facts. Nested constructors cannot hide this obligation. Source applications
 expand and reverify; independent structural/BigInt models check the kernel laws
 and reject altered formulas, missing guards, and malformed Nat schemas.
+
+`nat_integer_add` now derives the addition relationship by ordinary Nat induction
+and explicit Integer certificates. Certificate lowering accepts checked C/Nat
+observations and pure Integer function applications as atoms. It retains the
+scalar path and selects only referenced bindings for mixed atoms, preserving
+mandatory definedness checks. A deterministic 8/16/32/64 regression grows both
+unrelated C parameters and explicit certificate nodes together.

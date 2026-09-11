@@ -446,13 +446,15 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Pure(_context) => {
-                let mut integer_values = match self.context.as_ref() {
-                    ProofContext::Pure(context) => context.theorem_context.integer_values.clone(),
-                    _ => crate::persistent::PersistentMap::default(),
-                };
-                for (name, value) in self.state().locals().integer_values.iter() {
-                    integer_values = integer_values.with_inserted(name.clone(), value.clone());
+            ProofContext::Pure(context) => {
+                let mut names = BTreeSet::new();
+                collect_click_proposition_referenced_names(surface, &mut names);
+                let mut integer_values = context.theorem_context.integer_values.clone();
+                for name in &names {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if let Some(value) = self.state().locals().integer_values.get(name) {
+                        integer_values = integer_values.with_inserted(name.clone(), value.clone());
+                    }
                 }
                 let promoted = self.proposition_obligation().map_or_else(
                     || surface.clone(),
@@ -464,11 +466,66 @@ impl<'a> Proof<'a> {
                         )
                     },
                 );
-                crate::surface::lower_integer_certificate_proposition(&promoted, &integer_values)
+                if let Ok(proposition) = crate::surface::lower_integer_certificate_proposition(
+                    &promoted,
+                    &integer_values,
+                ) {
+                    return Ok(proposition);
+                }
+                // Mixed atoms need the ordinary checked specification lowerer.
+                // Select only bindings referenced by this explicit certificate
+                // node, so unrelated theorem parameters are never copied.
+                let values = names
+                    .iter()
+                    .filter_map(|name| {
+                        if integer_values.get(name).is_some() {
+                            return None;
+                        }
+                        context
+                            .theorem_context
+                            .values
+                            .get(name)
+                            .map(|value| (name.clone(), value.clone()))
+                    })
+                    .collect();
+                let arrays = names
+                    .iter()
+                    .filter_map(|name| {
+                        context
+                            .theorem_context
+                            .array_refs
+                            .get(name)
+                            .map(|value| (name.clone(), value.clone()))
+                    })
+                    .collect();
+                let algebraic = names
+                    .iter()
+                    .filter_map(|name| {
+                        context
+                            .structural_induction_setup
+                            .as_ref()?
+                            .algebraic_values
+                            .get(name)
+                            .map(|value| (name.clone(), value.clone()))
+                    })
+                    .collect();
+                super::super::pure_theorems::lower_pure_theorem_proposition_recording_introductions(
+                    context.claim_label,
+                    &promoted,
+                    self.facts().assumptions(),
+                    &values,
+                    &arrays,
+                    &algebraic,
+                    &integer_values,
+                    &context.theorem_context.memory,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+                .map(|(proposition, _)| proposition)
+                .map_err(|message| {
+                    self.step_error(format!("could not lower {description}: {message}"))
+                })
             }
-            .map_err(|message| {
-                self.step_error(format!("could not lower {description}: {message}"))
-            }),
             _ => self.lower_surface_proposition_direct(surface, description),
         }
     }
