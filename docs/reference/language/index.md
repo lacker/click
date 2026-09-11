@@ -390,6 +390,11 @@ Applying a theorem never consumes, creates, returns, opens, or closes
 resources. The exact inventory is in the
 [proof tactics reference](../tactics/index.md).
 
+One theorem form is not pure. An `executes` clause gives a theorem a single
+call as its execution frontier, together with the resources, `old(...)`, and
+`result` that one call needs. See
+[Callback execution theorems](#callback-execution-theorems).
+
 Pure theorems can use explicit strong induction on an `int32` parameter:
 
 <!-- verified-example: mdtests/pure_induction_countdown.md -->
@@ -593,19 +598,22 @@ theorem raw_is_buffered(callback: void (*)(int32*, int32))
 }
 ```
 
-The proof starts with arbitrary call arguments and the **target contract's**
-input requirements and resources. It knows only the callback contracts in the
-theorem's premises or established by checked proof steps—not the target
-contract fact being proved. The call checks the selected source contract's
-requirements and performs its resource transition. The remaining proof must
-establish all target postconditions, returned resources, and write bounds. Unrelated owned resources use ordinary framing.
+The premises state the source contracts for that callback, and the conclusion
+states the target. The proof starts with arbitrary call arguments and the
+target contract's requirements and resources. It knows the premises and
+whatever its own checked steps establish, never the target fact being proved.
+The call checks the selected source contract's requirements and performs its
+resource transition. The rest of the proof must establish the target's
+guarantees, return its resources, and stay inside its write footprint.
+Unrelated owned resources use ordinary framing.
 
 These are ordinary execution proof blocks: `have`, theorem application,
 rewriting, proof cases, `fold`, `unfold`, and the usual closing tactics retain
-their normal meanings. Every feasible proof case must execute the call. The
-checked result is a reusable contract implication: `apply(raw_is_buffered(f))`
-establishes `Buffered(f)`, after which an ordinary caller can use
-`step(Buffered)`. Expansion preserves the explicit contract selection.
+their normal meanings. Every feasible proof case must execute the call exactly
+once. The checked result is a reusable contract implication:
+`apply(raw_is_buffered(f))` establishes `Buffered(f)`, after which an ordinary
+caller can use `step(Buffered)`. Expansion preserves the explicit contract
+selection.
 
 Return-valued callbacks use the same syntax: the theorem parameter's C
 function-pointer type supplies the return type. `step(Contract)` performs the
@@ -628,15 +636,30 @@ the continuation after an inner `if` must check in every reachable case.
 See the [nested status cases](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_status_nested.md),
 including an impossible arm and a shared continuation containing another case.
 
-This slice supports one nongeneric callback theorem parameter,
-one target-contract conclusion, and one or more source-contract premises for
-that same pointer. The `executes` arguments use C parameter spelling, match
-the callback signature, and are bound only inside the execution proof; they
-cannot escape into theorem premises or conclusions. Their names must be
-distinct from the callback and from `result`; a return-valued callback parameter
-also cannot be named `result`. Additional theorem parameters remain outside
-this slice. Const-qualified pointer returns and parameters use the same C
-spelling in callbacks, named contracts, and execution proofs.
+This slice supports one nongeneric callback theorem parameter, one
+target-contract conclusion, and one or more source-contract premises for that
+same pointer. Additional theorem parameters remain outside this slice.
+Const-qualified pointer returns and parameters use the same C spelling in
+callbacks, named contracts, and execution proofs.
+
+### Names in an execution proof
+
+Nothing enters an execution proof block implicitly. Exactly three forms
+introduce names:
+
+- the `executes` parameter list introduces the call's C parameters;
+- `as { parameter: name }` on the conclusion introduces one arbitrary instance
+  per proof parameter of the target contract;
+- `let name = step(...)` introduces an instance a callee `produces`.
+
+Every other name in the block is one of those, a theorem parameter, or
+`result`.
+
+The `executes` arguments use C parameter spelling and match the callback
+signature. They are bound only inside the execution proof; they cannot escape
+into theorem premises or conclusions. Their names must be distinct from the
+callback and from `result`; a return-valued callback parameter also cannot be
+named `result`.
 
 When the target contract declares resource proof parameters, the conclusion
 introduces one arbitrary instance per parameter with an `as` map keyed by the
@@ -657,17 +680,26 @@ theorem lift(callback: int32 (*)()) executes callback() {
 
 `k` is the only name for that instance inside the block, and the theorem proves
 the refinement for an arbitrary such instance. The target's own spelling `cell`
-is not in scope: nothing enters an execution proof block implicitly. Every
-target proof parameter must be named exactly once, and an introduced name
-cannot shadow the callback, the call arguments, a theorem local name, or
-`result`. The names do not escape the block. A target with no proof parameters
-takes no map, though an empty `as {}` is accepted, and a map on such a target
-is an error. Source and target parameter names are unrelated, and the target
-contract may be declared later in the file. The
-[counter refinement tests](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_counter.md)
+is not in scope. Every target proof parameter must be named exactly once, and
+an introduced name cannot shadow the callback, the call arguments, a theorem
+local name, or `result`. The names do not escape the block. A target with no
+proof parameters takes no map, though an empty `as {}` is accepted, and a map
+on such a target is an error. Source and target parameter names are unrelated,
+and the target contract may be declared later in the file.
+
+A step passes instances in the spelling the callee's own declaration fixes.
+A named contract has a parameter list, so `step(Exact(k))` passes them
+positionally. A C function's binders live in its `owns`, `consumes`, and
+`produces` clauses rather than in its signature, so
+`step(increment(state), { first: k })` passes them by binder name, as in
+[Calls that transport named instances](#calls-that-transport-named-instances).
+
+The [counter refinement tests](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_counter.md)
 demonstrate an exact field increment refined to progress while framing an
 unrelated caller-owned counter. Unmentioned fields of the selected counter are
 not implicitly preserved.
+
+### Concrete callees
 
 `executes` may also name a verified or explicitly external C function instead of
 a callback parameter. The theorem then has no callback parameter and no
@@ -688,29 +720,51 @@ The conclusion chooses the form: a function address selects the concrete route,
 a plain binding the abstract one. The proof state still starts from the target
 contract's requirements and resources with the `as`-introduced instances bound,
 and the call is the ordinary C call of
-[Read and write resources](#read-and-write-resources), so the callee's own
-binder names appear only on the left of its map and the introduced name on the
-right. The written parameter list restates the C signature as well as the target
-contract's interface; the callee must be verified or explicitly external in the
-project; extra theorem parameters stay outside this slice; and every feasible
-proof case must execute exactly one call, as in the abstract form.
+[Read and write resources](#read-and-write-resources). The written parameter
+list restates the C signature as well as the target contract's interface, and
+the callee must be verified or explicitly external in the project. Extra
+theorem parameters stay outside this slice, and every feasible proof case must
+execute exactly one call, as in the abstract form.
 `apply(increment_is_exact())` then introduces `Exact(&increment)` at a call site
 exactly like a concrete `unfold(Name)` refinement theorem. This is the explicit
 route for a target contract with proof parameters, which `unfold(Name)` refuses.
 The [modeled-instance variant](https://github.com/lacker/click/blob/master/mdtests/c_contract_executes_concrete_model.md)
 carries a tree instance through the same two maps.
 
+### Automatic formation at `&f`
+
 Passing `&f` where a named contract is required does not always need such a
-theorem. Automatic formation admits scalar propositions over current and
-function-entry memory, resource-field reads on either of those states,
-algebraic equalities, `match` over an algebraic value, and algebraic
-pure-function arguments, provided every clause follows by an exact route.
-`at(...)`, explicit memory snapshots, counted-resource populations, and range
-folds stay outside it. When the contract declares proof parameters, formation
-also requires the pairing between its parameters and the implementation's
-binders to be forced: one implementation binder per parameter, same resource
-family, equal arguments, and the reverse. Otherwise Click refuses and prints
-the `executes` theorem that states the pairing.
+theorem. Formation compares the two interfaces over one shared symbolic entry
+memory and one shared post-call memory, so `old(pointer[0])` denotes the same
+entry value on both sides. A contract whose clauses read no memory forms on
+that comparison alone. When any clause reads memory, the named contract must
+also declare resource requirements, resource guarantees, and a nonempty owned
+footprint. In both cases the concrete function's owned footprint must be
+contained in the named one, and a footprint guard on either side must be
+load-free.
+
+Formation admits scalar comparisons and `defined` over current and
+function-entry memory, the connectives and quantifiers over those, finite
+sequence comparisons, reads of a resource instance's fields on either state,
+algebraic equalities, `match` over an algebraic value, and algebraic arguments
+to a pure function. It excludes `at(...)`, explicit memory snapshots,
+counted-resource populations, range folds, and mathematical `Integer`
+comparisons.
+
+Every admitted clause must also follow by an exact route: the clause is already
+an available fact, or it is one condition the decision procedure settles.
+Formation chooses no disjunction arm, refutes no guard it would have to reason
+about, and searches no equality for a rewrite. A clause outside the admitted
+classes, or one needing any of that reasoning, is proved by an explicit theorem
+instead.
+
+When the contract declares proof parameters, formation also requires the
+pairing between its parameters and the implementation's binders to be forced:
+for each parameter exactly one binder of the same resource family with equal
+arguments, and the reverse. Two binders of one family, or a binder with no
+counterpart, leaves the pairing unforced. Click then refuses rather than
+choosing one, and prints the `executes` theorem that states the pairing, with
+the contract's `as` map and the implementation's binder map filled in.
 
 ## Requirements
 
@@ -1097,45 +1151,6 @@ unsupported. No operation automatically unfolds an entire recursive structure.
 A declaration alone grants no ownership, and binding an instance does not
 implicitly expose its memory body.
 
-### Calls that transport named instances
-
-A C function whose sidecar declares instance binders is called with an
-explicit map from each of those binders to an instance the caller owns:
-
-<!-- verified-example: mdtests/c_call_binder_transport.md -->
-```click
-step(increment(state), { first: c });
-```
-
-The first argument is the call as written in the source, so the step still
-selects one call statement: the frontier must be a call to that function with
-that many arguments. The map is required whenever the callee declares any
-`owns`, `consumes`, or `produces` binder, and a callee with none takes no map.
-It is the only source of bindings; nothing is matched by name, by position, or
-by search. Missing, duplicate, unknown, wrong-family, and unowned entries are
-rejected where they are written.
-
-The transition is the one a named contract's proof arguments already take.
-A `consumes` binder removes the caller's instance. An `owns` binder returns
-the same identity with fresh post-call fields, related to its entry fields
-only by the callee's guarantees, so a field the callee does not mention is
-unknown afterwards. Caller instances the map does not mention frame unchanged.
-
-An instance the callee `produces` does not exist before the call, so the
-caller introduces it with `let`:
-
-<!-- verified-example: mdtests/c_call_binder_transport_produces.md -->
-```click
-let node = step(init(p, left, right, value), { l: a, r: b });
-```
-
-The introduced name is an ordinary owned instance afterwards: it can be folded
-into a parent as a child, or returned by the caller's own `produces` clause.
-A `produces` binder that no `let` introduces is an error, and so is a `let` on
-a call that produces nothing. A callee that produces more than one instance is
-not yet callable this way. The callee's binder names come from its own
-sidecar, so that sidecar must be declared before the proof that calls it.
-
 A composite body may instead have one top-level guard:
 
 <!-- verified-example: mdtests/recursive_conditional_resource.md -->
@@ -1301,6 +1316,47 @@ runtime-sized `int32` arrays are the
 supported heap slices. `loadable` remains a separate concept from memory
 permission: loadability proves an access is in bounds, while memory resources
 authorize the access.
+
+### Calls that transport named instances
+
+A C function whose sidecar declares instance binders is called with an
+explicit map from each of those binders to an instance the caller owns:
+
+<!-- verified-example: mdtests/c_call_binder_transport.md -->
+```click
+step(increment(state), { first: c });
+```
+
+The first argument is the call as written in the source, so the step still
+selects one call statement: the frontier must be a call to that function with
+that many arguments. The map is required whenever the callee declares any
+`owns`, `consumes`, or `produces` binder, and a callee with none takes no map.
+It is the only source of bindings; nothing is matched by name, by position, or
+by search. Missing, duplicate, unknown, wrong-family, and unowned entries are
+rejected where they are written.
+
+The transition is the one a named contract's proof arguments already take.
+A `consumes` binder removes the caller's instance. An `owns` binder returns
+the same identity with fresh post-call fields, related to its entry fields
+only by the callee's guarantees, so a field the callee does not mention is
+unknown afterwards. Caller instances the map does not mention frame unchanged.
+
+An instance the callee `produces` does not exist before the call, so the
+caller introduces it with `let`:
+
+<!-- verified-example: mdtests/c_call_binder_transport_produces.md -->
+```click
+let node = step(init(p, left, right, value), { l: a, r: b });
+```
+
+The introduced name is an ordinary owned instance afterwards: it can be folded
+into a parent as a child, or returned by the caller's own `produces` clause.
+A `produces` binder that no `let` introduces is an error, and so is a `let` on
+a call that produces nothing. A callee that produces more than one instance is
+not yet callable this way. The callee's binder names come from its own
+sidecar, so that sidecar must be declared before the proof that calls it.
+A named contract takes its instances positionally instead, as
+`step(Exact(k))`, because it declares a parameter list.
 
 ## Propositions
 

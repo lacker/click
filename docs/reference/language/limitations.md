@@ -86,6 +86,9 @@ or function-local static object may bind one to a function address in a
 positional or designated initializer. A load through such a field yields that
 concrete address, so the indirect call dispatches to exactly that function.
 Writes to a `const` table remain rejected.
+A bare function designator decays to the same address as `&name` in every value
+position, but only when the name is declared as a function in the translation
+unit that uses it; `&name` has no such requirement.
 Packed layout and union forms outside the named embedded read-only slice
 remain unsupported. Address-taking of modeled
 scalar leaf fields, including indexed cells in fixed-dimensional scalar-array
@@ -173,6 +176,20 @@ argument substitution, balanced nested calls, and bounded rescanning of
 replacements. They are expanded in source order across a source file and its
 local headers. Recursive expansion and unsupported parameter features receive
 diagnostics.
+
+## Callback contracts have known gaps
+
+A named contract's resource clause cannot read through one of its own
+parameters: `views old->left->augmented` guarded by `requires old->left != 0`
+fails to prepare, because the clause is lowered with no facts or resources in
+scope, so a callback that recomputes from a child link cannot state that
+footprint.
+
+Two indirect calls with `owns` footprints through one opened callback-suite
+resource are not supported; the second call reports that no named contract is
+available for the reloaded function pointer. One such call per opened resource
+works, and `views` footprints work for any number of calls, which is the shape
+`mdtests/rb_augment_callbacks_helper.md` uses for three callbacks.
 
 ## Type support is still narrow
 
