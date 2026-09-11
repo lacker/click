@@ -119,9 +119,14 @@ impl<'a> Proof<'a> {
         &self,
         premises: &[NamedArithmeticPremise],
     ) -> Result<Option<Self>, ClickError> {
+        let mut scope = attempt::search_scope("loop invariant bundle closure");
         check_verification_deadline()?;
         let (Some(goal), Some(surface_goal)) = (self.goal().cloned(), self.surface_goal().cloned())
         else {
+            attempt::record_search_note(
+                "loop invariant bundle closure",
+                "unsupported: no surface presentation is available for the loop invariant bundle goal",
+            );
             return Ok(None);
         };
         if matches!(goal, Proposition::And(_, _))
@@ -145,7 +150,17 @@ impl<'a> Proof<'a> {
             else {
                 return Ok(None);
             };
-            return attempt::candidate_outcome(right.join_focused_both(&marker, split, ids));
+            let result = attempt::candidate_outcome(right.join_focused_both(&marker, split, ids));
+            if matches!(&result, Ok(Some(_))) {
+                scope.succeed();
+            }
+            return result;
+        }
+        if matches!(goal, Proposition::And(_, _)) {
+            attempt::record_search_note(
+                "loop invariant bundle closure",
+                "unsupported: the loop invariant bundle has no matching surface conjunction presentation",
+            );
         }
         if matches!(goal, Proposition::Or(_, _))
             && let Some((surface_left, surface_right)) =
@@ -171,12 +186,17 @@ impl<'a> Proof<'a> {
                     attempt::candidate_outcome(joined.apply_step(closer))
                 })();
                 if let Some(selected) = selected? {
+                    scope.succeed();
                     return Ok(Some(selected));
                 }
             }
             return Ok(None);
         }
-        self.close_bundle_member(premises)
+        let result = self.close_bundle_member(premises)?;
+        if result.is_some() {
+            scope.succeed();
+        }
+        Ok(result)
     }
 
     /// One bundle member. The arithmetic candidate is tried first: its
@@ -428,17 +448,20 @@ impl<'a> Proof<'a> {
                 depth: 0,
             }),
         };
+        let mut search = attempt::search_scope("close invariants body");
         let checkpoint = root.checkpoint();
-        let attempted = root
-            .try_authoritative_linear_script(body)
-            .map_err(|error| {
+        let attempted = match root.try_authoritative_linear_script(body) {
+            Ok(attempted) => attempted,
+            Err(error) => {
                 let detail = ranking_member_diagnostic(&bundle.ranking_measures);
-                if detail.is_empty() {
+                let error = if detail.is_empty() {
                     error
                 } else {
-                    ClickError::new(format!("{}{detail}", error.message()))
-                }
-            })?;
+                    error.with_context(detail)
+                };
+                return Err(error.with_search_failures(search.finish()));
+            }
+        };
         // A smart closure request is the one body this planner owns:
         // `close_invariants()`, `close_invariants by { simp(); }`, the omitted
         // preservation body, and the region `simp()` all reach here as the
@@ -450,16 +473,21 @@ impl<'a> Proof<'a> {
             None if body == [ProofTactic::Simp] => {
                 let premises =
                     root.named_arithmetic_premises(bundle, context.function_block.requires());
-                root.plan_invariant_bundle_closure(&premises)?
+                match root.plan_invariant_bundle_closure(&premises) {
+                    Ok(result) => result,
+                    Err(error) => return Err(error.with_search_failures(search.finish())),
+                }
             }
             None => None,
         };
         let Some(completed) = attempted else {
-            return Err(self.step_error(format!(
+            let error = root.step_error(format!(
                 "closure body did not prove every invariant obligation{}",
                 ranking_member_diagnostic(&bundle.ranking_measures)
-            )));
+            ));
+            return Err(error.with_search_failures(search.finish()));
         };
+        search.succeed();
         let certificate = completed.certificate_since(&checkpoint)?;
         let state = self
             .state

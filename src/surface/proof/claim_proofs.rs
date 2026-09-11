@@ -690,7 +690,7 @@ mod exit_claim {
     pub(super) enum ClaimClosure {
         /// Not discharged yet; carries the last closing attempt's message so
         /// the drain can explain an unproved claim.
-        Open(Option<String>),
+        Open(Option<ClickError>),
         Closed(ClosedClaim),
     }
 
@@ -712,14 +712,14 @@ mod exit_claim {
             }
         }
 
-        pub(super) fn last_error(&self) -> Option<&str> {
+        pub(super) fn last_error(&self) -> Option<&ClickError> {
             match self {
-                Self::Open(error) => error.as_deref(),
+                Self::Open(error) => error.as_ref(),
                 Self::Closed(_) => None,
             }
         }
 
-        pub(super) fn record_failure(&mut self, message: String) {
+        pub(super) fn record_failure(&mut self, message: ClickError) {
             if let Self::Open(error) = self {
                 *error = Some(message);
             }
@@ -979,12 +979,12 @@ fn close_claim_directly_from_outcome<'a>(
     parameters: &[syntax::C0Parameter],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<Result<Proof<'a>, String>, ClickError> {
+) -> Result<Result<Proof<'a>, ClickError>, ClickError> {
     let surface = describe_click_proposition(surface_goal);
     let failure = |reason: String| {
-        Ok(Err(format!(
+        Ok(Err(ClickError::new(format!(
             "`ensures {surface}` failed for `{claim_label}` path {path_index}: {reason}"
-        )))
+        ))))
     };
     if !matches!(outcome, CFunctionOutcome::Return { .. }) {
         return failure(describe_function_outcome(outcome, parameters, arguments));
@@ -1030,14 +1030,17 @@ fn close_claim_directly_from_outcome<'a>(
             Err(_) => check_verification_deadline()?,
         }
     }
+    let mut search = super::attempt::search_scope("claim outcome closure");
     if let Some(completed) = proof.try_direct_logical_closure()?
         && completed.is_complete()
     {
+        search.succeed();
         return Ok(Ok(completed));
     }
     if let Some(completed) = proof.try_simp_closure()?
         && completed.is_complete()
     {
+        search.succeed();
         return Ok(Ok(completed));
     }
     check_verification_deadline()?;
@@ -1077,16 +1080,10 @@ fn close_claim_directly_from_outcome<'a>(
         }
         _ => String::new(),
     };
-    let resource_facts = match outcome {
-        CFunctionOutcome::Return { state, .. } => state.resources().facts().to_vec(),
-        _ => Vec::new(),
-    };
-    let pure_facts = root.facts().assumptions().pure_facts();
-    failure(format!(
-        "unclosed goal: {surface}{evaluated_sides}
-  {}",
-        describe_available_facts(&pure_facts, &resource_facts, parameters, arguments, &[])
-    ))
+    let error = proof.step_error(format!(
+        "`ensures {surface}` failed for `{claim_label}` path {path_index}: unclosed goal: {surface}{evaluated_sides}"
+    ));
+    Ok(Err(error.with_search_failures(search.finish())))
 }
 
 /// Serializes a completed existential claim Proof in the established
@@ -3670,7 +3667,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         click_function_environment,
                                                     )?
                                                     .err()
-                                                    .map(|reason| format!("\n{reason}"))
+                                                    .map(|reason| format!("\n{}", reason.message()))
                                                     .unwrap_or_default(),
                                                     None => String::new(),
                                                 };
@@ -3904,7 +3901,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         predicate_environment,
                                         click_function_environment,
                                     )? {
-                                        reasons.push(reason);
+                                        reasons.push(reason.message().to_owned());
                                     }
                                 }
                                 if let Some(error) = &pending_resource_transition_error {
@@ -4000,10 +3997,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                     completed.completed_proposition().ok(),
                                 );
                             }
-                            _ => closures[claim_index].record_failure(
-                                "the retained existential Proof did not close by the implicit exact check"
-                                    .to_string(),
-                            ),
+                            _ => closures[claim_index].record_failure(ClickError::new(
+                                "the retained existential Proof did not close by the implicit exact check",
+                            )),
                         }
                     }
 
@@ -4075,21 +4071,22 @@ pub(super) fn finish_ordered_proof<'a>(
                                 Some(Ok(())) => {
                                     closures[claim_index] = ClaimClosure::by_exact_check()
                                 }
-                                Some(Err(error)) => closures[claim_index]
-                                    .record_failure(error.message().to_string()),
+                                Some(Err(error)) => closures[claim_index].record_failure(error),
                                 None if !matches!(outcome, CFunctionOutcome::Return { .. }) => {
-                                    closures[claim_index].record_failure(format!(
+                                    closures[claim_index].record_failure(ClickError::new(format!(
                                         "`{claim_label}` failed on path {path_index}: {}",
                                         describe_function_outcome(
                                             &outcome,
                                             parsed_function.parameters(),
                                             arguments
                                         )
-                                    ))
+                                    )))
                                 }
-                                None => closures[claim_index].record_failure(format!(
-                                    "`{claim_label}` has no outcome Proof to close it from"
-                                )),
+                                None => {
+                                    closures[claim_index].record_failure(ClickError::new(format!(
+                                        "`{claim_label}` has no outcome Proof to close it from"
+                                    )))
+                                }
                             }
                         }
                     }
@@ -4102,13 +4099,13 @@ pub(super) fn finish_ordered_proof<'a>(
                         let claim_label =
                             function_claim_label(function_block.signature().name(), claim);
                         let closer = "`simp()`";
-                        let detail = closures[claim_index]
-                            .last_error()
-                            .map(|message| format!("\nlast closing attempt:\n{message}"))
-                            .unwrap_or_default();
-                        return Err(ClickError::new(format!(
-                            "`{proof_label}` path {path_index} left `{claim_label}` unproved; use {closer} after establishing the facts and resources it needs (claim index {claim_index}){detail}"
-                        )));
+                        let summary = format!(
+                            "`{proof_label}` path {path_index} left `{claim_label}` unproved; use {closer} after establishing the facts and resources it needs (claim index {claim_index})"
+                        );
+                        if let Some(error) = closures[claim_index].last_error() {
+                            return Err(error.clone().with_context(summary));
+                        }
+                        return Err(ClickError::new(summary));
                     }
 
                     // The specification's requirements are the certified path's

@@ -513,3 +513,59 @@ fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
     assert!(!message.contains("AlgebraicTerm"), "{message}");
     assert!(message.len() < 1000, "{message}");
 }
+
+#[test]
+fn integer_sum_range_fold_reproduction_fixture_is_kept_unchanged() {
+    let c = include_str!("../../../tests/fixtures/proof_diagnostics/integer_sum_range_fold.c");
+    let click =
+        include_str!("../../../tests/fixtures/proof_diagnostics/integer_sum_range_fold.click");
+    let error = verify_c0_sources(click, &[("integer_sum_range_fold.c", c)])
+        .expect_err("the preserved reproduction should fail at its known unsupported step");
+    let message = error.message();
+    assert!(message.contains("source tactic 44"), "{message}");
+    assert!(message.contains("kernel goal"), "{message}");
+    assert!(
+        message.contains("unsupported") || message.contains("no surface"),
+        "{message}"
+    );
+    assert!(message.contains("recent premises"), "{message}");
+    assert!(!message.contains("CMemory {"), "{message}");
+}
+
+#[test]
+fn negative_mdtest_failures_include_structured_kernel_context() {
+    for name in [
+        "max_bad_ensure",
+        "write_second_old_rejects_overwritten_cell",
+        "resource_summary_requires_returned_write",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(format!("{name}.md"));
+        let source = std::fs::read_to_string(&path).unwrap();
+        let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+        let click = fixture.click_source.as_deref().unwrap();
+        let sources = fixture
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let error = verify_c0_sources(click, &sources).expect_err(name);
+        let message = error.message();
+        if name == "resource_summary_requires_returned_write" {
+            assert!(
+                message.contains("missing resource fact"),
+                "{name}: {message}"
+            );
+            assert!(message.contains("owns p[0..1]"), "{name}: {message}");
+            assert!(
+                message.contains("available resource facts: []"),
+                "{name}: {message}"
+            );
+        } else {
+            assert!(message.contains("kernel goal"), "{name}: {message}");
+            assert!(message.contains("recent premises"), "{name}: {message}");
+        }
+        assert!(!message.contains("CMemory {"), "{name}: {message}");
+    }
+}

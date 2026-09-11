@@ -388,9 +388,14 @@ fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
             error.message()
         );
         assert!(
-            error.message().len() < 1000,
-            "diagnostic must not dump internal state"
+            error.message().len() <= 64 * 1024,
+            "diagnostic exceeded report cap"
         );
+        assert!(!error.message().contains("CMemory {"));
+        assert!(!error.message().contains("CState {"));
+        if error.message().contains("kernel goal") {
+            assert!(error.message().contains("recent premises"));
+        }
     }
 }
 

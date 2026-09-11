@@ -2933,7 +2933,7 @@ fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) 
 }
 
 fn add_proof_branch_context(error: ClickError, branch: &str) -> ClickError {
-    ClickError::new(format!("in {branch}:\n{}", error.message()))
+    error.with_prefix(format!("in {branch}:\n"))
 }
 
 pub(in crate::surface::proof) fn add_proof_branch_path(

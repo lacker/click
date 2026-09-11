@@ -679,7 +679,8 @@ impl<'a> Proof<'a> {
                     self.step_error("`intro` requires a proposition goal")
                 }
                 PropositionCloseError::ExpectedIntroduction(goal) => self.step_error(format!(
-                    "`intro` requires an implication, negation, or universal goal, got {goal:?}"
+                    "`intro` requires an implication, negation, or universal goal, got {}",
+                    describe_assumption_goal(&goal)
                 )),
                 PropositionCloseError::IntegerFresheningExhausted => {
                     self.step_error("`intro` requires a fresh Integer binder variable")
@@ -838,9 +839,12 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::NotProposition => {
                     self.step_error("induction application requires a proposition goal")
                 }
-                PropositionCloseError::InstantiatePremiseUnavailable(premise) => self.step_error(
-                    format!("induction premise is not exactly available: {premise:?}"),
-                ),
+                PropositionCloseError::InstantiatePremiseUnavailable(premise) => {
+                    self.step_error(format!(
+                        "induction premise is not exactly available: {}",
+                        crate::surface::proof_diagnostics::render::render_proposition(&premise)
+                    ))
+                }
                 PropositionCloseError::InstantiateQuantifiedUnavailable => {
                     self.step_error("induction hypothesis is not exactly available")
                 }
@@ -894,7 +898,8 @@ impl<'a> Proof<'a> {
             .find(|premise| !self.facts().available_across_effects(premise, &[]))
         {
             return Err(self.step_error(format!(
-                "induction premise is not exactly available: {missing:?}"
+                "induction premise is not exactly available: {}",
+                crate::surface::proof_diagnostics::render::render_proposition(missing)
             )));
         }
         if !self.facts().contains(&application.conclusion)
@@ -929,11 +934,14 @@ impl<'a> Proof<'a> {
             PropositionCloseError::NotProposition => {
                 self.step_error("`split` requires a proposition goal")
             }
-            PropositionCloseError::ExpectedConjunction(goal) => {
-                self.step_error(format!("`split` requires a conjunction goal, got {goal:?}"))
-            }
+            PropositionCloseError::ExpectedConjunction(goal) => self.step_error(format!(
+                "`split` requires a conjunction goal, got {}",
+                describe_assumption_goal(&goal)
+            )),
             PropositionCloseError::MissingConjuncts(left, right) => self.step_error(format!(
-                "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
+                "`split` requires both conjuncts as exact facts: {} and {}",
+                crate::surface::proof_diagnostics::render::render_proposition(&left),
+                crate::surface::proof_diagnostics::render::render_proposition(&right)
             )),
             _ => unreachable!("kernel returned an unrelated split error"),
         })
@@ -963,10 +971,12 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("`{step_name}` requires a proposition goal"))
                 }
                 PropositionCloseError::ExpectedDisjunction(goal) => self.step_error(format!(
-                    "`{step_name}` requires a disjunction goal, got {goal:?}"
+                    "`{step_name}` requires a disjunction goal, got {}",
+                    describe_assumption_goal(&goal)
                 )),
                 PropositionCloseError::MissingDisjunct(selected) => self.step_error(format!(
-                    "`{step_name}` requires its selected disjunct as an exact fact: {selected:?}"
+                    "`{step_name}` requires its selected disjunct as an exact fact: {}",
+                    crate::surface::proof_diagnostics::render::render_proposition(&selected)
                 )),
                 _ => unreachable!("kernel returned an unrelated disjunction error"),
             })

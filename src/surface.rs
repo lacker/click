@@ -94,6 +94,7 @@ mod integer_conversions;
 mod lowering;
 mod parser;
 pub(crate) mod planning;
+pub(crate) mod proof_diagnostics;
 use integer_conversions::*;
 mod printing;
 mod proof;
@@ -4082,10 +4083,13 @@ pub enum ProofKind {
     LoopVerification,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct ClickError {
     message: String,
-    timing_tactic: Option<TimingTacticContext>,
+    rendered: std::sync::OnceLock<String>,
+    diagnostic: Option<std::sync::Arc<proof_diagnostics::ProofFailureDiagnostic>>,
+    search_failures: Option<std::sync::Arc<Vec<proof_diagnostics::ProofSearchFailure>>>,
+    timing_tactic: Option<Box<TimingTacticContext>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4791,12 +4795,88 @@ impl ClickError {
         };
         Self {
             message: diagnostics::bound_error_message(message),
-            timing_tactic: current_timing_tactic(),
+            rendered: std::sync::OnceLock::new(),
+            diagnostic: None,
+            search_failures: None,
+            timing_tactic: current_timing_tactic().map(Box::new),
+        }
+    }
+
+    pub(crate) fn with_diagnostic(
+        summary: impl Into<String>,
+        diagnostic: proof_diagnostics::ProofFailureDiagnostic,
+    ) -> Self {
+        let summary = summary.into();
+        let summary = match crate::instrumentation::exceeded_verification_limit_context() {
+            Some(context) if !summary.contains(&context) => {
+                format!("verification budget exhausted inside {context}")
+            }
+            _ => summary,
+        };
+        Self {
+            message: diagnostics::bound_error_message(summary),
+            rendered: std::sync::OnceLock::new(),
+            diagnostic: Some(std::sync::Arc::new(diagnostic)),
+            search_failures: None,
+            timing_tactic: current_timing_tactic().map(Box::new),
         }
     }
 
     pub fn message(&self) -> &str {
+        if let Some(diagnostic) = &self.diagnostic {
+            self.rendered
+                .get_or_init(|| {
+                    proof_diagnostics::render_terminal_message(
+                        &self.message,
+                        diagnostic,
+                        self.search_failures
+                            .as_deref()
+                            .map_or(&[][..], Vec::as_slice),
+                    )
+                })
+                .as_str()
+        } else if let Some(failures) = &self.search_failures {
+            self.rendered
+                .get_or_init(|| proof_diagnostics::render_search_failures(&self.message, failures))
+                .as_str()
+        } else {
+            &self.message
+        }
+    }
+
+    /// The bounded cause text, without rendering proof state or premises.
+    pub(crate) fn raw_summary(&self) -> &str {
         &self.message
+    }
+
+    pub(crate) fn diagnostic(&self) -> Option<&proof_diagnostics::ProofFailureDiagnostic> {
+        self.diagnostic.as_deref()
+    }
+
+    pub(crate) fn with_search_failures(
+        mut self,
+        failures: Vec<proof_diagnostics::ProofSearchFailure>,
+    ) -> Self {
+        if !failures.is_empty() {
+            self.search_failures = Some(std::sync::Arc::new(failures));
+            self.rendered = std::sync::OnceLock::new();
+        }
+        self
+    }
+
+    pub(crate) fn with_context(self, prefix: impl AsRef<str>) -> Self {
+        self.with_prefix(format!("{}: ", prefix.as_ref()))
+    }
+
+    pub(crate) fn with_prefix(self, prefix: impl AsRef<str>) -> Self {
+        let summary = format!("{}{}", prefix.as_ref(), self.message);
+        Self {
+            message: diagnostics::bound_error_message(summary),
+            rendered: std::sync::OnceLock::new(),
+            diagnostic: self.diagnostic,
+            search_failures: self.search_failures,
+            timing_tactic: self.timing_tactic,
+        }
     }
 
     fn emit_timing_failure(&self) {
@@ -4815,6 +4895,29 @@ impl ClickError {
         }
     }
 }
+
+impl Clone for ClickError {
+    fn clone(&self) -> Self {
+        Self {
+            message: self.message.clone(),
+            rendered: std::sync::OnceLock::new(),
+            diagnostic: self.diagnostic.clone(),
+            search_failures: self.search_failures.clone(),
+            timing_tactic: self.timing_tactic.clone(),
+        }
+    }
+}
+
+impl PartialEq for ClickError {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+            && self.diagnostic == other.diagnostic
+            && self.search_failures == other.search_failures
+            && self.timing_tactic == other.timing_tactic
+    }
+}
+
+impl Eq for ClickError {}
 
 #[cfg(test)]
 mod tests;

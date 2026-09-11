@@ -178,6 +178,20 @@ impl<T> PersistentSequence<T> {
         }
     }
 
+    /// Return at most `limit` newest entries without materializing the full
+    /// insertion ordered sequence. Persistent proof diagnostics use this
+    /// tail view so report cost depends only on the displayed context.
+    pub(crate) fn recent(&self, limit: usize) -> Vec<&T> {
+        let mut entries = Vec::with_capacity(limit.min(self.len));
+        let mut current = self.tail.as_deref();
+        while entries.len() < limit {
+            let Some(node) = current else { break };
+            entries.push(&node.value);
+            current = node.parent.as_deref();
+        }
+        entries
+    }
+
     pub(crate) fn to_vec(&self) -> Vec<T>
     where
         T: Clone,
@@ -361,5 +375,19 @@ mod tests {
         // Shorter than the ancestor.
         let shorter = SharedVec::from(vec![1, 2]);
         assert_eq!(shorter.suffix_since(&ancestor), None);
+    }
+
+    #[test]
+    fn recent_reads_only_requested_tail_shape() {
+        let mut sequence = PersistentSequence::default();
+        for value in 0..10_000 {
+            sequence.push(value);
+        }
+        assert_eq!(sequence.recent(0), Vec::<&i32>::new());
+        assert_eq!(
+            sequence.recent(3).into_iter().copied().collect::<Vec<_>>(),
+            vec![9999, 9998, 9997]
+        );
+        assert_eq!(sequence.recent(20_000).len(), 10_000);
     }
 }

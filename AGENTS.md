@@ -86,7 +86,9 @@ current feature when any of these occurs:
 - a smart tactic reports success but its generated certificate does not verify;
 - `click expand` fails, emits an unverifiable rewrite, or disagrees with
   `click profile` or `click audit`;
-- a normal diagnostic expands into a huge internal state dump; or
+- a normal diagnostic expands into a huge repeated raw internal-state dump;
+  bounded user-approved goal, premise, and search context is useful and
+  should be retained, while repeated raw memory snapshots remain a defect; or
 - an example needs unnatural C or irrelevant proof bookkeeping to route around
   verifier behavior.
 

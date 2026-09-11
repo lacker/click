@@ -612,20 +612,15 @@ expand it, and independently re-verify the expanded proof.
 
 The diagnostic run established all five individual invariant `have` steps under
 ordinary checking, but not the combined generated-bundle closure or expansion.
-The first diagnostic confirmed an implementation presentation gap: the source
-synthesis path could not reconstruct a Surface presentation for the generated
-mathematical-Integer comparison goals in the loop-close bundle. Integer
-comparisons themselves remain expressible in the language. A subsequent narrow
-patch removed the gate failure, but the same generated bundle still failed. The
-preserved older reproduction remains in
-`/tmp/click-integer-sum-integration`; the standalone source recheck is
-`/tmp/click-integer-sum-reproduction/integer_sum_range_fold.click`. Running
-that source with the landed binary now fails promptly in `sum.contract` source
-tactic 44 with `closure body did not prove every invariant obligation` (0.29
-seconds), so this is a proof-closure failure rather than a timeout. The exact
-underlying leaf is still unknown. The next step is a bounded reduction of the
-smallest failing bundle with explicit leaf facts and source provenance, rather
-than a broad Surface implementation.
+The diagnostic report now retains the generated kernel bundle and identifies
+the concrete unsupported case: no Surface presentation is available for the
+whole generated invariant bundle. Integer comparisons themselves remain
+expressible in the language. The checked diagnostic coverage is exercised by
+[`tests/fixtures/proof_diagnostics/integer_sum_range_fold.click`](../tests/fixtures/proof_diagnostics/integer_sum_range_fold.click)
+and the named `integer_sum_range_fold_reproduction_fixture_is_kept_unchanged`
+regression. This diagnostic does not establish acceptance of the whole
+summation example or an expanded certificate; the later leaf and exact-sum
+proof remain a separate next task.
 
 The proposed next regression should isolate the goal shape
 `L and (L -> (L -> E))`, where `L` is the scoped loadability universal and `E`

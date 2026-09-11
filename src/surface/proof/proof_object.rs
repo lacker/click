@@ -752,6 +752,39 @@ type PropositionObligation =
     KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>>;
 type OutcomeObligation = FunctionOutcomeObligation<Arc<OutcomeProofData>>;
 
+/// Opaque diagnostic view over the same persistent kernel handle used by the
+/// checker. Formatting happens only when the terminal error message is read.
+struct ProofDiagnosticProofState(KernelProofHandle);
+
+impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnosticProofState {
+    fn kernel_goal(&self) -> Option<&Proposition> {
+        let branch = self
+            .0
+            .state()
+            .open_branches()
+            .get(self.0.focused_branch())?;
+        match &branch.obligation {
+            Obligation::Proposition(goal) => Some(goal.proposition()),
+            _ => None,
+        }
+    }
+
+    fn premises(&self, limit: usize) -> Vec<&Proposition> {
+        let Some(branch) = self.0.state().open_branches().get(self.0.focused_branch()) else {
+            return Vec::new();
+        };
+        branch.state.facts.recent_facts(limit)
+    }
+
+    fn premise_count(&self) -> usize {
+        self.0
+            .state()
+            .open_branches()
+            .get(self.0.focused_branch())
+            .map_or(0, |branch| branch.state.facts.fact_count())
+    }
+}
+
 /// The fixed-state data a result-aware checker consumes, resolved from
 /// either a fixed-state proof's borrowed context or a focused function-outcome
 /// goal (see [`Proof::outcome_fixed_state_view`]).
@@ -1599,16 +1632,27 @@ impl<'a> Proof<'a> {
     /// lineage of the current block instead. The proof-tree depth is never
     /// reported as if it were a step number.
     pub(in crate::surface::proof) fn step_error(&self, message: impl Into<String>) -> ClickError {
+        let reason = message.into();
         let location = self
             .site
             .path()
             .unwrap_or_else(|| format!("checked step {}", self.node.depth + 1));
-        ClickError::new(format!(
+        let summary = format!(
             "`{}` proof step {}: {}",
             self.context.claim_label(),
             location,
-            message.into()
-        ))
+            reason
+        );
+        let diagnostic = crate::surface::proof_diagnostics::ProofFailureDiagnostic {
+            origin: crate::surface::proof_diagnostics::ProofDiagnosticOrigin {
+                stage: "proof step".to_owned(),
+                location,
+            },
+            claim_label: self.context.claim_label().to_owned(),
+            reason: summary.clone(),
+            state: Some(Arc::new(ProofDiagnosticProofState(self.state.clone()))),
+        };
+        ClickError::with_diagnostic(summary, diagnostic)
     }
 
     /// The step position this proof's diagnostics report.

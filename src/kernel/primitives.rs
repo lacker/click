@@ -2629,6 +2629,21 @@ pub struct CMemory {
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
+impl CMemory {
+    /// O(1) diagnostic identity for a snapshot without interning or walking
+    /// its contents. This is intentionally only an identity label; equal
+    /// labels imply shared storage roots, not semantic inequality otherwise.
+    pub(crate) fn diagnostic_identity(&self) -> (usize, usize, usize, usize, usize) {
+        (
+            std::sync::Arc::as_ptr(&self.blocks) as usize,
+            std::sync::Arc::as_ptr(&self.cells) as usize,
+            std::sync::Arc::as_ptr(&self.union_cells) as usize,
+            std::sync::Arc::as_ptr(&self.ended_local_blocks) as usize,
+            std::sync::Arc::as_ptr(&self.heap) as usize,
+        )
+    }
+}
+
 /// A pinned, shallow identity for the lifetime metadata relevant to a read.
 /// Keeping the heap alive prevents allocation-address reuse in an index, and
 /// the local-lifetime bit distinguishes a retired automatic block from a

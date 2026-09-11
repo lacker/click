@@ -403,6 +403,7 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn try_direct_logical_closure(
         &self,
     ) -> Result<Option<Self>, ClickError> {
+        let mut scope = attempt::search_scope("direct logical closure");
         let mut budget = attempt::AttemptBudget::unbounded();
         let mut proof = self.clone();
         loop {
@@ -418,6 +419,7 @@ impl<'a> Proof<'a> {
                     ProofStep::Enumerate,
                 ],
             )? {
+                scope.succeed();
                 return Ok(Some(closed));
             }
             match attempt::candidate_outcome(proof.apply_step(ProofStep::Intro))? {
@@ -436,10 +438,16 @@ impl<'a> Proof<'a> {
     /// advances this same `Proof`; no semantic result is produced before
     /// those proof steps have been accepted.
     pub(in crate::surface::proof) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
+        let mut scope = attempt::search_scope("simp closure");
         if let Some(proof) = self.try_direct_logical_closure()? {
+            scope.succeed();
             return Ok(Some(proof));
         }
-        self.try_simp_closure_after_direct(false)
+        let result = self.try_simp_closure_after_direct(false)?;
+        if result.is_some() {
+            scope.succeed();
+        }
+        Ok(result)
     }
 
     /// Continues smart closure after direct logical candidates have either
@@ -451,17 +459,29 @@ impl<'a> Proof<'a> {
         &self,
         exclude_exact_goal: bool,
     ) -> Result<Option<Self>, ClickError> {
-        self.try_simp_closure_after_direct_with_surfaces(exclude_exact_goal, &[])
+        let mut scope = attempt::search_scope("simp closure after direct candidates");
+        let result = self.try_simp_closure_after_direct_with_surfaces(exclude_exact_goal, &[])?;
+        if result.is_some() {
+            scope.succeed();
+        }
+        Ok(result)
     }
 
     pub(super) fn try_simp_closure_with_surfaces(
         &self,
         introduced_surfaces: &[ClickProposition],
     ) -> Result<Option<Self>, ClickError> {
+        let mut scope = attempt::search_scope("simp closure with surfaces");
         if let Some(proof) = self.try_direct_logical_closure()? {
+            scope.succeed();
             return Ok(Some(proof));
         }
-        self.try_simp_closure_after_direct_with_surfaces(false, introduced_surfaces)
+        let result =
+            self.try_simp_closure_after_direct_with_surfaces(false, introduced_surfaces)?;
+        if result.is_some() {
+            scope.succeed();
+        }
+        Ok(result)
     }
 
     fn try_simp_closure_after_direct_with_surfaces(

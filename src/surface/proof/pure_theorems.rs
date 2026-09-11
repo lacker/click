@@ -827,12 +827,19 @@ fn check_pure_structural_induction(
             theorem_environment,
             branch_setup,
         );
-        let Some(proof) = root.try_authoritative_linear_script(&prepared)? else {
-            return Err(ClickError::new(format!(
+        let mut search = super::attempt::search_scope("pure structural induction arm");
+        let attempted = match root.try_authoritative_linear_script(&prepared) {
+            Ok(attempted) => attempted,
+            Err(error) => return Err(error.with_search_failures(search.finish())),
+        };
+        let Some(proof) = attempted else {
+            let error = root.step_error(format!(
                 "`{claim_label}` structural induction arm `{}::{}` did not close its goal",
                 arm.type_name, arm.variant
-            )));
+            ));
+            return Err(error.with_search_failures(search.finish()));
         };
+        search.succeed();
         checked_arms.push(ProofInductionArm {
             type_name: arm.type_name.clone(),
             variant: arm.variant.clone(),
@@ -1762,9 +1769,18 @@ fn verify_contract_refinement_theorem(
         click_function_environment,
         theorem_environment,
     );
-    let proof = root
-        .try_authoritative_linear_script(proof_tactics)?
-        .ok_or_else(refinement_failure)?;
+    let mut search = super::attempt::search_scope("contract refinement");
+    let attempted = match root.try_authoritative_linear_script(proof_tactics) {
+        Ok(attempted) => attempted,
+        Err(error) => return Err(error.with_search_failures(search.finish())),
+    };
+    let proof = match attempted {
+        Some(proof) => {
+            search.succeed();
+            proof
+        }
+        None => return Err(refinement_failure().with_search_failures(search.finish())),
+    };
     let checked = proof.completed_proposition()?;
     let goal = lower_pure_theorem_proposition_with_integer_values(
         theorem.name(),

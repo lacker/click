@@ -100,6 +100,17 @@ enum BitvectorEqualityAtomKey {
 }
 
 impl ProofFacts {
+    /// Bounded newest-first view for diagnostics. This deliberately exposes
+    /// references into the persistent sequence and never materializes the
+    /// ambient proof history.
+    pub(crate) fn recent_facts(&self, limit: usize) -> Vec<&Proposition> {
+        self.ordered.recent(limit)
+    }
+
+    pub(crate) fn fact_count(&self) -> usize {
+        self.ordered.len()
+    }
+
     /// Check only corresponding leaves of two presentations of one goal.
     /// No ambient fact search or pairwise load census is performed.
     pub(crate) fn with_checked_rewritten_loads(

@@ -79,6 +79,20 @@ or inserting irrelevant proof bookkeeping. See
 
 ## Reading a step failure's location
 
+Structured proof failures retain the claim, stage, source location, focused
+kernel goal, and a newest-first suffix of recent premises. The original
+reason remains the first line. Context is rendered only when the terminal
+message is requested, with a 64 KiB report cap, bounded proposition printer,
+and at most eight premises. Individual premise renderings are capped at 2 KiB
+and reports say when additional context was omitted. Snapshot identity in a
+report identifies shared roots; identical labels identify the same stored
+snapshot roots, while different labels may still describe equal memory
+contents. Diagnostic labels are context, not proof certificates. Search
+context covers bounded recent representatives from loop, induction,
+refinement, and common postcondition searches; it is not a complete theorem
+reasoning trace. This keeps failures useful for triage without dumping
+persistent proof history or repeated raw memory snapshots.
+
 A failing proof step names where it was written:
 
 ```text
