@@ -2969,3 +2969,31 @@ path = "reference/library/index.md#int32_subtract_to_integer"
 [[item]]
 id = "stdlib.theorem.int32_add_defined_by_integer_bounds"
 path = "reference/library/index.md#int32_add_defined_by_integer_bounds"
+
+[[item]]
+id = "stdlib.theorem.integer_to_int16_round_trip"
+path = "reference/library/index.md#integer_to_int16_round_trip"
+
+[[item]]
+id = "stdlib.theorem.integer_to_int32_round_trip"
+path = "reference/library/index.md#integer_to_int32_round_trip"
+
+[[item]]
+id = "stdlib.theorem.integer_to_uint8_round_trip"
+path = "reference/library/index.md#integer_to_uint8_round_trip"
+
+[[item]]
+id = "stdlib.theorem.integer_to_uint16_round_trip"
+path = "reference/library/index.md#integer_to_uint16_round_trip"
+
+[[item]]
+id = "stdlib.theorem.integer_to_uint32_round_trip"
+path = "reference/library/index.md#integer_to_uint32_round_trip"
+
+[[item]]
+id = "stdlib.theorem.integer_to_int64_round_trip"
+path = "reference/library/index.md#integer_to_int64_round_trip"
+
+[[item]]
+id = "stdlib.theorem.integer_to_uint64_round_trip"
+path = "reference/library/index.md#integer_to_uint64_round_trip"

@@ -5350,6 +5350,37 @@ pub fn prove_int32_add_defined_by_integer_bounds(
     ))
 }
 
+/// A checked round trip through a machine carrier preserves an Integer
+/// precisely within that carrier's representable range.
+pub fn prove_integer_machine_round_trip(
+    value: IntegerTerm,
+    destination: MachineIntegerType,
+) -> Theorem {
+    let (lower, upper) = super::spec::integer_machine_bounds(destination);
+    let converted = Bitvector32Term::IntegerToMachine {
+        value: value.clone().into(),
+        destination,
+    };
+    let observed = IntegerTerm::from_machine(destination, converted)
+        .expect("machine observation has an integral carrier");
+    Theorem::new(Proposition::Implies(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::IntegerGreaterEqual(value.clone().into(), lower.into()),
+            true,
+        )),
+        Box::new(Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerLessEqual(value.clone().into(), upper.into()),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(observed.into(), value.into()),
+                true,
+            )),
+        )),
+    ))
+}
+
 /// Exact mathematical observation of a defined signed 32-bit addition.
 /// The overflow premise is essential: the machine term alone is modular.
 pub fn prove_int32_add_to_integer(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
