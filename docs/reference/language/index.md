@@ -256,14 +256,17 @@ Machine variables and suffixed machine literals require explicit conversions.
 `to_integer(value)` preserves the numeric value of each supported machine
 integer type: `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, and `uint64`.
 Signed `-1` and unsigned `4294967295u32` therefore produce different Integers.
-Evaluating the argument retains its C definedness obligations; converting an
-overflowing C addition does not make the addition valid.
+Evaluating the argument retains its C definedness obligations. For example,
+`to_integer(x + 1)` requires established evidence of `defined(x + 1)`, even in
+a reflexive comparison. This requirement survives aliases, nested arithmetic,
+and conditional expressions; an overflowing C addition remains invalid.
 
 The reverse names are `to_int16`, `to_int32`, `to_uint8`, `to_uint16`,
-`to_uint32`, `to_int64`, and `to_uint64`. The current checkpoint accepts exact
-Integer constants within the destination's range and rejects values outside it.
-Symbolic reverse conversions with explicit range proofs are still being
-implemented. No conversion wraps, truncates, or implicitly mixes the two types.
+`to_uint32`, `to_int64`, and `to_uint64`. Exact constants must lie within the
+destination's range. Symbolic values require established lower and upper bounds;
+for example, `to_int32(z)` requires `z >= -2147483648` and `z <= 2147483647`.
+Missing either bound rejects the conversion, including inside reflexive claims.
+No conversion wraps, truncates, or implicitly mixes the two types.
 See [conversion examples](https://github.com/lacker/click/blob/master/mdtests/integer_machine_conversions.md).
 
 <!-- verified-example: mdtests/integer_successor.md -->

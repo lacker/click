@@ -1686,6 +1686,7 @@ pub(super) fn describe_bitvector_with_context(
                 describe_pointer(pointer, parameters, arguments)
             )
         }
+        Bitvector32Term::IntegerToMachine { .. } => "integer-to-machine".to_string(),
     }
 }
 

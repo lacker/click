@@ -166,7 +166,8 @@ fn collect_offset_load_variables_from_term(
         Bitvector32Term::RangeFold { .. }
         | Bitvector32Term::PureFunctionApplication { .. }
         | Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => {}
+        | Bitvector32Term::AlgebraicMatch { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => {}
     }
 }
 
@@ -281,7 +282,8 @@ fn assert_scaled_index_free_of_raw_loads(
         Bitvector32Term::RangeFold { .. }
         | Bitvector32Term::PureFunctionApplication { .. }
         | Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => {}
+        | Bitvector32Term::AlgebraicMatch { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => {}
     }
 }
 

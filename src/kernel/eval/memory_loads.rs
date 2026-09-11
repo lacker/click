@@ -1441,7 +1441,8 @@ fn substitute_load_variables(
                         }
                         None => term_results.push(term.clone()),
                     },
-                    Bitvector32Term::PointerAddress(_) => term_results.push(term.clone()),
+                    Bitvector32Term::PointerAddress(_)
+                    | Bitvector32Term::IntegerToMachine { .. } => term_results.push(term.clone()),
                     Bitvector32Term::ClickFunctionApplication { .. }
                     | Bitvector32Term::AlgebraicMatch { .. } => term_results.push(term.clone()),
                     Bitvector32Term::Add(left, right) => {
@@ -2136,6 +2137,7 @@ fn term_mentions_a_memory_load(term: &Bitvector32Term) -> bool {
         Bitvector32Term::AlgebraicMatch { arms, .. } => arms
             .iter()
             .any(|arm| term_mentions_a_memory_load(&arm.body)),
+        Bitvector32Term::IntegerToMachine { .. } => true,
     }
 }
 

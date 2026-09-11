@@ -344,6 +344,7 @@ impl<'a> Proof<'a> {
                 super::pure_theorems::lower_pure_theorem_proposition_recording_introductions(
                     context.claim_label,
                     surface,
+                    &PureFactContext::new(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
                     context

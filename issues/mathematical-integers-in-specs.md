@@ -413,3 +413,27 @@ failed prototypes, or weakened tests merely to make parallel work fit.
 - Division/remainder may follow initial arithmetic in a separate stage with
   the already agreed Euclidean semantics; do not claim their support before
   the corresponding implementation and regressions land.
+
+## Mandatory conversion obligations checkpoint (2026-09-10)
+
+Symbolic reverse conversions retain their destination carrier and require both
+exact Integer bounds for all seven machine types. A reflexive comparison is not
+a way to bypass those requirements; missing either bound rejects even when the
+converted terms on both sides are identical.
+
+Review found a related forward-conversion gap: the successful evaluation path of
+`to_integer(x + 1)` carried non-overflow as a path assumption. Consequently a
+reflexive goal could verify without establishing that its C argument was defined.
+Forward conversions now retain the complete argument domain as a mandatory
+verification condition, including intermediate operations and conditional paths.
+Proof lowering and expression capture preserve typed obligations until checking
+against independently established facts. Combining expression paths must preserve
+mandatory status and diagnostic context, never turn the condition into an
+assumption available to subsequent evaluation.
+
+Regressions cover unbounded reflexive claims, established definedness, nested and
+cancelled arithmetic, both operand positions, aliases, conditional branches,
+owned memory reads, exact reverse bounds, and expansion followed by verification.
+The checked C arithmetic bridge still requires definedness explicitly. This
+checkpoint does not complete the remaining functions, quantified proofs, Nat
+connections, folds, or unchanged C summation-loop acceptance work.

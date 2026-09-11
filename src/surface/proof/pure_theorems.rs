@@ -1263,9 +1263,11 @@ fn verify_theorem_ensure(
     )? {
         return Ok(verified);
     }
+    let lowering_assumptions = assumptions_from_propositions(&context.requires);
     let (goal, goal_introductions) = lower_pure_theorem_proposition_recording_introductions(
         theorem.name(),
         surface_goal,
+        &lowering_assumptions,
         &context.values,
         &context.array_refs,
         &BTreeMap::new(),
@@ -3696,6 +3698,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
     lower_pure_theorem_proposition_recording_introductions(
         theorem_name,
         proposition,
+        &PureFactContext::new(),
         values,
         array_refs,
         algebraic_values,
@@ -3714,6 +3717,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
 pub(super) fn lower_pure_theorem_proposition_recording_introductions(
     theorem_name: &str,
     proposition: &ClickProposition,
+    assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
@@ -3726,6 +3730,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         &PureFactContext::new(),
+        assumptions,
         values,
         array_refs,
         algebraic_values,

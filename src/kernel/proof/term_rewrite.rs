@@ -692,6 +692,12 @@ impl<'a> TermRewrite<'a> {
             Bitvector32Term::PointerAddress(pointer) => {
                 Bitvector32Term::PointerAddress(Box::new(self.pointer(pointer)))
             }
+            Bitvector32Term::IntegerToMachine { value, destination } => {
+                Bitvector32Term::IntegerToMachine {
+                    value: self.integer_shared(value).into(),
+                    destination: *destination,
+                }
+            }
             Bitvector32Term::Float32Binary {
                 operator,
                 left,
@@ -880,5 +886,31 @@ mod tests {
             assert_eq!(seen.len(), depth + 1);
             assert!(rewrite.visits <= depth + 4);
         }
+    }
+
+    #[test]
+    fn integer_to_machine_rewrite_descends_nested_math_payload() {
+        let payload = SharedIntegerTerm::from(IntegerTerm::Machine(
+            crate::kernel::SharedMachineIntegerTerm::intern(
+                crate::kernel::MachineIntegerType::Int32,
+                Bitvector32Term::Variable(Variable(880)),
+            ),
+        ));
+        let input = Term::Bitvector32(Bitvector32Term::IntegerToMachine {
+            value: payload,
+            destination: crate::kernel::MachineIntegerType::UInt32,
+        });
+        let mut rewrite = TermRewrite::for_bits(
+            &Bitvector32Term::Variable(Variable(880)),
+            &Bitvector32Term::Variable(Variable(881)),
+        );
+        let output = rewrite.term(&input);
+        assert!(
+            matches!(output, Term::Bitvector32(Bitvector32Term::IntegerToMachine {
+            destination: crate::kernel::MachineIntegerType::UInt32,
+            ref value,
+        }) if matches!(value.as_ref(), IntegerTerm::Machine(machine)
+            if machine.value() == &Bitvector32Term::Variable(Variable(881))))
+        );
     }
 }

@@ -49,24 +49,97 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opaque_integer_function_results_support_arithmetic_without_unfolding() {
-        let source = "function successor(z: Integer) -> Integer { z + 1 } theorem opaque(z: Integer) { ensures successor(z) + 1 > successor(z) by simp; }";
-        verify_c0_sources(source, &[]).unwrap();
-        let expanded = expand_c0_claim_source_by_label(source, &[], "opaque.ensures_0").unwrap();
-        verify_c0_sources(&expanded, &[]).unwrap();
-        let false_identity =
-            source.replace("successor(z) + 1 > successor(z)", "successor(z) == z + 1");
-        assert!(
-            verify_c0_sources(
-                &false_identity.replace("by simp", "by { normalize(); }"),
-                &[]
-            )
-            .is_err()
+    fn conversion_obligations_survive_right_operand_composition() {
+        for expression in [
+            "1 + to_integer(x + 1)",
+            "to_integer(x + 1) + 1",
+            "to_integer(x) + to_integer(x + 1)",
+        ] {
+            let source = format!(
+                "theorem compose(x: int32) {{ ensures {expression} == {expression} by simp; }}"
+            );
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+            verify_c0_sources(&bounded, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn forward_conversion_conditionals_preserve_the_argument_domain() {
+        let expression = "if c == 0 { x + 1 } else { y + 1 }";
+        let source = format!(
+            "theorem branch(c: int32, x: int32, y: int32) {{ requires defined({expression}); ensures to_integer({expression}) == to_integer({expression}) by simp; }}"
         );
-        let expanded_identity =
-            expand_c0_claim_source_by_label(&false_identity, &[], "opaque.ensures_0").unwrap();
-        assert!(expanded_identity.contains("unfold("), "{expanded_identity}");
-        verify_c0_sources(&expanded_identity, &[]).unwrap();
+        verify_c0_sources(&source, &[]).unwrap();
+        let invalid = source.replace(&format!("requires defined({expression});"), "");
+        assert!(verify_c0_sources(&invalid, &[]).is_err());
+        let one_branch = source.replace(
+            &format!("requires defined({expression});"),
+            "requires defined(x + 1);",
+        );
+        assert!(verify_c0_sources(&one_branch, &[]).is_err());
+    }
+
+    #[test]
+    fn forward_conversion_aliases_retain_definedness() {
+        for alias in [
+            "let a: Integer = to_integer(x + 1);",
+            "let b: Integer = to_integer(x + 1); let a: Integer = b + 0;",
+        ] {
+            let source = format!("theorem alias(x: int32) {{ {alias} ensures a == a by simp; }}");
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ let", "{ requires defined(x + 1); let");
+            verify_c0_sources(&bounded, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn forward_conversion_memory_requires_ownership_and_definedness() {
+        let c = "int32 read(int32* p) { return *p; }";
+        let source = "verifying \"read.c\"; int32 read(int32* p) { owns p[0..1]; requires defined(p[0] + 1); ensures to_integer(p[0] + 1) == to_integer(p[0] + 1); } by { execute(); simp(); }";
+        verify_c0_sources(source, &[("read.c", c)]).unwrap();
+        for missing in ["owns p[0..1];", "requires defined(p[0] + 1);"] {
+            let invalid = source.replace(missing, "");
+            assert!(
+                verify_c0_sources(&invalid, &[("read.c", c)]).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn forward_conversion_keeps_intermediate_overflow_obligations() {
+        let source = "theorem nested(x: int32) { requires defined((x + 1) + 1); ensures to_integer((x + 1) + 1) == to_integer((x + 1) + 1) by simp; }";
+        verify_c0_sources(source, &[]).unwrap();
+        let missing = source.replace("requires defined((x + 1) + 1);", "requires defined(x + 1);");
+        assert!(verify_c0_sources(&missing, &[]).is_err());
+        let cancelled = "theorem cancelled(x: int32) { ensures to_integer((x + 1) - 1) == to_integer((x + 1) - 1) by simp; }";
+        assert!(verify_c0_sources(cancelled, &[]).is_err());
+        let bounded = cancelled.replace("{ ensures", "{ requires defined((x + 1) - 1); ensures");
+        verify_c0_sources(&bounded, &[]).unwrap();
+    }
+
+    #[test]
+    fn forward_conversion_requires_symbolic_argument_definedness() {
+        for proof in ["normalize()", "simp()"] {
+            let source = format!(
+                "theorem forward(x: int32) {{ ensures to_integer(x + 1) == to_integer(x + 1) by {{ {proof}; }} }}"
+            );
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+            verify_c0_sources(&bounded, &[])
+                .unwrap_or_else(|error| panic!("{}\n{bounded}", error.message()));
+            if proof == "simp()" {
+                let expanded =
+                    expand_c0_claim_source_by_label(&bounded, &[], "forward.ensures_0").unwrap();
+                verify_c0_sources(&expanded, &[]).unwrap();
+            }
+        }
+        let c = "int32 identity(int32 x) { return x; }";
+        let source = "verifying \"identity.c\"; int32 identity(int32 x) { ensures to_integer(x + 1) == to_integer(x + 1); } by { execute(); simp(); }";
+        assert!(verify_c0_sources(source, &[("identity.c", c)]).is_err());
+        let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+        verify_c0_sources(&bounded, &[("identity.c", c)]).unwrap();
     }
 
     #[test]
@@ -229,6 +302,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn symbolic_integer_conversions_require_exact_bounds_for_all_targets() {
+        for (target, lower, upper) in [
+            ("int16", "-32768", "32767"),
+            ("int32", "-2147483648", "2147483647"),
+            ("uint8", "0", "255"),
+            ("uint16", "0", "65535"),
+            ("uint32", "0", "4294967295"),
+            ("int64", "-9223372036854775808", "9223372036854775807"),
+            ("uint64", "0", "18446744073709551615"),
+        ] {
+            let source = format!(
+                "theorem conversion(z: Integer) {{ requires z >= {lower}; requires z <= {upper}; ensures to_{target}(z) == to_{target}(z) by simp; }}"
+            );
+            verify_c0_sources(&source, &[]).unwrap_or_else(|error| {
+                panic!(
+                    "bounded symbolic conversion `{target}` rejected: {}",
+                    error.message()
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn symbolic_integer_conversions_reject_missing_bounds() {
+        for (target, lower, upper) in [
+            ("int16", "-32768", "32767"),
+            ("int32", "-2147483648", "2147483647"),
+            ("uint8", "0", "255"),
+            ("uint16", "0", "65535"),
+            ("uint32", "0", "4294967295"),
+            ("int64", "-9223372036854775808", "9223372036854775807"),
+            ("uint64", "0", "18446744073709551615"),
+        ] {
+            for requirements in [
+                vec![format!("z >= {lower}")],
+                vec![format!("z <= {upper}")],
+                Vec::new(),
+            ] {
+                let requires = requirements
+                    .into_iter()
+                    .map(|requirement| format!(" requires {requirement};"))
+                    .collect::<String>();
+                let source = format!(
+                    "theorem conversion(z: Integer) {{{requires} ensures to_{target}(z) == to_{target}(z) by simp; }}"
+                );
+                assert!(
+                    verify_c0_sources(&source, &[]).is_err(),
+                    "conversion `{target}` accepted without both bounds: {source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wrapped_symbolic_conversions_keep_bounds_through_proofs_and_expansion() {
+        let bounded = "theorem wrapped(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; ensures to_int32(z) + 0 == to_int32(z) by simp; }";
+        verify_c0_sources(bounded, &[]).unwrap();
+        let normalized = bounded.replace("by simp; }", "by { normalize(); } }");
+        verify_c0_sources(&normalized, &[]).unwrap();
+        let expanded = expand_c0_claim_source_by_label(bounded, &[], "wrapped.ensures_0").unwrap();
+        verify_c0_sources(&expanded, &[]).unwrap();
+
+        for missing in ["requires z >= -2147483648;", "requires z <= 2147483647;"] {
+            let invalid = bounded.replace(missing, "");
+            assert!(verify_c0_sources(&invalid, &[]).is_err(), "{invalid}");
+        }
+
+        let prior_have = "theorem prior(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let x: int32 = to_int32(z); ensures x + 0 == x by simp; }";
+        verify_c0_sources(prior_have, &[]).unwrap();
+        let aliases = "theorem aliases(z: Integer) { requires z >= -2147483648; requires z <= 2147483647; let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by simp; }";
+        verify_c0_sources(aliases, &[]).unwrap();
+        let no_bounds = "theorem aliases(z: Integer) { let a: int32 = to_int32(z); let b: int32 = a + 0; ensures b == a by simp; }";
+        assert!(verify_c0_sources(no_bounds, &[]).is_err());
     }
 
     #[test]

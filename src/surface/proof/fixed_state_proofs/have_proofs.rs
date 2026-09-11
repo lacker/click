@@ -82,6 +82,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions_
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         assumptions,
+        assumptions,
         &values,
         &array_refs,
         &BTreeMap::new(),
@@ -178,6 +179,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
         assumptions,
+        assumptions,
         values,
         array_refs,
         algebraic_values,
@@ -201,6 +203,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
 pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording_introductions(
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
+    obligation_assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
@@ -238,13 +241,19 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
         opaque_click_functions.clone(),
     )?;
     let (lowered, _, obligations, introductions) =
-        crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+        crate::kernel::c_lower_spec_proposition_with_checked_obligations(
             &states.lowering_state,
             &spec,
             Some(&states.entry_state),
             assumptions,
         )?;
-    refuse_impossible_loads(&obligations)?;
+    refuse_impossible_loads(
+        &obligations
+            .iter()
+            .map(|obligation| obligation.proposition().clone())
+            .collect::<Vec<_>>(),
+    )?;
+    refuse_unproved_conversion_bounds(&obligations, obligation_assumptions)?;
     Ok((lowered, introductions))
 }
 
@@ -350,12 +359,17 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
         click_function_environment,
         opaque_click_functions.clone(),
     )?;
-    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
         &states.lowering_state,
         &spec,
         Some(&states.entry_state),
         assumptions,
     )?;
+    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    let obligations = obligations
+        .iter()
+        .map(|obligation| obligation.proposition().clone())
+        .collect::<Vec<_>>();
     refuse_impossible_loads(&obligations)?;
     Ok(value)
 }
@@ -457,13 +471,17 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 functions,
                 BTreeSet::new(),
             )?;
-            let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
-                &states.lowering_state,
-                &spec,
-                Some(&states.entry_state),
-                assumptions,
-            )?;
-            if obligations.iter().any(|o| !assumptions.proves(o)) {
+            let (value, obligations) =
+                crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
+                    &states.lowering_state,
+                    &spec,
+                    Some(&states.entry_state),
+                    assumptions,
+                )?;
+            if obligations
+                .iter()
+                .any(|o| !assumptions.proves(o.proposition()))
+            {
                 return Err("fold initializer has unproved evaluation obligations".into());
             }
             if value.c_type() != *expected {
@@ -593,12 +611,17 @@ fn evaluate_c_fragment_with_binding_policy(
         &ClickFunctionEnvironment::new(&[]),
         std::collections::BTreeSet::new(),
     )?;
-    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
         &states.lowering_state,
         &spec,
         Some(&states.entry_state),
         assumptions,
     )?;
+    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    let obligations = obligations
+        .iter()
+        .map(|obligation| obligation.proposition().clone())
+        .collect::<Vec<_>>();
     refuse_impossible_loads(&obligations)?;
     if !assumptions.should_allow_symbolic_contract_loads()
         && let Some(obligation) = obligations.iter().find(|obligation| {
@@ -692,6 +715,18 @@ fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
         return Err(format!(
             "the proposition reads memory that is not loadable here: {obligation:?}"
         ));
+    }
+    Ok(())
+}
+
+fn refuse_unproved_conversion_bounds(
+    obligations: &[crate::kernel::ProofObligation],
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    for obligation in obligations {
+        if !obligation.is_assumable() && !assumptions.proves(obligation.proposition()) {
+            return Err("the proposition requires an established Integer conversion bound or argument definedness".into());
+        }
     }
     Ok(())
 }
