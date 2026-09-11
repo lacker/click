@@ -4160,11 +4160,58 @@ impl std::hash::Hash for PureFactContext {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct ProofObligation {
     pub(super) proposition: Proposition,
     pub(super) context: Option<String>,
     pub(super) assumable: bool,
+    /// The head chain the lowering that built `proposition` recorded for it,
+    /// outermost first, when the kernel built this obligation from a lowered
+    /// specification proposition.
+    ///
+    /// Lowering wraps an obligation in `Implies` nodes that no Surface
+    /// connective wrote. A consumer that introduces the head of this
+    /// obligation reads the chain instead of guessing from the shape the
+    /// written syntax happens to share. `None` is the unrecorded state: an
+    /// obligation the kernel built with no lowering of its own.
+    pub(super) introductions: Option<Arc<super::LoweringIntroductions>>,
+}
+
+/// Provenance describes the proposition; it never distinguishes two
+/// obligations. Comparison, ordering, and hashing therefore read the
+/// checked fields only, so an obligation carrying a recorded chain still
+/// deduplicates against the same obligation built without one.
+impl PartialEq for ProofObligation {
+    fn eq(&self, other: &Self) -> bool {
+        self.proposition == other.proposition
+            && self.context == other.context
+            && self.assumable == other.assumable
+    }
+}
+
+impl Eq for ProofObligation {}
+
+impl Hash for ProofObligation {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.proposition.hash(state);
+        self.context.hash(state);
+        self.assumable.hash(state);
+    }
+}
+
+impl Ord for ProofObligation {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.proposition
+            .cmp(&other.proposition)
+            .then_with(|| self.context.cmp(&other.context))
+            .then_with(|| self.assumable.cmp(&other.assumable))
+    }
+}
+
+impl PartialOrd for ProofObligation {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

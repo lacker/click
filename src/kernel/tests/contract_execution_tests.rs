@@ -3496,3 +3496,89 @@ fn completion_key_folds_trivial_conditions_the_proof_lowering_folds() {
     // Nothing else changes.
     assert_eq!(completion_key(&nontrivial), nontrivial);
 }
+
+/// A call requirement the caller cannot discharge becomes a precondition
+/// obligation, and that obligation now carries the head chain the lowering
+/// that built it recorded: the guards lowering inserted in front of the
+/// requirement, in the order an introduction reaches them.
+///
+/// The requirement here adds one to the symbolic argument, so lowering guards
+/// it with the no-overflow premise the caller state does not establish.
+/// Nothing pairs that guard with a written connective by shape: the record
+/// says it is one lowering inserted.
+#[test]
+fn call_requirement_obligations_carry_their_lowering_record() {
+    let successor_is_positive = SpecProposition::Comparison {
+        left: SpecExpression::Add(
+            Box::new(SpecExpression::CExpression(c_variable("n"))),
+            Box::new(SpecExpression::CExpression(c_int32_literal(1))),
+        ),
+        operator: CComparisonOperator::GreaterThan,
+        right: SpecExpression::CExpression(c_int32_literal(0)),
+    };
+    let returns_one = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("result")),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::CExpression(c_int32_literal(1)),
+    };
+    let helper = c_function(
+        CType::Int32,
+        "successor_is_positive",
+        vec![c_parameter("n", CType::Int32)],
+        c_return(c_int32_literal(1)),
+    )
+    .with_contract(
+        vec![successor_is_positive],
+        vec![returns_one],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+    let state = CState::new().with_local("n", int32(Bitvector32Term::Variable(Variable(31_000))));
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        state,
+        c_call_assign("result", "successor_is_positive", vec![c_variable("n")]),
+        PureFactContext::new(),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    let path = execution.paths().first().expect("verified call path");
+    let obligation = path
+        .obligations()
+        .iter()
+        .find(|obligation| obligation.context() == Some("successor_is_positive precondition"))
+        .unwrap_or_else(|| {
+            panic!(
+                "an undischarged precondition should be emitted: {:#?}",
+                path.obligations()
+            )
+        });
+    let recorded = obligation
+        .introductions()
+        .expect("a kernel-built call requirement carries its lowering record");
+    assert!(
+        !recorded.is_empty(),
+        "lowering guarded this requirement, so the record names those guards: {:?}",
+        obligation.proposition()
+    );
+    // Every recorded node is a guard lowering inserted, and each one is an
+    // `Implies` the proposition actually has: the record describes the
+    // proposition it was produced with.
+    let mut proposition = obligation.proposition();
+    for introduction in recorded {
+        assert!(
+            matches!(
+                introduction,
+                LoweringIntroduction::PathFactGuard | LoweringIntroduction::ObligationGuard
+            ),
+            "no Surface connective wrote this requirement's head: {introduction:?}"
+        );
+        let Proposition::Implies(_, body) = proposition else {
+            panic!("the record names more head nodes than the obligation has");
+        };
+        proposition = body;
+    }
+}

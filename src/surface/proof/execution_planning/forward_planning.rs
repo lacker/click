@@ -463,6 +463,11 @@ pub(in crate::surface::proof) struct PlannedPointPureGoal {
     /// True only when the returned certificate was retained by the same
     /// checked `Proof` that established `fact`.
     pub(in crate::surface::proof) certificate_already_checked: bool,
+    /// The head chain recorded for `fact`: the caller's, when it supplied an
+    /// already lowered goal and its record, and otherwise the one this
+    /// lowering produced. A caller pairs the written proposition with the
+    /// kernel form through this record instead of by constructor shape.
+    pub(in crate::surface::proof) introductions: Option<crate::kernel::LoweringIntroductions>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -484,28 +489,34 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
     surface_propositions: &SurfacePropositionMap,
     prelowered_goal: Option<&Proposition>,
     exact_proof_goal: Option<&Proposition>,
+    goal_introductions: Option<&crate::kernel::LoweringIntroductions>,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<PlannedPointPureGoal, ClickError> {
-    let fact = if let Some(prelowered_goal) = prelowered_goal {
-        prelowered_goal.clone()
+    // A pre-lowered goal arrives with the record its own lowering made; a
+    // goal lowered here records its chain in the same call that builds it.
+    // Either way the chain describes the exact proposition below.
+    let (fact, introductions) = if let Some(prelowered_goal) = prelowered_goal {
+        (prelowered_goal.clone(), goal_introductions.cloned())
     } else {
-        lower_fixed_state_proposition(
-            proposition,
-            available,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            None,
-            recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
-            ))
-        })?
+        let (fact, recorded) =
+            lower_fixed_state_proposition_with_assumptions_recording_introductions(
+                proposition,
+                &assumptions_from_propositions(available),
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                None,
+                recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
+                ))
+            })?;
+        (fact, Some(recorded))
     };
 
     // Structural fixed-state goals use the same checked source-script seam as
@@ -532,7 +543,11 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
             theorem_environment,
             &[],
             &[],
-        );
+        )
+        // The root goal is the exact proposition the record above
+        // describes, so an introduction on it reads the chain instead of
+        // refining the written form by shape.
+        .with_recorded_goal_introductions(introductions.clone());
         let checked = match proof {
             SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                 root.try_simp_closure()?
@@ -574,6 +589,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
                 fact,
                 certificate,
                 certificate_already_checked: true,
+                introductions,
             });
         }
     }
@@ -585,6 +601,7 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
             fact,
             certificate,
             certificate_already_checked: false,
+            introductions,
         });
     }
 
@@ -707,6 +724,9 @@ pub(in crate::surface::proof) fn plan_fixed_state_pure_goal_certificate(
         fact,
         certificate,
         certificate_already_checked: false,
+        // The smart-`have` planner lowered its own goal; this fact is not
+        // the one the record above describes, so no chain is reported.
+        introductions: None,
     })
 }
 

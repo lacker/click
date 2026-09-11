@@ -1717,13 +1717,23 @@ fn collect_invariant_check_obligations_with_mode(
                 let mut obligations = obligations;
                 let obligation_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                let proposition = wrap_path_context(path.proposition, &facts, &obligations);
+                // The guards this wrap inserts, then the head chain the
+                // invariant's own lowering recorded: one record for the
+                // obligation proposition, produced by the same wrap that
+                // built it, so a consumer introducing its head never pairs
+                // a hidden guard with a written connective.
+                let (proposition, guards) =
+                    wrap_path_context_with_introductions(path.proposition, &facts, &obligations);
+                let mut introductions = guards;
+                introductions.extend(path.introductions.iter().cloned());
+                let introductions = std::sync::Arc::new(introductions);
                 if without_search {
                     add_required_proof_obligation_without_search(
                         &mut obligations,
                         &obligation_assumptions,
                         proposition,
                         invariant_context(check, phase),
+                        Some(&introductions),
                     );
                     append_required_proof_obligations_without_search(
                         &mut all_obligations,
@@ -1736,6 +1746,7 @@ fn collect_invariant_check_obligations_with_mode(
                         &obligation_assumptions,
                         proposition,
                         invariant_context(check, phase),
+                        Some(&introductions),
                     );
                     append_required_proof_obligations(
                         &mut all_obligations,
@@ -1790,6 +1801,11 @@ pub(super) fn collect_loop_ranking_obligations(
                 ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), post.clone()),
                 true,
             ))
+            // A ranking member is one condition read from the declared
+            // measure: no lowering wrapped it, so its recorded chain is
+            // empty. Recording that keeps the bundle's member records
+            // aligned with its members.
+            .with_introductions(LoweringIntroductions::new())
             .with_context(format!(
                 "loop ranking component `{}` is nonnegative at the back edge",
                 crate::kernel::termination::c_ranking_measure_display(measure)
@@ -1819,10 +1835,12 @@ pub(super) fn collect_loop_ranking_obligations(
         })
         .expect("a ranked loop declares at least one component");
     obligations.push(
-        ProofObligation::verification_condition(decrease).with_context(format!(
-            "loop ranking measure `{}` decreases at the back edge",
-            crate::kernel::termination::c_ranking_measures_display(ranking_measures)
-        )),
+        ProofObligation::verification_condition(decrease)
+            .with_introductions(LoweringIntroductions::new())
+            .with_context(format!(
+                "loop ranking measure `{}` decreases at the back edge",
+                crate::kernel::termination::c_ranking_measures_display(ranking_measures)
+            )),
     );
     Ok(obligations)
 }

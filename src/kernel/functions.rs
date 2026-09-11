@@ -1540,7 +1540,11 @@ fn prepare_verified_function_call<'a>(
                 &requirement_path.obligations,
             );
             for path_obligation in &requirement_path.obligations {
-                let guarded = wrap_path_context(
+                // The guards this wrap inserts are the obligation's complete
+                // recorded head chain: the path obligation under them is a
+                // kernel load or overflow condition, which no written
+                // connective introduced.
+                let (guarded, guard_introductions) = wrap_path_context_with_introductions(
                     path_obligation.proposition().clone(),
                     &requirement_path.facts,
                     &[],
@@ -1557,6 +1561,7 @@ fn prepare_verified_function_call<'a>(
                 } else {
                     obligations.push(
                         ProofObligation::verification_condition(guarded.clone())
+                            .with_introductions(guard_introductions)
                             .with_context(format!("{} precondition", function.name())),
                     );
                 }
@@ -1598,11 +1603,18 @@ fn prepare_verified_function_call<'a>(
                     &requirement_path.proposition,
                 );
             }
-            let guarded_requirement = wrap_path_context(
+            // The guards this wrap inserts, then the head chain the
+            // requirement's own lowering recorded. The record comes from the
+            // lowering that produced the obligation, so an introduction on
+            // it reaches a hidden guard exactly as on a lowered goal.
+            let requirement_introductions = requirement_path.introductions;
+            let (guarded_requirement, guards) = wrap_path_context_with_introductions(
                 requirement_path.proposition,
                 &requirement_path.facts,
                 &requirement_path.obligations,
             );
+            let mut introductions = guards;
+            introductions.extend(requirement_introductions);
             if !requirement_is_proven {
                 let guarded_is_proven =
                     super::assumptions::capture_implicit_reasoning_provenance(|| {
@@ -1616,6 +1628,7 @@ fn prepare_verified_function_call<'a>(
                 } else {
                     obligations.push(
                         ProofObligation::verification_condition(guarded_requirement.clone())
+                            .with_introductions(introductions)
                             .with_context(format!("{} precondition", function.name())),
                     );
                 }

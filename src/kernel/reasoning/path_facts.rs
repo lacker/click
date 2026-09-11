@@ -866,11 +866,14 @@ fn bare_condition_is_decided(assumptions: &PureFactContext, proposition: &Propos
         && assumptions.decide(condition) == Some(*value)
 }
 
+/// Emits one required verification condition, carrying the head chain the
+/// lowering that built `proposition` recorded for it when there is one.
 pub(in crate::kernel) fn add_required_proof_obligation_with_context(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
+    introductions: Option<&std::sync::Arc<LoweringIntroductions>>,
 ) {
     // Suppression is the exact index, the frozen condition checker for a
     // proposition that is already one bare condition, or the retained atomic
@@ -887,18 +890,22 @@ pub(in crate::kernel) fn add_required_proof_obligation_with_context(
         return;
     }
 
-    let obligation = ProofObligation::verification_condition(proposition);
+    let obligation = ProofObligation::verification_condition(proposition)
+        .with_shared_introductions(introductions);
     obligations.push(match context {
         Some(context) => obligation.with_context(context),
         None => obligation,
     });
 }
 
+/// The same, suppressing only by the exact fact index, and carrying the same
+/// recorded head chain.
 pub(in crate::kernel) fn add_required_proof_obligation_without_search(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
     proposition: Proposition,
     context: Option<&str>,
+    introductions: Option<&std::sync::Arc<LoweringIntroductions>>,
 ) {
     if assumptions.proves_exact(&proposition)
         || obligations
@@ -907,7 +914,7 @@ pub(in crate::kernel) fn add_required_proof_obligation_without_search(
     {
         return;
     }
-    let obligation = ProofObligation::new(proposition);
+    let obligation = ProofObligation::new(proposition).with_shared_introductions(introductions);
     obligations.push(match context {
         Some(context) => obligation.with_context(context),
         None => obligation,
@@ -925,6 +932,7 @@ pub(in crate::kernel) fn append_required_proof_obligations(
             assumptions,
             obligation.proposition().clone(),
             obligation.context(),
+            obligation.shared_introductions(),
         );
     }
 }
@@ -940,6 +948,7 @@ pub(in crate::kernel) fn append_required_proof_obligations_without_search(
             assumptions,
             obligation.proposition().clone(),
             obligation.context(),
+            obligation.shared_introductions(),
         );
     }
 }
@@ -952,11 +961,25 @@ pub(in crate::kernel) fn append_required_proof_obligations_under_path_context(
     context_obligations: &[ProofObligation],
 ) {
     for obligation in new_obligations {
+        // This wrap adds head nodes in front of the obligation, so the
+        // record it carries forward is the new guards followed by the chain
+        // already recorded for the proposition underneath them.
+        let (proposition, guards) = wrap_path_context_with_introductions(
+            obligation.proposition().clone(),
+            facts,
+            context_obligations,
+        );
+        let introductions = obligation.introductions().map(|recorded| {
+            let mut introductions = guards.clone();
+            introductions.extend(recorded.iter().cloned());
+            std::sync::Arc::new(introductions)
+        });
         add_required_proof_obligation_with_context(
             obligations,
             assumptions,
-            wrap_path_context(obligation.proposition().clone(), facts, context_obligations),
+            proposition,
             obligation.context(),
+            introductions.as_ref(),
         );
     }
 }
