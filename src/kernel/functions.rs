@@ -1550,9 +1550,10 @@ fn prepare_verified_function_call<'a>(
                     &[],
                 );
                 // Discharge is an exact route or an emitted obligation. A
-                // guard the exact routes do not cover becomes an ordinary
-                // goal at the call step, carrying the head chain recorded
-                // for it, rather than a proof the kernel searches for.
+                // guard the exact routes do not cover is emitted as a
+                // required verification condition at the call step,
+                // carrying the head chain recorded for it, for the proof
+                // side to discharge. The kernel searches for no proof of it.
                 if required_obligation_is_exactly_discharged(&requirement_assumptions, &guarded) {
                     super::assumptions::record_reasoning_provenance(
                         &requirement_assumptions,
@@ -1617,7 +1618,8 @@ fn prepare_verified_function_call<'a>(
             introductions.extend(requirement_introductions);
             if !requirement_is_proven {
                 // Same rule as the guard above: exact routes, then an
-                // emitted goal. The general prover decides no precondition.
+                // emitted required verification condition. The general
+                // prover decides no precondition.
                 if required_obligation_is_exactly_discharged(
                     &requirement_assumptions,
                     &guarded_requirement,
