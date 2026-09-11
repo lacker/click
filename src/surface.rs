@@ -90,8 +90,10 @@ mod checking;
 mod diagnostics;
 mod expansion;
 mod generics;
+mod integer_conversions;
 mod lowering;
 mod parser;
+use integer_conversions::*;
 mod printing;
 mod proof;
 mod validation;
@@ -414,6 +416,7 @@ pub struct AlgebraicVariantDefinition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AlgebraicFieldType {
     Parameter(String),
+    Integer,
     C(C0Type),
     Algebraic {
         name: String,

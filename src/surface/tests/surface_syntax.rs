@@ -2660,38 +2660,39 @@ fn parses_sequence_literals_snapshots_and_concatenation() {
 }
 
 #[test]
-fn integer_source_quantifier_assumptions_are_sorted_and_scoped() {
+fn integer_datatype_match_bindings_shadow_each_source_carrier() {
     let source = r#"
-        theorem universal_assumption() {
-            requires forall (z: Integer) { z + 1 > z };
-            ensures forall (z: Integer) { z + 1 > z } by { assumption(); }
-        }
-        theorem existential_assumption() {
-            requires exists (z: Integer) { z == 1000000000000000000000000 };
-            ensures exists (z: Integer) { z == 1000000000000000000000000 } by { assumption(); }
-        }
-        theorem shadow_c(z: int32) {
-            requires forall (z: Integer) { z == z };
-            ensures forall (z: Integer) { z == z } by { assumption(); }
-        }
-        theorem shadow_integer(z: Integer) {
-            requires forall (z: int32) { z == z };
-            ensures forall (z: int32) { z == z } by { assumption(); }
+        spec enum Pair { Make(int32, Integer) }
+        theorem extraction(value: Integer) {
+            ensures match Pair::Make(0, value) {
+                Pair::Make(value, inner) => inner,
+            } == value by { normalize(); }
         }
     "#;
-    verify_c0_sources(source, &[]).unwrap();
+    verify_click_theorems(source).unwrap();
+    let bad = source.replace("=> inner,", "=> value,");
+    assert!(
+        verify_click_theorems(&bad).is_err(),
+        "a C field must not resolve to a same-named outer Integer"
+    );
 }
 
 #[test]
-fn integer_source_quantifier_rejects_mixed_comparisons() {
+fn symbolic_integer_datatype_match_rejects_unimplemented_field_binding() {
     let source = r#"
-        theorem mixed(x: int32) {
-            ensures forall (z: Integer) { x == z } by { simp(); }
+        spec enum Box { Wrapped(Integer) }
+        theorem capture(boxed: Box, value: Integer) {
+            ensures match boxed {
+                Box::Wrapped(value) => value,
+            } == value by { normalize(); }
         }
     "#;
-    let error = verify_c0_sources(source, &[]).unwrap_err();
+    let error =
+        verify_click_theorems(source).expect_err("symbolic fields must not capture outer names");
     assert!(
-        error.message().contains("cannot be compared with C values"),
+        error
+            .message()
+            .contains("symbolic Integer-valued datatype matches"),
         "{}",
         error.message()
     );

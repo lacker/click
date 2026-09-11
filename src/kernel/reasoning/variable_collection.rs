@@ -301,6 +301,7 @@ fn collect_algebraic_value_bitvector_variables(
 ) {
     match value {
         AlgebraicValue::C(value) => collect_c_value_bitvector_variables(value, variables),
+        AlgebraicValue::Integer(_) => {}
         AlgebraicValue::Algebraic(value) => {
             collect_algebraic_term_bitvector_variables(value, variables)
         }
@@ -496,6 +497,9 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
 ) {
     match expression {
         SpecExpression::ResourceField { .. } => {}
+        SpecExpression::IntegerToMachine { value, .. } => {
+            collect_spec_integer_variables(value, variables);
+        }
         SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
         SpecExpression::AlgebraicMatch { scrutinee, arms } => {
             collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
@@ -670,7 +674,9 @@ fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    let SpecIntegerExpression::Term(term) = expression;
+    let SpecIntegerExpression::Term(term) = expression else {
+        return;
+    };
     collect_integer_variables(term, variables);
 }
 
@@ -687,6 +693,7 @@ fn collect_spec_algebraic_expression_bitvector_variables(
                     SpecAlgebraicValue::C(field) => {
                         collect_spec_expression_bitvector_variables(field, variables)
                     }
+                    SpecAlgebraicValue::Integer(_) => {}
                     SpecAlgebraicValue::Algebraic(field) => {
                         collect_spec_algebraic_expression_bitvector_variables(field, variables)
                     }
@@ -1142,6 +1149,7 @@ fn collect_integer_variables_seen(
 ) {
     match term {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }
@@ -1165,6 +1173,7 @@ fn collect_shared_integer_variables(
     }
     match term.as_ref() {
         IntegerTerm::Constant(_) => {}
+        IntegerTerm::Machine(value) => collect_bitvector_variables(value.value(), variables),
         IntegerTerm::Variable(variable) => {
             variables.insert(*variable);
         }

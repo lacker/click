@@ -13,6 +13,7 @@ use std::collections::HashMap;
 pub(crate) struct TermRewrite<'a> {
     algebraic: Option<(&'a AlgebraicTerm, &'a AlgebraicTerm)>,
     bitvector: Option<(&'a Bitvector32Term, &'a Bitvector32Term)>,
+    pointer_variable: Option<(Variable, &'a Pointer)>,
     conditions: Option<&'a HashMap<ConditionTerm, bool>>,
     collected_conditions: Option<Vec<ConditionTerm>>,
     integer_cache: HashMap<u64, IntegerTerm>,
@@ -29,6 +30,7 @@ impl<'a> TermRewrite<'a> {
             bitvector: None,
             changed: false,
             integer_cache: HashMap::new(),
+            pointer_variable: None,
             #[cfg(test)]
             visits: 0,
         }
@@ -41,6 +43,7 @@ impl<'a> TermRewrite<'a> {
             bitvector: Some((from, to)),
             changed: false,
             integer_cache: HashMap::new(),
+            pointer_variable: None,
             #[cfg(test)]
             visits: 0,
         }
@@ -53,10 +56,25 @@ impl<'a> TermRewrite<'a> {
             collected_conditions: None,
             changed: false,
             integer_cache: HashMap::new(),
+            pointer_variable: None,
             #[cfg(test)]
             visits: 0,
         }
     }
+    pub(crate) fn for_pointer_variable(from: Variable, to: &'a Pointer) -> Self {
+        Self {
+            algebraic: None,
+            bitvector: None,
+            pointer_variable: Some((from, to)),
+            conditions: None,
+            collected_conditions: None,
+            integer_cache: HashMap::new(),
+            changed: false,
+            #[cfg(test)]
+            visits: 0,
+        }
+    }
+
     pub(crate) fn conditional_guards(proposition: &Proposition) -> Vec<ConditionTerm> {
         let empty = HashMap::new();
         let mut walker = TermRewrite::for_conditions(&empty);
@@ -139,6 +157,7 @@ impl<'a> TermRewrite<'a> {
     fn field(&mut self, v: &AlgebraicValue) -> AlgebraicValue {
         match v {
             AlgebraicValue::C(v) => AlgebraicValue::C(self.value(v)),
+            AlgebraicValue::Integer(v) => AlgebraicValue::Integer(v.clone()),
             AlgebraicValue::Algebraic(v) => AlgebraicValue::Algebraic(self.algebraic(v)),
         }
     }
@@ -190,6 +209,12 @@ impl<'a> TermRewrite<'a> {
         self.visit();
         let result = match shared.as_ref() {
             IntegerTerm::Constant(_) | IntegerTerm::Variable(_) => shared.as_ref().clone(),
+            IntegerTerm::Machine(value) => {
+                IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
+                    value.ty(),
+                    self.bits(value.value()),
+                ))
+            }
             // Rewriting preserves the symbolic DAG. In particular, it must
             // not fold a repeated symbolic expression into a giant literal.
             IntegerTerm::Negate(value) => IntegerTerm::Negate(self.integer_shared(value).into()),
@@ -210,6 +235,15 @@ impl<'a> TermRewrite<'a> {
         result
     }
     fn pointer(&mut self, p: &Pointer) -> Pointer {
+        if let Some((from, to)) = self.pointer_variable
+            && matches!(&p.block, PointerBlock::Symbolic(variable) | PointerBlock::FunctionSymbolic(variable) if *variable == from)
+        {
+            self.changed = true;
+            return Pointer {
+                block: to.block.clone(),
+                offset: PointerOffsetTerm::add(to.offset.clone(), self.offset(&p.offset)),
+            };
+        }
         Pointer {
             block: p.block.clone(),
             offset: self.offset(&p.offset),

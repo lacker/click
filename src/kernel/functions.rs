@@ -3264,6 +3264,7 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
     match expression {
         SpecExpression::ResourceField { .. } => false,
         SpecExpression::Value(_) => true,
+        SpecExpression::IntegerToMachine { .. } => false,
         SpecExpression::CExpression(expression) => {
             c_expression_supports_stateful_memory_refinement(expression)
         }
@@ -3453,6 +3454,7 @@ pub(super) fn spec_algebraic_expression_is_state_independent(
                 SpecAlgebraicValue::C(expression) => {
                     spec_expression_is_state_independent(expression)
                 }
+                SpecAlgebraicValue::Integer(_) => true,
                 SpecAlgebraicValue::Algebraic(expression) => {
                     spec_algebraic_expression_is_state_independent(expression)
                 }
@@ -3528,6 +3530,9 @@ fn spec_expression_reads_current_parameter(
 ) -> bool {
     match expression {
         SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => false,
+        SpecExpression::IntegerToMachine { value, .. } => {
+            spec_integer_expression_reads_current_parameter(value, parameter_name)
+        }
         SpecExpression::CExpression(expression) => {
             c_expression_mentions_variable(expression, parameter_name)
         }
@@ -3605,12 +3610,36 @@ fn spec_expression_reads_current_parameter(
     }
 }
 
+fn spec_integer_expression_reads_current_parameter(
+    expression: &SpecIntegerExpression,
+    parameter_name: &str,
+) -> bool {
+    match expression {
+        SpecIntegerExpression::Term(_) => false,
+        SpecIntegerExpression::FromMachine(machine) => {
+            spec_expression_reads_current_parameter(machine, parameter_name)
+        }
+        SpecIntegerExpression::Negate(inner) => {
+            spec_integer_expression_reads_current_parameter(inner, parameter_name)
+        }
+        SpecIntegerExpression::Add(left, right)
+        | SpecIntegerExpression::Subtract(left, right)
+        | SpecIntegerExpression::Multiply(left, right) => {
+            spec_integer_expression_reads_current_parameter(left, parameter_name)
+                || spec_integer_expression_reads_current_parameter(right, parameter_name)
+        }
+    }
+}
+
 fn spec_proposition_reads_current_parameter(
     proposition: &SpecProposition,
     parameter_name: &str,
 ) -> bool {
     match proposition {
-        SpecProposition::IntegerComparison { .. } => false,
+        SpecProposition::IntegerComparison { left, right, .. } => {
+            spec_integer_expression_reads_current_parameter(left, parameter_name)
+                || spec_integer_expression_reads_current_parameter(right, parameter_name)
+        }
         SpecProposition::AlgebraicComparison { left, right, .. } => {
             spec_algebraic_expression_reads_current_parameter(left, parameter_name)
                 || spec_algebraic_expression_reads_current_parameter(right, parameter_name)
@@ -3725,6 +3754,7 @@ fn spec_algebraic_expression_reads_current_parameter(
                 SpecAlgebraicValue::C(expression) => {
                     spec_expression_reads_current_parameter(expression, parameter_name)
                 }
+                SpecAlgebraicValue::Integer(_) => false,
                 SpecAlgebraicValue::Algebraic(expression) => {
                     spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
                 }
@@ -4050,6 +4080,7 @@ fn spec_expression_current_parameter_accesses(
 ) {
     match expression {
         SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => {}
+        SpecExpression::IntegerToMachine { .. } => *unknown_read = true,
         SpecExpression::CExpression(expression) => {
             if c_expression_mentions_variable(expression, parameter_name) {
                 *unknown_read = true;
@@ -4384,6 +4415,7 @@ fn spec_algebraic_expression_current_parameter_accesses(
                             unknown_read,
                         );
                     }
+                    SpecAlgebraicValue::Integer(_) => {}
                     SpecAlgebraicValue::Algebraic(expression) => {
                         spec_algebraic_expression_current_parameter_accesses(
                             expression,
@@ -8438,6 +8470,9 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                     let ty = value.c_type();
                     evaluation.locals.set_typed(name.clone(), value, ty);
                 }
+                AlgebraicValue::Integer(_) => {
+                    return Err("Integer algebraic resource fields are not supported here");
+                }
                 AlgebraicValue::Algebraic(value) => {
                     algebraic_bindings.insert(name.clone(), value);
                 }
@@ -11398,6 +11433,43 @@ mod verified_call_initialization_tests {
                 outcome: CFunctionOutcome::Return { .. },
                 ..
             }]
+        ));
+    }
+}
+
+#[cfg(test)]
+mod integer_parameter_read_tests {
+    use super::*;
+
+    #[test]
+    fn nested_integer_conversions_keep_current_parameter_reads_visible() {
+        let value = SpecIntegerExpression::Negate(Box::new(SpecIntegerExpression::FromMachine(
+            Box::new(SpecExpression::CExpression(c_variable("parameter"))),
+        )));
+        let conversion = SpecExpression::IntegerToMachine {
+            value: Box::new(value.clone()),
+            destination: MachineIntegerType::Int32,
+        };
+        assert!(spec_expression_reads_current_parameter(
+            &conversion,
+            "parameter"
+        ));
+        assert!(!spec_expression_reads_current_parameter(
+            &conversion,
+            "other"
+        ));
+        let comparison = SpecProposition::IntegerComparison {
+            left: SpecIntegerExpression::Term(IntegerTerm::constant_i64(0)),
+            operator: IntegerComparisonOperator::Equal,
+            right: value,
+        };
+        assert!(spec_proposition_reads_current_parameter(
+            &comparison,
+            "parameter"
+        ));
+        assert!(!spec_proposition_reads_current_parameter(
+            &comparison,
+            "other"
         ));
     }
 }

@@ -319,6 +319,7 @@ pub(super) fn click_type_from_algebraic_value_type(
     value_type: &AlgebraicValueType,
 ) -> Result<ClickType, ClickError> {
     Ok(match value_type {
+        AlgebraicValueType::Integer => ClickType::Integer,
         AlgebraicValueType::C(c_type) => ClickType::C(match c_type {
             CType::Void => C0Type::Void,
             CType::Bool => C0Type::Bool,
@@ -687,6 +688,11 @@ fn check_pure_structural_induction(
                     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
                     branch_algebraic_values.insert(binding.clone(), captured);
                     branch_bindings.insert(binding.clone(), symbolic);
+                }
+                AlgebraicValueType::Integer => {
+                    return Err(ClickError::new(
+                        "structural induction over Integer-valued constructor fields is not yet supported",
+                    ));
                 }
             }
         }

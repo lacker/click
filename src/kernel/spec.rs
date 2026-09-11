@@ -1,4 +1,5 @@
 use super::prelude::*;
+use num_traits::ToPrimitive;
 
 type EvaluatedSpecResource = (CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>);
 type SpecResourceBuilder = Box<dyn Fn(Vec<CValue>) -> Option<CResource>>;
@@ -15,6 +16,13 @@ pub(super) struct SpecExpressionPath {
     pub(super) value: CValue,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SpecIntegerPath {
+    value: IntegerTerm,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -158,31 +166,76 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             operator,
             right,
         } => {
-            let left = lower_spec_integer_expression(left, budget)?;
-            let right = lower_spec_integer_expression(right, budget)?;
-            let condition = match operator {
-                IntegerComparisonOperator::Equal => ConditionTerm::integer_equal(left, right),
-                IntegerComparisonOperator::NotEqual => {
-                    ConditionTerm::integer_not_equal(left, right)
+            let left_paths = evaluate_spec_integer_expression_paths(
+                state,
+                left,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+            let mut result = Vec::new();
+            for left_path in left_paths {
+                let path_assumptions = assumptions_with_path_context(
+                    assumptions,
+                    &left_path.facts,
+                    &left_path.obligations,
+                );
+                for right_path in evaluate_spec_integer_expression_paths(
+                    state,
+                    right,
+                    loop_entry_state,
+                    &path_assumptions,
+                    algebraic_bindings,
+                    budget,
+                )? {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &left_path.facts,
+                        &left_path.obligations,
+                        &right_path.facts,
+                        &right_path.obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    let condition = match operator {
+                        IntegerComparisonOperator::Equal => ConditionTerm::integer_equal(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::NotEqual => ConditionTerm::integer_not_equal(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::LessThan => ConditionTerm::integer_less_than(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::LessEqual => ConditionTerm::integer_less_equal(
+                            left_path.value.clone(),
+                            right_path.value.clone(),
+                        ),
+                        IntegerComparisonOperator::GreaterThan => {
+                            ConditionTerm::integer_greater_than(
+                                left_path.value.clone(),
+                                right_path.value.clone(),
+                            )
+                        }
+                        IntegerComparisonOperator::GreaterEqual => {
+                            ConditionTerm::integer_greater_equal(
+                                left_path.value.clone(),
+                                right_path.value.clone(),
+                            )
+                        }
+                    };
+                    result.push(SpecPropositionPath {
+                        proposition: Proposition::ConditionIs(condition, true),
+                        facts,
+                        obligations,
+                    });
                 }
-                IntegerComparisonOperator::LessThan => {
-                    ConditionTerm::integer_less_than(left, right)
-                }
-                IntegerComparisonOperator::LessEqual => {
-                    ConditionTerm::integer_less_equal(left, right)
-                }
-                IntegerComparisonOperator::GreaterThan => {
-                    ConditionTerm::integer_greater_than(left, right)
-                }
-                IntegerComparisonOperator::GreaterEqual => {
-                    ConditionTerm::integer_greater_equal(left, right)
-                }
-            };
-            Ok(vec![SpecPropositionPath {
-                proposition: Proposition::ConditionIs(condition, true),
-                facts: Vec::new(),
-                obligations: Vec::new(),
-            }])
+            }
+            Ok(result)
         }
         SpecProposition::AlgebraicComparison { left, equal, right } => {
             lower_spec_algebraic_comparison_at_state(
@@ -417,39 +470,6 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             })
             .collect())
         }
-        SpecProposition::ForAllInteger {
-            name: _,
-            variable,
-            body,
-        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
-            state,
-            body,
-            loop_entry_state,
-            assumptions,
-            algebraic_bindings,
-            budget,
-        )?
-        .into_iter()
-        .map(|path| SpecPropositionPath {
-            proposition: Proposition::ForAll {
-                var: *variable,
-                sort: Sort::Integer,
-                body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
-            },
-            facts: Vec::new(),
-            obligations: path
-                .obligations
-                .into_iter()
-                .map(|obligation| {
-                    obligation.map_proposition(|proposition| Proposition::ForAll {
-                        var: *variable,
-                        sort: Sort::Integer,
-                        body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
-                    })
-                })
-                .collect(),
-        })
-        .collect()),
         SpecProposition::ForAllPointer {
             name,
             variable,
@@ -534,39 +554,6 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
             })
             .collect())
         }
-        SpecProposition::ExistsInteger {
-            name,
-            variable,
-            body,
-        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
-            state,
-            body,
-            loop_entry_state,
-            assumptions,
-            algebraic_bindings,
-            budget,
-        )?
-        .into_iter()
-        .map(|path| {
-            // An existential witness cannot soundly absorb path guards or
-            // evaluation obligations: existentially quantifying an
-            // implication would make a false guard vacuously prove the body.
-            // The pure Integer fragment currently accepts only total bodies.
-            if !path.facts.is_empty() || !path.obligations.is_empty() {
-                return Err(ExecutionLimit::UnsupportedIntegerExistentialBody);
-            }
-            Ok(SpecPropositionPath {
-                proposition: Proposition::Exists {
-                    name: name.clone(),
-                    var: *variable,
-                    sort: Sort::Integer,
-                    body: Box::new(path.proposition),
-                },
-                facts: Vec::new(),
-                obligations: Vec::new(),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?),
         SpecProposition::ExistsPointer {
             name,
             variable,
@@ -703,21 +690,186 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
     }
 }
 
-fn lower_spec_integer_expression(
+fn evaluate_spec_integer_expression_paths(
+    state: &CState,
     expression: &SpecIntegerExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<IntegerTerm> {
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
     budget.consume_expression_step()?;
-    let SpecIntegerExpression::Term(term) = expression;
-    let work = term.as_const().map_or(1, |value| {
-        usize::try_from(value.bits())
-            .unwrap_or(usize::MAX)
-            .saturating_add(1)
-    });
-    if crate::instrumentation::deadline_exceeded_with_work(work) {
-        return Err(ExecutionLimit::Deadline);
+    match expression {
+        SpecIntegerExpression::Term(term) => {
+            if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(term)) {
+                return Err(ExecutionLimit::Deadline);
+            }
+            Ok(vec![SpecIntegerPath {
+                value: term.clone(),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
+        SpecIntegerExpression::FromMachine(machine) => {
+            evaluate_spec_expression_paths_with_algebraic_bindings(
+                state,
+                machine,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| {
+                let ty = MachineIntegerType::from_c_type(path.value.c_type())
+                    .ok_or(ExecutionLimit::Paths)?;
+                let bits = c_value_bitvector_term(&path.value).ok_or(ExecutionLimit::Paths)?;
+                let value = IntegerTerm::from_machine(ty, bits).ok_or(ExecutionLimit::Paths)?;
+                Ok(SpecIntegerPath {
+                    value,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            })
+            .collect()
+        }
+        SpecIntegerExpression::Negate(inner) => evaluate_spec_integer_expression_paths(
+            state,
+            inner,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )
+        .and_then(|paths| {
+            let mut result = Vec::new();
+            for mut path in paths {
+                if crate::instrumentation::numeric_operation_work_exceeded(integer_term_bits(
+                    &path.value,
+                )) {
+                    return Err(ExecutionLimit::Deadline);
+                }
+                path.value = IntegerTerm::negate(path.value);
+                result.push(path);
+            }
+            Ok(result)
+        }),
+        SpecIntegerExpression::Add(left, right) => evaluate_integer_binary_paths(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            IntegerBinaryOperation::Add,
+        ),
+        SpecIntegerExpression::Subtract(left, right) => evaluate_integer_binary_paths(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            IntegerBinaryOperation::Subtract,
+        ),
+        SpecIntegerExpression::Multiply(left, right) => evaluate_integer_binary_paths(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+            IntegerBinaryOperation::Multiply,
+        ),
     }
-    Ok(term.clone())
+}
+
+fn evaluate_integer_binary_paths(
+    state: &CState,
+    left: &SpecIntegerExpression,
+    right: &SpecIntegerExpression,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+    operation: IntegerBinaryOperation,
+) -> ExecutionResult<Vec<SpecIntegerPath>> {
+    let left_paths = evaluate_spec_integer_expression_paths(
+        state,
+        left,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    let mut result = Vec::new();
+    for left_path in left_paths {
+        let path_assumptions =
+            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
+        for right_path in evaluate_spec_integer_expression_paths(
+            state,
+            right,
+            loop_entry_state,
+            &path_assumptions,
+            algebraic_bindings,
+            budget,
+        )? {
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_path.facts,
+                &left_path.obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            let left_bits = integer_term_bits(&left_path.value);
+            let right_bits = integer_term_bits(&right_path.value);
+            let work = match operation {
+                IntegerBinaryOperation::Multiply => left_bits.saturating_mul(right_bits),
+                IntegerBinaryOperation::Add | IntegerBinaryOperation::Subtract => {
+                    left_bits.saturating_add(right_bits)
+                }
+            };
+            if crate::instrumentation::numeric_operation_work_exceeded(work) {
+                return Err(ExecutionLimit::Deadline);
+            }
+            let value = match operation {
+                IntegerBinaryOperation::Add => {
+                    IntegerTerm::add(left_path.value.clone(), right_path.value)
+                }
+                IntegerBinaryOperation::Subtract => {
+                    IntegerTerm::subtract(left_path.value.clone(), right_path.value)
+                }
+                IntegerBinaryOperation::Multiply => {
+                    IntegerTerm::multiply(left_path.value.clone(), right_path.value)
+                }
+            };
+            result.push(SpecIntegerPath {
+                value,
+                facts,
+                obligations,
+            });
+        }
+    }
+    Ok(result)
+}
+
+#[derive(Clone, Copy)]
+enum IntegerBinaryOperation {
+    Add,
+    Subtract,
+    Multiply,
+}
+
+fn integer_term_bits(term: &IntegerTerm) -> usize {
+    term.as_const()
+        .and_then(|value| usize::try_from(value.bits()).ok())
+        .unwrap_or(1)
+        .saturating_add(1)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -969,6 +1121,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                                 AlgebraicValue::C(value) => {
                                     body_state.locals.set(binding.clone(), value.clone());
                                 }
+                                AlgebraicValue::Integer(_) => {}
                                 AlgebraicValue::Algebraic(value) => {
                                     body_algebraic_bindings.insert(binding.clone(), value.clone());
                                 }
@@ -1049,6 +1202,7 @@ fn evaluate_spec_algebraic_at_state_with_bindings(
                             AlgebraicValue::C(field) => {
                                 body_state.locals.set(binding.clone(), field.clone());
                             }
+                            AlgebraicValue::Integer(_) => {}
                             AlgebraicValue::Algebraic(field) => {
                                 body_algebraic_bindings.insert(binding.clone(), field.clone());
                             }
@@ -1229,6 +1383,9 @@ fn symbolic_algebraic_bindings(
                 AlgebraicValueType::C(c_type) => {
                     Ok(AlgebraicValue::C(symbolic_call_result(*c_type, variable)))
                 }
+                AlgebraicValueType::Integer => {
+                    Ok(AlgebraicValue::Integer(IntegerTerm::var(variable)))
+                }
                 AlgebraicValueType::Algebraic { .. } | AlgebraicValueType::Parameter(_) => {
                     algebraic_type
                         .resolve_nested_type(value_type)
@@ -1254,6 +1411,21 @@ fn evaluate_spec_algebraic_value_at_state(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecAlgebraicValuePath>> {
     match value {
+        SpecAlgebraicValue::Integer(expression) => Ok(evaluate_spec_integer_expression_paths(
+            state,
+            expression,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| SpecAlgebraicValuePath {
+            value: AlgebraicValue::Integer(path.value),
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect()),
         SpecAlgebraicValue::C(expression) => {
             Ok(evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
@@ -2911,6 +3083,27 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
+        SpecExpression::IntegerToMachine { value, destination } => {
+            evaluate_spec_integer_expression_paths(
+                state,
+                value,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+            .into_iter()
+            .map(|path| {
+                let value = integer_constant_to_machine(&path.value, *destination)
+                    .ok_or(ExecutionLimit::Paths)?;
+                Ok(SpecExpressionPath {
+                    value,
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+            })
+            .collect::<ExecutionResult<Vec<_>>>()?
+        }
         SpecExpression::ResourceField { projection, c_type } => {
             let snapshot = if projection.at_entry {
                 loop_entry_state.ok_or(ExecutionLimit::Paths)?
@@ -2980,6 +3173,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                                 AlgebraicValue::C(value) => {
                                     body_state.locals.set(binding.clone(), value.clone());
                                 }
+                                AlgebraicValue::Integer(_) => {}
                                 AlgebraicValue::Algebraic(value) => {
                                     body_algebraic_bindings.insert(binding.clone(), value.clone());
                                 }
@@ -3075,6 +3269,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                             AlgebraicValue::C(field) => {
                                 body_state.locals.set(binding.clone(), field.clone());
                             }
+                            AlgebraicValue::Integer(_) => {}
                             AlgebraicValue::Algebraic(field) => {
                                 body_algebraic_bindings.insert(binding.clone(), field.clone());
                             }
@@ -3760,6 +3955,41 @@ fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::Float32(term)
         | CValue::Float64(term) => Some(term.clone()),
         CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
+fn integer_constant_to_machine(
+    value: &IntegerTerm,
+    destination: MachineIntegerType,
+) -> Option<CValue> {
+    let value = value.as_const()?;
+    match destination {
+        MachineIntegerType::Int16 => {
+            let value = i16::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int16(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::Int32 => {
+            let value = i32::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int32(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt8 => {
+            let value = u8::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt8(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt16 => {
+            let value = u16::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt16(Bitvector32Term::Constant(value as u32)))
+        }
+        MachineIntegerType::UInt32 => {
+            let value = u32::try_from(value.to_u64()?).ok()?;
+            Some(CValue::UInt32(Bitvector32Term::Constant(value)))
+        }
+        MachineIntegerType::Int64 => Some(CValue::Int64(Bitvector32Term::Int64Constant(
+            value.to_i64()?,
+        ))),
+        MachineIntegerType::UInt64 => Some(CValue::UInt64(Bitvector32Term::UInt64Constant(
+            value.to_u64()?,
+        ))),
     }
 }
 
@@ -4651,137 +4881,231 @@ fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
 }
 
 #[cfg(test)]
-mod integer_quantifier_tests {
+mod integer_budget_tests {
     use super::*;
-    use crate::kernel::reasoning::substitute_integer_variable_in_pure_proposition;
-
-    fn integer_comparison(variable: Variable) -> SpecProposition {
-        SpecProposition::IntegerComparison {
-            left: SpecIntegerExpression::Term(IntegerTerm::var(variable)),
-            operator: IntegerComparisonOperator::Equal,
-            right: SpecIntegerExpression::Term(IntegerTerm::constant_i64(0)),
-        }
-    }
+    use num_bigint::BigInt;
+    use num_traits::One;
 
     #[test]
-    fn integer_quantifiers_lower_to_sorted_kernel_quantifiers() {
-        let variable = Variable(700);
-        let state = CState::new();
-        let assumptions = PureFactContext::new();
-        for (quantifier, expected_sort) in [(true, Sort::Integer), (false, Sort::Integer)] {
-            let proposition = if quantifier {
-                SpecProposition::ForAllInteger {
-                    name: "z".into(),
-                    variable,
-                    body: Box::new(integer_comparison(variable)),
-                }
-            } else {
-                SpecProposition::ExistsInteger {
-                    name: "z".into(),
-                    variable,
-                    body: Box::new(integer_comparison(variable)),
-                }
-            };
-            let paths = lower_spec_proposition_at_state_with_loop_entry(
-                &state,
-                &proposition,
+    fn deferred_integer_multiply_precharges_product_work_without_active_tactic() {
+        // Each operand is individually below the configured setup allowance,
+        // while their product is deliberately above it.  This exercises the
+        // same configured allowance used during setup, without an active
+        // tactic supplying a separate work limit.
+        let operand_bits = 1_000usize;
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 10_000,
+            smart: 10_000,
+            control: 10_000,
+        };
+        let expression = SpecIntegerExpression::Multiply(
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(
+                BigInt::one() << operand_bits,
+            ))),
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(
+                BigInt::one() << operand_bits,
+            ))),
+        );
+
+        let result = crate::instrumentation::with_tactic_work_limits(limits, || {
+            evaluate_spec_integer_expression_paths(
+                &CState::default(),
+                &expression,
                 None,
-                &assumptions,
+                &PureFactContext::new(),
+                &BTreeMap::new(),
                 &mut ExecutionBudget::default(),
             )
-            .expect("Integer quantifier should lower");
+        });
+
+        assert_eq!(result, Err(ExecutionLimit::Deadline));
+    }
+
+    #[test]
+    fn from_machine_preserves_c_overflow_path_fact() {
+        let left = Variable(31);
+        let right = Variable(32);
+        let left_bits = Bitvector32Term::Variable(left);
+        let right_bits = Bitvector32Term::Variable(right);
+        let state = CState::new()
+            .with_local("left", int32(left_bits.clone()))
+            .with_local("right", int32(right_bits.clone()));
+        let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::CExpression(
+            c_add(c_variable("left"), c_variable("right")),
+        )));
+
+        let paths = evaluate_spec_integer_expression_paths(
+            &state,
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .expect("symbolic machine addition should produce paths");
+        let overflow = ConditionTerm::signed_add_overflows(left_bits, right_bits);
+        assert_eq!(paths.len(), 1);
+        assert!(
+            paths[0]
+                .facts
+                .contains(&ExecutionPureFact::condition(overflow, false))
+        );
+        assert_eq!(paths[0].obligations, Vec::<ProofObligation>::new());
+    }
+
+    #[test]
+    fn from_machine_keeps_signed_and_unsigned_values_distinct() {
+        let signed = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(u32::MAX)),
+        )));
+        let unsigned = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+        )));
+        let evaluate = |expression| {
+            evaluate_spec_integer_expression_paths(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &BTreeMap::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap()
+            .pop()
+            .unwrap()
+            .value
+        };
+
+        assert_eq!(evaluate(signed), IntegerTerm::constant_i64(-1));
+        assert_eq!(
+            evaluate(unsigned),
+            IntegerTerm::constant(BigInt::from(u32::MAX))
+        );
+    }
+
+    #[test]
+    fn bitvector_substitution_reaches_machine_integer_proposition() {
+        let variable = Variable(47);
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::integer_equal(
+                IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(variable),
+                )),
+                IntegerTerm::constant_i64(7),
+            ),
+            true,
+        );
+        let substituted = crate::kernel::reasoning::substitute_bitvector_variable_in_proposition(
+            &proposition,
+            variable,
+            &Bitvector32Term::Constant(7),
+        );
+        let Proposition::ConditionIs(ConditionTerm::IntegerEqual(left, _), true) = substituted
+        else {
+            panic!("machine-backed Integer proposition changed shape");
+        };
+        let IntegerTerm::Machine(machine) = left.as_ref() else {
+            panic!("machine-backed Integer term was not preserved");
+        };
+        assert_eq!(machine.value(), &Bitvector32Term::Constant(7));
+
+        let expression = SpecIntegerExpression::FromMachine(Box::new(SpecExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(7)),
+        )));
+        let paths = evaluate_spec_integer_expression_paths(
+            &CState::default(),
+            &expression,
+            None,
+            &PureFactContext::new(),
+            &BTreeMap::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(paths[0].value, IntegerTerm::constant_i64(7));
+    }
+
+    #[test]
+    fn integer_to_machine_converts_exact_boundaries_without_wrapping() {
+        let cases = [
+            (
+                MachineIntegerType::Int16,
+                BigInt::from(i16::MIN),
+                CValue::Int16(Bitvector32Term::Constant(i16::MIN as i32 as u32)),
+            ),
+            (
+                MachineIntegerType::Int32,
+                BigInt::from(i32::MIN),
+                CValue::Int32(Bitvector32Term::Constant(i32::MIN as u32)),
+            ),
+            (
+                MachineIntegerType::UInt8,
+                BigInt::from(u8::MAX),
+                CValue::UInt8(Bitvector32Term::Constant(u8::MAX as u32)),
+            ),
+            (
+                MachineIntegerType::UInt16,
+                BigInt::from(u16::MAX),
+                CValue::UInt16(Bitvector32Term::Constant(u16::MAX as u32)),
+            ),
+            (
+                MachineIntegerType::UInt32,
+                BigInt::from(u32::MAX),
+                CValue::UInt32(Bitvector32Term::Constant(u32::MAX)),
+            ),
+            (
+                MachineIntegerType::Int64,
+                BigInt::from(i64::MIN),
+                CValue::Int64(Bitvector32Term::Int64Constant(i64::MIN)),
+            ),
+            (
+                MachineIntegerType::UInt64,
+                BigInt::from(u64::MAX),
+                CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+            ),
+        ];
+        for (destination, integer, expected) in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(integer))),
+                destination,
+            };
+            let paths = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .expect("representable Integer constants should convert");
             assert_eq!(paths.len(), 1);
-            assert!(paths[0].facts.is_empty());
-            assert!(paths[0].obligations.is_empty());
-            match &paths[0].proposition {
-                Proposition::ForAll { sort, var, .. } | Proposition::Exists { sort, var, .. } => {
-                    assert_eq!(*sort, expected_sort);
-                    assert_eq!(*var, variable);
-                }
-                other => panic!("unexpected lowered proposition: {other:?}"),
-            }
+            assert_eq!(paths[0].value, expected);
         }
     }
 
     #[test]
-    fn integer_substitution_is_capture_avoiding_through_nested_binders() {
-        let source = Proposition::ForAll {
-            var: Variable(1),
-            sort: Sort::Integer,
-            body: Box::new(Proposition::Exists {
-                name: "inner".into(),
-                var: Variable(2),
-                sort: Sort::Integer,
-                body: Box::new(Proposition::Equal(
-                    Term::Integer(IntegerTerm::var(Variable(9))),
-                    Term::Integer(IntegerTerm::var(Variable(2))),
-                )),
-            }),
-        };
-        let substituted = substitute_integer_variable_in_pure_proposition(
-            &source,
-            Variable(9),
-            &IntegerTerm::var(Variable(1)),
-        )
-        .expect("pure Integer substitution should accept nested binders");
-        let Proposition::ForAll { var, body, .. } = substituted else {
-            panic!("substitution changed the outer quantifier carrier");
-        };
-        assert_ne!(
-            var,
-            Variable(1),
-            "replacement variable must not be captured"
-        );
-        let Proposition::Exists {
-            var: inner, body, ..
-        } = *body
-        else {
-            panic!("substitution changed the inner quantifier carrier");
-        };
-        assert_eq!(inner, Variable(2));
-        let Proposition::Equal(Term::Integer(left), Term::Integer(right)) = *body else {
-            panic!("substitution changed the pure Integer proposition");
-        };
-        assert_eq!(left, IntegerTerm::var(Variable(1)));
-        assert_eq!(right, IntegerTerm::var(Variable(2)));
-    }
-
-    #[test]
-    fn integer_existential_rejects_conditional_path_facts() {
-        let mut state = CState::new();
-        state
-            .locals
-            .set("flag", int32(Bitvector32Term::Variable(Variable(900))));
-        let proposition = SpecProposition::ExistsInteger {
-            name: "z".into(),
-            variable: Variable(901),
-            body: Box::new(SpecProposition::Comparison {
-                left: SpecExpression::CExpression(CExpression::Conditional {
-                    condition: Box::new(CExpression::Variable("flag".into())),
-                    then_branch: Box::new(CExpression::Divide(
-                        Box::new(CExpression::Value(int32(Bitvector32Term::constant(
-                            0x8000_0000,
-                        )))),
-                        Box::new(CExpression::Value(int32(Bitvector32Term::constant(
-                            u32::MAX,
-                        )))),
-                    )),
-                    else_branch: Box::new(CExpression::Value(int32(Bitvector32Term::constant(0)))),
-                }),
-                operator: CComparisonOperator::Equal,
-                right: SpecExpression::Value(int32(Bitvector32Term::constant(1))),
-            }),
-        };
-        let result = lower_spec_proposition_at_state_with_loop_entry(
-            &state,
-            &proposition,
-            None,
-            &PureFactContext::new(),
-            &mut ExecutionBudget::default(),
-        );
-        assert_eq!(
-            result,
-            Err(ExecutionLimit::UnsupportedIntegerExistentialBody)
-        );
+    fn integer_to_machine_rejects_out_of_range_constants() {
+        let cases = [
+            (MachineIntegerType::Int16, BigInt::from(i16::MAX) + 1),
+            (MachineIntegerType::Int32, BigInt::from(i32::MIN) - 1),
+            (MachineIntegerType::UInt8, BigInt::from(-1)),
+            (MachineIntegerType::UInt16, BigInt::from(u16::MAX) + 1),
+            (MachineIntegerType::UInt32, BigInt::from(u32::MAX) + 1),
+            (MachineIntegerType::Int64, BigInt::from(i64::MAX) + 1),
+            (MachineIntegerType::UInt64, BigInt::from(u64::MAX) + 1),
+        ];
+        for (destination, integer) in cases {
+            let expression = SpecExpression::IntegerToMachine {
+                value: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant(integer))),
+                destination,
+            };
+            let result = evaluate_spec_expression_paths_with_loop_entry(
+                &CState::default(),
+                &expression,
+                None,
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            );
+            assert_eq!(result, Err(ExecutionLimit::Paths));
+        }
     }
 }

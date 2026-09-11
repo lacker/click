@@ -706,9 +706,8 @@ impl Parser {
             return Ok(AlgebraicFieldType::C(parsed.c_type));
         }
         if name == "Integer" {
-            return Err(self.error(
-                "Integer fields in specification datatypes are not available in this slice",
-            ));
+            self.position += 1;
+            return Ok(AlgebraicFieldType::Integer);
         }
 
         self.position += 1;
