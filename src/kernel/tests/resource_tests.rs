@@ -3975,3 +3975,52 @@ fn satisfies_fact_miss_ignores_unrelated_facts() {
         "satisfies_fact's miss path scanned unrelated resources: {resources:?}"
     );
 }
+
+/// A contract section whose clauses cannot be put in any evaluable order is
+/// refused by naming a pair, not the clause that happens to be written last.
+/// Clause order does not decide a section, so one position is not the answer.
+#[test]
+fn resource_clauses_with_no_evaluable_order_name_two_positions() {
+    let unowned = |variable| {
+        CResourceSpec::OwnMemory(CMemorySegment {
+            base: CExpression::Load(Box::new(CExpression::Value(CValue::pointer(Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(variable)),
+                    4,
+                ),
+            })))),
+            start: c_int32_literal(0),
+            end: c_int32_literal(1),
+            element_width: 4,
+            guard: None,
+        })
+    };
+    let evaluate = |clauses: &[CResourceSpec]| {
+        let CRuntimeError::FunctionContract(message) =
+            crate::kernel::functions::evaluate_function_resource_context(
+                &CState::new(),
+                clauses,
+                &[],
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+            .expect("clause evaluation stays inside its budget")
+            .expect_err("no clause has read authority for its base")
+        else {
+            panic!("an unevaluable segment is a contract error");
+        };
+        message
+    };
+    assert_eq!(
+        evaluate(&[unowned(100), unowned(101)]),
+        "could not evaluate an owned memory resource segment (resource clauses 1 and 2 cannot \
+         be evaluated in any order: each needs a cell no clause evaluated before it supplies)"
+    );
+    // One stalled clause is still reported at its own position: there is no
+    // second clause whose authority it could have been waiting for.
+    assert_eq!(
+        evaluate(&[unowned(100)]),
+        "could not evaluate an owned memory resource segment (resource clause 1 of 1)"
+    );
+}

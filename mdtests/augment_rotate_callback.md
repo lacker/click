@@ -11,12 +11,11 @@ the two cells it updates while only viewing the tree the rotation rebuilt.
 `bump` and `reset` form `AugmentRotate(&bump)` and `AugmentRotate(&reset)` at
 the call site with no theorem.
 
-The rotation helper takes the root's two link cells and the two subtree shapes
-rather than one folded `shape(node)`: a contract cannot today own a memory
-segment, here `node->right->augmented`, whose base is loaded through a field
-owned by another owned or consumed composite in the same contract. With the
-links owned directly the segment evaluates, and the callback still sees only a
-view of the rebuilt shape.
+The rotation helper consumes one folded `shape(node)` and owns the two
+`augmented` cells beside it. `node->right->augmented` loads its base through
+`node->right`, a cell that `shape(node)` owns, so this contract is exactly the
+case where a resource clause reads a cell another clause of the same contract
+supplies from inside a folded composite.
 
 ```c filename=augment_rotate.c
 struct node {
@@ -114,10 +113,7 @@ struct node* rotate_left(
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
-    consumes shape(node->left);
-    consumes shape(node->right);
+    consumes shape(node);
     owns node->augmented;
     owns node->right->augmented;
     produces shape(result);
@@ -126,6 +122,7 @@ struct node* rotate_left(
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
+    unfold(shape(node));
     unfold(shape(node->right));
     step();
     step();
@@ -146,10 +143,7 @@ struct node* rotate_bump(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
-    consumes shape(node->left);
-    consumes shape(node->right);
+    consumes shape(node);
     owns node->augmented;
     owns node->right->augmented;
     produces shape(result);
@@ -168,10 +162,7 @@ struct node* rotate_reset(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
-    consumes shape(node->left);
-    consumes shape(node->right);
+    consumes shape(node);
     owns node->augmented;
     owns node->right->augmented;
     produces shape(result);
