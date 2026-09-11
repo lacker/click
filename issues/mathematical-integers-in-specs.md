@@ -1,5 +1,10 @@
 # Offer mathematical `Integer` values on the specification side
 
+**Current status:** dated checkpoints below are historical. The final
+`Current integration review (2026-09-11)` section is authoritative for the
+reviewed implementation checkpoint, its unfinished summation work, and the
+scope gate before any new feature work.
+
 Found by the 2026-09-01 kernel audit at cb034b21.
 
 The standard library now offers an ordinary ADT `Nat`, recursive `nat_add`,
@@ -232,11 +237,6 @@ records the scalar boundary before the later checkpoints below; it is not a
 current inventory of the implementation. The current landed boundary and the
 remaining array, resource-pattern, existential, and summation work are recorded
 in the 2026-09-11 status checkpoint at the end of this document.
-
-**Current status:** dated checkpoints below are historical. The final
-`Current merge-candidate status (2026-09-11)` section is authoritative for what
-is retained in the merge candidate, what remains open in unchanged-C summation,
-and the review gate before any new feature work.
 
 ## Quantifier review checkpoint (2026-09-10)
 
@@ -566,19 +566,26 @@ unchanged. Quadratic work in deeply nested universal-quantifier introduction
 also remains deferred; quantifier support itself is implemented. The staged
 status of those slices is recorded below.
 
-## Current merge-candidate status (2026-09-11)
+## Current integration review (2026-09-11)
 
-The clean merge candidate retains the previously unit-green scalar, datatype,
-quantifier, fold-law, resource-pattern, indexed-witness, snapshot-alpha,
-order-bridge, and bounded affine-certificate work. The mixed match/fold source
-cases, shared replacement universal-quantifier regression, and binder-collector
-memo fix are included in the reviewed work landed in `7543105f`. It also retains
-the negative
-summation fixtures for missing element bounds and intermediate machine overflow:
+The reviewed implementation checkpoint retains the previously unit-green
+scalar, datatype, quantifier, fold-law, resource-pattern, indexed-witness,
+snapshot-alpha, order-bridge, and bounded affine-certificate work. The mixed
+match/fold source cases, shared replacement universal-quantifier regression,
+and binder-collector memo fix are included in the reviewed work landed in
+`7543105f`. The checkpoint intentionally excludes unfinished unchanged-C
+summation acceptance while retaining the negative fixtures for missing element
+bounds and intermediate machine overflow:
 `integer_sum_range_fold_missing_bounds.md` and
 `integer_sum_range_fold_intermediate_overflow.md`.
 
-The focused slices retained in the candidate are:
+The scalar, match, snapshot, and affine baseline for this checkpoint passed its
+full gate with 2,435 unit and binary tests plus 14 fixtures. The implementation
+checkpoint was merged and pushed as `0c71c2de`. On the latest integration base,
+`scripts/check.sh` passes with 2,446 unit and binary tests plus 14 fixture
+gates.
+
+The focused slices retained in this checkpoint are:
 
 - Array-ref fold bodies preserve opaque snapshots and scoped definedness. The
   focused source cases pass ordinary verification, expansion, and independent
@@ -595,32 +602,47 @@ The focused slices retained in the candidate are:
   reviewed one- and two-premise combinations; atom identity is recomputed by
   the kernel and is never taken from a raw term ID or fingerprint alone.
 
-The candidate intentionally omits the failing positive
+The checkpoint intentionally omits the failing positive
 `integer_sum_range_fold.md` fixture, its unvalidated expansion regression, and
 the recent loop-closure patch with its two tests. Those files are not evidence
-that unchanged-C summation acceptance is complete. The remaining acceptance
-work is to reduce the smallest failing generated bundle to a bounded leaf
-diagnostic, repair that checked closure, and then verify the positive source
-ordinarily, expand it, and independently re-verify the expanded proof.
+that unchanged-C summation acceptance is complete. The remaining work is to
+reduce the smallest failing generated bundle to a bounded leaf diagnostic,
+repair that checked closure, and then verify the positive source ordinarily,
+expand it, and independently re-verify the expanded proof.
 
-The unmerged diagnostic run established all five individual invariant `have`
-steps under ordinary checking, but not the combined generated-bundle closure or
-expansion. The first diagnostic confirmed a presentation gap: the generated
-loop-close bundle had no representable Surface syntax for its
-mathematical-Integer comparison goals. A subsequent narrow patch removed the
-gate failure, but the same generated bundle still failed, so the actual
-remaining leaf is not yet diagnosed. The failing reproduction remains in
-`/tmp/click-integer-sum-integration`, with the omitted positive fixture at
-`mdtests/integer_sum_range_fold.md`. The next step is a bounded reduction of
-the smallest failing bundle with explicit leaf facts and source provenance;
-this is a diagnostic step, not a broad Surface implementation.
+The diagnostic run established all five individual invariant `have` steps under
+ordinary checking, but not the combined generated-bundle closure or expansion.
+The first diagnostic confirmed an implementation presentation gap: the source
+synthesis path could not reconstruct a Surface presentation for the generated
+mathematical-Integer comparison goals in the loop-close bundle. Integer
+comparisons themselves remain expressible in the language. A subsequent narrow
+patch removed the gate failure, but the same generated bundle still failed. The
+preserved older reproduction remains in
+`/tmp/click-integer-sum-integration`; the standalone source recheck is
+`/tmp/click-integer-sum-reproduction/integer_sum_range_fold.click`. Running
+that source with the landed binary now fails promptly in `sum.contract` source
+tactic 44 with `closure body did not prove every invariant obligation` (0.29
+seconds), so this is a proof-closure failure rather than a timeout. The exact
+underlying leaf is still unknown. The next step is a bounded reduction of the
+smallest failing bundle with explicit leaf facts and source provenance, rather
+than a broad Surface implementation.
+
+The proposed next regression should isolate the goal shape
+`L and (L -> (L -> E))`, where `L` is the scoped loadability universal and `E`
+is the checked Integer fold equality. Supply `L` and `E` as explicit premises;
+the leading conjunct exercises `Both`, while the nested implications exercise
+`Intro`. Compare the checked `Both`, `Intro`, and `Assumption` paths with the
+smart closer when the source presentation is absent, and reject a proof that
+lacks `E`. Then
+inspect the actual remaining bundle leaf. This is a bounded diagnostic and
+regression proposal, not an implemented or confirmed semantic extension.
 
 The process diagnosis is that merge was made dependent on whole-sum acceptance
 before the smallest failing bundle had been isolated, reduction happened too
-late, and intermediate integration checkpoints were not recorded. No new
-feature work should begin until this closure is reduced and reviewed. The
-candidate remains unmerged, and the current full gate is still running; no
-green result is claimed.
+late, and intermediate integration checkpoints were not recorded. Scope and
+process review for this checkpoint is complete. No new feature work should
+begin until this closure is reduced and reviewed against the latest base; the
+remaining leaf is still unknown.
 
 This checkpoint preserves the approved design: existing C remains unchanged;
 fold atoms use exact snapshot-aware identities rather than raw IDs or
