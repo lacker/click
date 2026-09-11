@@ -14,8 +14,8 @@ proposition prover, listed below as work packages. The arithmetic migration is
 a separate P1 implementation issue in [arithmetic.md](arithmetic.md), and
 blocks completion of this umbrella.
 
-Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11
-(first slice), 12, 13, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
+Landed so far (2026-09-10): packages 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 10
+(slices d and e), 11 (first slice), 12, 13, 14, and 16, plus the package 0 census whose results are recorded below. Their sections remain as the record
 of what was decided; each is marked landed.
 
 This document is the complete brief for that work. An agent taking one work
@@ -407,7 +407,7 @@ Deciding successes by site, mdtests plus examples, all others zero:
 Consequences for the packages:
 
 - **26 sites are never reached by either harness**, including every package
-  12 and 10(d) site, `assume_structural_path`, `capture_spec_algebraic_value`,
+  12 site, `assume_structural_path`, `capture_spec_algebraic_value`,
   all four `loop_effect_segment_contains_*` helpers, and the unreached arms of
   `contract_refinement_proves`. A package migrating one of these must first
   add a fixture that reaches it, or its regression proves nothing.
@@ -900,6 +900,22 @@ shape).
 
 ### Package 10: calls and resource populations
 
+**Slices (d) and (e) landed** 2026-09-10 ("Cover refinement footprints by
+exact guard routes only", "Discharge verified-call ensure premises by exact
+availability only"). (d): both guard tests use package 11's
+`refinement_route_proves`; the covering segment was structurally unique at
+every reached site and no consumer reads which segment covered, so
+coverage is a discharge, not a selection, and no disjunction or `using`
+clause was added; a boolean gate with no proof site refuses on miss, as
+package 5 recorded for `assume_structural_path`. A new fixture drives
+coverage past a first segment whose guard is unprovable. Pinned narrowing:
+a disjunctive available guard the old prover split by arm choice is now
+refused. (e): each stripped ensure premise must be exactly available or
+already discharged above it in the same chain; the retained implication
+is a fact, so a proof discharges it with `extract` after establishing the
+antecedent, not `intro`. Probe: 128 attempts, 30 successes, all exact; no
+fixture text changed. Slices (a), (b), (c) remain.
+
 **Entry points.** In `src/kernel/functions.rs`:
 `prepare_verified_function_call` (about line 1419; precondition discharge at
 about lines 1547 and 1606, with exact routes already tried first at about
@@ -942,7 +958,9 @@ must fail at the obligation; expansion of a smart proof shows the discharging
 steps; scaling in unrelated context is flat.
 
 **Census.** Slice (c)'s guarded-requirement site decides 40 times but denying
-it loses nothing; slice (d)'s sites and several others (`allocation_continuity`,
+it loses nothing; slice (d)'s sites are reached 18 times in mdtests, all
+exact-covered (an earlier version of this note wrongly listed them as
+unreached); several others (`allocation_continuity`,
 `assume_contract_proposition`, `prove_contract_propositions`,
 `lower_refinement_mutable_guards`, `evaluate_decided_contract_mutable_ranges`,
 `evaluate_guarded_contract_condition`) are never reached by either harness,
@@ -1165,7 +1183,8 @@ planning, validation, and the entry check.
 ### Dependency order
 
 Landed: 0, 1, 2, 3, 4, 5, 5b, 6, 7, 8, 9, 11 first slice, 12, 13, 14, 16.
-Open: 10 (slices a to e), 11 second slice after 10(b), 17, then 15 last.
+Open: 10 (slices a to c; d and e landed), 11 second slice after 10(b),
+17, then 15 last.
 After 4: 12, 5, 10(a), 10(b). After 7 and 4: 9. After 10(b): 10(c), 10(d),
 10(e), 11 second slice. Last: 15.
 
