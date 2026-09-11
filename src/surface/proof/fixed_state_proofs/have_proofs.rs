@@ -241,13 +241,18 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
         opaque_click_functions.clone(),
     )?;
     let (lowered, _, obligations, introductions) =
-        crate::kernel::c_lower_spec_proposition_at_state_with_provenance(
+        crate::kernel::c_lower_spec_proposition_with_checked_obligations(
             &states.lowering_state,
             &spec,
             Some(&states.entry_state),
             assumptions,
         )?;
-    refuse_impossible_loads(&obligations)?;
+    refuse_impossible_loads(
+        &obligations
+            .iter()
+            .map(|obligation| obligation.proposition().clone())
+            .collect::<Vec<_>>(),
+    )?;
     refuse_unproved_conversion_bounds(&obligations, obligation_assumptions)?;
     Ok((lowered, introductions))
 }
@@ -354,12 +359,17 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
         click_function_environment,
         opaque_click_functions.clone(),
     )?;
-    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
         &states.lowering_state,
         &spec,
         Some(&states.entry_state),
         assumptions,
     )?;
+    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    let obligations = obligations
+        .iter()
+        .map(|obligation| obligation.proposition().clone())
+        .collect::<Vec<_>>();
     refuse_impossible_loads(&obligations)?;
     Ok(value)
 }
@@ -461,13 +471,17 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 functions,
                 BTreeSet::new(),
             )?;
-            let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
-                &states.lowering_state,
-                &spec,
-                Some(&states.entry_state),
-                assumptions,
-            )?;
-            if obligations.iter().any(|o| !assumptions.proves(o)) {
+            let (value, obligations) =
+                crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
+                    &states.lowering_state,
+                    &spec,
+                    Some(&states.entry_state),
+                    assumptions,
+                )?;
+            if obligations
+                .iter()
+                .any(|o| !assumptions.proves(o.proposition()))
+            {
                 return Err("fold initializer has unproved evaluation obligations".into());
             }
             if value.c_type() != *expected {
@@ -597,12 +611,17 @@ fn evaluate_c_fragment_with_binding_policy(
         &ClickFunctionEnvironment::new(&[]),
         std::collections::BTreeSet::new(),
     )?;
-    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
         &states.lowering_state,
         &spec,
         Some(&states.entry_state),
         assumptions,
     )?;
+    refuse_unproved_conversion_bounds(&obligations, assumptions)?;
+    let obligations = obligations
+        .iter()
+        .map(|obligation| obligation.proposition().clone())
+        .collect::<Vec<_>>();
     refuse_impossible_loads(&obligations)?;
     if !assumptions.should_allow_symbolic_contract_loads()
         && let Some(obligation) = obligations.iter().find(|obligation| {
@@ -701,36 +720,15 @@ fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
 }
 
 fn refuse_unproved_conversion_bounds(
-    obligations: &[Proposition],
+    obligations: &[crate::kernel::ProofObligation],
     assumptions: &PureFactContext,
 ) -> Result<(), String> {
     for obligation in obligations {
-        if !contains_integer_range_condition(obligation) {
-            continue;
-        }
-        if !assumptions.proves(obligation) {
-            return Err("the proposition requires an established Integer conversion bound".into());
+        if !obligation.is_assumable() && !assumptions.proves(obligation.proposition()) {
+            return Err("the proposition requires an established Integer conversion bound or argument definedness".into());
         }
     }
     Ok(())
-}
-
-fn contains_integer_range_condition(proposition: &Proposition) -> bool {
-    match proposition {
-        Proposition::ConditionIs(
-            ConditionTerm::IntegerGreaterEqual(..) | ConditionTerm::IntegerLessEqual(..),
-            true,
-        ) => true,
-        Proposition::And(left, right)
-        | Proposition::Or(left, right)
-        | Proposition::Implies(left, right) => {
-            contains_integer_range_condition(left) || contains_integer_range_condition(right)
-        }
-        Proposition::Not(body)
-        | Proposition::ForAll { body, .. }
-        | Proposition::Exists { body, .. } => contains_integer_range_condition(body),
-        _ => false,
-    }
 }
 
 /// The states a fixed-state lowering runs at, with the values in scope at

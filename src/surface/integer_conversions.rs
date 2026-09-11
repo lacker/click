@@ -49,6 +49,100 @@ mod tests {
     use super::*;
 
     #[test]
+    fn conversion_obligations_survive_right_operand_composition() {
+        for expression in [
+            "1 + to_integer(x + 1)",
+            "to_integer(x + 1) + 1",
+            "to_integer(x) + to_integer(x + 1)",
+        ] {
+            let source = format!(
+                "theorem compose(x: int32) {{ ensures {expression} == {expression} by simp; }}"
+            );
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+            verify_c0_sources(&bounded, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn forward_conversion_conditionals_preserve_the_argument_domain() {
+        let expression = "if c == 0 { x + 1 } else { y + 1 }";
+        let source = format!(
+            "theorem branch(c: int32, x: int32, y: int32) {{ requires defined({expression}); ensures to_integer({expression}) == to_integer({expression}) by simp; }}"
+        );
+        verify_c0_sources(&source, &[]).unwrap();
+        let invalid = source.replace(&format!("requires defined({expression});"), "");
+        assert!(verify_c0_sources(&invalid, &[]).is_err());
+        let one_branch = source.replace(
+            &format!("requires defined({expression});"),
+            "requires defined(x + 1);",
+        );
+        assert!(verify_c0_sources(&one_branch, &[]).is_err());
+    }
+
+    #[test]
+    fn forward_conversion_aliases_retain_definedness() {
+        for alias in [
+            "let a: Integer = to_integer(x + 1);",
+            "let b: Integer = to_integer(x + 1); let a: Integer = b + 0;",
+        ] {
+            let source = format!("theorem alias(x: int32) {{ {alias} ensures a == a by simp; }}");
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ let", "{ requires defined(x + 1); let");
+            verify_c0_sources(&bounded, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    fn forward_conversion_memory_requires_ownership_and_definedness() {
+        let c = "int32 read(int32* p) { return *p; }";
+        let source = "verifying \"read.c\"; int32 read(int32* p) { owns p[0..1]; requires defined(p[0] + 1); ensures to_integer(p[0] + 1) == to_integer(p[0] + 1); } by { execute(); simp(); }";
+        verify_c0_sources(source, &[("read.c", c)]).unwrap();
+        for missing in ["owns p[0..1];", "requires defined(p[0] + 1);"] {
+            let invalid = source.replace(missing, "");
+            assert!(
+                verify_c0_sources(&invalid, &[("read.c", c)]).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn forward_conversion_keeps_intermediate_overflow_obligations() {
+        let source = "theorem nested(x: int32) { requires defined((x + 1) + 1); ensures to_integer((x + 1) + 1) == to_integer((x + 1) + 1) by simp; }";
+        verify_c0_sources(source, &[]).unwrap();
+        let missing = source.replace("requires defined((x + 1) + 1);", "requires defined(x + 1);");
+        assert!(verify_c0_sources(&missing, &[]).is_err());
+        let cancelled = "theorem cancelled(x: int32) { ensures to_integer((x + 1) - 1) == to_integer((x + 1) - 1) by simp; }";
+        assert!(verify_c0_sources(cancelled, &[]).is_err());
+        let bounded = cancelled.replace("{ ensures", "{ requires defined((x + 1) - 1); ensures");
+        verify_c0_sources(&bounded, &[]).unwrap();
+    }
+
+    #[test]
+    fn forward_conversion_requires_symbolic_argument_definedness() {
+        for proof in ["normalize()", "simp()"] {
+            let source = format!(
+                "theorem forward(x: int32) {{ ensures to_integer(x + 1) == to_integer(x + 1) by {{ {proof}; }} }}"
+            );
+            assert!(verify_c0_sources(&source, &[]).is_err(), "{source}");
+            let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+            verify_c0_sources(&bounded, &[])
+                .unwrap_or_else(|error| panic!("{}\n{bounded}", error.message()));
+            if proof == "simp()" {
+                let expanded =
+                    expand_c0_claim_source_by_label(&bounded, &[], "forward.ensures_0").unwrap();
+                verify_c0_sources(&expanded, &[]).unwrap();
+            }
+        }
+        let c = "int32 identity(int32 x) { return x; }";
+        let source = "verifying \"identity.c\"; int32 identity(int32 x) { ensures to_integer(x + 1) == to_integer(x + 1); } by { execute(); simp(); }";
+        assert!(verify_c0_sources(source, &[("identity.c", c)]).is_err());
+        let bounded = source.replace("{ ensures", "{ requires defined(x + 1); ensures");
+        verify_c0_sources(&bounded, &[("identity.c", c)]).unwrap();
+    }
+
+    #[test]
     fn integer_bounds_establish_c_add_definedness_without_circular_assumptions() {
         let source = "theorem safety(a: int32, b: int32) { requires to_integer(a) + to_integer(b) >= -2147483648; requires to_integer(a) + to_integer(b) <= 2147483647; ensures defined(a + b) by { apply(int32_add_defined_by_integer_bounds(a, b)); } }";
         verify_c0_sources(source, &[]).unwrap();

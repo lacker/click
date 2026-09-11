@@ -3729,7 +3729,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
     let state = CState::new().with_memory(memory.clone());
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
-        assumptions,
+        &PureFactContext::new(),
         assumptions,
         values,
         array_refs,

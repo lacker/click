@@ -769,6 +769,19 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
     }
 }
 
+fn retain_required_conversion_obligation(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    proposition: Proposition,
+) {
+    if assumptions.proves_exact(&proposition) {
+        return;
+    }
+    // Keep the original evaluation obligations and their diagnostic context.
+    // Appending the mandatory condition avoids scanning unrelated path history.
+    obligations.push(ProofObligation::verification_condition(proposition));
+}
+
 fn evaluate_spec_integer_expression_paths(
     state: &CState,
     expression: &SpecIntegerExpression,
@@ -808,27 +821,58 @@ fn evaluate_spec_integer_expression_paths(
             }])
         }
         SpecIntegerExpression::FromMachine(machine) => {
-            evaluate_spec_expression_paths_with_algebraic_bindings(
+            let paths = evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
                 machine,
                 loop_entry_state,
                 assumptions,
                 algebraic_bindings,
                 budget,
-            )?
-            .into_iter()
-            .map(|path| {
-                let ty = MachineIntegerType::from_c_type(path.value.c_type())
-                    .ok_or(ExecutionLimit::Paths)?;
-                let bits = c_value_bitvector_term(&path.value).ok_or(ExecutionLimit::Paths)?;
-                let value = IntegerTerm::from_machine(ty, bits).ok_or(ExecutionLimit::Paths)?;
-                Ok(SpecIntegerPath {
-                    value,
-                    facts: path.facts,
-                    obligations: path.obligations,
+            )?;
+            // Preserve the complete domain of the C expression, including the
+            // normal-path guards whose complementary paths had undefined behavior.
+            // This is a mandatory condition, not an assumption supplied by the
+            // conversion's own successful evaluation path.
+            let domain = paths
+                .iter()
+                .map(|path| {
+                    proposition_and_all(
+                        path.facts
+                            .iter()
+                            .map(|fact| fact.proposition().clone())
+                            .chain(
+                                path.obligations
+                                    .iter()
+                                    .map(|obligation| obligation.proposition().clone()),
+                            )
+                            .collect(),
+                    )
                 })
-            })
-            .collect()
+                .reduce(|left, right| Proposition::Or(Box::new(left), Box::new(right)))
+                .unwrap_or(Proposition::ConditionIs(
+                    ConditionTerm::Constant(false),
+                    true,
+                ));
+            paths
+                .into_iter()
+                .map(|path| {
+                    let ty = MachineIntegerType::from_c_type(path.value.c_type())
+                        .ok_or(ExecutionLimit::Paths)?;
+                    let bits = c_value_bitvector_term(&path.value).ok_or(ExecutionLimit::Paths)?;
+                    let value = IntegerTerm::from_machine(ty, bits).ok_or(ExecutionLimit::Paths)?;
+                    let mut obligations = path.obligations;
+                    retain_required_conversion_obligation(
+                        &mut obligations,
+                        assumptions,
+                        domain.clone(),
+                    );
+                    Ok(SpecIntegerPath {
+                        value,
+                        facts: path.facts,
+                        obligations,
+                    })
+                })
+                .collect()
         }
         SpecIntegerExpression::Negate(inner) => evaluate_spec_integer_expression_paths(
             state,
@@ -3215,8 +3259,6 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                 if path.value.as_const().is_some() {
                     return Err(ExecutionLimit::Paths);
                 }
-                let path_assumptions =
-                    assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
                 let mut obligations = path.obligations;
                 let lower_bound = Proposition::ConditionIs(
                     ConditionTerm::integer_greater_equal(path.value.clone(), lower.clone()),
@@ -3226,12 +3268,8 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                     ConditionTerm::integer_less_equal(path.value.clone(), upper.clone()),
                     true,
                 );
-                if add_proof_obligation(&mut obligations, &path_assumptions, lower_bound).is_none()
-                    || add_proof_obligation(&mut obligations, &path_assumptions, upper_bound)
-                        .is_none()
-                {
-                    continue;
-                }
+                retain_required_conversion_obligation(&mut obligations, assumptions, lower_bound);
+                retain_required_conversion_obligation(&mut obligations, assumptions, upper_bound);
                 let value = c_value_from_bitvector_term(
                     destination.c_type(),
                     Bitvector32Term::IntegerToMachine {
@@ -5099,7 +5137,7 @@ mod integer_budget_tests {
     }
 
     #[test]
-    fn from_machine_preserves_c_overflow_path_fact() {
+    fn from_machine_requires_c_overflow_path_fact() {
         let left = Variable(31);
         let right = Variable(32);
         let left_bits = Bitvector32Term::Variable(left);
@@ -5125,9 +5163,14 @@ mod integer_budget_tests {
         assert!(
             paths[0]
                 .facts
-                .contains(&ExecutionPureFact::condition(overflow, false))
+                .contains(&ExecutionPureFact::condition(overflow.clone(), false))
         );
-        assert_eq!(paths[0].obligations, Vec::<ProofObligation>::new());
+        assert_eq!(paths[0].obligations.len(), 1);
+        assert_eq!(
+            paths[0].obligations[0].proposition,
+            Proposition::ConditionIs(overflow, false)
+        );
+        assert!(!paths[0].obligations[0].assumable);
     }
 
     #[test]
@@ -5354,6 +5397,12 @@ mod integer_budget_tests {
                     if *d == destination
             ));
             assert_eq!(paths[0].obligations.len(), 2);
+            assert!(
+                paths[0]
+                    .obligations
+                    .iter()
+                    .all(|obligation| !obligation.is_assumable())
+            );
             let lower = IntegerTerm::constant(expected_lower);
             let upper = IntegerTerm::constant(expected_upper);
             assert!(paths[0].obligations.iter().any(|obligation| {
@@ -5399,7 +5448,26 @@ mod integer_budget_tests {
             ),
             false,
         )));
-        assert_eq!(paths[0].obligations.len(), 2);
+        assert_eq!(paths[0].obligations.len(), 3);
+        assert!(
+            paths[0]
+                .obligations
+                .iter()
+                .all(|obligation| !obligation.is_assumable())
+        );
+        assert!(
+            paths[0]
+                .obligations
+                .iter()
+                .any(|obligation| obligation.proposition()
+                    == &Proposition::ConditionIs(
+                        ConditionTerm::signed_add_overflows(
+                            Bitvector32Term::Variable(left),
+                            Bitvector32Term::Variable(right)
+                        ),
+                        false
+                    ))
+        );
     }
 }
 
