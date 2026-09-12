@@ -4469,6 +4469,7 @@ fn resource_model_arm_selection_ignores_unrelated_premises() {
     for pair in samples.windows(2) {
         assert!(pair[1] <= pair[0] + 32, "{samples:?}");
     }
+}
 
 /// Expanded leaves retain the source clause position used by diagnostics.
 /// The first source aggregate contributes two stalled leaves here; the
