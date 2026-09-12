@@ -33,9 +33,7 @@ fn relower_written_proposition_with_snapshots(
 
 /// One cell of a foreign static or file-scope object, spelled the way a
 /// caller's own contract writes it: the qualified name under the source
-/// alias, then the index. The parser flattens a multidimensional qualified
-/// array's indices into one, so `values[0]` and `values[0][2]` are the same
-/// surface shape over the same object.
+/// alias, then the flat cell index used by the caller-side resource range.
 fn qualified_cell(name: &str, base: &CValue, index: i32) -> ContractExpression {
     ContractExpression::Index(
         Box::new(ContractExpression::QualifiedC {
@@ -44,6 +42,30 @@ fn qualified_cell(name: &str, base: &CValue, index: i32) -> ContractExpression {
         }),
         Box::new(ContractExpression::IntegerLiteral(index.to_string())),
     )
+}
+
+fn qualified_multidimensional_cell(
+    name: &str,
+    base: &CValue,
+    row: i32,
+    column: i32,
+    columns: i32,
+) -> ContractExpression {
+    let flat_index = row * columns + column;
+    ContractExpression::ArrayIndex {
+        base: Box::new(ContractExpression::QualifiedC {
+            name: name.to_string(),
+            lowered: CExpression::Value(base.clone()),
+        }),
+        indexes: vec![
+            CExpression::Value(int32(row as u32)),
+            CExpression::Value(int32(column as u32)),
+        ],
+        lowered: CExpression::Index(
+            Box::new(CExpression::Value(base.clone())),
+            Box::new(CExpression::Value(int32(flat_index as u32))),
+        ),
+    }
 }
 
 /// The spellings a caller's own contract records for a foreign object's
@@ -146,7 +168,8 @@ fn qualified_names_in(proposition: &ClickProposition) -> BTreeSet<String> {
                 for expression in [left, right] {
                     let mut base = expression;
                     while let ContractExpression::Index(inner, _)
-                    | ContractExpression::Field { base: inner, .. } = base
+                    | ContractExpression::Field { base: inner, .. }
+                    | ContractExpression::ArrayIndex { base: inner, .. } = base
                     {
                         base = inner;
                     }
@@ -218,6 +241,89 @@ fn foreign_static_cell_requirements_round_trip_through_their_qualified_spelling(
             "the qualified index must be what makes this spellable"
         );
     }
+}
+
+#[test]
+fn qualified_multidimensional_cell_recovery_preserves_its_source_rank() {
+    let block = "static:increment_twice:values#static0";
+    let state = CState::new().with_memory(CMemory::new().with_block(block, 12));
+    let base = CValue::typed_pointer(
+        Pointer {
+            block: PointerBlock::Concrete(block.into()),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        CType::Int32Pointer,
+    );
+    let surface = ClickProposition::Comparison {
+        left: qualified_multidimensional_cell(
+            "static_local::increment_twice::values",
+            &base,
+            0,
+            2,
+            3,
+        ),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(5))),
+    };
+    let lowered = relower_written_proposition(&surface, &state)
+        .expect("a qualified multidimensional cell comparison lowers");
+    let mut sources = SurfacePropositionMap::default();
+    sources
+        .record_lowering(&surface, &lowered)
+        .expect("the multidimensional source spelling records");
+    let spelled = synthesized_under_sources(&lowered, &sources, &state)
+        .expect("the recorded multidimensional spelling is recoverable");
+    assert!(matches!(
+        spelled,
+        ClickProposition::Comparison {
+            left: ContractExpression::ArrayIndex { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        relower_written_proposition(&spelled, &state),
+        Ok(lowered),
+        "the recovered spelling must lower to the exact cell"
+    );
+}
+
+#[test]
+fn multidimensional_array_definedness_tracks_local_roots_and_indexes() {
+    let lowered = CExpression::Index(
+        Box::new(CExpression::Variable("grid".into())),
+        Box::new(CExpression::Variable("column".into())),
+    );
+    let local = ContractExpression::ArrayIndex {
+        base: Box::new(ContractExpression::CFragment(CExpression::Variable(
+            "grid".into(),
+        ))),
+        indexes: vec![CExpression::Variable("row".into())],
+        lowered: lowered.clone(),
+    };
+    assert!(contract_expression_mentions_c_local(
+        &local,
+        &BTreeSet::from(["grid", "column"]),
+    ));
+    assert!(contract_expression_mentions_c_local(
+        &local,
+        &BTreeSet::from(["row", "column"]),
+    ));
+
+    let qualified = ContractExpression::ArrayIndex {
+        base: Box::new(ContractExpression::QualifiedC {
+            name: "static_local::f::grid".into(),
+            lowered: CExpression::Value(int32(0)),
+        }),
+        indexes: vec![CExpression::Value(int32(0))],
+        lowered: CExpression::Index(
+            Box::new(CExpression::Variable("global_grid".into())),
+            Box::new(CExpression::Value(int32(0))),
+        ),
+    };
+    assert!(!contract_expression_mentions_c_local(
+        &qualified,
+        &BTreeSet::new(),
+    ));
 }
 
 /// One fixture's call requirement over a foreign object: spellable as that

@@ -588,6 +588,9 @@ fn contains_scoped_expression_shape(
             expression: base, ..
         }
         | ContractExpression::BitwiseNot(base) => contains_scoped_expression_shape(base, shape),
+        ContractExpression::ArrayIndex { base, .. } => {
+            contains_scoped_expression_shape(base, shape)
+        }
         ContractExpression::If {
             then_branch,
             else_branch,
@@ -2216,6 +2219,14 @@ pub(super) fn infer_contract_expression_type(
             }
             Ok(infer_c_expression_type(expression, variables))
         }
+        ContractExpression::ArrayIndex { lowered, .. } => {
+            if !variables.contains_key("result") && c_expression_uses_variable(lowered, "result") {
+                return Err(ClickError::new(format!(
+                    "`result` is not available in {context}"
+                )));
+            }
+            Ok(infer_c_expression_type(lowered, variables))
+        }
         ContractExpression::Binding(name) => Ok(variables.get(name).copied()),
         // C locals are resolved against the concrete program state during
         // lowering, not against the contract namespace used here. In
@@ -3040,6 +3051,10 @@ fn validate_contract_expression_calls(
         )),
         ContractExpression::Field { base, .. } => {
             validate_contract_expression_calls(base, click_functions, context)
+        }
+        ContractExpression::ArrayIndex { base, .. } => {
+            validate_contract_expression_calls(base, click_functions, context)?;
+            Ok(())
         }
         ContractExpression::Old(body) => {
             validate_contract_expression_calls(body, click_functions, context)

@@ -1770,6 +1770,18 @@ fn collect_resource_fact_reads_from_contract_expression(
                 resource_name,
             )
         }
+        ContractExpression::ArrayIndex { base, .. } => {
+            collect_resource_fact_reads_from_contract_expression(
+                base,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            Ok(())
+        }
         ContractExpression::Call { name, arguments } => {
             for argument in arguments {
                 collect_resource_fact_reads_from_contract_expression(

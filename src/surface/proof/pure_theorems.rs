@@ -3369,6 +3369,7 @@ pub(super) fn click_function_applications(
             }
             ContractExpression::QualifiedC { .. }
             | ContractExpression::CFragment(_)
+            | ContractExpression::ArrayIndex { .. }
             | ContractExpression::CBinding(_)
             | ContractExpression::ResourceWildcard => {}
         }

@@ -6084,6 +6084,17 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
     .map_err(ClickError::new)
 }
 
+fn c_expression_mentions_c_local(
+    expression: &CExpression,
+    parameter_names: &BTreeSet<&str>,
+) -> bool {
+    let mut names = BTreeSet::new();
+    crate::surface::collect_c_expression_referenced_names(expression, &mut names);
+    names
+        .iter()
+        .any(|name| !parameter_names.contains(name.as_str()))
+}
+
 pub(super) fn contract_expression_mentions_c_local(
     expression: &ContractExpression,
     parameter_names: &BTreeSet<&str>,
@@ -6125,6 +6136,18 @@ pub(super) fn contract_expression_mentions_c_local(
             !parameter_names.contains(name.as_str())
         }
         ContractExpression::QualifiedC { .. } | ContractExpression::CFragment(_) => false,
+        ContractExpression::ArrayIndex {
+            base,
+            indexes,
+            lowered,
+        } => {
+            contract_expression_mentions_c_local(base, parameter_names)
+                || indexes
+                    .iter()
+                    .any(|index| c_expression_mentions_c_local(index, parameter_names))
+                || (!matches!(base.as_ref(), ContractExpression::QualifiedC { .. })
+                    && c_expression_mentions_c_local(lowered, parameter_names))
+        }
         ContractExpression::Field { base, .. }
         | ContractExpression::Old(base)
         | ContractExpression::At {

@@ -3300,6 +3300,10 @@ impl AnnotationLowerer<'_> {
             | ContractExpression::Field {
                 lowered: expression,
                 ..
+            }
+            | ContractExpression::ArrayIndex {
+                lowered: expression,
+                ..
             } => self.lower_c_fragment_to_spec(expression, environment),
             ContractExpression::Binding(name) => {
                 if environment.algebraic_values.contains_key(name) {

@@ -1231,6 +1231,7 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
         }
         | ContractExpression::CFragment(expression) => Ok(expression.clone()),
         ContractExpression::Field { lowered, .. } => Ok(lowered.clone()),
+        ContractExpression::ArrayIndex { lowered, .. } => Ok(lowered.clone()),
         ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
             Ok(CExpression::Variable(name.clone()))
         }
