@@ -505,9 +505,9 @@ follow-up after checking the primary branch base.
 ## W3 follow-up: interval-aware waiter index (2026-09-11)
 
 This follow-up started from `31b8f93a` and the implementation is committed as
-`8f79f862` on `codex/mvr-w3`, still unmerged and unpushed. The pending-clause
+`ec820946` on `codex/mvr-w3`, still unmerged and unpushed. The pending-clause
 waiter index now normalizes concrete, comparable memory ranges to a fixed-depth
-sparse segment tree keyed by block, element width, and interval nodes. Queries
+sparse segment tree keyed by block and physical-byte interval nodes. Queries
 walk only the overlapping interval nodes and their boundary paths; they do not
 enumerate cells or rescan all pending clauses. Ranges with symbolic or
 un-normalizable bases/bounds retain the bounded fact/base/block fallback, so
@@ -527,8 +527,8 @@ four sizes and records exact candidate visits `4, 8, 16, 32`; a coarse
 
 Files/interfaces changed in this follow-up are `src/kernel/functions.rs` and
 this issue document. The focused kernel worklist module now covers adjacent
-range union, constant-base comparability, same-block disjoint candidate
-counts, and symbolic fallback. The broader focused resource/callback/
+range union, constant-base and cross-width physical-byte comparability,
+same-block disjoint candidate counts, and symbolic fallback. The broader focused resource/callback/
 contract-execution gate passes `172/172`; nested mdtests and examples pass;
 and unfiltered `scripts/check.sh` passes with `2588/2588` tests and `14/14`
 fixture/example checks (one pre-existing quarantined example remains skipped).
@@ -539,7 +539,7 @@ for concrete ranges; symbolic fallback, clause provenance, accumulated supply,
 and the kernel's single authority are retained. No blocker remains. No C
 source, Click syntax, budget, quarantine, or excluded semantics changed; no
 free unfolding or forward-language change was introduced. W3 did not merge or
-push; the manager should cherry-pick `8f79f862` and this documentation update
+push; the manager should cherry-pick `ec820946` and this documentation update
 after checking the primary branch base.
 
 ## Language-preservation contract
