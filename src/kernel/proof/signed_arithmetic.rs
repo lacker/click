@@ -628,6 +628,15 @@ pub(crate) enum SignedArithmeticNode {
         comparison: SignedArithmeticComparison,
         result: Proposition,
     },
+    /// Re-express an interval-justified affine machine term as a checked
+    /// proposition.  The source affine node supplies the algebraic fact;
+    /// the interval node proves that every decomposed machine operation is
+    /// defined (or has bounded endpoints).
+    AffineConclusion {
+        source: usize,
+        evidence: usize,
+        result: Proposition,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1095,6 +1104,29 @@ impl SignedArithmeticCertificate {
                     }
                     CheckedValue::Proposition(result.clone())
                 }
+                SignedArithmeticNode::AffineConclusion {
+                    source,
+                    evidence,
+                    result,
+                } => {
+                    let source = affine_at(&checked, *source)?;
+                    let _ = interval_at(&checked, *evidence)?;
+                    let expected = affine_claim_from_interval_evidence(
+                        &self.nodes,
+                        &checked,
+                        &mut terms,
+                        *evidence,
+                        result,
+                    )
+                    .ok_or(SignedArithmeticCheckError::NodeResultMismatch(node_index))?;
+                    if !charge_claim_work(&expected) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
+                    }
+                    if !same_int32_claim(&expected, source) {
+                        return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    CheckedValue::Proposition(result.clone())
+                }
             };
             if let CheckedValue::Affine(claim) = &value
                 && !charge_claim_work(claim)
@@ -1366,6 +1398,239 @@ fn affine_term_bounds(claim: &SignedArithmeticClaim, term: &Bitvector32Term) -> 
         }
         _ => None,
     }
+}
+
+fn affine_claim_from_interval_evidence(
+    nodes: &[SignedArithmeticNode],
+    checked: &[CheckedValue],
+    terms: &mut TermArena,
+    evidence: usize,
+    proposition: &Proposition,
+) -> Option<SignedArithmeticClaim> {
+    let (evidence_term, evidence_affine) = interval_affine_evidence(nodes, checked, evidence)?;
+    let (condition, value) = match proposition {
+        Proposition::ConditionIs(condition, value) => (condition, *value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => (condition, !value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (relation, left, right, strict) = match (condition, value) {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, left, right, true)
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, left, right, false)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, right, left, true)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, right, left, false)
+        }
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, right, left, false)
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, right, left, true)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, left, right, false)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, left, right, true)
+        }
+        (ConditionTerm::Bitvector32Equal(left, right), true) => {
+            let (terms, constant) = affine_difference_from_evidence(
+                left,
+                right,
+                terms,
+                &evidence_term,
+                &evidence_affine,
+            )?;
+            return Some(SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::Equal,
+                terms,
+                constant,
+            });
+        }
+        (ConditionTerm::Bitvector32Equal(left, right), false) => {
+            let (terms, constant) = affine_difference_from_evidence(
+                left,
+                right,
+                terms,
+                &evidence_term,
+                &evidence_affine,
+            )?;
+            return Some(SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::Disequal,
+                terms,
+                constant,
+            });
+        }
+        _ => return None,
+    };
+    let (terms, mut constant) =
+        affine_difference_from_evidence(left, right, terms, &evidence_term, &evidence_affine)?;
+    if strict {
+        constant += 1;
+    }
+    Some(SignedArithmeticClaim {
+        carrier: SignedArithmeticCarrier::SignedInt32,
+        relation,
+        terms,
+        constant,
+    })
+}
+
+fn affine_difference_from_evidence(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    terms: &mut TermArena,
+    evidence_term: &usize,
+    evidence_affine: &(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt),
+) -> Option<(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt)> {
+    let difference = |term: &Bitvector32Term, coefficient: i8| {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return None;
+        }
+        if terms.equivalent_explicit(*evidence_term, term) {
+            let multiplier = BigInt::from(coefficient);
+            let mut result = BTreeMap::new();
+            for (atom, value) in &evidence_affine.0 {
+                result.insert(atom.clone(), value * &multiplier);
+            }
+            return Some((result, evidence_affine.1.clone() * multiplier));
+        }
+        if contains_affine_machine_operation(term) {
+            return None;
+        }
+        affine_leaf(term).map(|(mut result, constant)| {
+            if coefficient == -1 {
+                for value in result.values_mut() {
+                    *value = -value.clone();
+                }
+                (result, -constant)
+            } else {
+                (result, constant)
+            }
+        })
+    };
+    let (left_terms, left_constant) = difference(left, 1)?;
+    let (right_terms, right_constant) = difference(right, -1)?;
+    let mut result = left_terms;
+    for (atom, coefficient) in right_terms {
+        let updated = result.entry(atom.clone()).or_default().clone() + coefficient;
+        if updated.is_zero() {
+            result.remove(&atom);
+        } else {
+            result.insert(atom, updated);
+        }
+    }
+    Some((result, left_constant + right_constant))
+}
+
+fn interval_affine_evidence(
+    nodes: &[SignedArithmeticNode],
+    checked: &[CheckedValue],
+    _evidence: usize,
+) -> Option<(usize, (BTreeMap<SignedArithmeticAtom, BigInt>, BigInt))> {
+    enum Task {
+        Visit(usize),
+        Add,
+        Subtract,
+    }
+    let mut tasks = vec![Task::Visit(_evidence)];
+    let mut results = Vec::new();
+    while let Some(task) = tasks.pop() {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return None;
+        }
+        match task {
+            Task::Visit(index) => {
+                let node = nodes.get(index)?;
+                match node {
+                    SignedArithmeticNode::IntervalAtom { term, .. }
+                    | SignedArithmeticNode::IntervalFromAffine { term, .. } => {
+                        let (affine_terms, constant) = affine_leaf(term)?;
+                        let term_reference = match checked.get(index)? {
+                            CheckedValue::Interval { term, .. } => *term,
+                            _ => return None,
+                        };
+                        results.push((term_reference, (affine_terms, constant)));
+                    }
+                    SignedArithmeticNode::IntervalIntersect { left, .. } => {
+                        tasks.push(Task::Visit(*left));
+                    }
+                    SignedArithmeticNode::IntervalAdd { left, right, .. }
+                    | SignedArithmeticNode::IntervalAddBounded { left, right, .. } => {
+                        tasks.push(Task::Add);
+                        tasks.push(Task::Visit(*right));
+                        tasks.push(Task::Visit(*left));
+                    }
+                    SignedArithmeticNode::IntervalSubtract { left, right, .. } => {
+                        tasks.push(Task::Subtract);
+                        tasks.push(Task::Visit(*right));
+                        tasks.push(Task::Visit(*left));
+                    }
+                    _ => return None,
+                }
+            }
+            Task::Add | Task::Subtract => {
+                let right = results.pop()?;
+                let left = results.pop()?;
+                let mut affine_terms: BTreeMap<SignedArithmeticAtom, BigInt> = left.1.0;
+                let add = matches!(task, Task::Add);
+                for (atom, coefficient) in right.1.0 {
+                    if crate::instrumentation::deadline_exceeded_with_work(1) {
+                        return None;
+                    }
+                    let contribution = if add { coefficient } else { -coefficient };
+                    let updated: BigInt =
+                        affine_terms.entry(atom.clone()).or_default().clone() + contribution;
+                    if updated.is_zero() {
+                        affine_terms.remove(&atom);
+                    } else {
+                        affine_terms.insert(atom, updated);
+                    }
+                }
+                let constant = if add {
+                    left.1.1 + right.1.1
+                } else {
+                    left.1.1 - right.1.1
+                };
+                let term_reference = match checked.get(_evidence) {
+                    Some(CheckedValue::Interval { term, .. }) => *term,
+                    _ => 0,
+                };
+                results.push((term_reference, (affine_terms, constant)));
+            }
+        }
+    }
+    let (term_reference, affine) = results.pop()?;
+    if !results.is_empty() {
+        return None;
+    }
+    Some((term_reference, affine))
+}
+
+fn affine_leaf(term: &Bitvector32Term) -> Option<(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt)> {
+    if let Some(value) = term.as_const().map(|value| i64::from(value as i32)) {
+        return Some((BTreeMap::new(), BigInt::from(value)));
+    }
+    let canonical = crate::kernel::eval::canonical_term(term);
+    let atom = SignedArithmeticAtom::from_term(&canonical)?;
+    Some((BTreeMap::from([(atom, BigInt::one())]), BigInt::zero()))
+}
+
+fn contains_affine_machine_operation(root: &Bitvector32Term) -> bool {
+    matches!(
+        root,
+        Bitvector32Term::Add(_, _) | Bitvector32Term::Subtract(_, _)
+    )
 }
 
 fn is_opaque_atom(term: &Bitvector32Term) -> bool {

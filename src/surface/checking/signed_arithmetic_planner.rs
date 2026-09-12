@@ -58,6 +58,9 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
     if let Some(plan) = plan_affine_one_premise(&claims, &expected) {
         return Some(plan);
     }
+    if let Some(plan) = plan_machine_affine_goal(goal, premises, &claims) {
+        return Some(plan);
+    }
     if let Some(plan) = plan_interval_goal(goal, premises, &claims) {
         return Some(plan);
     }
@@ -150,6 +153,72 @@ fn signed_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
     })
 }
 
+fn decomposed_signed_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
+    let (condition, value) = match proposition {
+        Proposition::ConditionIs(condition, value) => (condition, *value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => (condition, !*value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (relation, left, right, strict) = match (condition, value) {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, left, right, true)
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, left, right, false)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, right, left, true)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, right, left, false)
+        }
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, right, left, false)
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, right, left, true)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, left, right, false)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, left, right, true)
+        }
+        (ConditionTerm::Bitvector32Equal(left, right), true) => {
+            let (terms, constant) = decomposed_affine_difference(left, right)?;
+            return Some(SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::Equal,
+                terms,
+                constant,
+            });
+        }
+        (ConditionTerm::Bitvector32Equal(left, right), false) => {
+            let (terms, constant) = decomposed_affine_difference(left, right)?;
+            return Some(SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::Disequal,
+                terms,
+                constant,
+            });
+        }
+        _ => return None,
+    };
+    let (terms, mut constant) = decomposed_affine_difference(left, right)?;
+    if strict {
+        constant += 1;
+    }
+    Some(SignedArithmeticClaim {
+        carrier: SignedArithmeticCarrier::SignedInt32,
+        relation,
+        terms,
+        constant,
+    })
+}
+
 fn affine_difference(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
@@ -168,6 +237,41 @@ fn affine_difference(
                 terms.remove(&atom);
             } else {
                 terms.insert(atom, updated);
+            }
+        }
+    }
+    Some((terms, constant))
+}
+
+fn decomposed_affine_difference(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt)> {
+    let mut terms: BTreeMap<SignedArithmeticAtom, BigInt> = BTreeMap::new();
+    let mut constant = BigInt::zero();
+    let mut pending = vec![(left, BigInt::one()), (right, -BigInt::one())];
+    while let Some((term, coefficient)) = pending.pop() {
+        charge_work(1)?;
+        match term {
+            Bitvector32Term::Constant(value) => {
+                constant += coefficient * BigInt::from(*value as i32);
+            }
+            Bitvector32Term::Add(left, right) => {
+                pending.push((right, coefficient.clone()));
+                pending.push((left, coefficient));
+            }
+            Bitvector32Term::Subtract(left, right) => {
+                pending.push((right, -coefficient.clone()));
+                pending.push((left, coefficient));
+            }
+            _ => {
+                let atom = SignedArithmeticAtom::from_term(term)?;
+                let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
+                if updated.is_zero() {
+                    terms.remove(&atom);
+                } else {
+                    terms.insert(atom, updated);
+                }
             }
         }
     }
@@ -296,6 +400,34 @@ fn plan_affine_one_premise(
     None
 }
 
+fn plan_machine_affine_goal(
+    goal: &Proposition,
+    premises: &[Proposition],
+    claims: &[(usize, SignedArithmeticClaim)],
+) -> Option<SignedArithmeticCertificate> {
+    let operation = affine_operation_term(goal)?;
+    let expected = decomposed_signed_claim(goal)?;
+    let mut planner = Planner::new(premises, claims);
+    let evidence = planner.build_interval(operation)?;
+    let source = planner.affine_claim(&expected)?;
+    let conclusion = planner.push(SignedArithmeticNode::AffineConclusion {
+        source,
+        evidence,
+        result: goal.clone(),
+    })?;
+    Some(certificate(planner.nodes, conclusion))
+}
+
+fn affine_operation_term(proposition: &Proposition) -> Option<&Bitvector32Term> {
+    let (left, right, _) = comparison_terms(proposition)?;
+    [left, right].into_iter().find(|term| {
+        matches!(
+            term,
+            Bitvector32Term::Add(_, _) | Bitvector32Term::Subtract(_, _)
+        )
+    })
+}
+
 fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) -> Option<BigInt> {
     if source.terms.is_empty() {
         if !target.terms.is_empty() {
@@ -337,6 +469,33 @@ fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) 
     Some(factor)
 }
 
+fn add_affine_claims(
+    left: &SignedArithmeticClaim,
+    right: &SignedArithmeticClaim,
+) -> Option<SignedArithmeticClaim> {
+    if left.carrier != right.carrier
+        || left.relation != SignedArithmeticRelation::LessEqual
+        || right.relation != SignedArithmeticRelation::LessEqual
+    {
+        return None;
+    }
+    let mut terms = left.terms.clone();
+    for (atom, coefficient) in &right.terms {
+        let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
+        if updated.is_zero() {
+            terms.remove(atom);
+        } else {
+            terms.insert(atom.clone(), updated);
+        }
+    }
+    Some(SignedArithmeticClaim {
+        carrier: left.carrier,
+        relation: SignedArithmeticRelation::LessEqual,
+        terms,
+        constant: &left.constant + &right.constant,
+    })
+}
+
 fn equality_direction(source: &SignedArithmeticClaim, reverse: bool) -> SignedArithmeticClaim {
     if reverse {
         SignedArithmeticClaim {
@@ -361,6 +520,7 @@ struct Planner<'a> {
     nodes: Vec<SignedArithmeticNode>,
     intervals: Vec<Option<SignedArithmeticInterval>>,
     interval_cache: HashMap<SignedArithmeticAtom, usize>,
+    premise_cache: HashMap<usize, usize>,
 }
 
 impl<'a> Planner<'a> {
@@ -371,6 +531,7 @@ impl<'a> Planner<'a> {
             nodes: Vec::new(),
             intervals: Vec::new(),
             interval_cache: HashMap::new(),
+            premise_cache: HashMap::new(),
         }
     }
 
@@ -399,10 +560,70 @@ impl<'a> Planner<'a> {
     }
 
     fn premise(&mut self, index: usize, claim: &SignedArithmeticClaim) -> Option<usize> {
-        self.push(SignedArithmeticNode::Premise {
+        if let Some(node) = self.premise_cache.get(&index) {
+            return Some(*node);
+        }
+        let node = self.push(SignedArithmeticNode::Premise {
             index,
             result: claim.clone(),
-        })
+        })?;
+        self.premise_cache.insert(index, node);
+        Some(node)
+    }
+
+    fn affine_claim(&mut self, target: &SignedArithmeticClaim) -> Option<usize> {
+        for (index, claim) in self.claims {
+            charge_work(1)?;
+            if claim == target {
+                return self.premise(*index, claim);
+            }
+            if claim.relation == target.relation
+                && let Some(coefficient) = scale_factor(claim, target)
+                && (claim.relation == SignedArithmeticRelation::Equal
+                    || (coefficient >= BigInt::zero()
+                        && (claim.relation != SignedArithmeticRelation::Disequal
+                            || !coefficient.is_zero())))
+            {
+                let source = self.premise(*index, claim)?;
+                if coefficient == BigInt::one() {
+                    return Some(source);
+                }
+                return self.push(SignedArithmeticNode::Scale {
+                    source,
+                    coefficient,
+                    result: target.clone(),
+                });
+            }
+        }
+        let mut attempts = 0usize;
+        for left_position in 0..self.claims.len() {
+            for right_position in (left_position + 1)..self.claims.len() {
+                if attempts >= MAX_SELECTED_PREMISES.saturating_mul(MAX_SELECTED_PREMISES) {
+                    return None;
+                }
+                attempts += 1;
+                charge_work(1)?;
+                let (left_index, left) = &self.claims[left_position];
+                let (right_index, right) = &self.claims[right_position];
+                if left.relation != SignedArithmeticRelation::LessEqual
+                    || right.relation != SignedArithmeticRelation::LessEqual
+                {
+                    continue;
+                }
+                let combined = add_affine_claims(left, right)?;
+                if combined != *target {
+                    continue;
+                }
+                let left_node = self.premise(*left_index, left)?;
+                let right_node = self.premise(*right_index, right)?;
+                return self.push(SignedArithmeticNode::Add {
+                    left: left_node,
+                    right: right_node,
+                    result: target.clone(),
+                });
+            }
+        }
+        None
     }
 
     fn defined(&mut self, term: &Bitvector32Term) -> Option<usize> {
@@ -1047,6 +1268,16 @@ mod tests {
                 .iter()
                 .any(|node| matches!(node, SignedArithmeticNode::IntervalAdd { .. }))
         );
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::Add { .. }))
+        );
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::AffineConclusion { .. }))
+        );
     }
 
     #[test]
@@ -1080,6 +1311,17 @@ mod tests {
 
         let without_definedness = vec![premises[0].clone(), premises[1].clone()];
         assert!(plan_signed_arithmetic_certificate(&goal, &without_definedness).is_none());
+
+        let mut tampered_definedness = plan.clone();
+        let node = tampered_definedness
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::DefinedPremise { .. }))
+            .expect("definedness node");
+        if let SignedArithmeticNode::DefinedPremise { term, .. } = node {
+            *term = Bitvector32Term::Add(Box::new(var(11)), Box::new(var(99)));
+        }
+        assert!(tampered_definedness.check(&goal, &premises).is_err());
     }
 
     #[test]
@@ -1094,6 +1336,15 @@ mod tests {
             node,
             SignedArithmeticNode::IntervalAddBounded { left, right, .. } if left == right
         )));
+        assert!(plan.nodes.iter().any(|node| matches!(
+            node,
+            SignedArithmeticNode::Scale { coefficient, .. } if coefficient == &BigInt::from(2)
+        )));
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::AffineConclusion { .. }))
+        );
         assert!(
             !plan
                 .nodes
@@ -1125,6 +1376,24 @@ mod tests {
         }
         assert!(
             tampered
+                .check(
+                    &goal,
+                    &[le(constant(0), var(13)), le(var(13), constant(100))]
+                )
+                .is_err()
+        );
+
+        let mut tampered_scale = plan.clone();
+        let node = tampered_scale
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::Scale { .. }))
+            .expect("scale node");
+        if let SignedArithmeticNode::Scale { coefficient, .. } = node {
+            *coefficient = BigInt::from(3);
+        }
+        assert!(
+            tampered_scale
                 .check(
                     &goal,
                     &[le(constant(0), var(13)), le(var(13), constant(100))]
