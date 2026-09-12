@@ -8840,6 +8840,98 @@ fn c0_struct_field_lowering_uses_explicit_byte_offsets() {
 }
 
 #[test]
+fn c0_field_source_ids_distinguish_same_layout_occurrences() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        struct pair { int32 value; };
+        int32 read(struct pair* pair) {
+            return pair->value + pair->value;
+        }
+        "#,
+        "field-id.c",
+    )
+    .expect("same-layout field accesses should parse");
+    let syntax::C0Statement::Return(syntax::C0Expression::Add(left, right)) = functions[0].body()
+    else {
+        panic!("the two field accesses should remain in the return expression")
+    };
+    let left_id = left
+        .field_source_id()
+        .expect("left field needs source identity");
+    let right_id = right
+        .field_source_id()
+        .expect("right field needs source identity");
+    assert_ne!(left_id, right_id);
+    assert_eq!(left_id.source_identity(), Some("field-id.c"));
+    assert_eq!(left_id.function_name(), "read");
+    assert_eq!(left.field_source().unwrap().field_name(), "value");
+    assert_eq!(left_id.occurrence() + 1, right_id.occurrence());
+}
+
+#[test]
+fn c0_field_source_ids_survive_expression_rebuilds() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        int32 helper(int32 value);
+        struct pair { int32 value; };
+        int32 read(struct pair* pair) {
+            return helper(pair->value);
+        }
+        "#,
+        "field-rebuild.c",
+    )
+    .expect("call argument field access should parse");
+    fn call_argument(statement: &syntax::C0Statement) -> Option<&syntax::C0Expression> {
+        match statement {
+            syntax::C0Statement::CallAssign { arguments, .. } => arguments.first(),
+            syntax::C0Statement::Seq(first, second) => {
+                call_argument(first).or_else(|| call_argument(second))
+            }
+            _ => None,
+        }
+    }
+    let argument = call_argument(functions[0].body())
+        .expect("the call should be lowered to a call assignment");
+    let id = argument
+        .field_source_id()
+        .expect("rebuilt call argument should retain source identity");
+    assert_eq!(id.source_identity(), Some("field-rebuild.c"));
+    assert_eq!(id.function_name(), "read");
+    assert_eq!(argument.field_source().unwrap().field_name(), "value",);
+}
+
+#[test]
+fn c0_synthesized_aggregate_copy_fields_have_no_source_ids() {
+    let function = syntax::parse_function(
+        r#"
+        struct pair { int32 value; int32 other; };
+        void copy(struct pair* destination, struct pair* source) {
+            *destination = *source;
+        }
+        "#,
+    )
+    .expect("aggregate copy should parse");
+    fn assert_synthesized_fields_are_unidentified(statement: &syntax::C0Statement) -> usize {
+        match statement {
+            syntax::C0Statement::Store { value, .. } => {
+                assert!(value.field_source().is_none());
+                1
+            }
+            syntax::C0Statement::Seq(first, second) => {
+                assert_synthesized_fields_are_unidentified(first)
+                    + assert_synthesized_fields_are_unidentified(second)
+            }
+            _ => 0,
+        }
+    }
+    assert_eq!(
+        assert_synthesized_fields_are_unidentified(function.body()),
+        2,
+        "each scalar aggregate-copy store should carry an explicitly absent source"
+    );
+}
+
+#[test]
 fn c0_struct_field_address_lowering_preserves_nested_byte_offset() {
     #[repr(C)]
     struct HostInner {

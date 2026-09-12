@@ -1695,6 +1695,59 @@ pub struct C0StructField {
     byte_width: u32,
 }
 
+/// The parser-owned identity of one source-level struct-field access.
+///
+/// This metadata is deliberately retained only on the C0 syntax tree.  The
+/// kernel expression produced by [`C0Expression::to_kernel_expression`] does
+/// not include it in its semantic identity or certificate representation.
+/// `occurrence` is allocated in source traversal order within one function;
+/// the source position and field spelling make the identity useful to later
+/// source-plan consumers without reconstructing a walk from kernel terms.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct C0FieldSourceId {
+    source_identity: Option<String>,
+    function_name: String,
+    occurrence: u32,
+}
+
+/// Source validation data attached to a parsed field access.  The identity is
+/// separate so later execution events can carry only the canonical token and
+/// validate the spelling/location against the selected source plan.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct C0FieldSource {
+    id: C0FieldSourceId,
+    position: SourcePosition,
+    field_name: String,
+}
+
+impl C0FieldSourceId {
+    pub fn source_identity(&self) -> Option<&str> {
+        self.source_identity.as_deref()
+    }
+
+    pub fn function_name(&self) -> &str {
+        &self.function_name
+    }
+
+    pub fn occurrence(&self) -> u32 {
+        self.occurrence
+    }
+}
+
+impl C0FieldSource {
+    pub fn id(&self) -> &C0FieldSourceId {
+        &self.id
+    }
+
+    pub fn position(&self) -> &SourcePosition {
+        &self.position
+    }
+
+    pub fn field_name(&self) -> &str {
+        &self.field_name
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
     /// Plain char is distinct from unsigned char in C compatibility. The
@@ -2218,6 +2271,9 @@ pub enum C0Expression {
         field_struct_name: Option<String>,
         function_pointer_signature: Option<C0FunctionPointerSignature>,
         array_shape: Option<Vec<u32>>,
+        /// Source provenance minted by the C parser.  This is absent on
+        /// parser-synthesized field loads used by aggregate copies.
+        source: Option<C0FieldSource>,
     },
     UnionField {
         pointer: Box<C0Expression>,
@@ -2807,6 +2863,22 @@ impl C0Function {
                     })
                     .collect(),
             )
+    }
+}
+
+impl C0Expression {
+    /// Returns parser-minted provenance for a source-level scalar field load.
+    /// Synthesized aggregate-copy loads and all non-field expressions return
+    /// `None`.
+    pub fn field_source(&self) -> Option<&C0FieldSource> {
+        match self {
+            Self::Field { source, .. } => source.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn field_source_id(&self) -> Option<&C0FieldSourceId> {
+        self.field_source().map(|source| source.id())
     }
 }
 
@@ -4816,6 +4888,7 @@ fn field_expression(
     field_union_name: Option<String>,
     function_pointer_signature: Option<C0FunctionPointerSignature>,
     array_shape: Option<Vec<u32>>,
+    source: Option<C0FieldSource>,
 ) -> C0Expression {
     if let Some(union_name) = field_union_name {
         return C0Expression::UnionAddress {
@@ -4837,6 +4910,7 @@ fn field_expression(
         field_struct_name,
         function_pointer_signature,
         array_shape,
+        source,
     }
 }
 
@@ -5207,6 +5281,7 @@ struct Parser {
     next_synthesized_call: u32,
     next_synthesized_aggregate: u32,
     next_string_literal: u32,
+    next_field_source_ordinal: u32,
     string_literal_names: BTreeSet<String>,
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
@@ -5223,6 +5298,7 @@ struct Parser {
     string_literals: Vec<C0StringLiteral>,
     header_mode: bool,
     source_identity: Option<String>,
+    current_function_source_name: Option<String>,
     import_mode: bool,
     abi: CAbi,
     current_return_struct_name: Option<String>,
@@ -5394,6 +5470,7 @@ impl Parser {
             next_synthesized_call: 0,
             next_synthesized_aggregate: 0,
             next_string_literal: 0,
+            next_field_source_ordinal: 0,
             string_literal_names: BTreeSet::new(),
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
@@ -5410,6 +5487,7 @@ impl Parser {
             string_literals: Vec::new(),
             header_mode: false,
             source_identity: source_identity.map(str::to_string),
+            current_function_source_name: None,
             import_mode,
             abi,
             current_return_struct_name: None,
@@ -6135,6 +6213,26 @@ impl Parser {
             .cloned()
     }
 
+    fn mint_field_source_id(
+        &mut self,
+        field_name: String,
+        position: Option<SourcePosition>,
+    ) -> Option<C0FieldSource> {
+        let function_name = self.current_function_source_name.clone()?;
+        let position = position?;
+        let occurrence = self.next_field_source_ordinal;
+        self.next_field_source_ordinal = self.next_field_source_ordinal.checked_add(1)?;
+        Some(C0FieldSource {
+            id: C0FieldSourceId {
+                source_identity: self.source_identity.clone(),
+                function_name,
+                occurrence,
+            },
+            position,
+            field_name,
+        })
+    }
+
     /// An error at the next unconsumed token.
     fn error_here(&self, message: impl Into<String>) -> C0SyntaxError {
         match self.here() {
@@ -6382,6 +6480,11 @@ impl Parser {
         &mut self,
         header: C0FunctionHeader,
     ) -> Result<C0Function, C0SyntaxError> {
+        let previous_function_source_name = self
+            .current_function_source_name
+            .replace(header.source_name.clone());
+        let previous_field_source_ordinal =
+            std::mem::replace(&mut self.next_field_source_ordinal, 0);
         let previous_return_struct_name = std::mem::replace(
             &mut self.current_return_struct_name,
             header.return_struct_name.clone(),
@@ -6397,6 +6500,8 @@ impl Parser {
             header.return_pointee_constant,
         );
         let body_result = self.parse_block_statement();
+        self.current_function_source_name = previous_function_source_name;
+        self.next_field_source_ordinal = previous_field_source_ordinal;
         self.current_return_struct_name = previous_return_struct_name;
         self.current_return_pointer_struct_name = previous_return_pointer_struct_name;
         self.current_return_type = previous_return_type;
@@ -11405,6 +11510,7 @@ impl Parser {
                         field_struct_name: None,
                         function_pointer_signature: element_signature.clone(),
                         array_shape: None,
+                        source: None,
                     },
                     value_type: Some(element_type),
                 });
@@ -13261,6 +13367,7 @@ impl Parser {
                 field_struct_name,
                 function_pointer_signature,
                 array_shape,
+                source,
             } => {
                 let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
                 Ok((
@@ -13271,6 +13378,7 @@ impl Parser {
                         field_struct_name,
                         function_pointer_signature,
                         array_shape,
+                        source,
                     },
                 ))
             }
@@ -14586,6 +14694,7 @@ impl Parser {
                         _ => None,
                     };
                     self.position += 1;
+                    let field_position = self.here();
                     let field_name = self.expect_ident("field name")?;
                     let (
                         pointer,
@@ -14628,6 +14737,7 @@ impl Parser {
                             field_union_name,
                             function_pointer_signature,
                             array_shape,
+                            self.mint_field_source_id(field_name, field_position),
                         )
                     };
                 }

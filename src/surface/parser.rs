@@ -6294,6 +6294,7 @@ impl Parser {
                         field_struct_name: None,
                         function_pointer_signature: None,
                         array_shape: None,
+                        source: None,
                     }
                 }
             } else {
@@ -6303,6 +6304,7 @@ impl Parser {
                     field_struct_name: field.struct_name,
                     function_pointer_signature: field.function_pointer_signature.clone(),
                     array_shape: field.array_shape,
+                    source: None,
                 }
             }));
         }
