@@ -253,6 +253,27 @@ more permissive binder inference; and unrelated prover completeness work.
 General snapshot and transition machinery may accommodate future extensions,
 but this issue must not enable them.
 
+## Findings from the function-contracts close-out (2026-09-11)
+
+- Resource clauses now read what the whole clause set supplies, including
+  cells inside a folded composite, for memory segment bases (`7e55fdc7`,
+  `mdtests/contract_owns_through_composite_field.md`). A composite
+  *argument* that needs a load is still refused on the surface before that
+  evaluation runs: `owns pair(node->left->left)` fails with ``could not lower
+  resource `pair` argument 0: missing pure fact: loadable(...)``. The same
+  whole-clause-set rule should apply to composite arguments.
+- The surface check that refuses an unaddressable clause and the kernel
+  evaluator now share one wording (`resource_clause_position_note` /
+  `resource_clause_stall_note`), but the surface counts surface clauses while
+  the kernel counts lowered `CResourceSpec`s. They agree on every fixture; a
+  `MemoryAggregate` clause that lowers to several specs could number them
+  differently. Unify the count when either side is next touched.
+- Named contracts never reach `evaluate_function_resource_context`, so the
+  surface check in `initial_claim_context` is the only thing refusing a named
+  contract's unheld link read (`mdtests/named_contract_rejects_unheld_link_read.md`).
+  Routing named-contract clauses through the kernel evaluator would make the
+  kernel the single source of truth.
+
 ## Small intended regressions
 
 These are behavioral targets, not permission to commit failing default tests.

@@ -29,6 +29,23 @@ Right rotation and insert/erase regressions remain. Synthetic examples are
 development regressions, not a requirement to verify an extra tree library
 before launch; the target is the pinned unchanged Linux implementation.
 
+Found at the function-contracts close-out (2026-09-11): a model-gated
+composite cannot expose its links at contract-lowering time. With
+`resource tree_at(p) { field model: Shape; match model { ... owns p->left;
+owns p->right; ... } }`, a contract `consumes t: tree_at(node); owns
+node->right->augmented;` fails surface lowering with `missing pure fact:
+loadable(base=node[2], bytes=8)`: which links `tree_at` owns depends on the
+`model` arm, and no proof step has selected the `Shape::Node` arm when the
+contract is lowered. The memory-only `shape` resource, whose body is an
+`if`-guarded block, has no such gate and the same contract lowers. So
+`mdtests/augment_rotate_model_callback.md` keeps its helper contracted over
+the root's link cells and the two subtree instances instead of one folded
+`tree_at(node)`. The missing piece is deciding a matched arm from a
+requirement such as `requires t.model != Shape::Empty` at contract lowering,
+or otherwise exposing a matched composite's cells there. Regression: that
+fixture's `rotate_left` contracted as `consumes t: tree_at(node); produces r:
+tree_at(result); owns node->augmented; owns node->right->augmented;`.
+
 ## Violated invariant
 
 Contracts for a mutable recursive structure must be able to relate its finite
