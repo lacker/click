@@ -4852,6 +4852,42 @@ fn resource_model_arm_selection_decides_only_entailed_arms() {
 }
 
 #[test]
+fn resource_model_possible_arms_are_the_unrefuted_ones() {
+    let ty = arm_selection_type(&["Empty", "Reserved"], "Filled");
+    let model = resource_index_variable(&ty, 11);
+    let empty = arm_selection_constructor(&ty, "Empty", vec![]);
+    let reserved = arm_selection_constructor(&ty, "Reserved", vec![]);
+    let exclusion = |value: &AlgebraicTerm| {
+        Proposition::Not(Box::new(Proposition::Equal(
+            Term::Algebraic(model.clone()),
+            Term::Algebraic(value.clone()),
+        )))
+    };
+
+    // Nothing refuted is selection's business, not this decision's: an
+    // unconstrained model publishes no common authority at all.
+    assert!(
+        possible_resource_model_arm_variants(&model, &PureFactContext::new()).is_empty(),
+        "an unrefuted model has no refuted arm to reason from"
+    );
+
+    // One exclusion of three leaves exactly the two arms that must agree.
+    let excluded = PureFactContext::new().assume_proposition(exclusion(&empty));
+    assert_eq!(
+        possible_resource_model_arm_variants(&model, &excluded),
+        vec!["Filled".to_string(), "Reserved".to_string()]
+    );
+
+    // Two exclusions leave one arm, which selection answers for.
+    let decided = excluded.assume_proposition(exclusion(&reserved));
+    assert!(possible_resource_model_arm_variants(&model, &decided).is_empty());
+    assert_eq!(
+        select_resource_model_arm(&model, &decided),
+        Some(ResourceModelArmSelection::Variant("Filled".to_string()))
+    );
+}
+
+#[test]
 fn resource_model_arm_selection_ignores_unrelated_premises() {
     let ty = arm_selection_type(&["Empty"], "Filled");
     let model = resource_index_variable(&ty, 11);

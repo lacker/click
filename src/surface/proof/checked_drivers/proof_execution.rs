@@ -125,7 +125,27 @@ enum CheckedExecutionRegionEnd {
 // The source interpreter applies the same bound below. The direct structural
 // driver enforces it before recursive descent so nested explicit branches do
 // not reserve an unbounded Rust stack either.
+//
+// This counts *nested proof regions*: each `match`, `branch`, or proof `if`
+// inside another one. A linear run of tactics between two of them continues
+// the region it is in and is not a level of its own, and the frontier split
+// that selects one constructor arm out of many is charged separately, to
+// `MAX_CHECKED_EXECUTION_SPLIT_DEPTH`. Charging those to the same counter made
+// the effective nesting limit five, which is what declined a four-scrutinee
+// rbtree proof.
 const MAX_CHECKED_EXECUTION_REGION_DEPTH: usize = 12;
+
+/// The deepest nesting of `match`, `branch`, and proof `if` regions the
+/// checked drivers accept: a proof at this depth still runs, one level deeper
+/// is declined. Diagnostics name this number.
+pub(in crate::surface::proof) const MAX_CHECKED_PROOF_REGION_NESTING: usize =
+    MAX_CHECKED_EXECUTION_REGION_DEPTH - 1;
+
+/// How deep the binary frontier split that selects one live constructor arm
+/// may recurse. The split halves the arm list, so this admits `2^12` arms —
+/// far beyond any declared constructor family, and unrelated to how deeply
+/// the proof's regions nest.
+const MAX_CHECKED_EXECUTION_SPLIT_DEPTH: usize = 12;
 
 fn checked_execution_arm_tactics_end(
     tactics: &[IndexedTactic],
@@ -203,12 +223,14 @@ fn checked_execution_region_end_at(
             }))
         .then_some(CheckedExecutionRegionEnd::FunctionExit),
         InternalProofNode::Done => Some(initial),
+        // A linear run continues the region it is in; the control node it
+        // ends at is the next level.
         InternalProofNode::Linear {
             tactics,
             continuation,
         } => checked_execution_region_end_at(
             continuation,
-            depth + 1,
+            depth,
             checked_execution_arm_tactics_end(tactics, initial)?,
         ),
         InternalProofNode::Branch {
@@ -343,11 +365,7 @@ fn checked_execution_region_contains_source_at(
             tactics
                 .iter()
                 .any(|indexed| indexed.source_index == source_index)
-                || checked_execution_region_contains_source_at(
-                    continuation,
-                    source_index,
-                    depth + 1,
-                )
+                || checked_execution_region_contains_source_at(continuation, source_index, depth)
         }
         InternalProofNode::Branch {
             source_index: branch_source_index,
@@ -1664,11 +1682,11 @@ fn advance_preservation_match_group<'a>(
     owning_source_index: usize,
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
-    depth: usize,
+    split_depth: usize,
 ) -> Result<Proof<'a>, ClickError> {
-    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+    if split_depth >= MAX_CHECKED_EXECUTION_SPLIT_DEPTH {
         return Err(ClickError::new(format!(
-            "`{claim_label}`: proof `match` splits deeper than the checked region bound"
+            "`{claim_label}`: proof `match` splits deeper than the checked split bound of {MAX_CHECKED_EXECUTION_SPLIT_DEPTH}"
         )));
     }
     let [index] = live else {
@@ -1692,7 +1710,7 @@ fn advance_preservation_match_group<'a>(
                 owning_source_index,
                 claim_label,
                 leaves,
-                depth + 1,
+                split_depth + 1,
             )?;
         }
         return Ok(proof);
@@ -1952,6 +1970,7 @@ fn advance_execution_match<'a>(
         proof_site,
         owning_source_index,
         depth,
+        0,
     )?
     else {
         return decline();
@@ -1981,8 +2000,11 @@ fn advance_execution_match_group<'a>(
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
     depth: usize,
+    split_depth: usize,
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH
+        || split_depth >= MAX_CHECKED_EXECUTION_SPLIT_DEPTH
+    {
         return decline();
     }
     let [index] = live else {
@@ -2004,7 +2026,8 @@ fn advance_execution_match_group<'a>(
                 expansion_capture.as_deref_mut(),
                 proof_site,
                 owning_source_index,
-                depth + 1,
+                depth,
+                split_depth + 1,
             )?
             else {
                 return decline();
@@ -2066,7 +2089,7 @@ fn advance_focused_execution_region<'a>(
                 expansion_capture,
                 proof_site,
                 owning_source_index,
-                depth + 1,
+                depth,
             )
         }
         InternalProofNode::Done => Ok(Some(proof)),
@@ -2084,6 +2107,8 @@ fn advance_focused_execution_region<'a>(
             else {
                 return decline();
             };
+            // The linear run continues this region; its continuation is the
+            // control node that opens the next one, and that charges a level.
             advance_focused_execution_region(
                 advanced,
                 enclosing_record,
@@ -2091,7 +2116,7 @@ fn advance_focused_execution_region<'a>(
                 expansion_capture,
                 proof_site,
                 owning_source_index,
-                depth + 1,
+                depth,
             )
         }
         InternalProofNode::Branch {

@@ -13762,7 +13762,7 @@ pub(super) fn selected_instance_arm_views(
 }
 
 /// The cells owned by the match arm this context's premises select for
-/// `instance`, as views.
+/// `instance`, or by every arm they leave possible, as views.
 ///
 /// This is the kernel half of decision D7. The decision is
 /// [`select_resource_model_arm`]; what it selects is published as read
@@ -13771,9 +13771,19 @@ pub(super) fn selected_instance_arm_views(
 /// `if`-bodied composite owns. Ownership is untouched: only an explicit
 /// `unfold` moves the arm's cells into the proof state.
 ///
-/// Cost is the selected arm's own clauses. An instance whose arm is not
-/// selected, or whose arm names a constructor binding in a memory clause,
-/// publishes nothing.
+/// When the premises select no single arm they may still have refuted some,
+/// and the arms they leave possible can agree about a cell. `parent != 0`
+/// refutes an ascending frame's `Top` arm, and the `Left` and `Right` arms
+/// both own `parent->rb_right`, so that cell is readable however the model
+/// turns out. What is published is then the intersection of the possible arms'
+/// own memory clauses: a cell one possible arm does not own is never
+/// published, and an arm whose clauses cannot be evaluated here makes the
+/// intersection empty rather than being skipped.
+///
+/// Cost is the selected arm's own clauses, or one evaluation of each possible
+/// arm's clauses. An instance whose model carries no variant evidence at all,
+/// or whose arms name a constructor binding in a memory clause, publishes
+/// nothing.
 fn selected_instance_arm_read_authority(
     instance: &ResourceInstance,
     definitions: &[CCompositeResourceDefinition],
@@ -13792,43 +13802,134 @@ fn selected_instance_arm_read_authority(
     let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
         return Vec::new();
     };
-    let Some(selection) = select_resource_model_arm(model, assumptions) else {
-        return Vec::new();
+    let variants = match select_resource_model_arm(model, assumptions) {
+        Some(selection) => vec![selection.variant().to_owned()],
+        None => possible_resource_model_arm_variants(model, assumptions),
     };
-    let Some(arm) = body
-        .arms
-        .iter()
-        .find(|arm| arm.variant == selection.variant())
-    else {
+    if variants.is_empty() {
         return Vec::new();
-    };
+    }
     let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
         return Vec::new();
     };
+    let mut common: Option<Vec<CResourceFact>> = None;
+    for variant in &variants {
+        let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
+            return Vec::new();
+        };
+        let Some(views) = instance_arm_memory_views(&evaluation, arm, assumptions) else {
+            return Vec::new();
+        };
+        common = Some(match common {
+            // Order follows the first arm's clauses, so one possible arm and a
+            // selected arm publish the same list in the same order.
+            Some(common) => common
+                .into_iter()
+                .filter(|fact| views.contains(fact))
+                .collect(),
+            None => views,
+        });
+        if common.as_ref().is_some_and(Vec::is_empty) {
+            return Vec::new();
+        }
+    }
+    common.unwrap_or_default()
+}
+
+/// The cells one arm's own memory clauses own at `evaluation`, as views, or
+/// `None` when those clauses cannot be evaluated there.
+fn instance_arm_memory_views(
+    evaluation: &CState,
+    arm: &CResourceMatchArm,
+    assumptions: &PureFactContext,
+) -> Option<Vec<CResourceFact>> {
+    crate::instrumentation::record_deterministic_work(1);
     let evaluation_assumptions = assumptions
         .clone()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     let mut budget = ExecutionBudget::default();
     let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
-        &evaluation,
+        evaluation,
         &arm.contains,
         &[],
         &evaluation_assumptions,
         &mut budget,
         false,
     ) else {
+        return None;
+    };
+    Some(
+        body_resources
+            .0
+            .facts()
+            .iter()
+            .filter_map(|fact| match fact.resource() {
+                CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// The variants a context's premises leave possible for a matched model whose
+/// arm they do not decide.
+///
+/// This is the other side of [`select_resource_model_arm`] and reads the same
+/// evidence index: premises that rule a field-free constructor out, keyed by
+/// the exact value they describe. Selection answers when one variant is left;
+/// this answers with the two or more that are, so read authority the survivors
+/// agree on can still be published.
+///
+/// A witnessed variant, a model that already carries a constructor, and an
+/// unrefuted model are all selection's business, not this one: they answer
+/// empty. So does a context that has excluded every declared variant, which is
+/// inconsistent and not this decision's business to exploit.
+///
+/// Cost is the premises about this exact value plus the declared variants of
+/// its type.
+pub(crate) fn possible_resource_model_arm_variants(
+    model: &AlgebraicTerm,
+    assumptions: &PureFactContext,
+) -> Vec<String> {
+    let AlgebraicTermNode::Variable(variable) = &model.node else {
         return Vec::new();
     };
-    body_resources
-        .0
-        .facts()
+    let declared = model
+        .algebraic_type
+        .variants
         .iter()
-        .filter_map(|fact| match fact.resource() {
-            CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
-            _ => None,
-        })
-        .collect()
+        .map(|variant| variant.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut excluded = BTreeSet::new();
+    let mut premises = Vec::new();
+    for (premise, evidence) in assumptions.algebraic_variant_evidence(*variable) {
+        if !declared.contains(evidence.variant.as_str()) {
+            continue;
+        }
+        match evidence.kind {
+            AlgebraicVariantEvidenceKind::Witnessed => return Vec::new(),
+            AlgebraicVariantEvidenceKind::Excluded => {
+                if excluded.insert(evidence.variant.as_str()) {
+                    premises.push(premise);
+                }
+            }
+        }
+    }
+    if excluded.is_empty() {
+        return Vec::new();
+    }
+    let possible = declared
+        .difference(&excluded)
+        .map(|variant| (*variant).to_owned())
+        .collect::<Vec<_>>();
+    if possible.len() < 2 {
+        return Vec::new();
+    }
+    for premise in premises {
+        super::assumptions::record_reasoning_provenance(assumptions, premise);
+    }
+    possible
 }
 
 /// The negation of one already-lowered body fact, in the shape the exact
