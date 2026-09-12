@@ -705,10 +705,7 @@ impl<'a> Proof<'a> {
         for (_, surface) in premise_pairs {
             collect_signed_surface_proposition_terms(surface, &mut terms);
         }
-        let term = |term: &crate::kernel::Bitvector32Term| {
-            let result = self.signed_surface_term(term, &terms);
-            result
-        };
+        let term = |term: &crate::kernel::Bitvector32Term| self.signed_surface_term(term, &terms);
         let interval =
             |value: crate::kernel::proof::signed_arithmetic::SignedArithmeticInterval| {
                 SignedInt32Interval {
@@ -723,28 +720,22 @@ impl<'a> Proof<'a> {
             SignedArithmeticComparison::Disequal => SignedInt32Comparison::Disequal,
         };
         let mut surfaces: Vec<Option<ClickProposition>> = Vec::with_capacity(plan.nodes.len());
-        let typed_anchor = match surface_goal {
-            ClickProposition::Comparison { left, .. } => Some(left.clone()),
-            _ => None,
-        };
         let claim_surface = |claim: &SignedArithmeticClaim| {
             let value = claim.constant.to_i32()?;
-            let anchor = typed_anchor.clone()?;
-            let zero = ContractExpression::Subtract(Box::new(anchor.clone()), Box::new(anchor));
             let constant = ContractExpression::IntegerLiteral(value.unsigned_abs().to_string());
             let left = if value < 0 {
-                ContractExpression::Subtract(Box::new(zero.clone()), Box::new(constant))
+                ContractExpression::Negate(Box::new(constant))
             } else {
-                ContractExpression::Add(Box::new(zero.clone()), Box::new(constant))
+                constant
             };
-            (claim.terms.is_empty()).then(|| ClickProposition::Comparison {
+            (claim.terms.is_empty()).then_some(ClickProposition::Comparison {
                 left,
                 operator: match claim.relation {
                     SignedArithmeticRelation::LessEqual => ComparisonOperator::LessEqual,
                     SignedArithmeticRelation::Equal => ComparisonOperator::Equal,
                     SignedArithmeticRelation::Disequal => ComparisonOperator::NotEqual,
                 },
-                right: zero,
+                right: ContractExpression::IntegerLiteral("0".into()),
             })
         };
         for node in &plan.nodes {

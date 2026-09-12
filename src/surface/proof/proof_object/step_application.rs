@@ -12,6 +12,43 @@ fn signed_constant_expression(expression: &ContractExpression) -> Option<num_big
     }
 }
 
+fn lower_signed_constant_comparison(
+    proposition: &ClickProposition,
+) -> Option<crate::kernel::Proposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    let left = signed_constant_expression(left)?.to_i32()? as u32;
+    let right = signed_constant_expression(right)?.to_i32()? as u32;
+    let left = crate::kernel::Bitvector32Term::Constant(left);
+    let right = crate::kernel::Bitvector32Term::Constant(right);
+    let condition = match operator {
+        ComparisonOperator::LessEqual => crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(
+            Box::new(left),
+            Box::new(right),
+        ),
+        ComparisonOperator::LessThan => {
+            crate::kernel::ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right))
+        }
+        ComparisonOperator::Equal => {
+            crate::kernel::ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right))
+        }
+        ComparisonOperator::NotEqual => {
+            crate::kernel::ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right))
+        }
+        ComparisonOperator::GreaterThan
+        | ComparisonOperator::GreaterEqual
+        | ComparisonOperator::In => return None,
+    };
+    let value = !matches!(operator, ComparisonOperator::NotEqual);
+    Some(crate::kernel::Proposition::ConditionIs(condition, value))
+}
+
 fn signed_step_result_surface(step: &SignedArithmeticStep) -> Option<&ClickProposition> {
     match step {
         SignedArithmeticStep::Premise { result, .. }
@@ -215,16 +252,70 @@ fn signed_add_surface_shape(
                        second: &crate::kernel::Bitvector32Term| {
         if let crate::kernel::Bitvector32Term::Add(target_first, target_second) = target {
             return signed_atom_matches(target_first, first)
-                && signed_atom_matches(target_second, second);
+                && (signed_atom_matches(target_second, second)
+                    || matches!(
+                        (
+                            signed_term_constant_value(target_second),
+                            signed_term_constant_value(second)
+                        ),
+                        (Some(left), Some(right)) if left == right
+                    ));
         }
-        matches!(
-            (target.as_const(), first.as_const(), second.as_const()),
-            (Some(target), Some(first), Some(second)) if
-                (first as i64).wrapping_add(second as i64) == target as i64
-        )
+        if let (Some(target), Some(first), Some(second)) = (
+            signed_term_constant_value(target),
+            signed_term_constant_value(first),
+            signed_term_constant_value(second),
+        ) {
+            return first.saturating_add(second) == target;
+        }
+        false
     };
-    matches_sum(target_left, left_left, right_left)
-        && matches_sum(target_right, left_right, right_right)
+    let left_matches = matches_sum(target_left, left_left, right_left);
+    let right_matches = matches_sum(target_right, left_right, right_right);
+    left_matches && right_matches
+}
+
+fn signed_term_constant_value(term: &crate::kernel::Bitvector32Term) -> Option<i64> {
+    enum Task<'a> {
+        Visit(&'a crate::kernel::Bitvector32Term),
+        Combine(bool),
+    }
+    let mut pending = vec![Task::Visit(term)];
+    let mut values = Vec::new();
+    while let Some(task) = pending.pop() {
+        match task {
+            Task::Visit(term) => match term {
+                crate::kernel::Bitvector32Term::Constant(value) => {
+                    values.push(Some(*value as i32 as i64));
+                }
+                crate::kernel::Bitvector32Term::Add(left, right) => {
+                    pending.push(Task::Combine(true));
+                    pending.push(Task::Visit(right));
+                    pending.push(Task::Visit(left));
+                }
+                crate::kernel::Bitvector32Term::Subtract(left, right) => {
+                    if signed_atom_matches(left, right) {
+                        values.push(Some(0));
+                    } else {
+                        pending.push(Task::Combine(false));
+                        pending.push(Task::Visit(right));
+                        pending.push(Task::Visit(left));
+                    }
+                }
+                _ => values.push(None),
+            },
+            Task::Combine(add) => {
+                let right = values.pop()??;
+                let left = values.pop()??;
+                values.push(if add {
+                    left.checked_add(right)
+                } else {
+                    left.checked_sub(right)
+                });
+            }
+        }
+    }
+    values.pop().flatten()
 }
 
 fn signed_interval(
@@ -541,18 +632,15 @@ impl<'a> Proof<'a> {
             && let Some(plan) =
                 crate::surface::checking::plan_signed_arithmetic_certificate(goal, &premises)
             && let Some(surface_goal) = self.surface_goal()
-            && let Some(certificate) = {
-                let candidate = self.signed_plan_to_surface_certificate(
-                    &plan,
-                    &premises
-                        .iter()
-                        .cloned()
-                        .zip(surface_premises.iter().cloned())
-                        .collect::<Vec<_>>(),
-                    surface_goal,
-                );
-                candidate
-            }
+            && let Some(certificate) = self.signed_plan_to_surface_certificate(
+                &plan,
+                &premises
+                    .iter()
+                    .cloned()
+                    .zip(surface_premises.iter().cloned())
+                    .collect::<Vec<_>>(),
+                surface_goal,
+            )
         {
             let handle = self.apply_signed_int32_certificate(&certificate)?;
             return Ok((
@@ -817,14 +905,18 @@ impl<'a> Proof<'a> {
                     .ok_or_else(|| {
                         self.step_error("signed_int32 addition right must produce an affine result")
                     })?;
-                    let left_claim = claim(
-                        &lower_prop(self, left_result, "signed_int32 addition left")?,
-                        "signed_int32 addition left",
-                    )?;
-                    let right_claim = claim(
-                        &lower_prop(self, right_result, "signed_int32 addition right")?,
-                        "signed_int32 addition right",
-                    )?;
+                    let lower_addend = |surface: &ClickProposition, description: &str| {
+                        let lowered = match lower_signed_constant_comparison(surface) {
+                            Some(lowered) => lowered,
+                            None => lower_prop(self, surface, description)?,
+                        };
+                        Ok::<_, ClickError>(lowered)
+                    };
+                    let left_proposition = lower_addend(left_result, "signed_int32 addition left")?;
+                    let right_proposition =
+                        lower_addend(right_result, "signed_int32 addition right")?;
+                    let left_claim = claim(&left_proposition, "signed_int32 addition left")?;
+                    let right_claim = claim(&right_proposition, "signed_int32 addition right")?;
                     let expected = crate::kernel::proof::signed_arithmetic::add_claim(
                         &left_claim,
                         &right_claim,
@@ -838,8 +930,8 @@ impl<'a> Proof<'a> {
                         &actual, &expected,
                     ) && actual == expected)
                         && !signed_add_surface_shape(
-                            &lower_prop(self, left_result, "signed_int32 addition left")?,
-                            &lower_prop(self, right_result, "signed_int32 addition right")?,
+                            &left_proposition,
+                            &right_proposition,
                             &lowered_result,
                         )
                     {
@@ -877,12 +969,19 @@ impl<'a> Proof<'a> {
                         "signed_int32 equality",
                     )?,
                 },
-                SignedArithmeticStep::Trivial { result } => SignedArithmeticNode::Trivial {
-                    result: claim(
-                        &lower_prop(self, result, "signed_int32 trivial result")?,
-                        "signed_int32 trivial result",
-                    )?,
-                },
+                SignedArithmeticStep::Trivial { result } => {
+                    let lowered = if node_index != certificate.conclusion {
+                        match lower_signed_constant_comparison(result) {
+                            Some(lowered) => lowered,
+                            None => lower_prop(self, result, "signed_int32 trivial result")?,
+                        }
+                    } else {
+                        lower_prop(self, result, "signed_int32 trivial result")?
+                    };
+                    SignedArithmeticNode::Trivial {
+                        result: claim(&lowered, "signed_int32 trivial result")?,
+                    }
+                }
                 SignedArithmeticStep::IntervalFromAffine {
                     source,
                     term,

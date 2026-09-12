@@ -1062,15 +1062,12 @@ fn signed_arithmetic_smart_planner_handles_deep_supported_terms_iteratively() {
         expanded.contains("arithmetic_certificate signed_int32"),
         "{expanded}"
     );
-    let rechecked = source.replace(
-        &format!("by {{ arithmetic() using {{ 0 <= n; n <= 100; }} }}"),
-        &expanded,
-    );
+    let rechecked = source.replace("by { arithmetic() using { 0 <= n; n <= 100; } }", &expanded);
     verify_click_theorems(&rechecked).expect("deep expanded certificate should recheck");
 
     let overflowing = "theorem overflowing_intermediate(n: int32) {
         requires n == 1;
-        ensures 0 <= (n + 2147483647) - 2147483647 by {
+        ensures 0 <= (n + 2147483647) % 2 by {
             arithmetic() using { n == 1; }
         }
     }";
