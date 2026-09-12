@@ -1241,3 +1241,42 @@ Report unrelated tooling blockers rather than accepting a slow eventual pass.
   certification, and relevant audit checks pass without weakened gates.
 - `scripts/check.sh` passes on the final integrated implementation, documentation
   is current, and overlapping issue statuses accurately reflect completed work.
+
+## W5-E2 tooling-blocker handoff (2026-09-12)
+
+The W5 callback-invalidation investigation reached a semantic and
+representation boundary. A callback's checked memory projection must be
+invalidated when its supporting occurrence is consumed, replaced, or mutated,
+while disjoint observations and pure callback facts survive. The attempted
+anchor index was not sufficient: a composite whose declared pointer is based
+at offset 0 can expand to owned child ranges based at offsets 4 and 6. A query
+at offset 4 can therefore collide with an unrelated declaration at offset 4
+and omit the actual separating composition. Unioning the left and right
+declared-anchor buckets, or indexing only the first pointer argument, does not
+repair this counterexample; choosing the smaller bucket is merely conservative
+and cannot establish completeness.
+
+The required next representation is a checked per-composition
+`FrameFootprint` containing the definition epoch, memory snapshot identity,
+all recursively expanded owned leaf ranges, and an `Unknown`/alias marker when
+expansion is unavailable or symbolic. Each leaf range must be posted into a
+persistent same-block interval/containment index, with alias-wide and opaque
+fallback buckets. Frame range queries retrieve only overlapping postings and
+then exact-check the selected footprint witnesses; pointer queries use the
+corresponding unit range. A footprint from another definition epoch or memory
+snapshot is never reused. Support occurrence identity remains a separate
+datum, so equal persistent resource aliases do not conflate authority.
+
+External arguments must enter the alias-wide path and have a direct fallback
+regression. Acceptance requires non-vacuous derived-offset and nested/opaque
+fixtures plus deterministic cold and warm curves at U = 4, 16, 64, 256, and
+1024. Counters must include interval bucket visits, fallback/alias bucket
+visits, candidate-ID unions, and expansion work; a warm-cache result alone is
+not evidence, and a cold query must not scan unrelated compositions.
+
+The experimental source commits `9ac45778`, `9904b5cb`, and `d9ef0f4e` were
+reviewed and then reverted because they either retained ambient scans or used
+incomplete anchor selection. The clean rollback checkpoint preserves the
+earlier docs-only state and does not integrate those implementations. No C
+source, language semantics, budgets, quarantine, or unrelated files were
+changed to obtain this investigation result.
