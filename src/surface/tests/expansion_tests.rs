@@ -13499,3 +13499,268 @@ theorem mixed_integer_atoms(x: int32, n: Nat) {
         );
     }
 }
+
+/// The source shape behind `arena_region_length` in `examples/arena`: the
+/// function returns inside an `open(...)` body and the scope's closer runs
+/// after that return.
+const OPEN_SCOPE_RETURN_C: &str = r#"
+struct span {
+    int32 start;
+    int32 end;
+};
+
+int32 span_length(struct span* span) {
+    return span->end - span->start;
+}
+"#;
+
+const OPEN_SCOPE_RETURN_CLICK: &str = r#"
+resource span_bounds(span: struct span*) {
+    owns object(span);
+}
+
+verifying "span.c";
+
+int32 span_length(struct span* span) {
+    requires 0 <= span->start;
+    requires span->start <= span->end;
+    views span_bounds(span);
+
+    ensures result == span->end - span->start;
+} by {
+    open(span_bounds(span)) {
+        have defined(span->end - span->start) by {
+            apply(int32_nonnegative_subtract_within_value_is_defined(
+                span->end,
+                span->start
+            )) using {
+                0 <= span->start;
+                span->start <= span->end;
+            }
+        }
+        step();
+        simp();
+    }
+}
+"#;
+
+#[test]
+fn smart_closer_after_a_return_inside_an_open_scope_expands_and_reverifies() {
+    // Reduced from `arena_region_length` in `examples/arena`, which `click
+    // verify` accepted while `click audit` reported `the kernel lowering
+    // produced 0 paths` for the expanded proof. The closer's certificate
+    // names `result`, which only a function outcome binds; a `have` written
+    // after the return inside the scope has to reach that outcome the same
+    // way the scope's other post-exit operations do.
+    let sources = [("span.c", OPEN_SCOPE_RETURN_C)];
+    verify_c0_sources(OPEN_SCOPE_RETURN_CLICK, &sources)
+        .expect("the open-scope return proof should verify");
+
+    let closer = OPEN_SCOPE_RETURN_CLICK
+        .rfind("simp();")
+        .expect("proof should contain the scope's closer");
+    let position = expansion::position_at_offset(OPEN_SCOPE_RETURN_CLICK, closer);
+    let expanded = expand_c0_tactic_source_at(
+        OPEN_SCOPE_RETURN_CLICK,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("the scope's post-return closer should expand");
+    assert!(
+        expanded.contains("have result =="),
+        "the expansion should state the outcome `have` it checked: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded post-return closer should independently reverify");
+}
+
+/// `object_retain_many` from `examples/refcount`, whose proof writes a smart
+/// `have` inside an `open(...)` body and closes a produced resource claim
+/// with a grouped `simp`.
+const PRODUCED_RESOURCE_C: &str = r#"
+struct object {
+    int32 refs;
+};
+
+void object_retain_many(struct object* obj, int32 amount) {
+    obj->refs = obj->refs + amount;
+}
+"#;
+
+const PRODUCED_RESOURCE_CLICK: &str = r#"
+resource object_ref(obj: struct object*) {
+    contains allocation(obj, sizeof(struct object));
+    owns object(obj);
+    fact obj->refs == count(object_ref(obj));
+}
+
+verifying "object_retain_many.c";
+
+void object_retain_many(struct object* obj, int32 amount) {
+    requires 0 <= amount;
+    requires defined(1 + amount);
+    owns object_ref(obj);
+    produces amount of object_ref(obj);
+} by {
+    open(object_ref(obj)) {
+        have 1 == obj->refs by simp;
+        execute();
+    }
+    have 1 <= 1 + amount by {
+        apply(int32_add_nonnegative_right_is_at_least_left(1, amount)) using {
+            0 <= amount;
+            defined(1 + amount);
+        }
+    }
+    have amount <= 1 + amount by {
+        apply(int32_add_nonnegative_left_is_at_least_right(1, amount)) using {
+            defined(1 + amount);
+        }
+    }
+    simp();
+}
+"#;
+
+#[test]
+fn smart_have_inside_an_open_scope_expands_and_reverifies() {
+    // Reduced from `object_retain_many` in `examples/refcount` and the two
+    // `have`s of `arena_write` in `examples/arena`. The scope driver checked
+    // the `have` but retained no expansion for the source occurrence, so
+    // audit reported `has no source tactic 1` for a sidecar `click verify`
+    // accepted.
+    let sources = [("object_retain_many.c", PRODUCED_RESOURCE_C)];
+    verify_c0_sources(PRODUCED_RESOURCE_CLICK, &sources)
+        .expect("the produced-resource proof should verify");
+
+    let have = PRODUCED_RESOURCE_CLICK
+        .find("have 1 == obj->refs by simp;")
+        .expect("proof should contain the scope's smart have");
+    let position = expansion::position_at_offset(PRODUCED_RESOURCE_CLICK, have);
+    let expanded = expand_c0_tactic_source_at(
+        PRODUCED_RESOURCE_CLICK,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("a smart `have` inside an open scope should expand");
+    assert!(
+        !expanded.contains("have 1 == obj->refs by simp;"),
+        "the smart `have` should be replaced by its checked steps: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded scope `have` should independently reverify");
+}
+
+#[test]
+fn grouped_closer_with_a_produced_resource_claim_expands_and_reverifies() {
+    // Reduced from `pool_transfer` in `examples/bounded-pool` and
+    // `object_retain_many` in `examples/refcount`. The closer's certificate
+    // spells a produced resource claim's closure `assumption`, which reads
+    // the outcome through the contract's checked resource transition exactly
+    // as the `simp` it replaces does. Without that reading the expansion
+    // failed with `assumption did not match any current proposition goal`.
+    let sources = [("object_retain_many.c", PRODUCED_RESOURCE_C)];
+    verify_c0_sources(PRODUCED_RESOURCE_CLICK, &sources)
+        .expect("the produced-resource proof should verify");
+
+    let closer = PRODUCED_RESOURCE_CLICK
+        .rfind("simp();")
+        .expect("proof should contain the grouped closer");
+    let position = expansion::position_at_offset(PRODUCED_RESOURCE_CLICK, closer);
+    let expanded = expand_c0_tactic_source_at(
+        PRODUCED_RESOURCE_CLICK,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("the grouped closer should expand");
+    assert!(
+        expanded.contains("assumption();"),
+        "the closer's claim closures should be retained: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded grouped closer should independently reverify");
+}
+
+#[test]
+fn match_arm_field_binding_prints_its_binder_in_a_generated_certificate() {
+    // Reported from `mdtests/proof_match_three_constructors.md`. A C-typed
+    // constructor field binds the kernel value the case fact assigns it, and
+    // a certificate generated inside the arm used to print that value's
+    // kernel variable id. No lowering resolves such a spelling, so the
+    // rewritten sidecar failed with `the kernel lowering produced 0 paths`
+    // for a proof `click verify` accepted.
+    let c_source = "int read(int* p) { return *p; }";
+    let click_source = r#"
+verifying "read.c";
+
+spec enum Bi { Zero, Other(int) }
+
+function bi_code(t: Bi) -> int {
+    match t {
+        Bi::Zero => 0,
+        Bi::Other(value) => value,
+    }
+}
+
+resource cell(p: int*) {
+    field model: Bi;
+    match model {
+        Bi::Zero => { owns p[0..1]; fact p[0] == 0; },
+        Bi::Other(value) => { owns p[0..1]; fact p[0] == value; },
+    }
+}
+
+int read(int* p) {
+    owns c: cell(p);
+    ensures c.model == old(c.model);
+    ensures result == bi_code(old(c.model));
+} by {
+    match c.model {
+        Bi::Zero => {
+            unfold(c);
+            execute();
+            let c = fold(cell(p), { model: Bi::Zero }, {});
+            have bi_code(old(c.model)) == 0 by {
+                rewrite(old(c.model) == Bi::Zero);
+                unfold(bi_code(Bi::Zero));
+                normalize();
+            }
+            simp();
+        },
+        Bi::Other(value) => {
+            unfold(c);
+            execute();
+            let c = fold(cell(p), { model: Bi::Other(value) }, {});
+            have bi_code(old(c.model)) == value by {
+                rewrite(old(c.model) == Bi::Other(value));
+                unfold(bi_code(Bi::Other(value)));
+                normalize();
+            }
+            simp();
+        },
+    }
+}
+"#;
+    let sources = [("read.c", c_source)];
+    verify_c0_sources(click_source, &sources)
+        .expect("the two-constructor match proof should verify");
+
+    let closer = click_source
+        .rfind("simp();")
+        .expect("proof should contain the second arm's closer");
+    let position = expansion::position_at_offset(click_source, closer);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the arm's closer should expand");
+    assert!(
+        expanded.contains("Bi::Other(value)"),
+        "a generated constructor should name the arm's binder: {expanded}"
+    );
+    // Match-binder kernel ids live in the namespace that starts at 4_000_000.
+    assert!(
+        !expanded.contains("(v4"),
+        "a generated constructor must not print a kernel variable id: {expanded}"
+    );
+}

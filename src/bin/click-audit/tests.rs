@@ -637,3 +637,94 @@ fn prepared_audit_reuses_validated_inputs_across_sites() {
     assert!(AuditSessionWorker::start(&path, limit).is_err());
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn smart_have_inside_an_open_scope_audits_instead_of_reporting_a_missing_tactic() {
+    // Reduced from `object_retain_many` in `examples/refcount` and the two
+    // `have`s of `arena_write` in `examples/arena`. The resource-scope driver
+    // checked the `have` but recorded no expansion for its source occurrence,
+    // so audit failed the site with `has no source tactic 1` while `click
+    // verify` accepted the same sidecar. The grouped closer in the same proof
+    // covers the produced resource claim whose closure the certificate spells
+    // `assumption`.
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-scope-have-{}", std::process::id()));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    let c_source = r#"struct object {
+    int32 refs;
+};
+
+void object_retain_many(struct object* obj, int32 amount) {
+    obj->refs = obj->refs + amount;
+}"#;
+    let click_source = r#"resource object_ref(obj: struct object*) {
+    contains allocation(obj, sizeof(struct object));
+    owns object(obj);
+    fact obj->refs == count(object_ref(obj));
+}
+
+verifying "object_retain_many.c";
+
+void object_retain_many(struct object* obj, int32 amount) {
+    requires 0 <= amount;
+    requires defined(1 + amount);
+    owns object_ref(obj);
+    produces amount of object_ref(obj);
+} by {
+    open(object_ref(obj)) {
+        have 1 == obj->refs by simp;
+        execute();
+    }
+    have 1 <= 1 + amount by {
+        apply(int32_add_nonnegative_right_is_at_least_left(1, amount)) using {
+            0 <= amount;
+            defined(1 + amount);
+        }
+    }
+    have amount <= 1 + amount by {
+        apply(int32_add_nonnegative_left_is_at_least_right(1, amount)) using {
+            defined(1 + amount);
+        }
+    }
+    simp();
+}
+"#;
+    let click_path = directory.join("scope_have.click");
+    fs::write(directory.join("object_retain_many.c"), c_source).unwrap();
+    fs::write(&click_path, click_source).unwrap();
+    verify_c0_sources(click_source, &[("object_retain_many.c", c_source)])
+        .expect("the produced-resource proof should verify");
+
+    let line_of = |needle: &str| {
+        let offset = click_source
+            .find(needle)
+            .unwrap_or_else(|| panic!("proof should contain `{needle}`"));
+        click_source[..offset]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1
+    };
+    let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+    for needle in ["have 1 == obj->refs by simp;", "simp();\n}"] {
+        let line = line_of(needle);
+        let site = sites
+            .iter()
+            .find(|site| site.position.line == line)
+            .unwrap_or_else(|| panic!("line {line} should be an auditable site"));
+        let expanded = expand_location(&format_location(&site_location(site)))
+            .unwrap_or_else(|error| panic!("line {line} should expand: {error}"));
+        let source = load_audit_source_from_text(&click_path, expanded.clone()).unwrap();
+        let refs = source_refs(&source.c_sources);
+        verify_c0_sources(&source.click_source, &refs)
+            .unwrap_or_else(|error| panic!("line {line} rewrite: {}", error.message()));
+        assert_eq!(
+            reexpand_source(&click_path, &site.claim, &expanded).unwrap(),
+            expanded
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}

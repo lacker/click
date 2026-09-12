@@ -203,6 +203,22 @@ enough to become the first regression of the package that fixes them.
     of the match arm passes. Every rbtree fixup step writes one link and
     refolds a frame whose other facts are unchanged, so this blocks C3 and
     C5. Package A10.
+17. **Remaining audit disagreements after T3.** T3 took the full examples
+    audit from 12 site failures to 3 (400 of 457 sites pass; the
+    multifile-registry session failure is the quarantined pre-existing
+    verify failure). Left: (a) `marked_linked_list.click:80:5`: the
+    expansion prints a `let ... where` witness as `symbolic-pointer:...@0`
+    because a witness has no surface spelling, and the only diagnostic is
+    the parse error; a language decision, deferred with the other language
+    questions, but expansion must refuse with the real reason; (b)
+    `marked_linked_list.click:92:9`: the `execute()` expansion in an `else`
+    arm emits two `step()`s too many before its explicit `if at(...)` across
+    a recursive call, and its diagnostic dumps a raw `CMemory`; (c)
+    `sequence_transform.click:51:5`: a path-independent closer cannot be
+    stitched into a tree whose leaves already differ; (d) mode-D residue: a
+    generated `have c.model == old(c.model)` inside a match arm omits the
+    entry-anchored rewrite because the certificate was searched against a
+    goal with the entry model already substituted. Package T5.
 
 ## Design decisions
 
@@ -405,6 +421,9 @@ appears to need one reports the need instead of adding it.
   correctly, 590b2553) and T2 (bounded failed-`simp` diagnostic, 92a81e32)
   are on master with a confirming full gate; A8 found gaps 15 and 16. A9
   and A10 are dispatched; T3 is in progress.
+- 2026-09-12: T3 (three audit modes fixed: post-exit `have` in an open
+  scope, scope `have` expansion recording, `assumption` closing a produced
+  resource claim; bb009743) is on master. T5 dispatched for the residue.
 
 ## Work packages
 
@@ -567,6 +586,14 @@ nested `branch` fixtures from gap 15, remove the deep clones or make them
 share structure, and add a deterministic scaling regression over several
 widths per `docs/internals/verification-efficiency.md`. Not on the rbtree
 critical path; schedule after the Phase A packages.
+
+**T5. Close the remaining audit disagreements (gap 17 b, c, d) and refuse
+(a) with a real diagnostic.** Scope: the `execute()` step-count expansion
+across a recursive call, the multi-leaf closer stitching, and the
+`old(...)` anchoring of match-arm certificates; make expansion refuse a
+witness it cannot spell instead of emitting unparseable text; replace the
+raw `CMemory` dump. Regressions per mode as `verify -> expand -> reverify`
+tests. Depends on T3.
 
 ### Phase B: models on the fixed scaffold
 

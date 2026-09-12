@@ -2546,8 +2546,13 @@ fn advance_linear_open_scope<'a>(
         // After execution reached function exit inside the scope, an ordered
         // outcome operation (`simp`, `fold`, a `have` naming `result`, ...)
         // is deferred on the scope body and follows the scope's join.
+        //
+        // A `have` written here is such an operation: only the outcome binds
+        // `result`, so lowering it at the scope's frontier would produce no
+        // path at all for the very proposition a smart tactic's expansion
+        // renders. The flat driver already defers a post-exit `have`; the
+        // scope driver defers the same tactic through its own body.
         if scope.is_at_function_exit()
-            && !matches!(indexed.tactic, ProofTactic::Have(_))
             && let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic)
         {
             scope = scope.defer_post_execution_source_tactic(
@@ -2561,12 +2566,28 @@ fn advance_linear_open_scope<'a>(
         let ProofTactic::Have(have) = &indexed.tactic else {
             return decline();
         };
+        // A `have` with a smart body is a selectable source site like the
+        // operations above, so its checked steps are retained for expansion
+        // here too; without this the site verifies and then reports that the
+        // proof has no such source tactic.
+        let checkpoint = scope.checkpoint();
         let nested = scope.begin_have(have.proposition.clone())?;
         let selected = solve_nested_have(nested, have, false)?;
         let Some(selected) = selected else {
             return decline();
         };
         scope = scope.join_nested(selected)?;
+        if indexed.source_index != owning_source_index
+            && let Some(site) = proof_site
+        {
+            let certificate = scope.certificate_since(&checkpoint)?;
+            record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
+                site,
+                indexed.source_index,
+                &certificate.to_proof_tactics(),
+            );
+        }
     }
     Ok(Some(scope))
 }
