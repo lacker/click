@@ -4179,11 +4179,15 @@ pub(in crate::surface) fn composite_resource_definitions(
                     "resource match requires an algebraic field",
                 ));
             };
-            let scopes = validation::resource_match_arm_scopes(definition, |name| {
-                click_function_environment
-                    .algebraic_type_definitions
-                    .get(name)
-            })?;
+            let scopes = validation::resource_match_arm_scopes(
+                definition,
+                |name| {
+                    click_function_environment
+                        .algebraic_type_definitions
+                        .get(name)
+                },
+                |name| resource_environment.get(name),
+            )?;
             let mut arms = Vec::new();
             for (variant, bindings, arm) in scopes {
                 let mut integer_binding_variables = BTreeMap::new();
@@ -4245,6 +4249,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                         .map(|child| {
                             Ok(crate::kernel::CResourceChildSpec {
                                 name: child.name.clone(),
+                                resource: child.resource.clone(),
                                 binding: child.identity,
                                 arguments: child
                                     .arguments

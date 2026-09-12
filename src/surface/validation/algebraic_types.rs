@@ -1,9 +1,10 @@
 use super::*;
 use crate::surface::parser::algebraic_field_c_type_supported;
 
-pub(in crate::surface) fn resource_match_arm_scopes<'a>(
-    definition: &ResourceDefinition,
+pub(in crate::surface) fn resource_match_arm_scopes<'a, 'b>(
+    definition: &'b ResourceDefinition,
     lookup: impl Fn(&str) -> Option<&'a AlgebraicTypeDefinition>,
+    resources: impl Fn(&str) -> Option<&'b ResourceDefinition>,
 ) -> Result<Vec<(String, Vec<(String, ClickType)>, ResourceDefinition)>, ClickError> {
     let Some(matched) = definition
         .composite_body()
@@ -140,10 +141,37 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
                     "child ownership requires a declared resource",
                 ));
             };
-            if name != definition.name() || !binding.children.is_empty() {
+            if !binding.children.is_empty() {
                 return Err(ClickError::new(
-                    "this slice supports direct recursive children of the same resource",
+                    "a resource match child is one declared resource, not a child path",
                 ));
+            }
+            // A child may be the parent's own definition or another declared
+            // resource. Its arguments and field equations are checked against
+            // its own definition, so resolve that first.
+            let child_definition = if name == definition.name() {
+                definition
+            } else {
+                resources(name).ok_or_else(|| {
+                    ClickError::new(format!(
+                        "child `{}` names unknown resource `{name}`",
+                        binding.name
+                    ))
+                })?
+            };
+            if child_definition.parameters().len() != arguments.len() {
+                return Err(ClickError::new(format!(
+                    "child `{}` passes {} argument(s) to resource `{name}`, which takes {}",
+                    binding.name,
+                    arguments.len(),
+                    child_definition.parameters().len()
+                )));
+            }
+            if child_definition.fields().is_empty() {
+                return Err(ClickError::new(format!(
+                    "child `{}` requires a field-bearing resource; `{name}` has no fields",
+                    binding.name
+                )));
             }
             for argument in arguments {
                 // C expressions are read-only. The kernel checks their value,
@@ -159,7 +187,7 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
                 ));
             }
             let mut field_bindings = Vec::new();
-            for field in definition.fields() {
+            for field in child_definition.fields() {
                 let candidates = equations
                     .get(&(binding.identity, field.name()))
                     .ok_or_else(|| {
@@ -197,6 +225,7 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a>(
             }
             children.push(ResourceChildBody {
                 name: binding.name.clone(),
+                resource: name.clone(),
                 identity: binding.identity,
                 arguments: arguments.clone(),
                 field_bindings,
@@ -795,12 +824,20 @@ pub(super) fn validate_algebraic_type_uses(
             }
         }
     }
+    let resource_definitions = combined_resource_definitions(file)?;
+    let resource_definition_map = resource_definitions
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
     for definition in file.resource_definitions() {
         let Some(body) = definition.composite_body() else {
             continue;
         };
-        let arm_scopes =
-            resource_match_arm_scopes(definition, |name| definitions.get(name).copied())?;
+        let arm_scopes = resource_match_arm_scopes(
+            definition,
+            |name| definitions.get(name).copied(),
+            |name| resource_definition_map.get(name).copied(),
+        )?;
         for definition in std::iter::once(definition)
             .chain(arm_scopes.iter().map(|(_, _, definition)| definition))
         {

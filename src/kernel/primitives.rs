@@ -2257,6 +2257,10 @@ pub struct CResourceMatchArm {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CResourceChildSpec {
     pub name: String,
+    /// The child's own composite resource definition. It may be the parent's
+    /// definition or another declared resource; the rewrite resolves it and
+    /// checks the child's arguments and fields against that definition.
+    pub resource: String,
     pub binding: Variable,
     pub arguments: Vec<CExpression>,
     /// Each field is an immediate constructor binding. The matched model

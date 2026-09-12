@@ -9793,16 +9793,37 @@ pub(crate) fn rewrite_resource_instance(
         state,
         instance,
         definition,
+        std::slice::from_ref(definition),
         assumptions,
         unfold,
         None,
     )
 }
 
+/// The composite definition a matched arm's child names. A child of the
+/// parent's own family resolves to the definition already in hand; any other
+/// declared resource is looked up in the registered definitions, so the
+/// child's own parameters and fields decide what the rewrite checks.
+pub(in crate::kernel) fn child_composite_definition<'a>(
+    definition: &'a CCompositeResourceDefinition,
+    definitions: &'a [CCompositeResourceDefinition],
+    child: &CResourceChildSpec,
+) -> Result<&'a CCompositeResourceDefinition, &'static str> {
+    if child.resource == definition.name() {
+        return Ok(definition);
+    }
+    definitions
+        .binary_search_by(|candidate| candidate.name().cmp(&child.resource))
+        .ok()
+        .map(|index| &definitions[index])
+        .ok_or("resource match child has no registered definition")
+}
+
 pub(crate) fn rewrite_resource_instance_selecting_children(
     state: &CState,
     instance: &ResourceInstance,
     definition: &CCompositeResourceDefinition,
+    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
     unfold: bool,
     selected_children: Option<&[(String, Variable)]>,
@@ -9844,7 +9865,8 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut integer_bindings = BTreeMap::new();
     let mut constructor_fields = Vec::new();
     let selected = if definition.matched.is_some() {
-        let (arm, constructor) = selected_instance_match_arm(instance, definition, assumptions)?;
+        let (arm, constructor) =
+            selected_instance_match_arm(instance, definition, definitions, assumptions)?;
         let AlgebraicTermNode::Constructor { fields, .. } = constructor.node else {
             unreachable!()
         };
@@ -9951,10 +9973,21 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     for child in selected.into_iter().flat_map(|arm| &arm.children) {
         crate::instrumentation::record_deterministic_work(1);
+        // The child's own definition supplies the parameter types its
+        // arguments are coerced to and the schema its fields must satisfy.
+        let child_definition = child_composite_definition(definition, definitions, child)?;
+        let child_schema = if child_definition.name() == definition.name() {
+            instance.schema.clone()
+        } else {
+            child_definition
+                .instance_schema
+                .clone()
+                .ok_or("resource match child requires a field-bearing definition")?
+        };
         let arguments = child
             .arguments
             .iter()
-            .zip(&definition.parameters)
+            .zip(&child_definition.parameters)
             .map(|(argument, parameter)| {
                 let paths = evaluate_c_expression_paths(
                     &child_evaluation,
@@ -10011,17 +10044,17 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         }
         let mut child_instance = ResourceInstance::new(
             identity,
-            instance.name.clone(),
+            child_definition.name().to_string(),
             arguments,
-            instance.schema.clone(),
+            child_schema,
             fields,
         )
         .ok_or("recursive child fields or arguments have invalid types")?;
-        if child_instance.arguments.len() != definition.parameters.len()
+        if child_instance.arguments.len() != child_definition.parameters.len()
             || child_instance
                 .arguments
                 .iter()
-                .zip(&definition.parameters)
+                .zip(&child_definition.parameters)
                 .any(|(argument, parameter)| {
                     argument
                         .as_c_value()
@@ -10178,6 +10211,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(
     instance: &ResourceInstance,
     definition: &'a CCompositeResourceDefinition,
+    definitions: &'a [CCompositeResourceDefinition],
     assumptions: &PureFactContext,
 ) -> Result<(&'a CResourceMatchArm, AlgebraicTerm), &'static str> {
     let body = definition
@@ -10255,19 +10289,30 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
         let mut child_names = BTreeSet::new();
         let mut child_bindings = BTreeSet::new();
         for child in &arm.children {
+            // A child is checked against its own definition, which is the
+            // parent's for a directly recursive child and another declared
+            // resource otherwise.
+            let child_definition = child_composite_definition(definition, definitions, child)?;
+            let child_schema = if child_definition.name() == definition.name() {
+                instance.schema()
+            } else {
+                child_definition
+                    .instance_schema
+                    .as_ref()
+                    .ok_or("resource match child requires a field-bearing definition")?
+            };
             if child.name.is_empty()
                 || reserved.contains(child.name.as_str())
                 || names.contains(&child.name)
                 || !child_names.insert(&child.name)
                 || child.binding == Variable(u64::MAX)
                 || !child_bindings.insert(child.binding)
-                || child.arguments.len() != definition.parameters.len()
-                || child.field_bindings.len() != instance.schema.fields().len()
+                || child.arguments.len() != child_definition.parameters.len()
+                || child.field_bindings.len() != child_schema.fields().len()
             {
                 return Err("invalid recursive child schema");
             }
-            for ((_, field_type), index) in
-                instance.schema.fields().iter().zip(&child.field_bindings)
+            for ((_, field_type), index) in child_schema.fields().iter().zip(&child.field_bindings)
             {
                 let expected = match field_type {
                     ResourceFieldType::Integer => AlgebraicValueType::Integer,
@@ -10280,12 +10325,15 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
                     );
                 }
             }
-            // In particular, the parent's matched field is bound to a field
-            // of this constructor, never to the whole parent model.
-            if arm
-                .binding_types
-                .get(child.field_bindings[body.field_index])
-                != Some(&body.algebraic_type.value_type())
+            // In particular, a same-family child's model is bound to a field
+            // of this constructor, never to the whole parent model. A child of
+            // another family has no such field; its own matched field is
+            // already checked above, against its own declared type.
+            if child_definition.name() == definition.name()
+                && arm
+                    .binding_types
+                    .get(child.field_bindings[body.field_index])
+                    != Some(&body.algebraic_type.value_type())
             {
                 return Err("recursive child model must be a proper submodel");
             }

@@ -427,6 +427,7 @@ impl CheckedResourceRewrite {
                 before_state,
                 instance,
                 definition,
+                function.composite_resource_definitions(),
                 assumptions,
                 unfold,
                 selected_children.as_deref(),
@@ -3532,6 +3533,7 @@ fn trace_completion(
                             let path_case = crate::kernel::functions::selected_instance_match_arm(
                                 instance,
                                 &rewrite.definition,
+                                function.composite_resource_definitions(),
                                 executed_under,
                             )
                             .map(|(arm, _)| &arm.variant);
@@ -3539,6 +3541,7 @@ fn trace_completion(
                                 crate::kernel::functions::selected_instance_match_arm(
                                     instance,
                                     &rewrite.definition,
+                                    function.composite_resource_definitions(),
                                     rewrite.before_facts.assumptions(),
                                 )
                                 .map(|(arm, _)| &arm.variant);
@@ -3553,6 +3556,7 @@ fn trace_completion(
                                 state,
                                 instance,
                                 &rewrite.definition,
+                                function.composite_resource_definitions(),
                                 executed_under,
                                 false,
                                 rewrite.selected_children.as_deref(),
@@ -4813,6 +4817,7 @@ impl ExecutionProofCore {
             &before_state,
             instance,
             definition,
+            function.composite_resource_definitions(),
             before_facts.assumptions(),
             false,
             selected_children.as_deref(),

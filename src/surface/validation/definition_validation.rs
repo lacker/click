@@ -202,9 +202,14 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         &combined_algebraic_type_definitions(file)?,
     );
 
+    let resource_definition_map = resource_definitions
+        .iter()
+        .map(|definition| (definition.name(), definition))
+        .collect::<BTreeMap<_, _>>();
     for definition in &resource_definitions {
         validate_resource_definition(
             definition,
+            &resource_definition_map,
             &resources,
             &recursive_resources,
             &proposition_calls,
@@ -718,8 +723,9 @@ fn validate_theorem_definition(
     Ok(())
 }
 
-fn validate_resource_definition(
-    definition: &ResourceDefinition,
+fn validate_resource_definition<'a>(
+    definition: &'a ResourceDefinition,
+    resource_definitions: &BTreeMap<&'a str, &'a ResourceDefinition>,
     resources: &BTreeMap<String, usize>,
     recursive_resources: &BTreeSet<String>,
     predicates: &BTreeMap<String, usize>,
@@ -735,13 +741,18 @@ fn validate_resource_definition(
         return Ok(());
     };
     if composite_body.matched.is_some() {
-        for (_, _, arm) in resource_match_arm_scopes(definition, |name| {
-            click_function_environment
-                .algebraic_type_definitions
-                .get(name)
-        })? {
+        for (_, _, arm) in resource_match_arm_scopes(
+            definition,
+            |name| {
+                click_function_environment
+                    .algebraic_type_definitions
+                    .get(name)
+            },
+            |name| resource_definitions.get(name).copied(),
+        )? {
             validate_resource_definition(
                 &arm,
+                resource_definitions,
                 resources,
                 recursive_resources,
                 predicates,
@@ -2197,6 +2208,25 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                             .composite_body()
                             .is_none_or(|body| body.condition().is_none())
                 })
+                // A matched arm's children are containment too, and a child
+                // may name another definition. The arm itself is the guard
+                // that makes direct recursion finite, so only a cycle through
+                // another definition is reported here.
+                .chain(
+                    definition
+                        .composite_body()
+                        .and_then(|body| body.matched.as_ref())
+                        .into_iter()
+                        .flat_map(|matched| &matched.arms)
+                        .flat_map(|arm| &arm.body.contains)
+                        .filter_map(|resource| match resource {
+                            ResourceClause::Named { resource, .. } => {
+                                declared_composite_resource_name(resource).map(str::to_string)
+                            }
+                            _ => None,
+                        })
+                        .filter(|dependency| dependency != definition.name()),
+                )
                 .collect::<Vec<_>>();
             (definition.name().to_string(), dependencies)
         })
