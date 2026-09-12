@@ -4366,6 +4366,7 @@ impl ExecutionPureFact {
             certified_store: None,
             transport: None,
             generated_load_binding: None,
+            generated_load_source_events: Default::default(),
         }
     }
 
@@ -4377,6 +4378,7 @@ impl ExecutionPureFact {
             certified_store: None,
             transport: None,
             generated_load_binding: None,
+            generated_load_source_events: Default::default(),
         }
     }
 
@@ -4388,6 +4390,7 @@ impl ExecutionPureFact {
             certified_store: None,
             transport: None,
             generated_load_binding: None,
+            generated_load_source_events: Default::default(),
         }
     }
 
@@ -4415,6 +4418,7 @@ impl ExecutionPureFact {
             }),
             transport: None,
             generated_load_binding: None,
+            generated_load_source_events: Default::default(),
         }
     }
 
@@ -4434,6 +4438,7 @@ impl ExecutionPureFact {
             // surface consumer infer an epoch or pointer from a different
             // proposition.
             self.generated_load_binding = None;
+            self.generated_load_source_events = Default::default();
         }
         self.proposition = proposition;
         self
@@ -4442,6 +4447,18 @@ impl ExecutionPureFact {
     pub(crate) fn with_generated_load_binding(mut self, binding: GeneratedLoadBinding) -> Self {
         self.generated_load_binding = Some(binding);
         self
+    }
+
+    pub(crate) fn with_generated_load_source_event(
+        mut self,
+        event: GeneratedLoadSourceEvent,
+    ) -> Self {
+        self.generated_load_source_events.push(event);
+        self
+    }
+
+    pub(crate) fn generated_load_source_events(&self) -> &[GeneratedLoadSourceEvent] {
+        self.generated_load_source_events.as_slice()
     }
 
     pub(crate) fn certified_transport(
@@ -4456,6 +4473,7 @@ impl ExecutionPureFact {
             certified_store: None,
             transport: Some(CertifiedExecutionFactTransport { source, theorem }),
             generated_load_binding: None,
+            generated_load_source_events: Default::default(),
         }
     }
 

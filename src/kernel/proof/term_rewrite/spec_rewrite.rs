@@ -1490,10 +1490,12 @@ impl<'a> TermRewrite<'a> {
                 pointer,
                 value_type,
                 volatile,
+                source,
             } => CExpression::TypedLoad {
                 pointer: Box::new(self.rewrite_c_expression(pointer)?),
                 value_type: *value_type,
                 volatile: *volatile,
+                source: source.clone(),
             },
             CExpression::Index(left, right) => CExpression::Index(
                 Box::new(self.rewrite_c_expression(left)?),

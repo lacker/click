@@ -1753,6 +1753,7 @@ pub(super) fn synthesize_surface_pointer_offset(
                     )?),
                     value_type: CType::Int32Pointer,
                     volatile: false,
+                    source: Default::default(),
                 }))
             }
         }
@@ -1876,6 +1877,7 @@ fn synthesize_parameter_field_pointer_value(
                     pointer: Box::new(lowered_pointer),
                     value_type,
                     volatile: false,
+                    source: Default::default(),
                 },
             });
         }
@@ -2146,6 +2148,7 @@ fn synthesize_surface_bitvector(
                         pointer: Box::new(pointer),
                         value_type: CType::UInt8,
                         volatile: false,
+                        source: Default::default(),
                     },
                     _ => CExpression::Load(Box::new(pointer)),
                 }))
@@ -2537,6 +2540,7 @@ fn synthesize_local_aggregate_field(
                             pointer: Box::new(lowered_pointer),
                             value_type: field.c_type(),
                             volatile: false,
+                            source: Default::default(),
                         },
                     };
                     if element_count == 1 {
@@ -2740,6 +2744,7 @@ fn synthesize_parameter_field_load(
                 pointer: Box::new(field_pointer),
                 value_type,
                 volatile: false,
+                source: Default::default(),
             },
         });
     }

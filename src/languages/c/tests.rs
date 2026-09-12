@@ -8869,6 +8869,31 @@ fn c0_field_source_ids_distinguish_same_layout_occurrences() {
 }
 
 #[test]
+fn c0_field_source_id_reaches_the_kernel_typed_load() {
+    let functions = syntax::parse_functions_for_source(
+        r#"
+        struct owner { int32 len; };
+        int32 owner_len(struct owner* owner) {
+            return owner->len;
+        }
+        "#,
+        "owner_len.c",
+    )
+    .expect("field getter should parse with source identity");
+    let crate::kernel::CStatement::Return(crate::kernel::CExpression::TypedLoad { source, .. }) =
+        functions[0].body_kernel_statement()
+    else {
+        panic!("field getter should lower to a typed load")
+    };
+    let source = source
+        .as_ref()
+        .expect("a parsed field load should retain its source identity");
+    assert_eq!(source.owner.source_unit.as_ref(), "owner_len.c");
+    assert_eq!(source.owner.function.as_ref(), "owner_len");
+    assert_eq!(source.occurrence, 0);
+}
+
+#[test]
 fn c0_field_source_ids_survive_expression_rebuilds() {
     let functions = syntax::parse_functions_for_source(
         r#"

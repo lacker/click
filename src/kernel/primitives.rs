@@ -674,8 +674,60 @@ pub enum CExpression {
         /// A sequential kernel access primitive forces one observable access
         /// even when the source lvalue itself was not declared volatile.
         volatile: bool,
+        /// Source provenance is presentation metadata only. Its comparison
+        /// traits intentionally ignore the value.
+        source: CExpressionLoadSource,
     },
     Index(Box<CExpression>, Box<CExpression>),
+}
+
+/// Optional source provenance attached to a typed load. Two expressions that
+/// differ only in this metadata remain equal in kernel collections and caches.
+#[derive(Clone, Debug)]
+pub struct CExpressionLoadSource(Option<Arc<LoadSourceId>>);
+
+impl CExpressionLoadSource {
+    pub(crate) fn none() -> Self {
+        Self(None)
+    }
+
+    pub(crate) fn new(source: LoadSourceId) -> Self {
+        Self(Some(Arc::new(source)))
+    }
+
+    pub(crate) fn as_ref(&self) -> Option<&LoadSourceId> {
+        self.0.as_deref()
+    }
+}
+
+impl Default for CExpressionLoadSource {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
+impl PartialEq for CExpressionLoadSource {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for CExpressionLoadSource {}
+
+impl std::hash::Hash for CExpressionLoadSource {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl Ord for CExpressionLoadSource {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl PartialOrd for CExpressionLoadSource {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -5427,6 +5479,47 @@ pub struct ExecutionPureFact {
     /// carried with the certified fact rather than recovered from the current
     /// state, since the producer's snapshot and pointer are the authority.
     pub(super) generated_load_binding: Option<GeneratedLoadBinding>,
+    pub(super) generated_load_source_events: GeneratedLoadSourceEvents,
+}
+
+/// Source events are execution provenance, not part of the proposition's
+/// semantic identity. Keep them beside the fact while making fact equality
+/// and hashing remain proposition-oriented.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GeneratedLoadSourceEvents(Vec<GeneratedLoadSourceEvent>);
+
+impl GeneratedLoadSourceEvents {
+    pub(crate) fn as_slice(&self) -> &[GeneratedLoadSourceEvent] {
+        &self.0
+    }
+
+    pub(crate) fn push(&mut self, event: GeneratedLoadSourceEvent) {
+        self.0.push(event);
+    }
+}
+
+impl PartialEq for GeneratedLoadSourceEvents {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for GeneratedLoadSourceEvents {}
+
+impl std::hash::Hash for GeneratedLoadSourceEvents {
+    fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+impl Ord for GeneratedLoadSourceEvents {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl PartialOrd for GeneratedLoadSourceEvents {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// The source-independent identity of one kernel-generated load equation.

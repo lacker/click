@@ -59,6 +59,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
     next_kernel_variable: &mut u64,
+    source: Option<&LoadSourceId>,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
     if has_pending_reallocation_for_pointer(memory, &pointer) {
@@ -80,6 +81,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         false,
         &mut alias_cache,
         next_kernel_variable,
+        source,
     )
 }
 
@@ -113,6 +115,7 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
         true,
         &mut alias_cache,
         next_kernel_variable,
+        None,
     )
 }
 
@@ -136,6 +139,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     preserve_provisional_loadability: bool,
     alias_cache: &mut MemoryLoadAliasCache,
     next_kernel_variable: &mut u64,
+    source: Option<&LoadSourceId>,
 ) -> Vec<CExpressionPath> {
     let use_symbolic_pointer_identity =
         should_use_symbolic_pointer_identity(memory, &pointer, value_type);
@@ -224,6 +228,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
+            source,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -272,6 +277,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             next_kernel_variable,
             &mut facts,
             assumptions,
+            source,
         ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -319,6 +325,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             next_kernel_variable,
             &mut facts,
             assumptions,
+            source,
         ) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -372,6 +379,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
+            source,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -420,6 +428,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
+            source,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -473,6 +482,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 next_kernel_variable,
                 &mut facts,
                 assumptions,
+                source,
             ) {
                 CExpressionOutcome::Value(value)
             } else if value_type.accepts(&stored_value) {
@@ -508,6 +518,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 preserve_provisional_loadability,
                 alias_cache,
                 next_kernel_variable,
+                source,
             ));
         }
 
@@ -550,6 +561,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &mut facts,
             assumptions,
             use_symbolic_pointer_identity,
+            source,
         ) else {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -613,6 +625,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         &mut facts,
         assumptions,
         use_symbolic_pointer_identity,
+        source,
     ) else {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -671,25 +684,27 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
+    source: Option<&LoadSourceId>,
 ) -> Option<CValue> {
     let pointee_byte_width = value_type.pointee_type()?.byte_width();
     let fresh = match value {
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            mint_load_variable(bits, next_kernel_variable, facts, assumptions)?
+            mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?
         }
         // A cell materialized with its load variable (canonicalizing at
         // creation) already carries the variable; record its defining fact
         // in this path's stream, as minting would have.
         CValue::Int32(Bitvector32Term::Variable(variable)) if is_load_variable(variable) => {
             if let Some((memory, pointer)) = registered_load_for_variable(variable) {
-                record_load_variable_defining_fact(
+                record_load_variable_defining_fact_with_source(
                     *variable,
                     Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
                     facts,
+                    source,
                 );
             }
             *variable
@@ -729,6 +744,7 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
         facts,
         assumptions,
         should_use_symbolic_pointer_identity(memory, pointer, value_type),
+        None,
     )
 }
 
@@ -762,6 +778,7 @@ fn canonicalized_symbolic_load_value_with_identity(
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
     use_symbolic_identity: bool,
+    source: Option<&LoadSourceId>,
 ) -> Option<CValue> {
     let value = symbolic_load_value(memory, pointer, value_type)?;
     // Terms are canonical at creation: an int or byte load evaluates to its
@@ -769,19 +786,19 @@ fn canonicalized_symbolic_load_value_with_identity(
     // offset, and range built from the value is canonical.
     match &value {
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::UInt16(Bitvector32Term::Variable(fresh)));
         }
         // The wider integer scalars name their loads for the same reason.
@@ -795,15 +812,15 @@ fn canonicalized_symbolic_load_value_with_identity(
         // sibling cell of the same node, which the fold after that write
         // needs.
         CValue::UInt32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::UInt32(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int64(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::Int64(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt64(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
             return Some(CValue::UInt64(Bitvector32Term::Variable(fresh)));
         }
         _ => {}
@@ -825,7 +842,7 @@ fn canonicalized_symbolic_load_value_with_identity(
     if !matches!(bits.as_ref(), Bitvector32Term::MemoryLoad(_, _)) {
         return Some(value);
     }
-    let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
+    let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions, source)?;
     let pointer = if use_symbolic_identity {
         Pointer::symbolic(fresh)
     } else {
@@ -2431,9 +2448,10 @@ fn mint_load_variable(
     _next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     _assumptions: &PureFactContext,
+    source: Option<&LoadSourceId>,
 ) -> Option<Variable> {
     let (fresh, load) = load_variable_for_term(bits)?;
-    record_load_variable_defining_fact(fresh, load, facts);
+    record_load_variable_defining_fact_with_source(fresh, load, facts, source);
     Some(fresh)
 }
 
@@ -2446,6 +2464,15 @@ pub(crate) fn record_load_variable_defining_fact(
     load: Bitvector32Term,
     facts: &mut Vec<ExecutionPureFact>,
 ) {
+    record_load_variable_defining_fact_with_source(variable, load, facts, None);
+}
+
+pub(crate) fn record_load_variable_defining_fact_with_source(
+    variable: Variable,
+    load: Bitvector32Term,
+    facts: &mut Vec<ExecutionPureFact>,
+    source: Option<&LoadSourceId>,
+) {
     let Bitvector32Term::MemoryLoad(memory, pointer) = &load else {
         // `load_variable_for_term` currently returns a memory load's
         // canonical operand.  Keep this guard explicit so future changes
@@ -2453,25 +2480,39 @@ pub(crate) fn record_load_variable_defining_fact(
         return;
     };
     let defining_load = load.clone();
-    let defining = ExecutionPureFact::certified(Proposition::ConditionIs(
+    let defining_proposition = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::Variable(variable)),
             Box::new(load.clone()),
         ),
         true,
-    ))
-    .with_generated_load_binding(GeneratedLoadBinding::Exact {
+    );
+    let binding = GeneratedLoadBinding::Exact {
         variable,
         snapshot: CMemorySnapshotIdentity::of(memory.memory()),
         pointer: pointer.as_ref().clone(),
         load: defining_load,
-    });
-    if !facts
-        .iter()
-        .any(|fact| fact.proposition == defining.proposition)
+    };
+    let event =
+        source.and_then(|source| GeneratedLoadSourceEvent::new(source.clone(), binding.clone()));
+    if let Some(existing) = facts
+        .iter_mut()
+        .find(|fact| fact.proposition == defining_proposition)
     {
-        facts.push(defining);
+        if existing.generated_load_binding.is_none() {
+            existing.generated_load_binding = Some(binding);
+        }
+        if let Some(event) = event {
+            existing.generated_load_source_events.push(event);
+        }
+        return;
     }
+    let mut defining =
+        ExecutionPureFact::certified(defining_proposition).with_generated_load_binding(binding);
+    if let Some(event) = event {
+        defining = defining.with_generated_load_source_event(event);
+    }
+    facts.push(defining);
 }
 
 pub(in crate::kernel) fn symbolic_load_value(
@@ -2554,6 +2595,16 @@ pub(in crate::kernel) fn symbolic_load_value(
 mod tests {
     use super::*;
 
+    fn test_load_source(occurrence: u32) -> LoadSourceId {
+        LoadSourceId {
+            owner: LoadSourceOwnerId {
+                source_unit: std::sync::Arc::from("load-source.c"),
+                function: std::sync::Arc::from("read"),
+            },
+            occurrence,
+        }
+    }
+
     #[test]
     fn alias_cache_keys_answers_by_assumption_context() {
         let left = Pointer {
@@ -2604,7 +2655,39 @@ mod tests {
     }
 
     #[test]
-    fn transported_equal_equation_from_a_new_epoch_drops_binding() {
+    fn repeated_mint_keeps_each_exact_source_observation_on_one_fact() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(12),
+        };
+        let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
+        let (variable, canonical) = load_variable_for_term(&load).expect("load identity");
+        let mut facts = Vec::new();
+        let first = test_load_source(0);
+        let second = test_load_source(1);
+        record_load_variable_defining_fact_with_source(
+            variable,
+            canonical.clone(),
+            &mut facts,
+            Some(&first),
+        );
+        record_load_variable_defining_fact_with_source(
+            variable,
+            canonical,
+            &mut facts,
+            Some(&second),
+        );
+        let [fact] = facts.as_slice() else {
+            panic!("repeated producer equation should remain one fact: {facts:?}");
+        };
+        assert_eq!(fact.generated_load_source_events().len(), 2);
+        assert_eq!(fact.generated_load_source_events()[0].source(), &first);
+        assert_eq!(fact.generated_load_source_events()[1].source(), &second);
+    }
+
+    #[test]
+    fn transported_equal_equation_from_a_new_epoch_drops_producer_provenance() {
         let pointer = Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(20),
@@ -2614,17 +2697,20 @@ mod tests {
             Bitvector32Term::MemoryLoad(first_memory.clone(), Box::new(pointer.clone()));
         let mut facts = Vec::new();
         let mut next_variable = 0;
+        let source = test_load_source(0);
         let variable = mint_load_variable(
             &first_load,
             &mut next_variable,
             &mut facts,
             &PureFactContext::new(),
+            Some(&source),
         )
         .expect("load identity");
         let [fact] = facts.as_slice() else {
             panic!("expected one defining fact: {facts:?}");
         };
         assert!(fact.generated_load_binding().is_some());
+        assert_eq!(fact.generated_load_source_events().len(), 1);
 
         // A fresh arena represents a new epoch. Its empty CMemory is
         // structurally equal to the first one, but its embedded snapshot
@@ -2646,5 +2732,6 @@ mod tests {
         );
         let transported = fact.clone().with_proposition(replacement);
         assert!(transported.generated_load_binding().is_none());
+        assert!(transported.generated_load_source_events().is_empty());
     }
 }

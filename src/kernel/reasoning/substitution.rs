@@ -2546,12 +2546,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
             pointer,
             value_type,
             volatile,
+            source,
         } => CExpression::TypedLoad {
             pointer: Box::new(substitute_bitvector_variable_in_c_expression(
                 pointer, from, to,
             )),
             value_type: *value_type,
             volatile: *volatile,
+            source: source.clone(),
         },
         CExpression::LessThan(left, right) => CExpression::LessThan(
             Box::new(substitute_bitvector_variable_in_c_expression(
@@ -5718,12 +5720,14 @@ fn substitute_pointer_variable_in_c_expression(
             pointer,
             value_type,
             volatile,
+            source,
         } => CExpression::TypedLoad {
             pointer: Box::new(substitute_pointer_variable_in_c_expression(
                 pointer, from, to,
             )),
             value_type: *value_type,
             volatile: *volatile,
+            source: source.clone(),
         },
         CExpression::Not(body) | CExpression::BitwiseNot(body) => {
             let body = Box::new(substitute_pointer_variable_in_c_expression(body, from, to));

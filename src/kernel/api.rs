@@ -1051,10 +1051,21 @@ pub fn c_load(pointer: CExpression) -> CExpression {
 }
 
 pub fn c_typed_load(pointer: CExpression, value_type: CType) -> CExpression {
+    c_typed_load_with_source(pointer, value_type, None)
+}
+
+pub(crate) fn c_typed_load_with_source(
+    pointer: CExpression,
+    value_type: CType,
+    source: Option<crate::kernel::LoadSourceId>,
+) -> CExpression {
     CExpression::TypedLoad {
         pointer: Box::new(pointer),
         value_type,
         volatile: false,
+        source: source
+            .map(crate::kernel::CExpressionLoadSource::new)
+            .unwrap_or_default(),
     }
 }
 
@@ -1067,6 +1078,7 @@ pub fn c_volatile_typed_load(pointer: CExpression, value_type: CType) -> CExpres
         pointer: Box::new(pointer),
         value_type,
         volatile: true,
+        source: crate::kernel::CExpressionLoadSource::none(),
     }
 }
 

@@ -1850,6 +1850,11 @@ fn execute_step_from_frontier_position_selecting_path(
                     describe_evidence_refusal(&refusal, parameters, arguments)
                 ))
             })?;
+        let generated_load_source_events = transitions
+            .iter()
+            .flat_map(|transition| transition.generated_load_source_events.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         for transition in &transitions {
             execution
                 .presentation
@@ -1891,6 +1896,9 @@ fn execute_step_from_frontier_position_selecting_path(
         execution.core.frontier.next_statement_index = source_region.continuation_node;
         *available_pure_facts = common_pure_facts;
         *state = execution_state;
+        execution
+            .presentation
+            .record_generated_load_source_events(&generated_load_source_events);
         return Ok(common_introduced_facts);
     }
     if transitions.len() != 1 {
@@ -1975,6 +1983,7 @@ fn execute_step_from_frontier_position_selecting_path(
     execution
         .presentation
         .record_generated_load_bindings(&transition.generated_load_bindings);
+    let generated_load_source_events = transition.generated_load_source_events.clone();
     let introduced_facts = transition.introduced_facts.clone();
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)
         && let Some(loop_index) = loop_index
@@ -2376,6 +2385,9 @@ fn execute_step_from_frontier_position_selecting_path(
             )));
         }
     }
+    execution
+        .presentation
+        .record_generated_load_source_events(&generated_load_source_events);
     // Standalone fact-transport steps are written against the post-statement
     // state, so their construction runs after the statement's exit snapshots
     // are in place. Each transport adds its target to the certificate-visible

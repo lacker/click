@@ -154,10 +154,12 @@ fn substitute_c_expression_variables(
             pointer,
             value_type,
             volatile,
+            source,
         } => TypedLoad {
             pointer: unary(pointer),
             value_type: *value_type,
             volatile: *volatile,
+            source: source.clone(),
         },
         Index(left, right) => {
             let (left, right) = binary(left, right);

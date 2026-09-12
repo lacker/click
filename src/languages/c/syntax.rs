@@ -3674,10 +3674,22 @@ impl C0Expression {
             Self::Field {
                 pointer,
                 field_type,
+                source,
                 ..
-            } => crate::kernel::c_typed_load(
+            } => crate::kernel::c_typed_load_with_source(
                 pointer.to_kernel_expression(),
                 field_type.to_kernel_type(),
+                source.as_ref().and_then(|source| {
+                    source.id().source_identity().map(|source_identity| {
+                        crate::kernel::LoadSourceId {
+                            owner: crate::kernel::LoadSourceOwnerId {
+                                source_unit: std::sync::Arc::from(source_identity),
+                                function: std::sync::Arc::from(source.id().function_name()),
+                            },
+                            occurrence: source.id().occurrence(),
+                        }
+                    })
+                }),
             ),
             Self::UnionField {
                 pointer,

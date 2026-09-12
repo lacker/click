@@ -2518,6 +2518,8 @@ pub struct CertifiedStatementTransition {
     /// the producer's snapshot/pointer identity without inferring it from
     /// ambient state.
     pub(crate) generated_load_bindings: Vec<crate::kernel::GeneratedLoadBinding>,
+    /// Exact source identities emitted by producer facts in this transition.
+    pub(crate) generated_load_source_events: Vec<crate::kernel::GeneratedLoadSourceEvent>,
 }
 
 #[doc(hidden)]

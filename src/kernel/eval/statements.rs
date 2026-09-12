@@ -107,6 +107,10 @@ fn execute_c_lvalue_update_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let source = match target {
+        CExpression::TypedLoad { source, .. } => source.as_ref(),
+        _ => None,
+    };
     let mut paths = Vec::new();
     for target_path in evaluate_c_lvalue_paths(state, target, assumptions, budget)? {
         let CLValuePath {
@@ -160,6 +164,7 @@ fn execute_c_lvalue_update_paths(
             CLValueOutcome::LValue(lvalue.clone()),
             facts,
             obligations,
+            source,
             assumptions,
             &mut budget.next_kernel_variable,
         ) {
@@ -2123,6 +2128,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 pointer: Box::new(pointer.clone()),
                 value_type: *value_type,
                 volatile: *volatile,
+                source: Default::default(),
             },
             value,
             assumptions,

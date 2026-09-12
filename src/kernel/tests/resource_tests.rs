@@ -461,6 +461,7 @@ fn stored_child_arguments_require_owned_memory() {
         pointer: Box::new(c_variable("p")),
         value_type: CType::Int32Pointer,
         volatile: false,
+        source: Default::default(),
     }];
     let children = vec![
         ("left".into(), Variable(501)),
@@ -523,6 +524,7 @@ fn stored_child_arguments_require_owned_memory() {
             pointer: Box::new(c_pointer_value(concrete.clone())),
             value_type: CType::Int32Pointer,
             volatile: false,
+            source: Default::default(),
         }];
     // A materialized C block is not authority to read a link outside the
     // resource body, even though ordinary C execution can access that block.
@@ -5023,6 +5025,7 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
         pointer: Box::new(c_pointer_value(pointer)),
         value_type: CType::Int32Pointer,
         volatile: false,
+        source: Default::default(),
     };
     let samples = [4_usize, 8, 16, 32]
         .into_iter()
@@ -5111,6 +5114,7 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
         pointer: Box::new(c_pointer_value(pointer)),
         value_type: CType::Int32Pointer,
         volatile: false,
+        source: Default::default(),
     };
     let owned = |base: CExpression, end: CExpression| {
         CResourceSpec::owned_memory(CMemorySegment {

@@ -3156,6 +3156,7 @@ pub(in crate::surface) fn parse_c_layouts(
                         pointer: Box::new(CExpression::Value(value)),
                         value_type,
                         volatile: false,
+                        source: Default::default(),
                     }
                 };
                 objects.insert(
@@ -3275,6 +3276,7 @@ pub(in crate::surface) fn parse_c_layouts(
                             pointer: Box::new(CExpression::Value(value)),
                             value_type,
                             volatile: false,
+                            source: Default::default(),
                         }
                     };
                     objects.insert(

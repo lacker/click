@@ -1298,6 +1298,8 @@ fn certified_transitions_from_execution(
                 }
                 let generated_load_bindings =
                     generated_load_bindings_from_facts(&execution_facts);
+                let generated_load_source_events =
+                    generated_load_source_events_from_facts(&execution_facts);
                 return Ok(CertifiedStatementTransition {
                     theorem: path.theorem().clone(),
                     context: executed_under.clone(),
@@ -1311,9 +1313,12 @@ fn certified_transitions_from_execution(
                     planning_premises: Vec::new(),
                     fact_transports: transported_facts,
                     generated_load_bindings,
+                    generated_load_source_events,
                 });
             }
             let generated_load_bindings = generated_load_bindings_from_facts(&execution_facts);
+            let generated_load_source_events =
+                generated_load_source_events_from_facts(&execution_facts);
             Ok(CertifiedStatementTransition {
                 theorem: path.theorem().clone(),
                 context: executed_under.clone(),
@@ -1332,6 +1337,7 @@ fn certified_transitions_from_execution(
                 planning_premises: Vec::new(),
                 fact_transports: Vec::new(),
                 generated_load_bindings,
+                generated_load_source_events,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1380,6 +1386,16 @@ fn generated_load_bindings_from_facts(
     bindings.into_values().collect()
 }
 
+fn generated_load_source_events_from_facts(
+    facts: &[ExecutionPureFact],
+) -> Vec<crate::kernel::GeneratedLoadSourceEvent> {
+    facts
+        .iter()
+        .flat_map(ExecutionPureFact::generated_load_source_events)
+        .cloned()
+        .collect()
+}
+
 /// Replaces a transported fact's source with its target at the source's
 /// position: downstream premise selection is order-sensitive, so rewriting
 /// must not reorder the working set. Keep the by-value proposition handling
@@ -1425,7 +1441,7 @@ fn direct_transport_with_frame_premises(
 #[cfg(test)]
 mod condition_transition_tests {
     use super::*;
-    use crate::kernel::{c_load, c_variable};
+    use crate::kernel::{CRuntimeError, c_load, c_variable};
 
     #[test]
     fn planning_condition_transition_still_checks_execution_obligations() {
@@ -1503,15 +1519,22 @@ mod condition_transition_tests {
     fn real_load_execution_publishes_producer_binding_on_transition() {
         let pointer = Pointer {
             block: PointerBlock::ExternalArgument,
-            offset: PointerOffsetTerm::Constant(8),
+            offset: PointerOffsetTerm::Constant(0),
         };
-        let statement = CStatement::Return(CExpression::TypedLoad {
-            pointer: Box::new(CExpression::Value(CValue::pointer(pointer.clone()))),
-            value_type: CType::Int32,
-            volatile: false,
-        });
-        let state =
-            CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+        let parsed = crate::languages::c::syntax::parse_functions_for_source(
+            r#"
+            struct owner { int32 len; };
+            int32 owner_len(struct owner* owner) {
+                return owner->len;
+            }
+            "#,
+            "owner_len.c",
+        )
+        .expect("field getter should parse with source identity");
+        let statement = parsed[0].body_kernel_statement();
+        let state = CState::new()
+            .with_local("owner", CValue::pointer(pointer.clone()))
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(
                 CResourceFact::own_memory(CMemoryRange::new(
                     pointer.clone(),
                     Bitvector32Term::Constant(0),
@@ -1546,6 +1569,12 @@ mod condition_transition_tests {
             }] if recorded_pointer == &pointer
         ));
         assert!(matches!(
+            transition.generated_load_source_events.as_slice(),
+            [event] if event.source().occurrence == 0
+                && event.source().owner.source_unit.as_ref() == "owner_len.c"
+                && event.source().owner.function.as_ref() == "owner_len"
+        ));
+        assert!(matches!(
             transition.outcome,
             CStatementOutcome::Return { .. }
         ));
@@ -1564,11 +1593,185 @@ mod condition_transition_tests {
         execution
             .presentation
             .record_generated_load_bindings(&transition.generated_load_bindings);
+        execution
+            .presentation
+            .record_generated_load_source_events(&transition.generated_load_source_events);
         assert_eq!(execution.presentation.generated_load_bindings.len(), 1);
         assert_eq!(
             execution.presentation.generated_load_binding_events.len(),
             1
         );
+        assert_eq!(
+            execution
+                .presentation
+                .generated_load_source_resolutions
+                .len(),
+            1
+        );
+        assert_eq!(execution.presentation.generated_load_source_events.len(), 1);
+    }
+
+    #[test]
+    fn parsed_compound_field_update_publishes_its_implicit_read_source() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let parsed = crate::languages::c::syntax::parse_functions_for_source(
+            r#"
+            struct counter { uint32 value; };
+            void bump(struct counter* counter) {
+                counter->value += 1u;
+            }
+            "#,
+            "bump.c",
+        )
+        .expect("compound field update should parse with source identity");
+        fn update_source_occurrence(statement: &crate::languages::c::syntax::C0Statement) -> u32 {
+            match statement {
+                crate::languages::c::syntax::C0Statement::Update { target, .. } => target
+                    .field_source_id()
+                    .expect("the parsed update target should retain source identity")
+                    .occurrence(),
+                crate::languages::c::syntax::C0Statement::Seq(first, second) => {
+                    if matches!(
+                        first.as_ref(),
+                        crate::languages::c::syntax::C0Statement::Update { .. }
+                    ) {
+                        update_source_occurrence(first)
+                    } else {
+                        update_source_occurrence(second)
+                    }
+                }
+                _ => panic!("expected the function body to contain an update"),
+            }
+        }
+        let expected_occurrence = update_source_occurrence(parsed[0].body());
+        let statement = parsed[0].body_kernel_statement();
+        let state = CState::new()
+            .with_local("counter", CValue::pointer(pointer.clone()))
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(
+                CResourceFact::own_memory(CMemoryRange::new(
+                    pointer.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )),
+            ));
+        let mut next_opaque_call = 0;
+        let mut next_kernel_variable = 0;
+        let (transitions, _) = certified_statement_transitions(
+            &state,
+            &[],
+            &statement,
+            &CExecutionEnvironment::new(),
+            None,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            "compound field update source-event test",
+            &mut next_opaque_call,
+            &mut next_kernel_variable,
+            StatementPrerequisitePolicy::Explicit,
+            StatementFactTransportPolicy::None,
+            None,
+        )
+        .expect("an owned unsigned field update should produce a checked transition");
+        let [transition] = transitions.as_slice() else {
+            panic!("expected one field-update transition: {transitions:?}");
+        };
+        assert!(
+            matches!(
+            transition.generated_load_source_events.as_slice(),
+            [event] if event.source().occurrence == expected_occurrence
+                    && event.source().owner.source_unit.as_ref() == "bump.c"
+                    && event.source().owner.function.as_ref() == "bump"
+                    && matches!(
+                        event.binding(),
+                        crate::kernel::GeneratedLoadBinding::Exact {
+                            pointer: recorded_pointer,
+                            ..
+                        } if recorded_pointer == &pointer
+                    )
+            ),
+            "{:#?}",
+            transition.generated_load_source_events
+        );
+    }
+
+    #[test]
+    fn failed_typed_load_publishes_no_source_event() {
+        let statement = CStatement::Return(CExpression::TypedLoad {
+            pointer: Box::new(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(7),
+            ))),
+            value_type: CType::Int32,
+            volatile: false,
+            source: crate::kernel::CExpressionLoadSource::new(crate::kernel::LoadSourceId {
+                owner: crate::kernel::LoadSourceOwnerId {
+                    source_unit: std::sync::Arc::from("bad.c"),
+                    function: std::sync::Arc::from("bad"),
+                },
+                occurrence: 0,
+            }),
+        });
+        let mut next_opaque_call = 0;
+        let mut next_kernel_variable = 0;
+        let (transitions, _) = certified_statement_transitions(
+            &CState::new(),
+            &[],
+            &statement,
+            &CExecutionEnvironment::new(),
+            None,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            "failed load source-event test",
+            &mut next_opaque_call,
+            &mut next_kernel_variable,
+            StatementPrerequisitePolicy::Explicit,
+            StatementFactTransportPolicy::None,
+            None,
+        )
+        .expect("a runtime type error should remain an explicit transition outcome");
+        let [transition] = transitions.as_slice() else {
+            panic!("expected one failed load transition: {transitions:?}");
+        };
+        assert!(matches!(
+            transition.outcome,
+            CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+        ));
+        assert!(transition.generated_load_source_events.is_empty());
+    }
+
+    #[test]
+    fn typed_load_source_metadata_is_semantically_neutral() {
+        use std::collections::HashSet;
+        let pointer = CExpression::Value(CValue::pointer(Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(8),
+        }));
+        let source = |occurrence| {
+            crate::kernel::CExpressionLoadSource::new(crate::kernel::LoadSourceId {
+                owner: crate::kernel::LoadSourceOwnerId {
+                    source_unit: std::sync::Arc::from("f.c"),
+                    function: std::sync::Arc::from("f"),
+                },
+                occurrence,
+            })
+        };
+        let first = CExpression::TypedLoad {
+            pointer: Box::new(pointer.clone()),
+            value_type: CType::Int32,
+            volatile: false,
+            source: source(0),
+        };
+        let second = CExpression::TypedLoad {
+            pointer: Box::new(pointer),
+            value_type: CType::Int32,
+            volatile: false,
+            source: source(1),
+        };
+        assert_eq!(first, second);
+        let mut expressions = HashSet::new();
+        expressions.insert(first);
+        expressions.insert(second);
+        assert_eq!(expressions.len(), 1);
     }
 
     #[test]

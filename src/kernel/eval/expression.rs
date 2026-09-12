@@ -1709,6 +1709,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             pointer: pointer_expression,
             value_type,
             volatile,
+            ..
         } => {
             let mut paths = Vec::new();
             for pointer_path in
@@ -1804,6 +1805,10 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
+    let source = match expression {
+        CExpression::TypedLoad { source, .. } => source.as_ref(),
+        _ => None,
+    };
     let mut paths = Vec::new();
     for lvalue_path in evaluate_c_lvalue_paths(state, expression, assumptions, budget)? {
         paths.extend(read_c_lvalue_paths(
@@ -1811,6 +1816,7 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
             lvalue_path.outcome,
             lvalue_path.facts,
             lvalue_path.obligations,
+            source,
             assumptions,
             &mut budget.next_kernel_variable,
         ));
@@ -1824,6 +1830,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
     outcome: CLValueOutcome,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
+    source: Option<&LoadSourceId>,
     assumptions: &PureFactContext,
     next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
@@ -1936,6 +1943,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     assumptions,
                     is_external && has_read_resource,
                     next_kernel_variable,
+                    source,
                 );
                 if !lvalue.is_volatile() {
                     return paths;

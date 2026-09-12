@@ -5333,6 +5333,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings(
                         &mut budget.next_kernel_variable,
                         &mut facts,
                         assumptions,
+                        None,
                     )
                     .or_else(|| value_type.accepts(&stored).then_some(stored));
                 }
