@@ -19,6 +19,23 @@ The general substitution route already has
 `prepare_click_proposition_binding_body`, but this special alias-expansion
 route bypasses its capture avoidance.
 
+## Binding representation decision
+
+The implementation follow-up found that reusing alpha-renaming alone also
+renames the quantifier's source proof binding. That breaks otherwise valid
+`witness(x = ...)` steps and references following `intro()`. The proposition
+representation currently uses one name for both purposes; the existing
+proof-expression substitution does not track those introduced scopes.
+
+A complete fix therefore needs to preserve definition-time alias scope
+without losing source proof names. Possible approaches include retaining
+clause aliases as lexical environments until proposition lowering, or
+keeping source binder names separately from fresh semantic identities and
+carrying that correspondence through proof construction and expansion.
+This requires an internal binding decision, rather than a local use of the
+existing substitution helper. Do not land a partial freshening fix that
+breaks valid proof scripts or rejects legal shadowing.
+
 ## Small reproduction
 
 Save this as `capture.click`; no C input is needed:

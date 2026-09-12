@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (15)
+## P1: before launch (13)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -61,8 +61,6 @@ Soundness and kernel shape:
 - [Preserve object provenance across pointer-parameter boundaries](external-pointer-object-provenance.md)
 - [Resolve declared C identifiers before built-in constant spellings](c-identifier-constant-shadowing.md)
 - [Preserve ordinary operand reads around expression calls](c-expression-call-evaluation-order.md)
-- [Attest every verified dependency before reusing an incremental baseline](incremental-header-attestation.md)
-- [Verify theorem-only sidecars during incremental full rebuilds](incremental-theorem-only-sidecars.md)
 - [Make `arithmetic` smart and expand it to `arithmetic_certificate`](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 

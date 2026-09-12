@@ -47,9 +47,17 @@ result. A marker records the C target, the verifier binary, the commit, the side
 every `CLICK_*` environment variable that was set, so a baseline attested
 with a switch such as `CLICK_DISABLE_TACTIC_BUDGETS` is not reused by a run
 without it. A full rebuild attests `HEAD`, and also the requested baseline
-when that baseline's sidecar and C sources are identical to the current
-ones, so the next `--changed-since` run against the same baseline can select
-instead of rebuilding again.
+only when the commit's sidecar, declared C sources, and transitively included
+local headers exactly match the inputs that were verified. An uncommitted
+header change cannot attest the original commit. Files changed after
+verification do not change which input snapshot the marker records.
+
+A full rebuild checks theorem-only sidecars too, even though their selected
+C function count is zero. Once a baseline is attested, unchanged theorem-only
+sidecars can be reused; changing their theorem definitions requires a full
+rebuild. The same comparison lets a subsequent `--changed-since` run reuse
+an explicitly requested baseline whose complete inputs matched the full
+verification.
 
 ## Output and exit behavior
 
