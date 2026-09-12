@@ -185,6 +185,11 @@ explicit program-point snapshots. Expansion spells the chain with source C
 locals and fields; symbolic call identities, havoc markers, and other
 execution-only facts remain kernel details rather than Surface Click premises.
 
+When the C never assigns the result to a local — `if (f(x))` and
+`return f(x);` — the call step's `let` binder names it instead, so the
+postcondition and the branch or return fact can be related in one proposition.
+See [naming a call result](proof-scripts.md#naming-a-call-result).
+
 An opaque call first creates proof obligations for the callee's `requires`
 clauses. Those requirements are then available as established assumptions while
 Click evaluates the remaining resource, effect, and postcondition clauses of
@@ -337,7 +342,8 @@ one-step behavior is intentional: large composite resources should not be
 recursively expanded by default proof automation.
 
 A guarded directly recursive resource also has a finite inductive witness.
-`decreases resource list(node)` can use a direct contained child as a hidden
+`decreases list(node)`, or `decreases n;` naming the binder of an
+`owns n: list(node);` clause, can use a direct contained child as a hidden
 structural rank for a directly recursive C traversal. This does not turn
 pointers into sizes and does not automatically unfold the resource: the proof
 still uses `observe` or `unfold` to expose the layer it needs, while the
@@ -492,6 +498,16 @@ meant. Selection also grants nothing but reading: ownership of the arm's cells,
 and its contained child resources, still come only from an explicit `unfold`.
 A loop head selects an arm the same way, with its invariants playing the part
 the requirements play in a contract.
+
+An arm's cells need not hang off the resource's own parameters. A constructor
+field declared `struct tag*` makes its binding a struct base for the whole
+arm, so a frame keyed by one node can own the cells of another node the model
+carries: `owns parent->left;`, `fact parent->left == child;`, and
+`owns sibling: tree_at(parent->right);` all resolve against `struct tag`'s
+layout. That is what lets a context frame own its parent's links while being
+indexed by the child it focuses. A binding of any other type is not a base and
+is refused as one. The regression is
+`mdtests/resource_arm_binding_struct_base.md`.
 
 If a fact reads mutable memory, the composite body must contain an owned memory
 resource covering that memory. This is what makes the fact stable while the

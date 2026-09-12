@@ -77,7 +77,12 @@ component requires a checked `decreases` measure.
 ### Optional C termination
 
 Use `decreases` only when a caller needs separate evidence that a C function
-returns. A function-level measure ranks recursive calls:
+returns. A `decreases` clause is always one expression, and what it names
+decides which measure it is: an `int32` parameter, a resource application such
+as `list(node)`, or a contract or loop resource binder such as `t`. Functions
+and resources share one namespace, so that classification happens after name
+resolution rather than from a keyword; there is no `decreases resource`
+spelling. A function-level measure ranks recursive calls:
 
 <!-- verified-example: mdtests/c_decreases_recursive.md -->
 ```click
@@ -105,15 +110,32 @@ structural rank:
 <!-- verified-example: mdtests/c_decreases_resource_recursive.md -->
 ```click
 int32 list_destroy(struct node* node) {
-    decreases resource list(node);
+    decreases list(node);
     consumes list(node);
     ensures result == 0;
 }
 ```
 
-The declaration must exactly name an owned or viewed entry resource. The
-current structural slice supports direct recursion, a guarded directly
-recursive composite definition, and a simple resource guard. Every recursive
+A binder the contract already declares names the same measure without
+repeating its arguments:
+
+<!-- verified-example: mdtests/c_decreases_matched_arm_child.md -->
+```click
+int32 tree_depth_ok(struct node* root) {
+    owns t: tree_at(root);
+    decreases t;
+    ensures t.model == old(t.model);
+}
+```
+
+The declaration must exactly name an owned or viewed entry resource, or one of
+the contract's own resource binders. The current structural slice supports
+direct recursion, a directly recursive composite definition, and a simple
+resource guard. The definition may be `if`-guarded or `match model`-bodied: a
+matched body's named and unnamed children of the same family are its direct
+contained children, and the arm is selected by a fact of its own that every
+other arm's facts deny, as `fact p != 0` is denied by an `Empty` arm's
+`fact p == 0`. Every recursive
 call path must establish that guard, either from a function precondition or
 ordinary C control flow. Guard matching uses C meaning rather than one
 spelling: negation, branch polarity, symmetric equality, and corresponding
@@ -175,7 +197,22 @@ parameter. Every variable mentioned by a numeric measure must also remain
 unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
 ranked update, so the plan is rejected. Structural measures do not yet support
-mutual C recursion. Loop-local lexicographic tuples are supported; nested-loop
+mutual C recursion.
+
+A loop may name one of its own resource binders instead of int32 components:
+`decreases sub;` on a loop that declares `owns sub: tree_at(cur);`. The rule is
+the function-level one, applied at the back edge: the instance the binder ends
+holding must be a direct contained child, in the exact resource definition, of
+the instance it held at the loop head, with the submodel that child carries.
+Models are finite inductive terms, so a strictly smaller submodel at every back
+edge is well-founded; there is no counter, size function, or automatic
+unfolding. Which arm names the children is decided by the loop's invariants
+playing the part of a contract's requirements, the same arm selection contract
+lowering uses, so a structural loop measure needs a `match model` resource
+whose constructor the invariants pin down. Unlike the numeric components, the
+structural descent is not a member of the invariant bundle: the back edge
+decides it and names the binder when it does not descend. See
+`mdtests/loop_decreases_rejects_same_instance.md`. Loop-local lexicographic tuples are supported; nested-loop
 propagation treats a separately ranked inner loop as an opaque terminating
 phase. If it writes a variable mentioned by the enclosing tuple, the kernel
 forgets that variable's scalar alias and relies on the enclosing invariants for
@@ -512,6 +549,23 @@ iteration, constructs the kernel loop rule, applies it, and reaches the
 abstract exit. It fails if the current frontier is not a loop. Ordinary
 `step()` instead evaluates the loop condition and enters at most one concrete
 iteration; it does not invent a loop summary.
+
+A loop header holds `invariant` items, an optional `decreases` clause, the
+`initialize` and `preserve` phase proofs, and the loop's own resource clauses.
+Those resource clauses take the same forms a contract's do, including the
+instance binder `owns name: resource(args);`. A declared binder takes the one
+enclosing owned instance of that family and arguments, the invariants may read
+`name.field`, and `close_invariants()` binds the name again at the back edge
+from the family and arguments rather than from whatever the body called the
+instance. Instances the loop does not declare are unavailable in the body and
+returned after it. A declared binder's arguments are read where they are used:
+the head builds the binder's instance at the loop's own havocked values, and
+the back edge reads the clause again in the state the body reached, so a body
+that assigns `root = root->left` hands the loop the instance at the new cursor.
+A loop's `decreases` may name one of its binders, which is the structural
+measure below. Instances the loop does not declare are unavailable in the body
+and returned after it. The rules are in
+[loops and invariants](../../concepts/loops-and-invariants.md).
 
 When the two arms need to expose facts or resources about changed state, add an
 optional common-frontier interface to `branch`:
@@ -1078,8 +1132,26 @@ resource cell(p: int32*) {
 
 Here `Maybe<T>` is declared in the linked fixture. Arms must cover every
 constructor exactly once. Bindings are scoped to their arm and have the
-constructor's instantiated types, including pointers and nested ADTs. They
-cannot shadow resource parameters or fields. Fold/unfold requires constructor
+constructor's instantiated types, including pointers and nested ADTs. A
+binding whose constructor field is declared `struct tag*` is a struct base for
+the whole arm: `parent->left` names that field's cell at its declared offset
+and width in `owns`, in `fact`, and in a child instance's arguments. The
+datatype may be declared above or below the resource, because declaration
+order does not create scope. A binding of any other type is not a base, and
+using one as one is refused with the type the constructor declares. They
+cannot shadow resource parameters or fields.
+
+A pointer-typed payload is an ordinary C pointer value, so a proposition may
+compare it with any C pointer expression, in `requires`, `ensures`, `have`,
+`rewrite`, and `normalize() using`. A resource arm that records the owner's
+own address, `fact p == identity`, is what connects the two: the C tests an
+address, the model tests its payload, and that fact is the bridge. Pointers
+stay pointers; there is no conversion to an integer and the payload carries no
+ownership. The regression is
+`mdtests/model_identity_pointer_payload.md`, with
+`mdtests/model_identity_pointer_payload_rejects_other_cell.md` as its negative.
+A pure function may not yet *return* a pointer type; its application has no
+kernel pointer term, so such a call cannot be lowered. Fold/unfold requires constructor
 evidence for the actual instance field (for example,
 `c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
 implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
@@ -1165,18 +1237,79 @@ Unfolding a recursive body requires `as { ... }` to name its selected children;
 refolding requires the explicit child map. Unfold consumes the parent, so it
 cannot be projected or unfolded again unless a new owned parent is constructed.
 
-Each child currently uses the parent's resource definition. Equations for all
-child fields must bind them to immediate constructor fields of the matching
-types. In particular, the matched model strictly descends to a proper submodel.
+A child names one declared field-bearing resource: the parent's own definition
+or another one. Its arguments and field equations are checked against that
+definition, so a child of another family carries that family's fields:
+
+<!-- verified-example: mdtests/resource_cross_family_children.md -->
+```click
+resource ctx_at(node: struct tree_node*) {
+    field model: Context;
+    match model {
+        Context::Top => {},
+        Context::Left(up_node, value, right_model, up_model) => {
+            owns node->value;
+            owns node->left;
+            owns node->right;
+            owns right: tree_at(node->right);
+            owns up: ctx_at(up_node);
+            fact node != 0;
+            fact node->value == value;
+            fact right.model == right_model;
+            fact up.model == up_model;
+        },
+    }
+}
+```
+
+Here `ctx_at` owns a `tree_at`, and `tree_at` never owns a `ctx_at`; two
+definitions that own each other are still rejected as a composite resource
+cycle. `Context::Top => {}` shows that an arm may own nothing at all, and
+`fold(ctx_at(node), { model: Context::Top }, {})` constructs it.
+
+An arm need not own only cells of the resource's own parameters. The frame
+below is keyed by the focused child and owns the cells of the `parent` the
+constructor carries, including the sibling subtree reached through it:
+
+<!-- verified-example: mdtests/resource_arm_binding_struct_base.md -->
+```click
+resource ctx_at(child: struct tree_node*) {
+    field model: Context;
+    match model {
+        Context::Top => {},
+        Context::Left(parent, value, sibling_model, up_model) => {
+            owns parent->value;
+            owns parent->left;
+            owns parent->right;
+            owns sibling: tree_at(parent->right);
+            owns up: ctx_at(parent);
+            fact parent != 0;
+            fact parent->left == child;
+            fact parent->value == value;
+            fact sibling.model == sibling_model;
+            fact up.model == up_model;
+        },
+    }
+}
+```
+
+`Context::Left`'s first field is declared `struct tree_node*`, so `parent`
+carries that layout for the arm. After `unfold(ctx) as { sibling: s, up: u }`
+the arm's facts hold of the exposed cells, so `fact parent->left == child`
+is what lets a proof read the focused node back out of the frame.
+
+Equations for all child fields must bind them to immediate constructor fields
+of the matching types. In particular, a child of the parent's own family
+strictly descends to a proper submodel.
 Child arguments may be read-only C expressions, including stored pointer
 fields such as `p->left`. Loads must be readable from the immediate body's
 owned memory, not from a still-folded child or unrelated ambient ownership.
 Fold checks this memory before interpreting the child arguments. Expression
 safety and path premises must be proved; argument evaluation does not split
 the proof into cases. See `mdtests/resource_tree_node_init.md`.
-Mixed resource families, witnesses, nested resource matches/guards, arbitrary
-match scrutinees, and passing child paths as contract arguments remain
-unsupported. No operation automatically unfolds an entire recursive structure.
+Memory and token families in a child slot, witnesses, nested resource
+matches/guards, arbitrary match scrutinees, and passing child paths as
+contract arguments remain unsupported. No operation automatically unfolds an entire recursive structure.
 
 A declaration alone grants no ownership, and binding an instance does not
 implicitly expose its memory body.
@@ -1214,6 +1347,18 @@ symbolic pointer constrained by the `where` fact, and the program's own cast
 binds it to the recorded origin of the word the `where` fact relates it to, so
 after `node->word = (unsigned long)tail;` the witness is `tail`. A word with no
 recorded origin cannot fold, and the diagnostic names the missing body fact.
+
+A resource parameter serves the same purpose when the packed pointer is already
+named by the caller. `rb_at(p, parent)` in `mdtests/rb_at_link_helpers.md` takes
+the parent as its second parameter and states
+`fact p->__rb_parent_color == address(parent) + (p->__rb_parent_color & 1);`,
+so `rb_parent`'s `(struct rb_node *)(r->__rb_parent_color & ~3)` recovers that
+parameter with its provenance. Keep the tag in the stated form
+`(p->__rb_parent_color & 1)` rather than an opaque pure-function application:
+clearing tag bits needs the tag proven below 4, and a function such as
+`color_bit(color)` is opaque until it is unfolded at a concrete constructor. A
+second fact `(p->__rb_parent_color & 1) == color_bit(color)` then ties the bit
+to the model.
 
 There is no `else`: when the guard is false, the body is empty. The guard must
 be load-free, because it decides which memory resource facts exist and therefore
@@ -1381,12 +1526,30 @@ let node = step(init(p, left, right, value), { l: a, r: b });
 
 The introduced name is an ordinary owned instance afterwards: it can be folded
 into a parent as a child, or returned by the caller's own `produces` clause.
-A `produces` binder that no `let` introduces is an error, and so is a `let` on
-a call that produces nothing. A callee that produces more than one instance is
-not yet callable this way. The callee's binder names come from its own
-sidecar, so that sidecar must be declared before the proof that calls it.
-A named contract takes its instances positionally instead, as
-`step(Exact(k))`, because it declares a parameter list.
+A `produces` binder that no `let` introduces is an error. A callee that
+produces more than one instance is not yet callable this way.
+
+On a callee that declares no `produces` binder, the same `let` names the
+call's scalar result:
+
+<!-- verified-example: mdtests/call_result_in_condition.md -->
+```click
+let r = step(classify(x), { });
+```
+
+This is how a proof refers to a result the C never stores, as in
+`if (f(x))` and `return f(x);`, where the branch fact and the callee's
+guarantee are otherwise about a value with no name. The bound name is an
+ordinary value in propositions and keeps denoting that returned value after
+later statements; `result` on a `return f(x);` path is that same value. A
+`let` on a call whose result the C discards is an error, and so is a name that
+is already a C local or a proof-local binding. The map is still written, as
+`{ }` when the callee declares no instance binder at all.
+
+The callee's binder names come from its own sidecar, so that sidecar must be
+declared before the proof that calls it. A named contract takes its instances
+positionally instead, as `step(Exact(k))`, because it declares a parameter
+list.
 
 ## Propositions
 

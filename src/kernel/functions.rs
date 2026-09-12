@@ -150,6 +150,64 @@ mod pointee_const_return_tests {
     }
 }
 use std::collections::VecDeque;
+
+// Resource-clause evaluation reports the exact checked resource that a
+// failed expression tried to read.  The section worklist below captures that
+// fact while each clause runs, allowing only clauses that depend on a newly
+// supplied fact to be retried.
+thread_local! {
+    static RESOURCE_DEPENDENCY_CAPTURE: std::cell::RefCell<Option<Vec<CResourceFact>>> =
+        const { std::cell::RefCell::new(None) };
+    #[cfg(test)]
+    static RESOURCE_CLAUSE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn record_resource_dependency(resource: CResourceFact) {
+    RESOURCE_DEPENDENCY_CAPTURE.with(|capture| {
+        let mut captured = capture.borrow_mut();
+        let Some(dependencies) = captured.as_mut() else {
+            return;
+        };
+        if !dependencies.contains(&resource) {
+            dependencies.push(resource);
+        }
+    });
+}
+
+fn capture_resource_dependencies<T>(operation: impl FnOnce() -> T) -> (T, Vec<CResourceFact>) {
+    RESOURCE_DEPENDENCY_CAPTURE.with(|capture| {
+        let previous = capture.replace(Some(Vec::new()));
+        let result = operation();
+        let captured = capture.replace(previous).unwrap_or_default();
+        // Resource expression evaluation can call another checked contract
+        // boundary.  Preserve nested missing-resource observations in the
+        // enclosing clause's capture instead of dropping them when the inner
+        // capture is restored.
+        if let Some(active) = capture.borrow_mut().as_mut() {
+            for dependency in &captured {
+                if !active.contains(dependency) {
+                    active.push(dependency.clone());
+                }
+            }
+        }
+        (result, captured)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn measure_resource_clause_attempts<T>(operation: impl FnOnce() -> T) -> (T, usize) {
+    RESOURCE_CLAUSE_ATTEMPTS.with(|attempts| {
+        let previous = attempts.replace(0);
+        let result = operation();
+        let measured = attempts.replace(previous);
+        (result, measured)
+    })
+}
+
+#[cfg(test)]
+fn record_resource_clause_attempt() {
+    RESOURCE_CLAUSE_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
+}
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CFunctionResourceTransfer {
     callee_resources: ResourceContext,
@@ -1638,6 +1696,130 @@ struct PreparedVerifiedFunctionCall<'a> {
     bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
 }
 
+/// Finds the exact source snapshot carried by a lowered pure requirement.
+/// This is deliberately narrower than the general recursive variable walker:
+/// only the logical/condition/bitvector shapes admitted by the source-backed
+/// classifier are visited, with the same finite structural budget.
+fn source_load_snapshot_for_proposition(
+    proposition: &Proposition,
+) -> ExecutionResult<Option<CMemorySnapshotIdentity>> {
+    const MAX_NODES: usize = 4096;
+    enum Work<'a> {
+        Proposition(&'a Proposition),
+        Condition(&'a ConditionTerm),
+        Bitvector(&'a Bitvector32Term),
+    }
+    let mut work = vec![Work::Proposition(proposition)];
+    let mut visited = 0usize;
+    let mut snapshot = None;
+    while let Some(item) = work.pop() {
+        visited = visited.saturating_add(1);
+        crate::instrumentation::record_deterministic_work(1);
+        if visited > MAX_NODES {
+            return Err(ExecutionLimit::ExpressionSteps);
+        }
+        if crate::kernel::assumptions::reasoning_interrupted() {
+            return Err(ExecutionLimit::Deadline);
+        }
+        match item {
+            Work::Proposition(Proposition::ConditionIs(condition, _)) => {
+                work.push(Work::Condition(condition));
+            }
+            Work::Proposition(Proposition::And(left, right))
+            | Work::Proposition(Proposition::Or(left, right))
+            | Work::Proposition(Proposition::Implies(left, right)) => {
+                work.push(Work::Proposition(right));
+                work.push(Work::Proposition(left));
+            }
+            Work::Proposition(Proposition::Not(body))
+            | Work::Proposition(Proposition::ForAll { body, .. })
+            | Work::Proposition(Proposition::Exists { body, .. }) => {
+                work.push(Work::Proposition(body));
+            }
+            Work::Proposition(_) => return Ok(None),
+            Work::Condition(
+                ConditionTerm::Bitvector32SignedLessThan(left, right)
+                | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector32Equal(left, right)
+                | ConditionTerm::Bitvector64SignedLessThan(left, right)
+                | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+                | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+                | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+                | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector64Equal(left, right)
+                | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right),
+            ) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
+            }
+            Work::Condition(ConditionTerm::Constant(_))
+            | Work::Condition(ConditionTerm::Variable(_)) => {}
+            Work::Condition(_) => return Ok(None),
+            Work::Bitvector(Bitvector32Term::Constant(_))
+            | Work::Bitvector(Bitvector32Term::Int64Constant(_))
+            | Work::Bitvector(Bitvector32Term::UInt64Constant(_)) => {}
+            Work::Bitvector(Bitvector32Term::Variable(variable)) => {
+                if crate::kernel::is_load_variable(variable) {
+                    let Some((origin, _)) =
+                        crate::kernel::registered_load_origin_for_variable(variable)
+                    else {
+                        return Ok(None);
+                    };
+                    let identity = CMemorySnapshotIdentity::of(origin.memory());
+                    if snapshot.is_some_and(|known| known != identity) {
+                        return Ok(None);
+                    }
+                    snapshot = Some(identity);
+                }
+            }
+            Work::Bitvector(Bitvector32Term::MemoryLoad(memory, _)) => {
+                let identity = CMemorySnapshotIdentity::of(memory.memory());
+                if snapshot.is_some_and(|known| known != identity) {
+                    return Ok(None);
+                }
+                snapshot = Some(identity);
+            }
+            Work::Bitvector(
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::Multiply(left, right)
+                | Bitvector32Term::Divide(left, right)
+                | Bitvector32Term::UnsignedDivide(left, right)
+                | Bitvector32Term::Remainder(left, right)
+                | Bitvector32Term::UnsignedRemainder(left, right)
+                | Bitvector32Term::ShiftLeft(left, right)
+                | Bitvector32Term::ArithmeticShiftRight(left, right)
+                | Bitvector32Term::LogicalShiftRight(left, right)
+                | Bitvector32Term::BitwiseAnd(left, right)
+                | Bitvector32Term::BitwiseOr(left, right)
+                | Bitvector32Term::BitwiseXor(left, right),
+            ) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
+            }
+            Work::Bitvector(Bitvector32Term::BitwiseNot(body)) => {
+                work.push(Work::Bitvector(body));
+            }
+            Work::Bitvector(_) => return Ok(None),
+        }
+    }
+    Ok(snapshot)
+}
+
 fn prepare_verified_function_call<'a>(
     caller_state: &CState,
     application: CFunctionContractApplication<'a>,
@@ -1770,6 +1952,7 @@ fn prepare_verified_function_call<'a>(
             .clone()
             .allow_symbolic_contract_loads();
         let mut requirement_source: Option<std::sync::Arc<CallRequirementSource>> = None;
+        let source_load_snapshot = std::cell::Cell::new(None);
         let mut source_for_requirement = || {
             if let Some(source) = &requirement_source {
                 return source.clone();
@@ -1800,6 +1983,7 @@ fn prepare_verified_function_call<'a>(
                         source_requirement_ordinal.is_some()
                             && spec_proposition_is_state_independent(requirement)
                     }),
+                source_load_snapshot.get(),
             ));
             requirement_source = Some(source.clone());
             source
@@ -1811,6 +1995,23 @@ fn prepare_verified_function_call<'a>(
             &lowering_assumptions,
             budget,
         )?;
+        let mut load_snapshot = None;
+        let mut load_snapshot_consistent = true;
+        for requirement_path in &requirement_paths {
+            let Some(identity) =
+                source_load_snapshot_for_proposition(&requirement_path.proposition)?
+            else {
+                continue;
+            };
+            if load_snapshot.is_some_and(|known| known != identity) {
+                load_snapshot_consistent = false;
+            } else {
+                load_snapshot = Some(identity);
+            }
+        }
+        if load_snapshot_consistent {
+            source_load_snapshot.set(load_snapshot);
+        }
         if requirement_paths.is_empty() {
             obligations.push(
                 ProofObligation::verification_condition(false_equals_true_proposition())
@@ -2836,7 +3037,7 @@ fn forced_refinement_instance_bindings(
     Ok(Some(bindings))
 }
 
-fn arbitrary_resource_instance_fields(
+pub(super) fn arbitrary_resource_instance_fields(
     schema: &ResourceFieldSchema,
     budget: &mut ExecutionBudget,
 ) -> ResourceArguments {
@@ -9793,16 +9994,37 @@ pub(crate) fn rewrite_resource_instance(
         state,
         instance,
         definition,
+        std::slice::from_ref(definition),
         assumptions,
         unfold,
         None,
     )
 }
 
+/// The composite definition a matched arm's child names. A child of the
+/// parent's own family resolves to the definition already in hand; any other
+/// declared resource is looked up in the registered definitions, so the
+/// child's own parameters and fields decide what the rewrite checks.
+pub(in crate::kernel) fn child_composite_definition<'a>(
+    definition: &'a CCompositeResourceDefinition,
+    definitions: &'a [CCompositeResourceDefinition],
+    child: &CResourceChildSpec,
+) -> Result<&'a CCompositeResourceDefinition, &'static str> {
+    if child.resource == definition.name() {
+        return Ok(definition);
+    }
+    definitions
+        .binary_search_by(|candidate| candidate.name().cmp(&child.resource))
+        .ok()
+        .map(|index| &definitions[index])
+        .ok_or("resource match child has no registered definition")
+}
+
 pub(crate) fn rewrite_resource_instance_selecting_children(
     state: &CState,
     instance: &ResourceInstance,
     definition: &CCompositeResourceDefinition,
+    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
     unfold: bool,
     selected_children: Option<&[(String, Variable)]>,
@@ -9844,7 +10066,8 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut integer_bindings = BTreeMap::new();
     let mut constructor_fields = Vec::new();
     let selected = if definition.matched.is_some() {
-        let (arm, constructor) = selected_instance_match_arm(instance, definition, assumptions)?;
+        let (arm, constructor) =
+            selected_instance_match_arm(instance, definition, definitions, assumptions)?;
         let AlgebraicTermNode::Constructor { fields, .. } = constructor.node else {
             unreachable!()
         };
@@ -9951,10 +10174,21 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     for child in selected.into_iter().flat_map(|arm| &arm.children) {
         crate::instrumentation::record_deterministic_work(1);
+        // The child's own definition supplies the parameter types its
+        // arguments are coerced to and the schema its fields must satisfy.
+        let child_definition = child_composite_definition(definition, definitions, child)?;
+        let child_schema = if child_definition.name() == definition.name() {
+            instance.schema.clone()
+        } else {
+            child_definition
+                .instance_schema
+                .clone()
+                .ok_or("resource match child requires a field-bearing definition")?
+        };
         let arguments = child
             .arguments
             .iter()
-            .zip(&definition.parameters)
+            .zip(&child_definition.parameters)
             .map(|(argument, parameter)| {
                 let paths = evaluate_c_expression_paths(
                     &child_evaluation,
@@ -10011,17 +10245,17 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         }
         let mut child_instance = ResourceInstance::new(
             identity,
-            instance.name.clone(),
+            child_definition.name().to_string(),
             arguments,
-            instance.schema.clone(),
+            child_schema,
             fields,
         )
         .ok_or("recursive child fields or arguments have invalid types")?;
-        if child_instance.arguments.len() != definition.parameters.len()
+        if child_instance.arguments.len() != child_definition.parameters.len()
             || child_instance
                 .arguments
                 .iter()
-                .zip(&definition.parameters)
+                .zip(&child_definition.parameters)
                 .any(|(argument, parameter)| {
                     argument
                         .as_c_value()
@@ -10178,6 +10412,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(
     instance: &ResourceInstance,
     definition: &'a CCompositeResourceDefinition,
+    definitions: &'a [CCompositeResourceDefinition],
     assumptions: &PureFactContext,
 ) -> Result<(&'a CResourceMatchArm, AlgebraicTerm), &'static str> {
     let body = definition
@@ -10255,19 +10490,30 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
         let mut child_names = BTreeSet::new();
         let mut child_bindings = BTreeSet::new();
         for child in &arm.children {
+            // A child is checked against its own definition, which is the
+            // parent's for a directly recursive child and another declared
+            // resource otherwise.
+            let child_definition = child_composite_definition(definition, definitions, child)?;
+            let child_schema = if child_definition.name() == definition.name() {
+                instance.schema()
+            } else {
+                child_definition
+                    .instance_schema
+                    .as_ref()
+                    .ok_or("resource match child requires a field-bearing definition")?
+            };
             if child.name.is_empty()
                 || reserved.contains(child.name.as_str())
                 || names.contains(&child.name)
                 || !child_names.insert(&child.name)
                 || child.binding == Variable(u64::MAX)
                 || !child_bindings.insert(child.binding)
-                || child.arguments.len() != definition.parameters.len()
-                || child.field_bindings.len() != instance.schema.fields().len()
+                || child.arguments.len() != child_definition.parameters.len()
+                || child.field_bindings.len() != child_schema.fields().len()
             {
                 return Err("invalid recursive child schema");
             }
-            for ((_, field_type), index) in
-                instance.schema.fields().iter().zip(&child.field_bindings)
+            for ((_, field_type), index) in child_schema.fields().iter().zip(&child.field_bindings)
             {
                 let expected = match field_type {
                     ResourceFieldType::Integer => AlgebraicValueType::Integer,
@@ -10280,12 +10526,15 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
                     );
                 }
             }
-            // In particular, the parent's matched field is bound to a field
-            // of this constructor, never to the whole parent model.
-            if arm
-                .binding_types
-                .get(child.field_bindings[body.field_index])
-                != Some(&body.algebraic_type.value_type())
+            // In particular, a same-family child's model is bound to a field
+            // of this constructor, never to the whole parent model. A child of
+            // another family has no such field; its own matched field is
+            // already checked above, against its own declared type.
+            if child_definition.name() == definition.name()
+                && arm
+                    .binding_types
+                    .get(child.field_bindings[body.field_index])
+                    != Some(&body.algebraic_type.value_type())
             {
                 return Err("recursive child model must be a proper submodel");
             }
@@ -11830,7 +12079,7 @@ pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
         && resource_context_definitionally_contains(right, left, definitions, memory, assumptions)
 }
 
-pub(super) fn evaluate_function_resource_context(
+pub(crate) fn evaluate_function_resource_context(
     state: &CState,
     resources: &[CResourceSpec],
     definitions: &[CCompositeResourceDefinition],
@@ -11887,13 +12136,11 @@ fn evaluate_function_resource_context_with_normalization(
 ///
 /// A base load in one clause may read a cell any other clause of the same
 /// section owns or views, including a cell inside a folded composite, exactly
-/// as a `requires` clause may. The first pass walks the clauses in order with
-/// the incremental authority each one adds, so a section that already
-/// evaluated in order costs precisely what it did before and produces the
-/// identical context. Only when that pass leaves clauses unevaluated is the
-/// evaluated part expanded through its composite definitions, exposing the
-/// cells a folded composite holds as read authority, and the remaining clauses
-/// retried against it.
+/// as a `requires` clause may. The first pass walks the clauses in source
+/// order. If it leaves clauses unevaluated, the successful portion is expanded
+/// once and the missing-resource edges recorded by each failed clause drive an
+/// indexed event queue. A newly supplied memory fact therefore wakes only its
+/// dependent clauses; no fixed-point round rescans all pending clauses.
 ///
 /// Each clause contributes its resource exactly once: a clause that evaluates
 /// is never revisited, and the caller composes the results once, in source
@@ -11912,8 +12159,9 @@ fn evaluate_resource_clauses_against_whole_section(
 ) -> ExecutionResult<Result<Vec<CResourceFact>, CRuntimeError>> {
     let mut evaluated: Vec<Option<CResourceFact>> = vec![None; resources.len()];
     let mut supplied: Vec<CResourceFact> = Vec::new();
-    let mut pending: Vec<usize> = Vec::new();
-    let mut failures: BTreeMap<usize, CRuntimeError> = BTreeMap::new();
+    let mut failures: Vec<Option<CRuntimeError>> = vec![None; resources.len()];
+    let mut dependencies: Vec<Vec<CResourceFact>> = vec![Vec::new(); resources.len()];
+    let mut waiters = ResourceClauseWaiterIndex::default();
     for (index, resource) in resources.iter().enumerate() {
         let evaluation_state = state.clone().with_resource_context(
             state
@@ -11921,74 +12169,817 @@ fn evaluate_resource_clauses_against_whole_section(
                 .clone()
                 .unchecked_with_facts(supplied.iter().cloned()),
         );
-        match evaluate_function_resource_spec(&evaluation_state, resource, assumptions, budget)? {
+        let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            &evaluation_state,
+            resource,
+            assumptions,
+            budget,
+        )?;
+        match outcome {
             Ok(resource) => {
                 supplied.push(resource.clone());
                 evaluated[index] = Some(resource);
             }
             Err(error) => {
-                failures.insert(index, error);
-                pending.push(index);
+                failures[index] = Some(error);
+                resource_clause_register_waiters(index, missing, &mut dependencies, &mut waiters);
             }
         }
     }
-    while !pending.is_empty() {
-        let evaluation_state = state
-            .clone()
-            .with_resource_context(resource_clause_section_supply(
-                state,
-                &supplied,
-                definitions,
-                assumptions,
-            ));
-        let mut progressed = false;
-        let mut still_pending = Vec::new();
-        for index in pending {
-            match evaluate_function_resource_spec(
-                &evaluation_state,
-                &resources[index],
-                assumptions,
-                budget,
-            )? {
-                Ok(resource) => {
-                    supplied.push(resource.clone());
-                    evaluated[index] = Some(resource);
-                    failures.remove(&index);
-                    progressed = true;
-                }
-                Err(error) => {
-                    failures.insert(index, error);
-                    still_pending.push(index);
+    let mut section_supply =
+        resource_clause_section_supply(state, &supplied, definitions, assumptions);
+    let mut pending = VecDeque::new();
+    let mut queued = vec![false; resources.len()];
+    for index in 0..resources.len() {
+        if evaluated[index].is_none()
+            && dependencies[index]
+                .iter()
+                .any(|dependency| section_supply.satisfies_fact(dependency, assumptions))
+        {
+            queued[index] = true;
+            pending.push_back(index);
+        }
+    }
+    while let Some(index) = pending.pop_front() {
+        queued[index] = false;
+        if evaluated[index].is_some() {
+            continue;
+        }
+        resource_clause_unregister_waiters(index, &mut dependencies, &mut waiters);
+        let evaluation_state = state.clone().with_resource_context(section_supply.clone());
+        let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            &evaluation_state,
+            &resources[index],
+            assumptions,
+            budget,
+        )?;
+        match outcome {
+            Ok(resource) => {
+                let (next_supply, newly_supplied) = resource_clause_supply_with_fact(
+                    section_supply,
+                    resource.clone(),
+                    definitions,
+                    state.memory(),
+                    assumptions,
+                );
+                section_supply = next_supply;
+                supplied.push(resource.clone());
+                evaluated[index] = Some(resource);
+                failures[index] = None;
+                for fact in newly_supplied {
+                    resource_clause_enqueue_waiters(
+                        &fact,
+                        assumptions,
+                        &section_supply,
+                        &evaluated,
+                        &mut queued,
+                        &mut pending,
+                        &dependencies,
+                        &waiters,
+                    );
                 }
             }
-        }
-        pending = still_pending;
-        if !progressed {
-            break;
+            Err(error) => {
+                failures[index] = Some(error);
+                resource_clause_register_waiters(index, missing, &mut dependencies, &mut waiters);
+            }
         }
     }
     // A clause refused for its own shape is reported at its own position: no
     // other clause's authority was ever going to repair it, so naming a pair
     // would send the user to a clause that is fine.
-    let refused = pending.iter().copied().find(|index| {
-        failures
-            .get(index)
-            .is_none_or(|error| !resource_clause_failure_awaits_supply(error))
-    });
-    if let Some(index) = refused.or_else(|| pending.first().copied()) {
-        let error = failures
-            .remove(&index)
+    let unresolved = evaluated
+        .iter()
+        .enumerate()
+        .filter_map(|(index, resource)| resource.is_none().then_some(index))
+        .collect::<Vec<_>>();
+    let refused = unresolved
+        .iter()
+        .copied()
+        .filter(|index| {
+            let error = failures[*index].as_ref();
+            let awaits = !dependencies[*index].is_empty()
+                || error.is_some_and(resource_clause_failure_awaits_supply);
+            !awaits
+        })
+        .min_by_key(|index| resource_clause_position(resources, *index));
+    if let Some(index) = refused.or_else(|| {
+        unresolved
+            .iter()
+            .copied()
+            .min_by_key(|index| resource_clause_position(resources, *index))
+    }) {
+        let error = failures[index]
+            .take()
             .unwrap_or_else(|| CRuntimeError::FunctionContract("unevaluated".to_string()));
         let cycle = refused
             .is_none()
-            .then(|| pending.iter().copied().find(|other| *other != index))
+            .then(|| {
+                let source_index = resource_clause_position(resources, index).0;
+                unresolved
+                    .iter()
+                    .copied()
+                    .filter(|other| {
+                        *other != index
+                            && resource_clause_position(resources, *other).0 != source_index
+                    })
+                    .min_by_key(|other| resource_clause_position(resources, *other))
+                    .map(|other| (index, other))
+            })
             .flatten();
         return Ok(Err(match cycle {
-            Some(other) => resource_clause_cycle_runtime_error(error, index, other),
-            None => resource_clause_runtime_error(error, index, resources.len()),
+            Some((index, other)) => {
+                resource_clause_cycle_runtime_error(error, index, other, resources)
+            }
+            None => resource_clause_runtime_error(error, index, resources),
         }));
     }
     Ok(Ok(evaluated.into_iter().flatten().collect()))
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ResourceClauseDependencyKey {
+    Fact(CResourceFact),
+    MemoryBase(Pointer),
+    MemoryBlock(PointerBlock),
+}
+
+/// A sparse segment-tree coordinate space for a concrete memory block.
+///
+/// The range bounds are normalized to the block's physical byte coordinate,
+/// using the pointer base's proven constant byte offset and checked element
+/// widths.  Keeping the base out of the key is what lets a clause based at
+/// `p + 2` wake a clause based at `p`, while refusing to compare symbolic
+/// pointer offsets.  A non-concrete base or bound uses the bounded block/base
+/// fallback below instead.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ResourceClauseIntervalSpace {
+    block: PointerBlock,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ResourceClauseIntervalNode {
+    space: ResourceClauseIntervalSpace,
+    /// `level` is the base-2 logarithm of the node's byte span.  The root
+    /// is level 32 and the leaves are level 0; no node represents individual
+    /// cells outside this fixed-depth index.
+    level: u8,
+    start: u32,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ResourceClauseIntervalWaiter {
+    clause: usize,
+    dependency: usize,
+}
+
+#[derive(Default)]
+struct ResourceClauseIntervalIndex {
+    exact: BTreeMap<ResourceClauseIntervalNode, BTreeSet<ResourceClauseIntervalWaiter>>,
+    /// Subtree aggregates are used only when a query fully covers a node.
+    /// Partial queries follow their two boundary paths, so a tiny supplied
+    /// range never reads the root aggregate and never wakes every waiter in a
+    /// block.  Each update touches at most 33 ancestors per canonical range
+    /// node, independent of the number of memory cells in that range.
+    subtree: BTreeMap<ResourceClauseIntervalNode, BTreeSet<ResourceClauseIntervalWaiter>>,
+}
+
+#[derive(Default)]
+struct ResourceClauseWaiterIndex {
+    coarse: BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+    /// Concrete waiters also have a block-local fallback entry.  It is used
+    /// only when the *supplied* memory fact cannot be normalized to a
+    /// concrete interval: a symbolic event has no interval key to query, but
+    /// its explicit block is still a sound conservative candidate boundary.
+    /// Store the dependency index as well as the clause so register/remove
+    /// stay symmetric when one clause waits on multiple ranges in a block.
+    concrete_block_fallback: BTreeMap<PointerBlock, BTreeSet<ResourceClauseIntervalWaiter>>,
+    intervals: ResourceClauseIntervalIndex,
+}
+
+/// Returns a concrete, block-relative byte interval when the base and both
+/// bounds have a checked signed integer interpretation.  The interval index
+/// is deliberately conservative: ranges that cannot be normalized into the
+/// fixed 32-bit coordinate universe remain on the symbolic block/base path.
+fn resource_clause_concrete_memory_interval(
+    range: &CMemoryRange,
+) -> Option<(ResourceClauseIntervalSpace, i64, i64)> {
+    let base_offset = range.base().offset.as_const()?;
+    let start_elements = signed_bitvector_constant(range.start())?;
+    let end_elements = signed_bitvector_constant(range.end())?;
+    if start_elements >= end_elements {
+        return None;
+    }
+    let element_width = i64::from(range.element_width());
+    let start = base_offset.checked_add(start_elements.checked_mul(element_width)?)?;
+    let byte_count = end_elements
+        .checked_sub(start_elements)?
+        .checked_mul(element_width)?;
+    let end = start.checked_add(byte_count)?;
+    if !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&start)
+        || !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&end)
+    {
+        return None;
+    }
+    Some((
+        ResourceClauseIntervalSpace {
+            block: range.base().block.clone(),
+        },
+        start,
+        end,
+    ))
+}
+
+fn resource_clause_biased_coordinate(value: i64) -> Option<u64> {
+    (i64::from(i32::MIN)..=i64::from(i32::MAX))
+        .contains(&value)
+        .then_some((value - i64::from(i32::MIN)) as u64)
+}
+
+fn resource_clause_interval_node_start(coordinate: u64, level: u8) -> u32 {
+    if level >= 32 {
+        0
+    } else {
+        ((coordinate >> level) << level) as u32
+    }
+}
+
+fn resource_clause_interval_node(
+    space: &ResourceClauseIntervalSpace,
+    level: u8,
+    start: u32,
+) -> ResourceClauseIntervalNode {
+    ResourceClauseIntervalNode {
+        space: space.clone(),
+        level,
+        start,
+    }
+}
+
+/// Canonical segment-tree decomposition of `[start, end)`.  A range is
+/// represented by O(32) aligned nodes, rather than by its cells.
+fn resource_clause_interval_nodes(
+    space: &ResourceClauseIntervalSpace,
+    start: i64,
+    end: i64,
+) -> Option<Vec<ResourceClauseIntervalNode>> {
+    let mut start = resource_clause_biased_coordinate(start)?;
+    let end = resource_clause_biased_coordinate(end)?;
+    if start >= end {
+        return None;
+    }
+    let mut nodes = Vec::new();
+    while start < end {
+        let alignment = if start == 0 {
+            32
+        } else {
+            start.trailing_zeros().min(32)
+        };
+        let remaining = end - start;
+        let magnitude = 63 - remaining.leading_zeros();
+        let level = alignment.min(magnitude).min(32) as u8;
+        let node_start = resource_clause_interval_node_start(start, level);
+        nodes.push(resource_clause_interval_node(space, level, node_start));
+        start += 1u64 << level;
+    }
+    Some(nodes)
+}
+
+fn resource_clause_interval_node_ancestors(
+    node: &ResourceClauseIntervalNode,
+) -> Vec<ResourceClauseIntervalNode> {
+    (node.level..=32)
+        .map(|level| {
+            resource_clause_interval_node(
+                &node.space,
+                level,
+                resource_clause_interval_node_start(u64::from(node.start), level),
+            )
+        })
+        .collect()
+}
+
+fn resource_clause_interval_node_bounds(node: &ResourceClauseIntervalNode) -> (u64, u64) {
+    let start = u64::from(node.start);
+    (start, start + (1u64 << node.level))
+}
+
+impl ResourceClauseIntervalIndex {
+    fn insert(
+        &mut self,
+        waiter: ResourceClauseIntervalWaiter,
+        space: &ResourceClauseIntervalSpace,
+        start: i64,
+        end: i64,
+    ) {
+        let Some(nodes) = resource_clause_interval_nodes(space, start, end) else {
+            return;
+        };
+        for node in nodes {
+            self.exact
+                .entry(node.clone())
+                .or_default()
+                .insert(waiter.clone());
+            for ancestor in resource_clause_interval_node_ancestors(&node) {
+                self.subtree
+                    .entry(ancestor)
+                    .or_default()
+                    .insert(waiter.clone());
+            }
+        }
+    }
+
+    fn remove(
+        &mut self,
+        waiter: &ResourceClauseIntervalWaiter,
+        space: &ResourceClauseIntervalSpace,
+        start: i64,
+        end: i64,
+    ) {
+        let Some(nodes) = resource_clause_interval_nodes(space, start, end) else {
+            return;
+        };
+        for node in nodes {
+            let remove_exact = self.exact.get_mut(&node).is_some_and(|waiters| {
+                waiters.remove(waiter);
+                waiters.is_empty()
+            });
+            if remove_exact {
+                self.exact.remove(&node);
+            }
+            for ancestor in resource_clause_interval_node_ancestors(&node) {
+                let remove_subtree = self.subtree.get_mut(&ancestor).is_some_and(|waiters| {
+                    waiters.remove(waiter);
+                    waiters.is_empty()
+                });
+                if remove_subtree {
+                    self.subtree.remove(&ancestor);
+                }
+            }
+        }
+    }
+
+    fn add_candidates(
+        waiters: &BTreeSet<ResourceClauseIntervalWaiter>,
+        candidates: &mut BTreeSet<usize>,
+    ) {
+        candidates.extend(waiters.iter().map(|waiter| waiter.clause));
+    }
+
+    fn query_node(
+        &self,
+        node: &ResourceClauseIntervalNode,
+        query_start: u64,
+        query_end: u64,
+        candidates: &mut BTreeSet<usize>,
+    ) {
+        let (node_start, node_end) = resource_clause_interval_node_bounds(node);
+        if node_end <= query_start || query_end <= node_start {
+            return;
+        }
+        if let Some(waiters) = self.exact.get(node) {
+            Self::add_candidates(waiters, candidates);
+        }
+        if query_start <= node_start && node_end <= query_end {
+            if let Some(waiters) = self.subtree.get(node) {
+                Self::add_candidates(waiters, candidates);
+            }
+            return;
+        }
+        if node.level == 0 {
+            return;
+        }
+        let child_level = node.level - 1;
+        let left = resource_clause_interval_node(&node.space, child_level, node.start);
+        let right_start = (u64::from(node.start) + (1u64 << child_level)) as u32;
+        let right = resource_clause_interval_node(&node.space, child_level, right_start);
+        self.query_node(&left, query_start, query_end, candidates);
+        self.query_node(&right, query_start, query_end, candidates);
+    }
+
+    fn candidates_for_fact(&self, fact: &CResourceFact) -> BTreeSet<usize> {
+        let mut candidates = BTreeSet::new();
+        let Some(range) = fact.memory_range() else {
+            return candidates;
+        };
+        let Some((space, start, end)) = resource_clause_concrete_memory_interval(range) else {
+            return candidates;
+        };
+        let Some(query_start) = resource_clause_biased_coordinate(start) else {
+            return candidates;
+        };
+        let Some(query_end) = resource_clause_biased_coordinate(end) else {
+            return candidates;
+        };
+        let root = resource_clause_interval_node(&space, 32, 0);
+        self.query_node(&root, query_start, query_end, &mut candidates);
+        candidates
+    }
+}
+
+fn resource_clause_coarse_keys(fact: &CResourceFact) -> Vec<ResourceClauseDependencyKey> {
+    let mut keys = vec![ResourceClauseDependencyKey::Fact(fact.clone())];
+    if let Some(range) = fact.memory_range() {
+        keys.push(ResourceClauseDependencyKey::MemoryBase(
+            range.base().clone(),
+        ));
+        keys.push(ResourceClauseDependencyKey::MemoryBlock(
+            range.base().block.clone(),
+        ));
+    }
+    keys
+}
+
+impl ResourceClauseWaiterIndex {
+    fn register(&mut self, clause: usize, dependencies: &[CResourceFact]) {
+        for (dependency_index, dependency) in dependencies.iter().enumerate() {
+            if let Some((space, start, end)) = dependency
+                .memory_range()
+                .and_then(resource_clause_concrete_memory_interval)
+            {
+                let waiter = ResourceClauseIntervalWaiter {
+                    clause,
+                    dependency: dependency_index,
+                };
+                self.coarse
+                    .entry(ResourceClauseDependencyKey::Fact(dependency.clone()))
+                    .or_default()
+                    .insert(clause);
+                self.concrete_block_fallback
+                    .entry(space.block.clone())
+                    .or_default()
+                    .insert(waiter.clone());
+                self.intervals.insert(waiter, &space, start, end);
+            } else {
+                for key in resource_clause_coarse_keys(dependency) {
+                    self.coarse.entry(key).or_default().insert(clause);
+                }
+            }
+        }
+    }
+
+    fn unregister(&mut self, clause: usize, dependencies: &[CResourceFact]) {
+        for (dependency_index, dependency) in dependencies.iter().enumerate() {
+            if let Some((space, start, end)) = dependency
+                .memory_range()
+                .and_then(resource_clause_concrete_memory_interval)
+            {
+                let waiter = ResourceClauseIntervalWaiter {
+                    clause,
+                    dependency: dependency_index,
+                };
+                let key = ResourceClauseDependencyKey::Fact(dependency.clone());
+                let remove_key = self.coarse.get_mut(&key).is_some_and(|clauses| {
+                    clauses.remove(&clause);
+                    clauses.is_empty()
+                });
+                if remove_key {
+                    self.coarse.remove(&key);
+                }
+                let remove_block = self
+                    .concrete_block_fallback
+                    .get_mut(&space.block)
+                    .is_some_and(|waiters| {
+                        waiters.remove(&waiter);
+                        waiters.is_empty()
+                    });
+                if remove_block {
+                    self.concrete_block_fallback.remove(&space.block);
+                }
+                self.intervals.remove(&waiter, &space, start, end);
+            } else {
+                for key in resource_clause_coarse_keys(dependency) {
+                    let remove_key = self.coarse.get_mut(&key).is_some_and(|clauses| {
+                        clauses.remove(&clause);
+                        clauses.is_empty()
+                    });
+                    if remove_key {
+                        self.coarse.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+
+    fn candidates_for_supplied(&self, supplied: &CResourceFact) -> BTreeSet<usize> {
+        let mut candidates = self.intervals.candidates_for_fact(supplied);
+        // Concrete supplied facts use only exact/interval events.  The
+        // fallback below is deliberately reserved for symbolic or otherwise
+        // un-normalizable supplied memory: scanning concrete waiters in one
+        // explicit symbolic block event is conservative and bounded by that
+        // event's block-local waiter set, while concrete same-block events
+        // retain their interval-sensitive work curve.
+        if supplied
+            .memory_range()
+            .and_then(resource_clause_concrete_memory_interval)
+            .is_none()
+            && let Some(range) = supplied.memory_range()
+            && let Some(waiters) = self.concrete_block_fallback.get(&range.base().block)
+        {
+            ResourceClauseIntervalIndex::add_candidates(waiters, &mut candidates);
+        }
+        for key in resource_clause_coarse_keys(supplied) {
+            if let Some(clauses) = self.coarse.get(&key) {
+                candidates.extend(clauses.iter().copied());
+            }
+        }
+        candidates
+    }
+}
+
+fn resource_clause_register_waiters(
+    index: usize,
+    missing: Vec<CResourceFact>,
+    dependencies: &mut [Vec<CResourceFact>],
+    waiters: &mut ResourceClauseWaiterIndex,
+) {
+    let mut unique = Vec::new();
+    for dependency in missing {
+        if unique.contains(&dependency) {
+            continue;
+        }
+        unique.push(dependency.clone());
+    }
+    waiters.register(index, &unique);
+    dependencies[index] = unique;
+}
+
+fn resource_clause_unregister_waiters(
+    index: usize,
+    dependencies: &mut [Vec<CResourceFact>],
+    waiters: &mut ResourceClauseWaiterIndex,
+) {
+    let previous = std::mem::take(&mut dependencies[index]);
+    waiters.unregister(index, &previous);
+}
+
+fn resource_clause_enqueue_waiters(
+    supplied: &CResourceFact,
+    assumptions: &PureFactContext,
+    section_supply: &ResourceContext,
+    evaluated: &[Option<CResourceFact>],
+    queued: &mut [bool],
+    pending: &mut VecDeque<usize>,
+    dependencies: &[Vec<CResourceFact>],
+    waiters: &ResourceClauseWaiterIndex,
+) {
+    let candidates = waiters.candidates_for_supplied(supplied);
+    for index in candidates {
+        if evaluated[index].is_none()
+            && !queued[index]
+            && dependencies[index]
+                .iter()
+                .any(|dependency| section_supply.satisfies_fact(dependency, assumptions))
+        {
+            queued[index] = true;
+            pending.push_back(index);
+        }
+    }
+}
+
+#[cfg(test)]
+mod resource_clause_worklist_tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_supply_wakes_wide_memory_waiter() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-adjacent".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let wide = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ));
+        let left = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let right = CResourceFact::view_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(2),
+        ));
+        let assumptions = PureFactContext::new();
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![wide.clone()], &mut dependencies, &mut waiters);
+        let evaluated = vec![None];
+        let mut queued = vec![false];
+        let mut pending = VecDeque::new();
+        let section_supply = ResourceContext::new().unchecked_with_fact(left.clone());
+
+        assert!(!section_supply.satisfies_fact(&wide, &assumptions));
+        resource_clause_enqueue_waiters(
+            &left,
+            &assumptions,
+            &section_supply,
+            &evaluated,
+            &mut queued,
+            &mut pending,
+            &dependencies,
+            &waiters,
+        );
+        assert!(pending.is_empty());
+
+        let section_supply = section_supply.unchecked_with_fact(right.clone());
+        assert!(section_supply.satisfies_fact(&wide, &assumptions));
+        resource_clause_enqueue_waiters(
+            &right,
+            &assumptions,
+            &section_supply,
+            &evaluated,
+            &mut queued,
+            &mut pending,
+            &dependencies,
+            &waiters,
+        );
+        assert_eq!(pending, VecDeque::from([0]));
+    }
+
+    /// Same-block disjoint ranges have one real dependency edge apiece.  The
+    /// interval index must visit those edges, not every waiter sharing the
+    /// block key.  The exact candidate count is the regression: the old
+    /// `MemoryBlock` index would produce `size * size` visits here.
+    #[test]
+    fn same_block_disjoint_waiters_use_interval_candidates() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-disjoint".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let samples = [4_usize, 8, 16, 32]
+            .into_iter()
+            .map(|size| {
+                let mut dependencies = vec![Vec::new(); size];
+                let mut waiters = ResourceClauseWaiterIndex::default();
+                for index in 0..size {
+                    let start = (index * 2) as u32;
+                    let dependency = CResourceFact::view_memory(CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(start),
+                        Bitvector32Term::Constant(start + 1),
+                    ));
+                    resource_clause_register_waiters(
+                        index,
+                        vec![dependency],
+                        &mut dependencies,
+                        &mut waiters,
+                    );
+                }
+                let mut candidate_visits = 0;
+                for index in 0..size {
+                    let start = (index * 2) as u32;
+                    let supplied = CResourceFact::view_memory(CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(start),
+                        Bitvector32Term::Constant(start + 1),
+                    ));
+                    let candidates = waiters.candidates_for_supplied(&supplied);
+                    candidate_visits += candidates.len();
+                    assert_eq!(
+                        candidates.into_iter().collect::<Vec<_>>(),
+                        vec![index],
+                        "a disjoint supplied range woke unrelated same-block waiters: size={size} index={index}"
+                    );
+                }
+                (size, candidate_visits)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            samples,
+            vec![(4, 4), (8, 8), (16, 16), (32, 32)],
+            "same-block interval candidate work should follow actual dependency edges"
+        );
+    }
+
+    #[test]
+    fn comparable_constant_bases_share_interval_space() {
+        let block = PointerBlock::Concrete("resource-clause-base-aware".to_string());
+        let dependency_base = Pointer {
+            block: block.clone(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let supplied_base = Pointer {
+            block,
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new(
+            dependency_base,
+            Bitvector32Term::Constant(2),
+            Bitvector32Term::Constant(3),
+        ));
+        let supplied = CResourceFact::view_memory(CMemoryRange::new(
+            supplied_base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&supplied),
+            BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn concrete_memory_waiters_share_physical_byte_space_across_widths() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-byte-space".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(8),
+            Bitvector32Term::Constant(12),
+            1,
+        ));
+        let supplied = CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            base,
+            Bitvector32Term::Constant(2),
+            Bitvector32Term::Constant(3),
+            4,
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&supplied),
+            BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn symbolic_memory_waiters_keep_conservative_block_fallback() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-symbolic".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Variable(Variable(9_901)),
+        ));
+        let supplied = CResourceFact::view_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&supplied),
+            BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn concrete_waiter_block_fallback_registers_and_unregisters_symmetrically() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-fallback-lifetime".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let symbolic_supplied = CResourceFact::view_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Variable(Variable(9_902)),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&symbolic_supplied),
+            BTreeSet::from([0])
+        );
+        resource_clause_unregister_waiters(0, &mut dependencies, &mut waiters);
+        assert!(
+            waiters
+                .candidates_for_supplied(&symbolic_supplied)
+                .is_empty()
+        );
+    }
+}
+
+fn evaluate_resource_clause_with_dependencies(
+    state: &CState,
+    resource: &CResourceSpec,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<(Result<CResourceFact, CRuntimeError>, Vec<CResourceFact>)> {
+    #[cfg(test)]
+    record_resource_clause_attempt();
+    let (result, dependencies) = capture_resource_dependencies(|| {
+        evaluate_function_resource_spec(state, resource, assumptions, budget)
+    });
+    result.map(|result| (result, dependencies))
 }
 
 /// The read authority a section's already-evaluated clauses supply to the
@@ -12125,6 +13116,59 @@ fn selected_instance_arm_read_authority(
         .collect()
 }
 
+/// Incrementally exposes the memory cells beneath one newly evaluated
+/// composite clause.  The outer section supply already expanded all facts
+/// from the previous pass; walking only this fact and its nested children
+/// keeps a dependency chain proportional to its own nodes and edges instead
+/// of rescanning the complete section after every successful retry.
+fn resource_clause_supply_with_fact(
+    mut supply: ResourceContext,
+    fact: CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> (ResourceContext, Vec<CResourceFact>) {
+    let mut added = Vec::new();
+    if !supply.facts().contains(&fact) {
+        supply = supply.unchecked_with_fact(fact.clone());
+        added.push(fact.clone());
+    }
+    if definitions.is_empty() || !matches!(fact.resource(), CResource::Composite { .. }) {
+        return (supply, added);
+    }
+    let mut pending = VecDeque::from([fact]);
+    let mut seen = BTreeSet::new();
+    while let Some(composite) = pending.pop_front() {
+        if !seen.insert(composite.clone()) {
+            continue;
+        }
+        let expansion_context = supply.clone().unchecked_with_fact(composite.clone());
+        let Some((_, children, _)) = expand_composite_resource_fact_with_children(
+            &expansion_context,
+            &composite,
+            definitions,
+            memory,
+            assumptions,
+        ) else {
+            continue;
+        };
+        for child in children {
+            match child.resource() {
+                CResource::Memory(range) => {
+                    let view = CResourceFact::view_memory(range.clone());
+                    if !supply.facts().contains(&view) {
+                        supply = supply.unchecked_with_fact(view.clone());
+                        added.push(view);
+                    }
+                }
+                CResource::Composite { .. } => pending.push_back(child),
+                CResource::Token { .. } | CResource::Instance(_) => {}
+            }
+        }
+    }
+    (supply, added)
+}
+
 /// Names which resource clause of a contract section could not be addressed.
 ///
 /// Two checks reach this conclusion about the same contract: the surface
@@ -12153,14 +13197,22 @@ pub(crate) fn resource_clause_stall_note(index: usize, other: usize) -> String {
 /// identification available here, and it is enough for a user to find the
 /// clause. Structured errors already print the offending resource and are
 /// passed through unchanged.
+fn resource_clause_position(resources: &[CResourceSpec], index: usize) -> (usize, usize) {
+    resources
+        .get(index)
+        .and_then(CResourceSpec::clause_position)
+        .unwrap_or((index, resources.len()))
+}
+
 fn resource_clause_runtime_error(
     error: CRuntimeError,
     index: usize,
-    total: usize,
+    resources: &[CResourceSpec],
 ) -> CRuntimeError {
     let CRuntimeError::FunctionContract(message) = error else {
         return error;
     };
+    let (index, total) = resource_clause_position(resources, index);
     CRuntimeError::FunctionContract(format!(
         "{message} ({})",
         resource_clause_position_note(index, total)
@@ -12184,10 +13236,13 @@ fn resource_clause_cycle_runtime_error(
     error: CRuntimeError,
     index: usize,
     other: usize,
+    resources: &[CResourceSpec],
 ) -> CRuntimeError {
     let CRuntimeError::FunctionContract(message) = error else {
         return error;
     };
+    let (index, _) = resource_clause_position(resources, index);
+    let (other, _) = resource_clause_position(resources, other);
     CRuntimeError::FunctionContract(format!(
         "{message} ({})",
         resource_clause_stall_note(index, other)
@@ -12374,7 +13429,7 @@ pub(super) fn evaluate_function_resource_spec(
 /// requirements. A function may assume these at its own entry just as it may
 /// assume its ordinary `requires`; call sites still use
 /// `evaluate_function_resource_spec` and must prove every condition.
-pub(super) fn quantified_resource_requirement_assumptions(
+pub(crate) fn quantified_resource_requirement_assumptions(
     state: &CState,
     resources: &[CResourceSpec],
     assumptions: &PureFactContext,

@@ -42,6 +42,8 @@ pub(crate) use eval::load_variable_for_cell_with_origin;
 pub(crate) use eval::load_variable_for_term;
 pub(crate) use eval::offsets_have_same_canonical_form;
 pub(crate) use eval::proposition_mentions_registered_load_variable;
+#[cfg(test)]
+pub(crate) use eval::record_load_variable_defining_fact;
 pub(crate) use eval::registered_load_for_variable;
 pub(crate) use eval::registered_load_origin_for_variable;
 pub(crate) use eval::resolve_pending_heap_allocations;
@@ -50,14 +52,24 @@ pub(crate) use eval::terms_have_same_canonical_form;
 pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_capacity};
 pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::initialize_c_program_storage;
+#[cfg(test)]
+pub(crate) use functions::measure_resource_clause_attempts;
 pub(crate) use functions::modified_by_value_aggregate_parameter_with_current_ensure_in_source;
 pub(crate) use functions::select_resource_model_arm;
 pub(crate) use functions::stable_symbolic_pointer_cell_value;
 pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
-pub(crate) use functions::{resource_clause_position_note, resource_clause_stall_note};
-pub(crate) use loops::{c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge};
+pub(crate) use functions::{
+    evaluate_function_resource_context, quantified_resource_requirement_assumptions,
+    resource_clause_position_note, resource_clause_stall_note,
+};
+pub use loops::CLoopBinder;
+pub(crate) use loops::{
+    c_loop_binders, c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge,
+    c_loop_state_with_head_binder_models, c_loop_state_with_loop_binders_rebound,
+    loop_structural_descent_failure,
+};
 pub use memory_provenance::*;
 pub(crate) use primitives::resource_context_has_symbolic_int32_range_read;
 pub use primitives::*;

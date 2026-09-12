@@ -901,8 +901,12 @@ pub(in crate::surface) fn resource_context_from_requirements(
         if let Requirement::Resource(resource) = requirement.inner() {
             // This lowering path has no proposition assumptions yet. It builds
             // a provisional context; execution paths use checked composition
-            // once assumptions are available.
-            context = context.unchecked_with_fact(lower_resource_clause_at_state(
+            // once assumptions are available.  Resource arguments may contain
+            // loads whose authority is supplied by another clause, so keep
+            // those arguments symbolic here.  The entry context is checked by
+            // the kernel section evaluator once all pure requirements and
+            // clause supplies are available.
+            context = context.unchecked_with_facts(lower_resource_clause_facts_at_state_for_entry(
                 resource, parameters, arguments, state,
             )?);
         }
@@ -977,6 +981,17 @@ pub(in crate::surface) fn lower_resource_clause_facts_at_state(
     lower_resource_clause_facts_with_values(resource, parameters, &values, state, None)
 }
 
+fn lower_resource_clause_facts_at_state_for_entry(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Result<Vec<CResourceFact>, ClickError> {
+    let values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    lower_resource_clause_facts_with_values_mode(resource, parameters, &values, state, None, true)
+}
+
 pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1020,10 +1035,27 @@ fn lower_resource_clause_with_values(
     state: &CState,
     result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
+    lower_resource_clause_with_values_mode(resource, parameters, values, state, result, false)
+}
+
+fn lower_resource_clause_with_values_mode(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    values: &BTreeMap<String, CValue>,
+    state: &CState,
+    result: Option<&CValue>,
+    allow_symbolic_resource_arguments: bool,
+) -> Result<CResourceFact, ClickError> {
     match resource {
         ResourceClause::Named { binding, resource } => {
-            let lowered =
-                lower_resource_clause_with_values(resource, parameters, values, state, result)?;
+            let lowered = lower_resource_clause_with_values_mode(
+                resource,
+                parameters,
+                values,
+                state,
+                result,
+                allow_symbolic_resource_arguments,
+            )?;
             let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
                 return Err(ClickError::new(
                     "named instance requires an owned resource definition",
@@ -1057,7 +1089,13 @@ fn lower_resource_clause_with_values(
         )),
         ResourceClause::Quantified { quantity, resource } => {
             let quantity = resource_argument_to_c_expression(quantity)?;
-            let assumptions = PureFactContext::new();
+            let assumptions = if allow_symbolic_resource_arguments {
+                PureFactContext::new()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads()
+            } else {
+                PureFactContext::new()
+            };
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
             let quantity = crate::surface::proof::evaluate_resource_fragment_through_kernel(
                 &quantity,
@@ -1077,8 +1115,14 @@ fn lower_resource_clause_with_values(
                     "declared resource quantity must evaluate to int32",
                 ));
             };
-            let lowered =
-                lower_resource_clause_with_values(resource, parameters, values, state, result)?;
+            let lowered = lower_resource_clause_with_values_mode(
+                resource,
+                parameters,
+                values,
+                state,
+                result,
+                allow_symbolic_resource_arguments,
+            )?;
             let CResourceFact::Own(resource, _) = lowered else {
                 return Err(ClickError::new(
                     "declared resource quantity requires owned authority",
@@ -1131,7 +1175,13 @@ fn lower_resource_clause_with_values(
             arguments: resource_arguments,
             parameter_types,
         } => {
-            let assumptions = PureFactContext::new();
+            let assumptions = if allow_symbolic_resource_arguments {
+                PureFactContext::new()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads()
+            } else {
+                PureFactContext::new()
+            };
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
             let mut resource_values = Vec::new();
             if resource_arguments.len() != parameter_types.len() {
@@ -1195,6 +1245,17 @@ fn lower_resource_clause_facts_with_values(
     state: &CState,
     result: Option<&CValue>,
 ) -> Result<Vec<CResourceFact>, ClickError> {
+    lower_resource_clause_facts_with_values_mode(resource, parameters, values, state, result, false)
+}
+
+fn lower_resource_clause_facts_with_values_mode(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    values: &BTreeMap<String, CValue>,
+    state: &CState,
+    result: Option<&CValue>,
+    allow_symbolic_resource_arguments: bool,
+) -> Result<Vec<CResourceFact>, ClickError> {
     match resource {
         ResourceClause::MemoryAggregate { access, segments } => segments
             .iter()
@@ -1203,12 +1264,25 @@ fn lower_resource_clause_facts_with_values(
                     ResourceAccessMode::Own => ResourceClause::OwnMemory(segment.clone()),
                     ResourceAccessMode::View => ResourceClause::ViewMemory(segment.clone()),
                 };
-                lower_resource_clause_with_values(&leaf, parameters, values, state, result)
+                lower_resource_clause_with_values_mode(
+                    &leaf,
+                    parameters,
+                    values,
+                    state,
+                    result,
+                    allow_symbolic_resource_arguments,
+                )
             })
             .collect(),
         ResourceClause::Quantified { quantity, resource } => {
             let quantity = resource_argument_to_c_expression(quantity)?;
-            let assumptions = PureFactContext::new();
+            let assumptions = if allow_symbolic_resource_arguments {
+                PureFactContext::new()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads()
+            } else {
+                PureFactContext::new()
+            };
             let array_refs = array_refs_for_parameters(parameters, values, state.memory());
             let quantity = crate::surface::proof::evaluate_resource_fragment_through_kernel(
                 &quantity,
@@ -1228,20 +1302,32 @@ fn lower_resource_clause_facts_with_values(
                     "declared resource quantity must evaluate to int32",
                 ));
             };
-            lower_resource_clause_facts_with_values(resource, parameters, values, state, result)?
-                .into_iter()
-                .map(|lowered| {
-                    let CResourceFact::Own(resource, _) = lowered else {
-                        return Err(ClickError::new(
-                            "declared resource quantity requires owned authority",
-                        ));
-                    };
-                    Ok(CResourceFact::own_quantity(resource, quantity.clone()))
-                })
-                .collect()
+            lower_resource_clause_facts_with_values_mode(
+                resource,
+                parameters,
+                values,
+                state,
+                result,
+                allow_symbolic_resource_arguments,
+            )?
+            .into_iter()
+            .map(|lowered| {
+                let CResourceFact::Own(resource, _) = lowered else {
+                    return Err(ClickError::new(
+                        "declared resource quantity requires owned authority",
+                    ));
+                };
+                Ok(CResourceFact::own_quantity(resource, quantity.clone()))
+            })
+            .collect()
         }
-        _ => Ok(vec![lower_resource_clause_with_values(
-            resource, parameters, values, state, result,
+        _ => Ok(vec![lower_resource_clause_with_values_mode(
+            resource,
+            parameters,
+            values,
+            state,
+            result,
+            allow_symbolic_resource_arguments,
         )?]),
     }
 }

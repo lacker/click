@@ -3589,7 +3589,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         "smart retry",
         0,
         ExecutionProofState::at_entry(
-            state,
+            state.clone(),
             ExecutionFrontier::default(),
             RecordedSnapshots::new(),
             SurfacePropositionMap::default(),
@@ -3652,7 +3652,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         root.execution().unwrap().core.state.memory(),
     ));
     let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
-        site, 0, None, false,
+        site, 0, None, false, None,
     ));
     let refusal = ClickError::new("injected unsupported requirement").with_unresolved_requirement(
         &ProofObligation::verification_condition(unsupported.clone())
@@ -3706,6 +3706,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         0,
         Some(0),
         true,
+        None,
     ));
     let refusal = ClickError::new("injected supported source refusal").with_unresolved_requirement(
         &ProofObligation::verification_condition(supported).with_call_requirement_site(source),
@@ -3789,6 +3790,7 @@ fn supported_source_refusal_on_branch_does_not_enter_planning() {
         0,
         Some(0),
         true,
+        None,
     ));
     let refusal = ClickError::new("injected supported branch refusal").with_unresolved_requirement(
         &ProofObligation::verification_condition(Proposition::ConditionIs(
@@ -3984,6 +3986,29 @@ fn smart_retry_uses_static_local_array_qualified_source() {
         "static_local::increment_twice::values",
         3,
     );
+}
+
+#[test]
+fn retained_have_conjunct_collection_is_iterative_and_bounded() {
+    let leaf = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+    };
+    let within_limit = (0..2047).fold(leaf.clone(), |body, _| {
+        ClickProposition::And(Box::new(leaf.clone()), Box::new(body))
+    });
+    let leaves = crate::surface::proof::smart_closures::collect_bounded_surface_conjunct_leaves(
+        &within_limit,
+    )
+    .expect("a 4095-node conjunction should fit the retained-have bound");
+    assert_eq!(leaves.len(), 2048);
+
+    let over_limit = ClickProposition::And(Box::new(leaf), Box::new(within_limit));
+    let error =
+        crate::surface::proof::smart_closures::collect_bounded_surface_conjunct_leaves(&over_limit)
+            .expect_err("retained-have collection must propagate structural exhaustion");
+    assert!(error.message().contains("structural limit"));
 }
 
 #[test]
@@ -9493,7 +9518,9 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
                 &CExpression::Value(int32(1)),
                 &checks,
                 &[],
+                None,
                 &[surface.clone(), legacy_surface.clone()],
+                &[],
                 &[],
                 false,
             )
@@ -9597,7 +9624,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         )];
         let (body, scope) = root
             .state
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_, _| {
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| {
                 PropositionPresentation {
                     surface: None,
                     surface_bindings: PersistentMap::default(),
@@ -10228,6 +10255,368 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         assert!(
             allocations <= allocation_bound,
             "size {size} checked execution branch allocated {allocations} persistent nodes (logarithmic bound {allocation_bound})"
+        );
+    }
+}
+
+#[test]
+fn cursor_execution_branch_join_retains_a_real_load_binding() {
+    let click_file = crate::surface::parse(
+        r#"
+            int32 branch_load(int32 x, int32 p[1]) {
+                ensures returns_any: result == result by { assumption(); }
+            }
+        "#,
+    )
+    .expect("test function contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function = syntax::parse_function(
+        "int32 branch_load(int32 x, int32 p[1]) { if (x < 0) { return p[0]; } else { return p[0]; } }",
+    )
+    .expect("test C branch should parse");
+    let function = parsed_function.to_kernel_function();
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+        CResourceFact::own_memory(CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )),
+    ));
+    let arguments = vec![
+        CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(60_001)))),
+        CExpression::Value(CValue::pointer(pointer.clone())),
+    ];
+    let function_environment = CExecutionEnvironment::new();
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment =
+        ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let root = Proof::for_execution_frontier(
+        "cursor load branch proof",
+        0,
+        ExecutionProofState::at_entry(
+            state.clone(),
+            ExecutionFrontier {
+                next_statement_index: 0,
+                ..ExecutionFrontier::default()
+            },
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        Vec::new(),
+        ExecutionProofConstants {
+            source_layout: SourceExecutionLayout::new(parsed_function.body()),
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let (split, record) = root
+        .split_focused_execution_branch()
+        .expect("symbolic condition should expose both load branches");
+    let then_completed = split
+        .focus_split_arm(&record, true)
+        .expect("then branch should be open")
+        .apply_step(ProofStep::Step)
+        .expect("then return should execute through the cursor");
+    // Fresh load variables are normally unique, so exercise the collision
+    // law by producing a second observation through the kernel producer and
+    // attaching it to one real cursor arm before the production join.
+    let conflicting_binding = {
+        let execution = then_completed
+            .execution()
+            .expect("completed then arm should retain execution state");
+        let (_, exact) = execution
+            .presentation
+            .generated_load_bindings
+            .iter()
+            .next()
+            .expect("then arm should publish its load binding");
+        let crate::kernel::GeneratedLoadBinding::Exact {
+            variable,
+            pointer: recorded_pointer,
+            load,
+            ..
+        } = exact
+        else {
+            panic!("fresh producer observation should be exact");
+        };
+        let crate::kernel::Bitvector32Term::MemoryLoad(memory, _) = load else {
+            panic!("fresh producer observation should carry a memory load");
+        };
+        let conflicting_pointer = Pointer {
+            block: recorded_pointer.block.clone(),
+            offset: PointerOffsetTerm::Constant(1),
+        };
+        let mut producer_facts = Vec::new();
+        crate::kernel::record_load_variable_defining_fact(
+            *variable,
+            crate::kernel::Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(conflicting_pointer),
+            ),
+            &mut producer_facts,
+        );
+        producer_facts
+            .into_iter()
+            .find_map(|fact| fact.generated_load_binding().cloned())
+            .expect("kernel producer should publish the conflicting observation")
+    };
+    let (then_completed, ()) = then_completed
+        .edit_execution_presentation(|presentation| {
+            presentation.record_generated_load_bindings(std::slice::from_ref(&conflicting_binding));
+        })
+        .expect("real cursor arm should accept producer metadata");
+    let advanced = then_completed
+        .focus_split_arm(&record, false)
+        .expect("else branch should be open")
+        .apply_step(ProofStep::Step)
+        .expect("else return should execute through the cursor");
+    let joined = advanced
+        .join_focused_execution_terminal(&record)
+        .expect("terminal load branches should join");
+    let execution = joined
+        .execution()
+        .expect("joined execution should remain present");
+    assert_eq!(execution.presentation.generated_load_bindings.len(), 1);
+    assert_eq!(
+        execution.presentation.generated_load_binding_events.len(),
+        2
+    );
+    assert!(
+        execution
+            .presentation
+            .generated_load_bindings
+            .iter()
+            .all(|(_, binding)| matches!(
+                binding,
+                crate::kernel::GeneratedLoadBinding::Ambiguous { .. }
+            ))
+    );
+    let terminal_view = joined
+        .finalization_view()
+        .expect("terminal cursor outcome should retain its provenance");
+    let outcome_count = terminal_view
+        .frontier
+        .execution()
+        .expect("terminal frontier should retain checked outcomes")
+        .paths()
+        .len();
+    assert!(outcome_count > 0);
+    let mut ambiguous_outcomes = 0;
+    for path_index in 0..outcome_count {
+        let bindings = terminal_view.generated_load_bindings(path_index);
+        if bindings.iter().any(|(_, binding)| {
+            matches!(
+                binding,
+                crate::kernel::GeneratedLoadBinding::Ambiguous { .. }
+            )
+        }) {
+            ambiguous_outcomes += 1;
+            assert!(bindings.iter().all(|(_, binding)| matches!(
+                binding,
+                crate::kernel::GeneratedLoadBinding::Ambiguous { .. }
+            )));
+        }
+    }
+    assert!(
+        ambiguous_outcomes > 0,
+        "terminal provenance must retain the conflict tombstone"
+    );
+
+    // A condition fact selects one arm, exercising the single-transition
+    // cursor path that records metadata immediately before advancing the
+    // selected successor.
+    let selecting_fact = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(Variable(60_001))),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    let selected_root = Proof::for_execution_frontier(
+        "cursor selected load proof",
+        0,
+        ExecutionProofState::at_entry(
+            state,
+            ExecutionFrontier {
+                next_statement_index: 0,
+                ..ExecutionFrontier::default()
+            },
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        vec![selecting_fact],
+        ExecutionProofConstants {
+            source_layout: SourceExecutionLayout::new(parsed_function.body()),
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let (selected_split, selected_record) = selected_root
+        .split_focused_execution_branch()
+        .expect("condition fact should retain the selected load branch");
+    assert_eq!(selected_record.sole_feasible_arm(), Some(true));
+    let selected = selected_split
+        .focus_split_arm(&selected_record, true)
+        .expect("selected load branch should be open")
+        .apply_step(ProofStep::Step)
+        .expect("selected return should execute through the cursor");
+    let selected = selected
+        .finish_focused_execution_decided(&selected_record)
+        .expect("selected load branch should finish as a focused path");
+    let selected_execution = selected
+        .execution()
+        .expect("selected execution should retain its presentation");
+    assert!(
+        selected_execution
+            .presentation
+            .generated_load_bindings
+            .iter()
+            .any(|(_, binding)| matches!(
+                binding,
+                crate::kernel::GeneratedLoadBinding::Exact {
+                    pointer: recorded,
+                    ..
+                } if recorded == &pointer
+            ))
+    );
+}
+
+#[test]
+fn cursor_execution_load_binding_work_is_deterministic_and_output_sized() {
+    let click_file = crate::surface::parse(
+        r#"
+            int32 branch_load_scaling(int32 x, int32 p[1]) {
+                ensures returns_any: result == result by { assumption(); }
+            }
+        "#,
+    )
+    .expect("test function contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function = syntax::parse_function(
+        "int32 branch_load_scaling(int32 x, int32 p[1]) { if (x < 0) { return p[0]; } else { return p[0]; } }",
+    )
+    .expect("test C branch should parse");
+    let function = parsed_function.to_kernel_function();
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+        CResourceFact::own_memory(CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )),
+    ));
+    let arguments = vec![
+        CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(60_002)))),
+        CExpression::Value(CValue::pointer(pointer)),
+    ];
+    let function_environment = CExecutionEnvironment::new();
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment =
+        ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let run = |size: u32| {
+        let root = Proof::for_execution_frontier(
+            "cursor load scaling proof",
+            0,
+            ExecutionProofState::at_entry(
+                state.clone(),
+                ExecutionFrontier {
+                    next_statement_index: 0,
+                    ..ExecutionFrontier::default()
+                },
+                RecordedSnapshots::new(),
+                SurfacePropositionMap::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
+            ExecutionProofConstants {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..ExecutionProofConstants::default()
+            },
+            function_block,
+            &function,
+            &parsed_function,
+            &arguments,
+            &function_environment,
+            &resource_environment,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+        );
+        let (split, record) = root
+            .split_focused_execution_branch()
+            .expect("scaling branch should split");
+        let advanced = split
+            .focus_split_arm(&record, true)
+            .expect("then scaling arm should be open")
+            .apply_step(ProofStep::Step)
+            .expect("then scaling load should execute")
+            .focus_split_arm(&record, false)
+            .expect("else scaling arm should be open")
+            .apply_step(ProofStep::Step)
+            .expect("else scaling load should execute");
+        let joined = advanced
+            .join_focused_execution_terminal(&record)
+            .expect("scaling load arms should join");
+        let execution = joined.execution().expect("joined execution should remain");
+        (
+            execution.presentation.generated_load_bindings.len(),
+            execution.presentation.generated_load_binding_events.len(),
+        )
+    };
+    let mut samples = Vec::new();
+    for size in [8_u32, 32, 128, 512] {
+        // Warm the shared parser/kernel caches so the measured cursor work
+        // reflects the transition and join paths rather than one-time setup.
+        let _ = run(size);
+        let (first, first_work) = crate::instrumentation::measure_deterministic_work(|| run(size));
+        let (second, _second_work) =
+            crate::instrumentation::measure_deterministic_work(|| run(size));
+        assert_eq!(
+            first, second,
+            "cursor result must be deterministic at size {size}"
+        );
+        assert_eq!(
+            first,
+            (1, 1),
+            "load metadata output must stay constant at size {size}"
+        );
+        samples.push((size, first_work));
+    }
+    let (base_size, base_work) = samples[0];
+    for (size, work) in samples {
+        assert!(
+            work <= base_work + 64 * (size - base_size) as usize,
+            "cursor load metadata work grew beyond the output-sized bound at size {size}: {work} > {}",
+            base_work + 64 * (size - base_size) as usize
         );
     }
 }

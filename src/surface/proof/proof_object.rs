@@ -614,6 +614,15 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// than an invariant across parallel vectors. The record is output-sized
     /// Proof provenance; its persistent roots do not copy semantic state.
     outcome_provenance: Arc<Vec<OutcomeProvenance>>,
+    /// Exact producer-issued bindings for load-defining equations.  The
+    /// vector is output-sized and persistent across proof forks; conflicting
+    /// observations for one variable are retained as an ambiguity tombstone.
+    pub(in crate::surface::proof) generated_load_bindings:
+        PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadBinding>,
+    /// Append-only producer observations. Joins consume only each arm's
+    /// suffix since the split root, keeping merge work output-sized.
+    pub(in crate::surface::proof) generated_load_binding_events:
+        PersistentSequence<crate::kernel::GeneratedLoadBinding>,
 }
 
 pub(in crate::surface::proof) type ExecutionProofState =
@@ -629,6 +638,7 @@ impl ExecutionProofState {
                 branch_decisions: self.presentation.branch_decisions.clone(),
                 surface_propositions: self.presentation.surface_propositions.clone(),
                 recorded_snapshots: self.presentation.recorded_snapshots.clone(),
+                generated_load_bindings: self.presentation.generated_load_bindings.clone(),
             })
     }
 
@@ -673,6 +683,8 @@ impl ExecutionProofState {
                 branch_surface_facts: PersistentOrderedSet::default(),
                 branch_decisions: PersistentSequence::default(),
                 outcome_provenance: Arc::new(Vec::new()),
+                generated_load_bindings: PersistentMap::default(),
+                generated_load_binding_events: PersistentSequence::default(),
             },
         )
     }
@@ -700,6 +712,21 @@ pub(super) struct ProofExecutionView<'p> {
 }
 
 impl ProofExecutionView<'_> {
+    /// Exact producer metadata for one terminal outcome. Terminal joins keep
+    /// this per-outcome map because different arms may carry different
+    /// observations; a non-branching frontier uses the shared presentation
+    /// map directly.
+    #[allow(dead_code)]
+    pub(super) fn generated_load_bindings(
+        &self,
+        path_index: usize,
+    ) -> &PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadBinding> {
+        self.outcome_provenance
+            .get(path_index)
+            .map(|provenance| &provenance.generated_load_bindings)
+            .unwrap_or(&self.execution.presentation.generated_load_bindings)
+    }
+
     /// The proof-level case decisions recorded on one outcome path, in
     /// decision order: each is a surface condition and the arm taken.
     /// Selects the retained surface branch skeleton for one checked outcome.
@@ -743,6 +770,9 @@ struct OutcomeProvenance {
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     surface_propositions: SurfacePropositionMap,
     recorded_snapshots: RecordedSnapshots,
+    #[allow(dead_code)]
+    generated_load_bindings:
+        PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadBinding>,
 }
 
 type Obligation = KernelBranchObligation<PropositionPresentation, Arc<OutcomeProofData>>;
@@ -1769,6 +1799,48 @@ pub(in crate::surface::proof) use fact_index::collect_surface_conjunct_leaves;
 pub(in crate::surface::proof) use outcomes_and_focus::frontier_premise_anchor;
 
 impl ExecutionProofPresentation {
+    pub(in crate::surface::proof) fn record_generated_load_bindings(
+        &mut self,
+        incoming: &[crate::kernel::GeneratedLoadBinding],
+    ) {
+        if incoming.is_empty() {
+            return;
+        }
+        let mut by_variable = self.generated_load_bindings.clone();
+        for binding in incoming {
+            let variable = match binding {
+                crate::kernel::GeneratedLoadBinding::Exact { variable, .. }
+                | crate::kernel::GeneratedLoadBinding::Ambiguous { variable } => *variable,
+            };
+            let merged = match by_variable.get(&variable) {
+                Some(crate::kernel::GeneratedLoadBinding::Ambiguous { .. }) => continue,
+                Some(crate::kernel::GeneratedLoadBinding::Exact {
+                    snapshot,
+                    pointer,
+                    load,
+                    ..
+                }) => match binding {
+                    crate::kernel::GeneratedLoadBinding::Exact {
+                        snapshot: next_snapshot,
+                        pointer: next_pointer,
+                        load: next_load,
+                        ..
+                    } if snapshot == next_snapshot
+                        && pointer == next_pointer
+                        && load == next_load =>
+                    {
+                        continue;
+                    }
+                    _ => crate::kernel::GeneratedLoadBinding::Ambiguous { variable },
+                },
+                None => binding.clone(),
+            };
+            by_variable = by_variable.with_inserted(variable, merged);
+            self.generated_load_binding_events.push(binding.clone());
+        }
+        self.generated_load_bindings = by_variable;
+    }
+
     pub(in crate::surface::proof) fn defer_post_execution(
         &mut self,
         tactic_index: usize,

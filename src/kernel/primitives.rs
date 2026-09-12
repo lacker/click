@@ -10,7 +10,7 @@ use super::reasoning::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
 mod contracts;
@@ -1748,6 +1748,12 @@ pub enum CStatement {
         /// nonnegativity obligation per component and one lexicographic
         /// decrease obligation over them.
         ranking_measures: Vec<CExpression>,
+        /// The loop's declared structural `decreases` binder, when the clause
+        /// named a loop resource binder instead of int32 components (D6).
+        /// The back edge checks that the instance the binder ends holding is
+        /// a direct contained child, in the exact resource definition, of the
+        /// instance it held at the loop head.
+        structural_measure: Option<String>,
         /// Whether the body runs before the first condition check, as in C's
         /// `do ... while` statement.
         do_while: bool,
@@ -2257,6 +2263,10 @@ pub struct CResourceMatchArm {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CResourceChildSpec {
     pub name: String,
+    /// The child's own composite resource definition. It may be the parent's
+    /// definition or another declared resource; the rewrite resolves it and
+    /// checks the child's arguments and fields against that definition.
+    pub resource: String,
     pub binding: Variable,
     pub arguments: Vec<CExpression>,
     /// Each field is an immediate constructor binding. The matched model
@@ -2474,7 +2484,22 @@ pub struct CVerifiedFunctionTerminationRule {
 pub struct CFunctionTerminationPlan {
     pub(super) function_name: String,
     pub(super) recursive_measure: Option<CFunctionTerminationMeasure>,
-    pub(super) loop_measures: BTreeMap<usize, Vec<CExpression>>,
+    pub(super) loop_measures: BTreeMap<usize, CLoopTerminationMeasure>,
+}
+
+/// One loop's declared `decreases` measure (D6).
+///
+/// The clause is one expression at the surface; what it names decides which
+/// of these the loop carries, and the loop head carries the same choice, so
+/// the back-edge check and this plan cannot describe different measures.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CLoopTerminationMeasure {
+    /// Scalar int32 components, in source order, ranked lexicographically by
+    /// the back-edge invariant bundle.
+    Ranking(Vec<CExpression>),
+    /// A loop resource binder whose instance must descend to a direct
+    /// contained child of the instance it held at the loop head.
+    Structural(String),
 }
 
 impl CFunctionTerminationPlan {
@@ -2484,7 +2509,7 @@ impl CFunctionTerminationPlan {
 
     pub fn extend_loop_measures(
         &mut self,
-        measures: impl IntoIterator<Item = (usize, Vec<CExpression>)>,
+        measures: impl IntoIterator<Item = (usize, CLoopTerminationMeasure)>,
     ) {
         self.loop_measures.extend(measures);
     }
@@ -3065,6 +3090,11 @@ pub(crate) struct CallRequirementSource {
     pub(crate) site: std::sync::Arc<CallRequirementSite>,
     pub(crate) requirement_ordinal: usize,
     pub(crate) source_requirement_ordinal: Option<usize>,
+    /// Exact snapshot identity of the source-side load carrier, when this
+    /// requirement is stateful and its lowering registered one.  This is
+    /// separate from `site.source_snapshot`, which identifies the caller's
+    /// frontier and must remain stable for source lookup.
+    pub(crate) source_load_snapshot: Option<CMemorySnapshotIdentity>,
     /// Whether the complete selected source requirement is state independent.
     /// This is a capability of the top-level requirement, not of any one
     /// lowered leaf, so every obligation emitted from the requirement shares
@@ -3078,11 +3108,13 @@ impl CallRequirementSource {
         requirement_ordinal: usize,
         source_requirement_ordinal: Option<usize>,
         source_requirement_is_state_independent: bool,
+        source_load_snapshot: Option<CMemorySnapshotIdentity>,
     ) -> Self {
         Self {
             site,
             requirement_ordinal,
             source_requirement_ordinal,
+            source_load_snapshot,
             // Generated requirements and contracts without a source registry
             // must never advertise source-side capabilities.
             source_requirement_is_state_independent: source_requirement_ordinal.is_some()
@@ -3544,6 +3576,11 @@ pub(super) struct ResourceContextChange {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
     pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
+    /// Owned instances keyed by the resource family and arity they name. A
+    /// loop binder selects its instance by family and arguments, so that
+    /// selection costs the instances of one family rather than the whole
+    /// resource context.
+    pub(super) instance_shapes: PersistentMap<(String, usize), ResourceEntryIds>,
     pub(super) exact: PersistentMap<CResourceFact, ResourceEntryIds>,
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
@@ -3921,13 +3958,18 @@ pub enum CResourceSnapshot {
     Post,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct CResourceSpec {
     term: CResourceTerm,
     access: CResourceAccessMode,
     quantity: CResourceQuantity,
     role: CResourceTransferRole,
     snapshot: CResourceSnapshot,
+    /// Source-level clause identity, when lowering expanded one source
+    /// clause into more than one normalized specification.  Keeping this on
+    /// the spec lets kernel diagnostics retain the surface clause numbering
+    /// without making the evaluator know about surface syntax.
+    clause_position: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4051,6 +4093,7 @@ impl CResourceSpec {
             quantity,
             role,
             snapshot,
+            clause_position: None,
         };
         spec.validate()?;
         Ok(spec)
@@ -4217,6 +4260,18 @@ impl CResourceSpec {
         self.snapshot
     }
 
+    /// Attach the zero-based source clause position and the total number of
+    /// source resource clauses represented by this normalized specification.
+    /// All leaves produced from one aggregate carry the same position.
+    pub fn with_clause_position(mut self, index: usize, total: usize) -> Self {
+        self.clause_position = Some((index, total));
+        self
+    }
+
+    pub(crate) fn clause_position(&self) -> Option<(usize, usize)> {
+        self.clause_position
+    }
+
     pub fn family(&self) -> ResourceFamily {
         self.term.family()
     }
@@ -4330,6 +4385,58 @@ impl CResourceSpec {
 
     fn validate(&self) -> Result<(), CResourceSpecError> {
         crate::kernel::primitives::resource_algebra::validate_resource_spec(self)
+    }
+}
+
+// Clause positions are diagnostic provenance, not part of a resource's
+// identity.  In particular, the same normalized term may occur in a
+// precondition and a postcondition (or in two separately expanded source
+// clauses); changing its source position must not change contract identity,
+// resource indexing, or equality used by the algebra.
+impl PartialEq for CResourceSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.term == other.term
+            && self.access == other.access
+            && self.quantity == other.quantity
+            && self.role == other.role
+            && self.snapshot == other.snapshot
+    }
+}
+
+impl Eq for CResourceSpec {}
+
+impl Hash for CResourceSpec {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.term.hash(state);
+        self.access.hash(state);
+        self.quantity.hash(state);
+        self.role.hash(state);
+        self.snapshot.hash(state);
+    }
+}
+
+impl Ord for CResourceSpec {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (
+            &self.term,
+            self.access,
+            &self.quantity,
+            self.role,
+            self.snapshot,
+        )
+            .cmp(&(
+                &other.term,
+                other.access,
+                &other.quantity,
+                other.role,
+                other.snapshot,
+            ))
+    }
+}
+
+impl PartialOrd for CResourceSpec {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -5085,6 +5192,29 @@ pub struct ExecutionPureFact {
     pub(super) certified: bool,
     pub(super) certified_store: Option<CertifiedMemoryStore>,
     pub(super) transport: Option<CertifiedExecutionFactTransport>,
+    /// Exact producer metadata for a kernel-minted load variable.  This is
+    /// carried with the certified fact rather than recovered from the current
+    /// state, since the producer's snapshot and pointer are the authority.
+    pub(super) generated_load_binding: Option<GeneratedLoadBinding>,
+}
+
+/// The source-independent identity of one kernel-generated load equation.
+/// Consumers must use the complete `(variable, snapshot, pointer)` key; the
+/// source expression is retained only as the exact equation operand produced
+/// by the kernel.  A variable-level tombstone is represented by
+/// [`GeneratedLoadBinding::Ambiguous`] when one path observes incompatible
+/// bindings for the same variable.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum GeneratedLoadBinding {
+    Exact {
+        variable: Variable,
+        snapshot: CMemorySnapshotIdentity,
+        pointer: Pointer,
+        load: Bitvector32Term,
+    },
+    Ambiguous {
+        variable: Variable,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

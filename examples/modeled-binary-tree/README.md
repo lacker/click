@@ -115,25 +115,64 @@ structural induction, using the library's `list_contains_append` and
 `list_contains_cons`. Membership in the model is therefore exactly membership
 in the derived in-order sequence, which is what the rotation theorems preserve.
 
+`heap_member_nonzero_is_one` proves
+`heap_member(tree, target) != 0 implies heap_member(tree, target) == 1`, also
+by structural induction. The C search only learns that a recursive call
+returned nonzero, while `heap_member` tests its left subtree with
+`heap_member(left, target) == 1`, so the membership proof needs that range
+fact to connect the two.
+
 ## Verified C depth-first search
 
 The unchanged recursive `tree_contains` is verified against
-`owns t: tree_at(root); ensures t.model == old(t.model);`. The proof matches
-the entry model, unfolds the root in the nonempty case, spells the two C `if`
-statements with `branch`, hands each recursive call the matching child
-instance through the call binder map (`step(tree_contains(root->left, target),
-{ t: l })`), and refolds the root from the returned children on every path.
-Recursion therefore descends through a matched, modeled resource without
-losing or duplicating any subtree.
+`owns t: tree_at(root);` with `ensures t.model == old(t.model);` and the
+unguarded `ensures result == heap_member(old(t.model), target);`.
+The proof matches the entry model, unfolds the root in the nonempty case,
+spells the two C `if` statements with `branch`, hands each recursive call the
+matching child instance through the call binder map, and refolds the root
+from the returned children on every path. Recursion therefore descends through
+a matched, modeled resource without losing or duplicating any subtree.
 
-The result claim `result == heap_member(old(t.model), target)` is **not**
-verified, and neither is structural termination. Both are blocked on verifier
-gaps recorded in
-[`recursive-structure-models.md`](../../issues/recursive-structure-models.md):
-a proposition equating a model's `struct tree_node*` payload with a C pointer
-cannot be lowered, so the C test `root == target` cannot be connected to the
-model's identity test; and `decreases resource tree_at(root);` is refused
-because the structural measure does not accept a resource with fields.
+The membership guarantee is where the model's identity payload earns its
+place. `heap_member` tests `node == target` against the payload, while the C
+tests the address `root == target`; `tree_at` states `fact p == identity`, and
+the proof turns that into `node == target` with
+
+```click
+have node == target by {
+    rewrite(node == root);
+    normalize() using { root == target; }
+}
+```
+
+A pointer payload is an ordinary pointer in a proposition, so this compares a
+`struct tree_node*` payload with a C pointer directly, with no conversion and
+no ownership of its own. `mdtests/model_identity_pointer_payload.md` is the
+minimal form of the same bridge, carried all the way to an unconditional
+`ensures result == cell_member(old(c.model), q);`.
+
+Both recursive calls appear only inside a condition or a return expression, so
+their results are never stored in a named C object. The proof names each one
+with the binder the call step already has:
+
+```click
+let found_left = step(tree_contains(root->left, target), { t: l });
+```
+
+`tree_contains` declares no `produces` binder, so this `let` binds
+`found_left` to the call's scalar result instead of to a produced instance.
+The name is then usable on either side of the `branch` that spells the C `if`:
+the then arm combines `found_left != 0` with the callee's
+`found_left == heap_member(left_model, target)`, and the else arm combines
+`found_left == 0` with the same guarantee. The final
+`return tree_contains(root->right, target);` is named the same way, and
+`result` is that value.
+
+Structural termination is verified too. `decreases t;` names the contract's
+own `owns t: tree_at(root)` binder, and the `HeapTree::Node` arm's `left` and
+`right` children are the direct contained children each recursive call must
+pass, so the measure is the modeled resource rather than a pointer or a
+counter.
 
 ## Negative rotation regressions
 
@@ -157,9 +196,9 @@ the case ownership alone cannot catch.
 ## Remaining C proofs
 
 The generic `Tree<T>` theorems above remain pure model exercises; mirroring
-is not a C operation. Traversal termination and the membership result of
-`tree_contains` are not yet verified; the iterative walks `tree_leftmost` and
-`tree_rightmost` have no contracts yet.
+is not a C operation. `tree_contains` terminates by its structural measure;
+the iterative walks `tree_leftmost` and `tree_rightmost` have no contracts
+yet.
 
 Further recursive-model algorithms are tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),

@@ -1744,19 +1744,19 @@ fn verify_c0_sources_with_context(
             if let Some(verified) = frontier_loop_artifacts {
                 let mut loop_measures = BTreeMap::new();
                 for clause in &verified.frontier_loop_clauses {
-                    let Some(measure) = clause.decreases() else {
-                        continue;
-                    };
                     let CodeRegion::Loop(loop_index) = clause.region() else {
                         continue;
                     };
-                    let expressions = termination_measure_expressions(
-                        measure,
+                    let Some(expressions) = loop_termination_measure(
+                        clause,
                         &format!(
                             "frontier-local loop {loop_index} `decreases` in `{}`",
                             function_block.signature.name()
                         ),
-                    )?;
+                    )?
+                    else {
+                        continue;
+                    };
                     if let Some(previous) = loop_measures.insert(*loop_index, expressions.clone())
                         && previous != expressions
                     {
@@ -2550,6 +2550,46 @@ pub(in crate::surface) fn termination_measure_expressions(
         .collect()
 }
 
+/// The bare source name a one-component `decreases` clause spells, if any.
+fn termination_measure_binder_name(measure: &TerminationMeasure) -> Option<&str> {
+    let [component] = measure.components() else {
+        return None;
+    };
+    match component {
+        ContractExpression::Binding(name)
+        | ContractExpression::CBinding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name)) => Some(name),
+        _ => None,
+    }
+}
+
+/// Classifies one loop's `decreases` clause (D6).
+///
+/// The clause is one expression, and a loop's own `owns name: resource(args);`
+/// binders are the names that make it a structural measure; anything else is
+/// the existing int32 ranking measure. The decision reads this loop's own
+/// declarations, so it costs the clause and the loop header.
+pub(in crate::surface) fn loop_termination_measure(
+    clause: &StructuralClause,
+    context: &str,
+) -> Result<Option<crate::kernel::CLoopTerminationMeasure>, ClickError> {
+    let Some(measure) = clause.decreases() else {
+        return Ok(None);
+    };
+    if let Some(name) = termination_measure_binder_name(measure)
+        && clause.resources().iter().any(|resource| {
+            matches!(resource, ResourceClause::Named { binding, .. } if binding.name == name)
+        })
+    {
+        return Ok(Some(crate::kernel::CLoopTerminationMeasure::Structural(
+            name.to_string(),
+        )));
+    }
+    Ok(Some(crate::kernel::CLoopTerminationMeasure::Ranking(
+        termination_measure_expressions(measure, context)?,
+    )))
+}
+
 pub(in crate::surface) fn c_function_termination_plans(
     file: &ClickFile,
     selected_functions: Option<&BTreeSet<String>>,
@@ -2571,6 +2611,38 @@ pub(in crate::surface) fn c_function_termination_plans(
         let recursive_measure = function
             .decreases()
             .map(|measure| match measure {
+                CFunctionDecrease::Unresolved(_) => Err(ClickError::new(format!(
+                    "function-level `decreases` in `{}` was never classified; declared-resource expansion did not run",
+                    function.signature().name()
+                ))),
+                CFunctionDecrease::Binder(binder) => {
+                    // `decreases t;` names one of this contract's own resource
+                    // binders. The kernel measure is an index into the entry
+                    // resource requirements, so find the clause that declares
+                    // the binder and count the resource requirements before it.
+                    let mut resource_index = 0;
+                    let mut matched = None;
+                    for requirement in function.requires() {
+                        let Requirement::Resource(required) = requirement.inner() else {
+                            continue;
+                        };
+                        if matches!(
+                            required,
+                            ResourceClause::Named { binding, .. } if &binding.name == binder
+                        ) {
+                            matched = Some(resource_index);
+                            break;
+                        }
+                        resource_index += 1;
+                    }
+                    let index = matched.ok_or_else(|| {
+                        ClickError::new(format!(
+                            "function-level `decreases {binder}` in `{}` must name an owned or viewed entry resource binder",
+                            function.signature().name()
+                        ))
+                    })?;
+                    Ok(crate::kernel::CFunctionTerminationMeasure::ResourceRequirement(index))
+                }
                 CFunctionDecrease::Numeric(measure) => {
                     let name = termination_measure_name(
                         measure,
@@ -2607,7 +2679,7 @@ pub(in crate::surface) fn c_function_termination_plans(
                     } = measure
                     else {
                         return Err(ClickError::new(format!(
-                            "function-level `decreases resource` in `{}` must name one composite resource",
+                            "function-level `decreases` in `{}` must name one composite resource",
                             function.signature().name()
                         )));
                     };
@@ -2633,7 +2705,7 @@ pub(in crate::surface) fn c_function_termination_plans(
                     }
                     let index = matched.ok_or_else(|| {
                         ClickError::new(format!(
-                            "function-level `decreases resource {measure_name}(...)` in `{}` must exactly match an owned or viewed entry resource",
+                            "function-level `decreases {measure_name}(...)` in `{}` must exactly match an owned or viewed entry resource",
                             function.signature().name()
                         ))
                     })?;
@@ -2643,9 +2715,9 @@ pub(in crate::surface) fn c_function_termination_plans(
             .transpose()?;
         let mut loop_measures = BTreeMap::new();
         for clause in function.structural_clauses() {
-            let Some(measure) = clause.decreases() else {
+            if clause.decreases().is_none() {
                 continue;
-            };
+            }
             let CodeRegion::Loop(index) = clause.region() else {
                 return Err(ClickError::new(format!(
                     "`decreases` is supported only for loop regions, not {:?} in `{}`",
@@ -2653,13 +2725,16 @@ pub(in crate::surface) fn c_function_termination_plans(
                     function.signature().name()
                 )));
             };
-            let expressions = termination_measure_expressions(
-                measure,
+            let Some(expressions) = loop_termination_measure(
+                clause,
                 &format!(
                     "loop {index} `decreases` in `{}`",
                     function.signature().name()
                 ),
-            )?;
+            )?
+            else {
+                continue;
+            };
             if loop_measures.insert(*index, expressions).is_some() {
                 return Err(ClickError::new(format!(
                     "duplicate `decreases` measure for loop {index} in `{}`",
@@ -2678,20 +2753,18 @@ pub(in crate::surface) fn c_function_termination_plans(
             let mut grouped_clauses = Vec::new();
             proof.collect_termination_loop_clauses(&mut grouped_clauses);
             for (index, clause) in grouped_clauses.into_iter().enumerate() {
-                if let Some(measure) = clause.decreases() {
-                    let expressions = termination_measure_expressions(
-                        measure,
-                        &format!(
-                            "loop {index} `decreases` in `{}`",
-                            function.signature().name()
-                        ),
-                    )?;
-                    if loop_measures.insert(index, expressions).is_some() {
-                        return Err(ClickError::new(format!(
-                            "duplicate `decreases` measure for loop {index} in `{}`",
-                            function.signature().name()
-                        )));
-                    }
+                if let Some(expressions) = loop_termination_measure(
+                    clause,
+                    &format!(
+                        "loop {index} `decreases` in `{}`",
+                        function.signature().name()
+                    ),
+                )? && loop_measures.insert(index, expressions).is_some()
+                {
+                    return Err(ClickError::new(format!(
+                        "duplicate `decreases` measure for loop {index} in `{}`",
+                        function.signature().name()
+                    )));
                 }
             }
         }
@@ -4005,37 +4078,54 @@ pub(in crate::surface) fn function_resource_summary(
         .collect::<Vec<_>>();
     let mut borrowed_requirements = vec![false; borrowed_resources.len()];
     let mut requires = Vec::new();
+    let resource_clause_count = function_block
+        .requires()
+        .iter()
+        .filter(|requirement| matches!(requirement.inner(), Requirement::Resource(_)))
+        .count();
+    let mut resource_clause_index = 0;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
         };
+        let first_spec = requires.len();
         append_entry_resource_specs(
             resource,
             parsed_function.parameters(),
             resource_environment,
             &mut requires,
         )?;
-        if let Some(spec) = requires.last_mut() {
-            let borrowed_index = borrowed_resources
-                .iter()
-                .enumerate()
-                .find(|(index, borrowed)| !borrowed_requirements[*index] && **borrowed == resource)
-                .map(|(index, _)| index);
-            let role = if spec.is_view() || borrowed_index.is_some() {
-                if let Some(index) = borrowed_index {
-                    borrowed_requirements[index] = true;
-                }
-                CResourceTransferRole::Borrow
-            } else {
-                CResourceTransferRole::Consume
-            };
+        let borrowed_index = borrowed_resources
+            .iter()
+            .enumerate()
+            .find(|(index, borrowed)| !borrowed_requirements[*index] && **borrowed == resource)
+            .map(|(index, _)| index);
+        let role = if requires[first_spec..].iter().any(CResourceSpec::is_view)
+            || borrowed_index.is_some()
+        {
+            if let Some(index) = borrowed_index {
+                borrowed_requirements[index] = true;
+            }
+            CResourceTransferRole::Borrow
+        } else {
+            CResourceTransferRole::Consume
+        };
+        for spec in &mut requires[first_spec..] {
             *spec = spec
                 .clone()
                 .with_role(role)
-                .with_snapshot(CResourceSnapshot::Entry);
+                .with_snapshot(CResourceSnapshot::Entry)
+                .with_clause_position(resource_clause_index, resource_clause_count);
         }
+        resource_clause_index += 1;
     }
     let mut ensures = Vec::new();
+    let ensure_clause_count = function_block
+        .ensures()
+        .iter()
+        .filter(|ensure| matches!(ensure.ensure(), Ensure::Resource(_)))
+        .count();
+    let mut ensure_clause_index = 0;
     for ensure in function_block.ensures() {
         let Ensure::Resource(resource) = ensure.ensure() else {
             continue;
@@ -4050,21 +4140,24 @@ pub(in crate::surface) fn function_resource_summary(
         } else {
             CResourceSnapshot::Post
         };
-        let mut spec = resource_clause_to_resource_spec_with_metadata(
+        let specs = resource_clause_to_resource_specs_with_metadata(
             resource,
             parsed_function.parameters(),
             Some(parsed_function.return_type().to_kernel_type()),
             role,
             snapshot,
         )?;
-        // Instance ownership is identity-borrowed but field-produced: its
-        // selected identity comes from entry while its declared fields are
-        // checked against the post-call instance.  Keep that exceptional
-        // snapshot explicit in the normalized descriptor.
-        if ensure.borrowed() && spec.is_instance() {
-            spec = spec.with_snapshot(CResourceSnapshot::Post);
+        for mut spec in specs {
+            // Instance ownership is identity-borrowed but field-produced: its
+            // selected identity comes from entry while its declared fields are
+            // checked against the post-call instance.  Keep that exceptional
+            // snapshot explicit in the normalized descriptor.
+            if ensure.borrowed() && spec.is_instance() {
+                spec = spec.with_snapshot(CResourceSnapshot::Post);
+            }
+            ensures.push(spec.with_clause_position(ensure_clause_index, ensure_clause_count));
         }
-        ensures.push(spec);
+        ensure_clause_index += 1;
     }
     Ok((requires, ensures))
 }
@@ -4179,11 +4272,15 @@ pub(in crate::surface) fn composite_resource_definitions(
                     "resource match requires an algebraic field",
                 ));
             };
-            let scopes = validation::resource_match_arm_scopes(definition, |name| {
-                click_function_environment
-                    .algebraic_type_definitions
-                    .get(name)
-            })?;
+            let scopes = validation::resource_match_arm_scopes(
+                definition,
+                |name| {
+                    click_function_environment
+                        .algebraic_type_definitions
+                        .get(name)
+                },
+                |name| resource_environment.get(name),
+            )?;
             let mut arms = Vec::new();
             for (variant, bindings, arm) in scopes {
                 let mut integer_binding_variables = BTreeMap::new();
@@ -4245,6 +4342,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                         .map(|child| {
                             Ok(crate::kernel::CResourceChildSpec {
                                 name: child.name.clone(),
+                                resource: child.resource.clone(),
                                 binding: child.identity,
                                 arguments: child
                                     .arguments
@@ -4304,10 +4402,48 @@ pub(in crate::surface) fn append_entry_resource_specs(
     _resource_environment: &ResourceEnvironment,
     specs: &mut Vec<CResourceSpec>,
 ) -> Result<(), ClickError> {
-    specs.push(resource_clause_to_resource_spec_with_parameters(
-        resource, parameters, None,
+    specs.extend(resource_clause_to_resource_specs_with_metadata(
+        resource,
+        parameters,
+        None,
+        CResourceTransferRole::Borrow,
+        CResourceSnapshot::Entry,
     )?);
     Ok(())
+}
+
+fn resource_clause_to_resource_specs_with_metadata(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    result_type: Option<crate::kernel::CType>,
+    role: crate::kernel::CResourceTransferRole,
+    snapshot: crate::kernel::CResourceSnapshot,
+) -> Result<Vec<CResourceSpec>, ClickError> {
+    if let ResourceClause::MemoryAggregate { access, segments } = resource {
+        return segments
+            .iter()
+            .map(|segment| {
+                let leaf = match access {
+                    ResourceAccessMode::Own => ResourceClause::OwnMemory(segment.clone()),
+                    ResourceAccessMode::View => ResourceClause::ViewMemory(segment.clone()),
+                };
+                resource_clause_to_resource_spec_with_metadata(
+                    &leaf,
+                    parameters,
+                    result_type,
+                    role,
+                    snapshot,
+                )
+            })
+            .collect();
+    }
+    Ok(vec![resource_clause_to_resource_spec_with_metadata(
+        resource,
+        parameters,
+        result_type,
+        role,
+        snapshot,
+    )?])
 }
 
 fn resource_clause_to_resource_spec_with_parameters(

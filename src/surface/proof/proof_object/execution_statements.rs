@@ -239,6 +239,42 @@ impl<'a> Proof<'a> {
         self.try_simp_closure()
     }
 
+    /// The C local the call at the current frontier assigns its result to.
+    ///
+    /// A call whose result is used in a condition or a return expression is
+    /// lowered as an assignment to one synthesized local, so naming that
+    /// local's post-call value is what gives a proof a surface name for the
+    /// result. A call in statement position discards its result and has no
+    /// such local; naming it is an error rather than a silent no-op.
+    fn frontier_call_result_local(&self, name: &String) -> Result<String, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`step` requires an execution-frontier proof"));
+        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        if self.state().locals().values.contains_key(name)
+            || execution.core.state.locals().contains_name(name)
+        {
+            return Err(self.step_error(format!("call result name `{name}` is already in scope")));
+        }
+        let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
+            execution.view(context),
+            &execution.core.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "step",
+        )?;
+        match statement {
+            CStatement::CallAssign { target, .. } => Ok(target),
+            _ => Err(self.step_error(format!(
+                "`let {name} = step(...)` names a call result, but this call's result is unused"
+            ))),
+        }
+    }
+
     pub(super) fn apply_execution_statement_step(
         &self,
         step: ProofStep,
@@ -256,6 +292,22 @@ impl<'a> Proof<'a> {
     ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step` requires an execution-frontier proof"));
+        };
+        // `let name = step(callee(...), { ... })` on a callee that produces no
+        // resource instance names the call's scalar result. Resolve the C
+        // local this one call assigns before the step runs, so the name can be
+        // bound to its post-call value below. This reads the statement the
+        // frontier already points at; it searches nothing.
+        let call_result_target = match &step {
+            ProofStep::StepCall(transport) => match transport.result() {
+                Some(name) => {
+                    let name = name.to_string();
+                    let target = self.frontier_call_result_local(&name)?;
+                    Some((name, target))
+                }
+                None => None,
+            },
+            _ => None,
         };
         let selected_environment;
         let selected_context;
@@ -396,6 +448,28 @@ impl<'a> Proof<'a> {
                     .record_lowering(&surface, fact);
             }
         }
+        // The call's result is the value its own assignment left in the C
+        // local the frontier statement named: one indexed read of that name,
+        // bound as the proof-local value the surface name denotes from here on.
+        let call_result_binding = match &call_result_target {
+            Some((name, target)) => {
+                let value = checked
+                    .execution
+                    .core
+                    .state
+                    .locals()
+                    .get(target)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.step_error(format!("`let {name} = step(...)` found no call result"))
+                    })?;
+                Some((
+                    name.clone(),
+                    ContractExpression::CFragment(CExpression::Value(value)),
+                ))
+            }
+            None => None,
+        };
         let added_facts = checked.added_facts;
         let state = self
             .state
@@ -406,6 +480,14 @@ impl<'a> Proof<'a> {
                 added_facts,
             )
             .map_err(|error| self.execution_update_error("`step`", error))?;
+        let state = match call_result_binding {
+            Some((name, value)) => {
+                let mut locals = state.locals().clone();
+                locals.values = locals.values.with_inserted(name, value);
+                state.with_locals(locals)
+            }
+            None => state,
+        };
         Ok(Self {
             site: self.site.clone(),
             context: self.context.clone(),
@@ -475,6 +557,7 @@ impl<'a> Proof<'a> {
                 &bundle.iteration_entry_state,
                 &bundle.checks,
                 &bundle.ranking_measures,
+                &bundle.binders,
                 |goal, introductions| {
                     let both_children = if introductions.len() == 2
                         && bundle.checks.len() == 2
@@ -622,6 +705,8 @@ impl<'a> Proof<'a> {
         loop_head_state: &CState,
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
+        binders: &[crate::kernel::CLoopBinder],
+        structural_measure: Option<&str>,
         composite_resource_definitions: &[CCompositeResourceDefinition],
     ) -> Result<(), ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
@@ -646,8 +731,34 @@ impl<'a> Proof<'a> {
             &execution.core.effect_facts,
         ));
         let assumptions = assumptions_from_propositions(&closer_facts);
-        let invariant_obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+        // The back edge binds the loop's names again before anything reads
+        // them: whatever the body called the instance it ends holding, the
+        // binder names it, and a body that ends with no instance at those
+        // arguments fails here by name.
+        let back_edge_state = crate::kernel::c_loop_state_with_loop_binders_rebound(
+            loop_head_state,
             &execution.core.state,
+            binders,
+            &assumptions,
+        )
+        .map_err(|message| self.step_error(format!("loop state join: {message}")))?;
+        // D6: a structural `decreases` is decided here, against the instance
+        // the binder held at the loop head. It is not a bundle member, so a
+        // back edge that does not descend is named at the join.
+        if let Some(measure) = structural_measure
+            && let Some(failure) = crate::kernel::loop_structural_descent_failure(
+                loop_head_state,
+                &back_edge_state,
+                binders,
+                measure,
+                composite_resource_definitions,
+                &assumptions,
+            )
+        {
+            return Err(self.step_error(format!("loop state join: {failure}")));
+        }
+        let invariant_obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+            &back_edge_state,
             loop_entry_state,
             invariant_checks,
             &assumptions,
@@ -659,22 +770,26 @@ impl<'a> Proof<'a> {
                 .map(|obligation| obligation.proposition().clone()),
         );
         let assumptions = assumptions_from_propositions(&closer_facts);
-        if !crate::kernel::c_loop_condition_may_continue(
-            &execution.core.state,
-            condition,
-            &assumptions,
-        )
-        .map_err(|message| self.step_error(format!("loop condition classification: {message}")))?
+        if !crate::kernel::c_loop_condition_may_continue(&back_edge_state, condition, &assumptions)
+            .map_err(|message| {
+                self.step_error(format!("loop condition classification: {message}"))
+            })?
         {
             return Ok(());
         }
         // Heap lifetime and resource ownership are compared against the head
         // the body actually started from. That is the loop entry context for
         // an ordinary loop, and the loop's own narrower resource context when
-        // the loop declares `owns` or `views` clauses of its own.
+        // the loop declares `owns` or `views` clauses of its own. A binder's
+        // model is what its invariants constrain, so the ownership comparison
+        // sets it aside; the invariant obligations above checked it.
         crate::kernel::c_loop_state_components_match_at_back_edge(
             loop_head_state,
-            &execution.core.state,
+            &crate::kernel::c_loop_state_with_head_binder_models(
+                &back_edge_state,
+                loop_head_state,
+                binders,
+            ),
             &assumptions,
             composite_resource_definitions,
         )
@@ -695,7 +810,9 @@ impl<'a> Proof<'a> {
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
         ranking_measures: &[CExpression],
+        structural_measure: Option<&str>,
         invariant_surfaces: &[ClickProposition],
+        binders: &[crate::kernel::CLoopBinder],
         composite_resource_definitions: &[CCompositeResourceDefinition],
         do_while: bool,
     ) -> Result<Option<Self>, ClickError> {
@@ -704,6 +821,8 @@ impl<'a> Proof<'a> {
             loop_head_state,
             condition,
             invariant_checks,
+            binders,
+            structural_measure,
             composite_resource_definitions,
         )?;
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
@@ -1368,8 +1487,13 @@ impl<'a> Proof<'a> {
             &execution.presentation.expansion,
             context.constants.proof_site.as_ref(),
         );
-        let smart_certificate =
-            check_mid_execution_have(have, &mut execution, &tactic_context, &mut facts)?;
+        let smart_certificate = check_mid_execution_have(
+            have,
+            &mut execution,
+            &tactic_context,
+            &mut facts,
+            &self.state.locals().values,
+        )?;
         if capture_this_tactic {
             // The tactic's expansion is the law's own surface certificate.
             let expansion = ProofCertificateBuilder {

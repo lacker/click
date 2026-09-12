@@ -24,7 +24,7 @@ resource guarded(active: int32) {
 verifying "c_decreases_resource_rejects_inactive_child.c";
 
 int32 empty_repeat(int32 active) {
-    decreases resource guarded(active);
+    decreases guarded(active);
     views guarded(active);
 
     ensures result == 0;

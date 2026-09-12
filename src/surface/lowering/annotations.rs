@@ -1234,6 +1234,7 @@ fn loop_resource_declarations(
         }
         let declaration = declarations.entry(*loop_index).or_default();
         for resource in clause.resources() {
+            let resource = &loop_resource_with_field_schema(resource, resource_environment)?;
             collect_owned_resource_memory_segments(
                 resource,
                 resource_environment,
@@ -1250,6 +1251,49 @@ fn loop_resource_declarations(
         }
     }
     Ok(declarations)
+}
+
+/// A loop binder's checked field schema, taken from the resource definition
+/// it names.
+///
+/// Contract binders are given their schema when the file is checked, because
+/// a contract clause is reached from the function block. A loop binder lives
+/// inside a proof script and is reached only here, at the one place its
+/// declaration is lowered.
+fn loop_resource_with_field_schema(
+    resource: &ResourceClause,
+    resource_environment: &ResourceEnvironment,
+) -> Result<ResourceClause, ClickError> {
+    let ResourceClause::Named { binding, resource } = resource else {
+        return Ok(resource.clone());
+    };
+    if binding.schema.is_some() {
+        return Ok(ResourceClause::Named {
+            binding: binding.clone(),
+            resource: resource.clone(),
+        });
+    }
+    let ResourceClause::Declared { name, .. } = resource.as_ref() else {
+        return Err(ClickError::new(
+            "named ownership requires a declared resource",
+        ));
+    };
+    let schema = resource_environment
+        .get(name)
+        .and_then(ResourceDefinition::field_schema)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "loop binder `{}` names resource `{name}`, which has no checked fields",
+                binding.name
+            ))
+        })?;
+    Ok(ResourceClause::Named {
+        binding: ResourceInstanceBinding {
+            schema: Some(schema.clone()),
+            ..binding.clone()
+        },
+        resource: resource.clone(),
+    })
 }
 
 fn collect_owned_resource_memory_segments(
@@ -1668,7 +1712,8 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
-                let ranking_measures = self.loop_ranking_measures(loop_index)?;
+                let (ranking_measures, structural_measure) =
+                    self.loop_measure_clauses(loop_index)?;
                 if matches!(statement, syntax::C0Statement::DoWhile { .. }) {
                     c_do_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1678,6 +1723,7 @@ impl AnnotationLowerer<'_> {
                     )
                     .with_loop_resource_specs(resource_specs)
                     .with_loop_ranking_measures(ranking_measures)
+                    .with_loop_structural_measure(structural_measure)
                 } else {
                     c_while_with_invariant_and_effect_checks(
                         condition.to_kernel_expression(),
@@ -1688,6 +1734,7 @@ impl AnnotationLowerer<'_> {
                     )
                     .with_loop_resource_specs(resource_specs)
                     .with_loop_ranking_measures(ranking_measures)
+                    .with_loop_structural_measure(structural_measure)
                 }
             }
             syntax::C0Statement::For {
@@ -1704,7 +1751,8 @@ impl AnnotationLowerer<'_> {
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_frame_checks(loop_index)?;
                 let resource_specs = self.loop_resource_specs(loop_index);
-                let ranking_measures = self.loop_ranking_measures(loop_index)?;
+                let (ranking_measures, structural_measure) =
+                    self.loop_measure_clauses(loop_index)?;
                 c_seq(
                     lowered_initializer,
                     c_while_with_invariant_and_effect_checks(
@@ -1715,7 +1763,8 @@ impl AnnotationLowerer<'_> {
                         crate::kernel::c_for_body_with_step(lowered_body, lowered_step),
                     )
                     .with_loop_resource_specs(resource_specs)
-                    .with_loop_ranking_measures(ranking_measures),
+                    .with_loop_ranking_measures(ranking_measures)
+                    .with_loop_structural_measure(structural_measure),
                 )
             }
             syntax::C0Statement::If {
@@ -1764,20 +1813,23 @@ impl AnnotationLowerer<'_> {
     /// bundle, the verified loop rule, and the whole-function termination
     /// pass all read the one declared clause rather than agreeing by
     /// coincidence.
-    fn loop_ranking_measures(&self, loop_index: usize) -> Result<Vec<CExpression>, ClickError> {
-        let mut measures: Option<Vec<CExpression>> = None;
+    fn loop_ranking_measures(
+        &self,
+        loop_index: usize,
+    ) -> Result<Option<crate::kernel::CLoopTerminationMeasure>, ClickError> {
+        let mut measures: Option<crate::kernel::CLoopTerminationMeasure> = None;
         for clause in self
             .structural_clauses
             .iter()
             .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
         {
-            let Some(measure) = clause.decreases() else {
+            let Some(expressions) = crate::surface::verification::loop_termination_measure(
+                clause,
+                &format!("loop {loop_index} `decreases`"),
+            )?
+            else {
                 continue;
             };
-            let expressions = crate::surface::verification::termination_measure_expressions(
-                measure,
-                &format!("loop {loop_index} `decreases`"),
-            )?;
             match &measures {
                 Some(existing) if existing != &expressions => {
                     return Err(ClickError::new(format!(
@@ -1787,7 +1839,22 @@ impl AnnotationLowerer<'_> {
                 _ => measures = Some(expressions),
             }
         }
-        Ok(measures.unwrap_or_default())
+        Ok(measures)
+    }
+
+    /// The loop head's declared measure, split into the two clauses the
+    /// kernel loop statement carries.
+    fn loop_measure_clauses(
+        &self,
+        loop_index: usize,
+    ) -> Result<(Vec<CExpression>, Option<String>), ClickError> {
+        Ok(match self.loop_ranking_measures(loop_index)? {
+            Some(crate::kernel::CLoopTerminationMeasure::Ranking(components)) => (components, None),
+            Some(crate::kernel::CLoopTerminationMeasure::Structural(binder)) => {
+                (Vec::new(), Some(binder))
+            }
+            None => (Vec::new(), None),
+        })
     }
 
     fn loop_invariant_checks(
@@ -5039,7 +5106,7 @@ fn instantiate_algebraic_kernel_field_type(
 ) -> Result<AlgebraicValueType, String> {
     match field {
         AlgebraicFieldType::Integer => Ok(AlgebraicValueType::Integer),
-        AlgebraicFieldType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
+        AlgebraicFieldType::C { c_type, .. } => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()
             .iter()

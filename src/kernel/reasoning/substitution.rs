@@ -2607,9 +2607,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             effect_checks,
             resource_specs,
             ranking_measures,
+            structural_measure,
             body,
             do_while,
         } => CStatement::While {
+            structural_measure: structural_measure.clone(),
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
             ranking_measures: ranking_measures
                 .iter()
@@ -3748,6 +3750,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                             .iter()
                             .map(|child| CResourceChildSpec {
                                 name: child.name.clone(),
+                                resource: child.resource.clone(),
                                 binding: child.binding,
                                 field_bindings: child.field_bindings.clone(),
                                 arguments: child
@@ -5511,9 +5514,11 @@ fn substitute_pointer_variable_in_c_statement(
             effect_checks,
             resource_specs,
             ranking_measures,
+            structural_measure,
             body,
             do_while,
         } => CStatement::While {
+            structural_measure: structural_measure.clone(),
             condition: substitute_pointer_variable_in_c_expression(condition, from, to),
             ranking_measures: ranking_measures
                 .iter()
@@ -6739,6 +6744,7 @@ fn substitute_pointer_variable_in_c_function(
                             .iter()
                             .map(|child| CResourceChildSpec {
                                 name: child.name.clone(),
+                                resource: child.resource.clone(),
                                 binding: child.binding,
                                 field_bindings: child.field_bindings.clone(),
                                 arguments: child

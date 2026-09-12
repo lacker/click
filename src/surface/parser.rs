@@ -192,6 +192,11 @@ struct Parser {
     contract_proof_bindings: BTreeMap<String, Vec<(String, Variable, String)>>,
     next_resource_identity: u64,
     current_resource_bindings: BTreeMap<String, (Variable, String)>,
+    /// Instances introduced by `unfold(parent) as { slot: name }`. The slot's
+    /// resource is declared by the parent's matched arm, which may not be
+    /// parsed yet, so the recorded family is the parent's and every family
+    /// comparison against these instances is left to declaration expansion.
+    child_slot_identities: BTreeSet<Variable>,
     current_resource_fields: BTreeMap<String, ResourceFieldAccess>,
     current_resource_targets: BTreeMap<String, ResourceClause>,
     match_nesting: usize,
@@ -211,6 +216,19 @@ struct Parser {
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
     current_click_type_parameters: BTreeSet<String>,
     current_contract_bindings: BTreeSet<String>,
+    /// Declared field types of every `spec enum` variant in the file, keyed by
+    /// datatype and variant name and indexed before any item is parsed. A
+    /// resource's match arm types its constructor bindings from this index, so
+    /// a struct-pointer binding is a memory base whether its datatype is
+    /// declared above or below the resource: declaration order does not create
+    /// scope.
+    algebraic_variant_fields: BTreeMap<(String, String), Vec<AlgebraicFieldType>>,
+    /// The constructor bindings of the match arm currently being parsed, with
+    /// their declared field types. A struct-pointer binding is also in
+    /// `current_struct_params`; the others are here only so using one as a
+    /// memory base is refused by name instead of lowering to a width-unknown
+    /// load.
+    current_arm_binding_types: BTreeMap<String, AlgebraicFieldType>,
     current_integer_params: BTreeSet<String>,
     current_integer_lets: BTreeSet<String>,
     integer_literal_context: bool,
@@ -429,6 +447,7 @@ impl Parser {
             contract_proof_bindings: BTreeMap::new(),
             next_resource_identity: 0,
             current_resource_bindings: BTreeMap::new(),
+            child_slot_identities: BTreeSet::new(),
             current_resource_fields: BTreeMap::new(),
             current_resource_targets: BTreeMap::new(),
             tokens,
@@ -448,6 +467,8 @@ impl Parser {
             current_algebraic_params: BTreeMap::new(),
             current_click_type_parameters: BTreeSet::new(),
             current_contract_bindings: BTreeSet::new(),
+            algebraic_variant_fields: BTreeMap::new(),
+            current_arm_binding_types: BTreeMap::new(),
             current_integer_params: BTreeSet::new(),
             current_integer_lets: BTreeSet::new(),
             callee_resource_binders: BTreeMap::new(),
@@ -464,7 +485,67 @@ impl Parser {
         Ok(file)
     }
 
+    /// Records each `spec enum` variant's declared field types before any item
+    /// is parsed, so a resource's match arm can type its constructor bindings
+    /// against a datatype declared anywhere in the file. The scan visits the
+    /// token stream once and parses only the datatype declarations; the item
+    /// loop then parses the same declarations again as the definitions the
+    /// file carries. A declaration that does not parse is skipped without a
+    /// diagnostic of its own: the item loop reaches it and reports the error
+    /// in the order the file is written.
+    fn index_algebraic_variant_fields(&mut self) {
+        let resume = self.position;
+        // Closing a nested datatype argument list rewrites the `>>` it ends on
+        // into a single `>` and leaves it for the enclosing list to consume,
+        // so the rewrite is not idempotent: a second parse would spend that
+        // `>` on the inner list and fail on the outer one. Put every `>>` back
+        // before the item loop reads the same tokens.
+        let shift_rights = self
+            .tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, token)| **token == Token::ShiftRight)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        self.position = 0;
+        let mut depth = 0usize;
+        while self.position < self.tokens.len() {
+            crate::instrumentation::record_deterministic_work(1);
+            let declares_datatype = depth == 0
+                && self.peek_ident() == Some("spec")
+                && matches!(self.peek_next(), Some(Token::Ident(next)) if next == "enum");
+            if declares_datatype {
+                let declaration = self.position;
+                match self.parse_algebraic_type_definition() {
+                    Ok(definition) => {
+                        for variant in definition.variants() {
+                            self.algebraic_variant_fields
+                                .entry((definition.name().to_string(), variant.name().to_string()))
+                                .or_insert_with(|| variant.fields().to_vec());
+                        }
+                    }
+                    // Resume from just after the `spec`, so the rest of the
+                    // file is still indexed and the brace depth counts every
+                    // token this scan walked past.
+                    Err(_) => self.position = declaration + 1,
+                }
+                continue;
+            }
+            match self.peek() {
+                Some(Token::LBrace) => depth += 1,
+                Some(Token::RBrace) => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            self.position += 1;
+        }
+        for index in shift_rights {
+            self.tokens[index] = Token::ShiftRight;
+        }
+        self.position = resume;
+    }
+
     fn parse_file_items(&mut self) -> Result<ClickFile, ClickError> {
+        self.index_algebraic_variant_fields();
         let mut verifying_sources = Vec::new();
         let mut algebraic_type_definitions = Vec::new();
         let mut predicate_definitions = Vec::new();
@@ -742,7 +823,19 @@ impl Parser {
                     "algebraic datatype fields must be C scalar, data-pointer, or algebraic values",
                 ));
             }
-            return Ok(AlgebraicFieldType::C(parsed.c_type));
+            // Only a declared `struct tag*` records a tag: a bare
+            // `struct tag` is not a pointer to a laid-out object and a
+            // `struct tag**` does not point at one either, so neither is a
+            // memory base in a match arm.
+            let struct_name = if parsed.struct_pointer && parsed.c_type == C0Type::Int32Pointer {
+                parsed.struct_name
+            } else {
+                None
+            };
+            return Ok(AlgebraicFieldType::C {
+                c_type: parsed.c_type,
+                struct_name,
+            });
         }
         if name == "Integer" {
             self.position += 1;
@@ -1040,6 +1133,39 @@ impl Parser {
         })
     }
 
+    /// Types a match arm's constructor bindings from the indexed datatype.
+    /// A binding of struct-pointer type joins `current_struct_params`, which
+    /// is what makes `parent->left` in the arm resolve against
+    /// `struct tree_node`'s layout; every other binding is recorded only so
+    /// that using it as a memory base is refused with its declared type. A
+    /// pattern this index cannot resolve, because the datatype or the arity is
+    /// wrong, is left to the validation that reports exactly that.
+    fn bind_arm_binding_types(&mut self, type_name: &str, variant: &str, bindings: &[String]) {
+        let Some(fields) = self
+            .algebraic_variant_fields
+            .get(&(type_name.to_string(), variant.to_string()))
+            .filter(|fields| fields.len() == bindings.len())
+            .cloned()
+        else {
+            return;
+        };
+        for (binding, field) in bindings.iter().zip(fields) {
+            match field.struct_pointer_name() {
+                Some(struct_name) => {
+                    self.current_struct_params
+                        .insert(binding.clone(), struct_name.to_string());
+                }
+                // The binding shadows any enclosing name for the arm, so an
+                // outer struct parameter must not keep lending it a layout.
+                None => {
+                    self.current_struct_params.remove(binding);
+                }
+            }
+            self.current_arm_binding_types
+                .insert(binding.clone(), field);
+        }
+    }
+
     fn parse_composite_resource_body(
         &mut self,
         resource_name: &str,
@@ -1116,9 +1242,14 @@ impl Parser {
                 self.match_nesting += 1;
                 let saved_bindings = self.current_resource_bindings.clone();
                 let saved_targets = self.current_resource_targets.clone();
+                let saved_struct_params = self.current_struct_params.clone();
+                let saved_arm_binding_types = std::mem::take(&mut self.current_arm_binding_types);
+                self.bind_arm_binding_types(&type_name, &variant, &bindings);
                 let body = self.parse_composite_resource_body(resource_name);
                 self.current_resource_bindings = saved_bindings;
                 self.current_resource_targets = saved_targets;
+                self.current_struct_params = saved_struct_params;
+                self.current_arm_binding_types = saved_arm_binding_types;
                 self.match_nesting -= 1;
                 let body = body?;
                 for name in inserted {
@@ -1717,25 +1848,19 @@ impl Parser {
                             signature.name()
                         )));
                     }
-                    decreases = Some(if self.peek_ident() == Some("resource") {
-                        self.position += 1;
-                        let resource = self.parse_resource_target(ResourceAccessMode::View)?;
-                        self.expect(Token::Semicolon)?;
-                        CFunctionDecrease::Resource(
-                            apply_contract_lets_to_resource_clause(resource, &contract_lets)
-                                .map_err(|message| self.error(message))?,
+                    // D6: one expression, classified after resolution.
+                    // `decreases n;`, `decreases list(node);`, and
+                    // `decreases sub;` are the same syntax here; declared
+                    // resource expansion decides which measure each one is.
+                    let measure = self.parse_contract_expression()?;
+                    self.expect(Token::Semicolon)?;
+                    decreases = Some(CFunctionDecrease::Unresolved(
+                        substitute_contract_expression(
+                            &measure,
+                            &contract_let_substitutions(&contract_lets),
                         )
-                    } else {
-                        let measure = self.parse_contract_expression()?;
-                        self.expect(Token::Semicolon)?;
-                        CFunctionDecrease::Numeric(
-                            substitute_contract_expression(
-                                &measure,
-                                &contract_let_substitutions(&contract_lets),
-                            )
-                            .map_err(|message| self.error(message))?,
-                        )
-                    });
+                        .map_err(|message| self.error(message))?,
+                    ));
                 }
                 Some("owns") => {
                     self.position += 1;
@@ -2755,7 +2880,7 @@ impl Parser {
             else {
                 return Err(self.error(format!("unknown resource instance `{instance}`")));
             };
-            if family != declaration.family {
+            if family != declaration.family && !self.child_slot_identities.contains(&identity) {
                 return Err(self.error(format!(
                     "binder `{binder}` expects resource `{}`, but `{instance}` is `{family}`",
                     declaration.family
@@ -2792,6 +2917,7 @@ impl Parser {
                 "`{callee}` produces more than one resource instance; a call step introduces one"
             )));
         }
+        let mut result = None;
         let produced = match (produced, produced_declaration) {
             (None, None) => None,
             (None, Some((produced, _))) => {
@@ -2799,10 +2925,21 @@ impl Parser {
                     "`{callee}` produces `{produced}`; introduce it with `let {produced} = step(...)`"
                 )));
             }
+            // The callee produces no instance, so the same `let` names the
+            // call's scalar result. The frontier's call statement decides
+            // whether there is one; the parser only records the name.
             (Some(name), None) => {
-                return Err(self.error(format!(
-                    "`{callee}` produces no resource instance, so `let {name} = step(...)` introduces nothing"
-                )));
+                if self.current_contract_bindings.contains(&name)
+                    || self.current_integer_params.contains(&name)
+                    || self.current_integer_lets.contains(&name)
+                    || self.current_resource_bindings.contains_key(&name)
+                {
+                    return Err(self.error(format!(
+                        "call result name `{name}` conflicts with a C, pure, or resource binding"
+                    )));
+                }
+                result = Some(name);
+                None
             }
             (Some(name), Some((produced, declaration))) => {
                 if self.current_contract_bindings.contains(&name)
@@ -2813,7 +2950,9 @@ impl Parser {
                 }
                 let identity = match self.current_resource_bindings.get(&name) {
                     Some((identity, family)) => {
-                        if *family != declaration.family {
+                        if *family != declaration.family
+                            && !self.child_slot_identities.contains(identity)
+                        {
                             return Err(
                                 self.error("produced instance changes the named resource family")
                             );
@@ -2841,6 +2980,7 @@ impl Parser {
             arguments,
             binders,
             produced,
+            result,
         })
     }
 
@@ -2877,6 +3017,21 @@ impl Parser {
     }
 
     fn parse_owned_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
+        self.parse_owned_resource_binding_allowing_rebinding(false)
+    }
+
+    /// A loop header binder, which may reuse an enclosing binder's name. The
+    /// loop rebinds that name to the instance it selects at entry, so a reused
+    /// name keeps the enclosing instance identity and must name the same
+    /// resource family.
+    fn parse_loop_resource_binding(&mut self) -> Result<ResourceClause, ClickError> {
+        self.parse_owned_resource_binding_allowing_rebinding(true)
+    }
+
+    fn parse_owned_resource_binding_allowing_rebinding(
+        &mut self,
+        rebinding: bool,
+    ) -> Result<ResourceClause, ClickError> {
         if let Some(name) = self.peek_ident()
             && self.peek_next() != Some(&Token::Colon)
             && let Some(parameter) = self.contract_resource_parameters.get(name).cloned()
@@ -2890,7 +3045,10 @@ impl Parser {
         }
         let name = self.expect_ident("resource instance name")?;
         self.expect(Token::Colon)?;
-        if self.current_resource_bindings.contains_key(&name)
+        let rebound = rebinding
+            .then(|| self.current_resource_bindings.get(&name).cloned())
+            .flatten();
+        if (rebound.is_none() && self.current_resource_bindings.contains_key(&name))
             || self.current_contract_bindings.contains(&name)
         {
             return Err(self.error(format!("duplicate resource instance binding `{name}`")));
@@ -2903,8 +3061,21 @@ impl Parser {
         else {
             return Err(self.error("named ownership requires a field-bearing declared resource"));
         };
-        let identity = Variable(self.next_resource_identity);
-        self.next_resource_identity += 1;
+        let identity = match rebound {
+            Some((identity, family)) => {
+                if &family != resource_name {
+                    return Err(self.error(format!(
+                        "loop binder `{name}` rebinds an instance of resource `{family}`, not `{resource_name}`"
+                    )));
+                }
+                identity
+            }
+            None => {
+                let identity = Variable(self.next_resource_identity);
+                self.next_resource_identity += 1;
+                identity
+            }
+        };
         self.current_resource_bindings
             .insert(name.clone(), (identity, resource_name.clone()));
         let target = ResourceClause::Named {
@@ -3637,20 +3808,20 @@ impl Parser {
             if self.current_contract_bindings.contains(&name) {
                 return Err(self.error("child resource name conflicts with a C or pure binding"));
             }
-            let identity =
-                if let Some((identity, existing)) = self.current_resource_bindings.get(&name) {
-                    if existing != family {
-                        return Err(self.error("child resource has the wrong family"));
-                    }
-                    *identity
-                } else if introduce {
-                    let identity = Variable(self.next_resource_identity);
-                    self.next_resource_identity += 1;
-                    identity
-                } else {
-                    return Err(self.error(format!("unknown child resource `{name}`")));
-                };
+            let identity = if let Some((identity, _)) = self.current_resource_bindings.get(&name) {
+                // A child slot's resource comes from the parent's matched
+                // arm, which the parser cannot resolve; declaration
+                // expansion checks the supplied instance against it.
+                *identity
+            } else if introduce {
+                let identity = Variable(self.next_resource_identity);
+                self.next_resource_identity += 1;
+                identity
+            } else {
+                return Err(self.error(format!("unknown child resource `{name}`")));
+            };
             if introduce {
+                self.child_slot_identities.insert(identity);
                 self.current_resource_bindings
                     .insert(name.clone(), (identity, family.clone()));
                 self.current_resource_targets.insert(
@@ -3714,17 +3885,18 @@ impl Parser {
                 {
                     return Err(self.error("fold result conflicts with a C or pure binding"));
                 }
-                let identity =
-                    if let Some((identity, previous)) = self.current_resource_bindings.get(&name) {
-                        if previous != resource_name {
-                            return Err(self.error("fold result changes the named resource family"));
-                        }
-                        *identity
-                    } else {
-                        let identity = Variable(self.next_resource_identity);
-                        self.next_resource_identity += 1;
-                        identity
-                    };
+                let identity = if let Some((identity, previous)) =
+                    self.current_resource_bindings.get(&name)
+                {
+                    if previous != resource_name && !self.child_slot_identities.contains(identity) {
+                        return Err(self.error("fold result changes the named resource family"));
+                    }
+                    *identity
+                } else {
+                    let identity = Variable(self.next_resource_identity);
+                    self.next_resource_identity += 1;
+                    identity
+                };
                 self.expect(Token::Comma)?;
                 self.expect(Token::LBrace)?;
                 let mut fields = Vec::new();
@@ -4002,8 +4174,17 @@ impl Parser {
                 // so they are region declarations rather than proof items.
                 if self.peek_ident() == Some("owns") {
                     self.position += 1;
-                    let resource = self.parse_owned_resource_target()?;
+                    let resource = self.parse_loop_resource_binding()?;
                     self.expect(Token::Semicolon)?;
+                    if let ResourceClause::Named { binding, .. } = &resource
+                        && resources.iter().any(|existing| {
+                            matches!(existing, ResourceClause::Named { binding: other, .. }
+                                if other.name == binding.name)
+                        })
+                    {
+                        return Err(self
+                            .error(format!("duplicate loop resource binder `{}`", binding.name)));
+                    }
                     resources.push(resource);
                     continue;
                 }
@@ -5580,6 +5761,7 @@ impl Parser {
             .get(base_name)
             .or_else(|| self.current_aggregate_objects.get(base_name))
         else {
+            self.reject_non_struct_arm_base(base_name, field_name)?;
             return Ok(None);
         };
         if !self.struct_layouts.contains_key(struct_name) {
@@ -5587,6 +5769,25 @@ impl Parser {
         }
         self.resolve_struct_field_metadata(struct_name, field_name)
             .map(Some)
+    }
+
+    /// Refuses a match-arm constructor binding that is not a struct pointer as
+    /// the base of a field place. Without this the arm body would keep the
+    /// field name for lowering to resolve, which for a binding no later pass
+    /// can give a layout means a width-unknown load and a fold that reports
+    /// only that it could not evaluate the instance memory body.
+    fn reject_non_struct_arm_base(
+        &self,
+        base_name: &str,
+        field_name: &str,
+    ) -> Result<(), ClickError> {
+        let Some(field) = self.current_arm_binding_types.get(base_name) else {
+            return Ok(());
+        };
+        Err(self.error(format!(
+            "match-arm binding `{base_name}` is declared `{}`, so `{base_name}->{field_name}` has no struct layout; only a `struct ...*` binding is a memory base in a match arm body",
+            field.describe()
+        )))
     }
 
     fn resolve_struct_field_metadata(

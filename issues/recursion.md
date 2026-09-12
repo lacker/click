@@ -35,7 +35,7 @@ must never recover a consumed child or hide a mutation behind the loop join.
 
 ### Mutual structural recursion
 
-`decreases resource` currently supports a guarded directly recursive composite
+A structural `decreases` currently supports a guarded directly recursive composite
 and direct self-recursive C calls. Mutually recursive C functions using
 structural resource measures need a checked well-founded family rather than a
 same-function direct-child rule. Mutual resource-definition cycles remain a

@@ -660,6 +660,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     ranking_measures: &[CExpression],
+    structural_measure: Option<&str>,
     condition: &CExpression,
     body: &CStatement,
     do_while: bool,
@@ -735,8 +736,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })),
             checks: invariant_checks.to_vec(),
             ranking_measures: ranking_measures.to_vec(),
+            structural_measure: structural_measure.map(str::to_string),
             declared_invariant_surfaces: invariant_surfaces.clone(),
             loop_head_premises: Vec::new(),
+            binders: preservation.binders().to_vec(),
         })),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
@@ -979,12 +982,17 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 leaf = proved.join()?;
             }
         }
-        let checked = if invariant_checks.is_empty() && ranking_measures.is_empty() {
+        let checked = if invariant_checks.is_empty()
+            && ranking_measures.is_empty()
+            && structural_measure.is_none()
+        {
             leaf.check_loop_state_join(
                 preservation.loop_entry_state(),
                 preservation.state(),
                 condition,
                 &[],
+                preservation.binders(),
+                structural_measure,
                 environment.function.composite_resource_definitions(),
             )
             .map_err(|error| {
@@ -1001,7 +1009,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 condition,
                 invariant_checks,
                 ranking_measures,
+                structural_measure,
                 &invariant_surfaces,
+                preservation.binders(),
                 environment.function.composite_resource_definitions(),
                 do_while,
             )
@@ -1033,12 +1043,25 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ));
         // The body must return to the head it started from, which carries the
         // loop's own resource context when the loop declares one.
-        if crate::kernel::c_loop_state_components_match_at_back_edge(
+        let join_assumptions = assumptions_from_propositions(&join_facts);
+        if crate::kernel::c_loop_state_with_loop_binders_rebound(
             preservation.state(),
             &checked_execution.core.state,
-            &assumptions_from_propositions(&join_facts),
-            environment.function.composite_resource_definitions(),
+            preservation.binders(),
+            &join_assumptions,
         )
+        .and_then(|rebound| {
+            crate::kernel::c_loop_state_components_match_at_back_edge(
+                preservation.state(),
+                &crate::kernel::c_loop_state_with_head_binder_models(
+                    &rebound,
+                    preservation.state(),
+                    preservation.binders(),
+                ),
+                &join_assumptions,
+                environment.function.composite_resource_definitions(),
+            )
+        })
         .is_err()
         {
             let candidate = CLoopFinalExitCandidate::new(
@@ -1049,7 +1072,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 final_exit_candidates.push(candidate);
             }
         }
-        let closer_tactics = if (invariant_checks.is_empty() && ranking_measures.is_empty())
+        let closer_tactics = if (invariant_checks.is_empty()
+            && ranking_measures.is_empty()
+            && structural_measure.is_none())
             || invariants_close_requested
         {
             Vec::new()

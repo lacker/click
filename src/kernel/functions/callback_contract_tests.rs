@@ -769,7 +769,7 @@ fn generated_requirement_source_cannot_advertise_state_independence() {
         &[],
         &CMemory::new(),
     ));
-    let source = CallRequirementSource::new(site, 0, None, true);
+    let source = CallRequirementSource::new(site, 0, None, true, None);
     assert!(!source.source_requirement_is_state_independent);
 }
 
@@ -918,6 +918,24 @@ fn empty_requirement_lowering_retains_selected_call_source() {
     assert_eq!(source.interface.as_ref(), "EmptyRequirement");
     assert_eq!(source.requirement_ordinal, 0);
     assert_eq!(source.source_requirement_ordinal, None);
+}
+
+#[test]
+fn source_load_snapshot_collection_is_iterative_and_bounded() {
+    let leaf = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    // The condition node is visited in addition to the proposition nodes.
+    let within_limit = (0..4094).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
+    assert!(
+        source_load_snapshot_for_proposition(&within_limit)
+            .expect("the bounded collector should handle deep logical structure")
+            .is_none()
+    );
+    let over_limit = Proposition::Not(Box::new(within_limit));
+    assert_eq!(
+        source_load_snapshot_for_proposition(&over_limit),
+        Err(ExecutionLimit::ExpressionSteps),
+        "metadata collection must propagate structural exhaustion"
+    );
 }
 
 fn interface(index: usize) -> CFunctionContract {

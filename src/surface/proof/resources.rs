@@ -350,11 +350,15 @@ pub(in crate::surface) fn selected_resource_instance_arm(
         return None;
     };
     let selection = crate::kernel::select_resource_model_arm(model, assumptions)?;
-    let scopes = crate::surface::validation::resource_match_arm_scopes(definition, |name| {
-        click_function_environment
-            .algebraic_type_definitions
-            .get(name)
-    })
+    let scopes = crate::surface::validation::resource_match_arm_scopes(
+        definition,
+        |name| {
+            click_function_environment
+                .algebraic_type_definitions
+                .get(name)
+        },
+        |name| resource_environment.get(name),
+    )
     .ok()?;
     scopes
         .into_iter()

@@ -108,6 +108,72 @@ function heap_member(tree: HeapTree, target: struct tree_node*) -> int32
     }
 }
 
+theorem heap_member_nonzero_is_one(tree: HeapTree, target: struct tree_node*) {
+    ensures heap_member(tree, target) != 0 implies heap_member(tree, target) == 1 by {
+        induct(tree) as ih {
+            HeapTree::Empty => {
+                intro();
+                have heap_member(HeapTree::Empty, target) == 0 by {
+                    unfold(heap_member(HeapTree::Empty, target));
+                    normalize();
+                }
+                contradiction(heap_member(HeapTree::Empty, target) == 0);
+            }
+            HeapTree::Node(node, value, left, right) => {
+                intro();
+                if node == target {
+                    have heap_member(HeapTree::Node(node, value, left, right), target) == 1 by {
+                        unfold(heap_member(
+                            HeapTree::Node(node, value, left, right), target));
+                        normalize() using { node == target; }
+                    }
+                    assumption();
+                } else {
+                    if heap_member(left, target) == 0 {
+                        have heap_member(right, target)
+                            == heap_member(HeapTree::Node(node, value, left, right), target) by {
+                            unfold(heap_member(
+                                HeapTree::Node(node, value, left, right), target));
+                            rewrite(heap_member(left, target) == 0);
+                            normalize() using { not(node == target); }
+                        }
+                        have heap_member(HeapTree::Node(node, value, left, right), target)
+                            == heap_member(right, target) by {
+                            unfold(heap_member(
+                                HeapTree::Node(node, value, left, right), target));
+                            rewrite(heap_member(left, target) == 0);
+                            normalize() using { not(node == target); }
+                        }
+                        have heap_member(right, target) != 0 by {
+                            rewrite(heap_member(right, target)
+                                == heap_member(HeapTree::Node(node, value, left, right), target));
+                            assumption();
+                        }
+                        apply(ih(right));
+                        extract(heap_member(right, target) == 1);
+                        have heap_member(HeapTree::Node(node, value, left, right), target) == 1 by {
+                            rewrite(heap_member(HeapTree::Node(node, value, left, right), target)
+                                == heap_member(right, target));
+                            assumption();
+                        }
+                        assumption();
+                    } else {
+                        apply(ih(left));
+                        extract(heap_member(left, target) == 1);
+                        have heap_member(HeapTree::Node(node, value, left, right), target) == 1 by {
+                            unfold(heap_member(
+                                HeapTree::Node(node, value, left, right), target));
+                            rewrite(heap_member(left, target) == 1);
+                            normalize() using { not(node == target); }
+                        }
+                        assumption();
+                    }
+                }
+            }
+        }
+    }
+}
+
 theorem heap_member_is_inorder_membership(tree: HeapTree, target: struct tree_node*) {
     ensures heap_member(tree, target) == list_contains(heap_inorder(tree), target) by {
         induct(tree) as ih {
@@ -356,13 +422,20 @@ struct tree_node* tree_rotate_right(struct tree_node* root) {
 
 int tree_contains(struct tree_node* root, struct tree_node* target) {
     owns t: tree_at(root);
+    decreases t;
     ensures t.model == old(t.model);
+    ensures result == heap_member(old(t.model), target);
 } by {
     match t.model {
         HeapTree::Empty => {
             unfold(t);
             execute();
             let t = fold(tree_at(root), { model: HeapTree::Empty });
+            have result == heap_member(old(t.model), target) by {
+                rewrite(old(t.model) == HeapTree::Empty);
+                unfold(heap_member(HeapTree::Empty, target));
+                normalize();
+            }
             simp();
         },
         HeapTree::Node(node, value, left_model, right_model) => {
@@ -375,22 +448,84 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
                 then {
                     step();
                     let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
+                    have node == target by {
+                        rewrite(node == root);
+                        normalize() using { root == target; }
+                    }
+                    have result == heap_member(old(t.model), target) by {
+                        rewrite(old(t.model)
+                            == HeapTree::Node(node, value, left_model, right_model));
+                        unfold(heap_member(
+                            HeapTree::Node(node, value, left_model, right_model), target));
+                        normalize() using { node == target; }
+                    }
                     simp();
                 }
                 else {}
             }
-            step(tree_contains(root->left, target), { t: l });
+            have not(node == target) by {
+                rewrite(node == root);
+                normalize() using { not(root == target); }
+            }
+            let found_left = step(tree_contains(root->left, target), { t: l });
             branch {
                 then {
                     step();
+                    have heap_member(left_model, target) == 1 by {
+                        have heap_member(left_model, target) != 0 by {
+                            simp() using {
+                                found_left != 0;
+                                found_left == heap_member(left_model, target);
+                            }
+                        }
+                        have left_model == l.model by {
+                            rewrite(l.model == left_model);
+                            normalize();
+                        }
+                        have heap_member(l.model, target) != 0 by {
+                            rewrite(l.model == left_model);
+                            assumption();
+                        }
+                        apply(heap_member_nonzero_is_one(l.model, target));
+                        extract(heap_member(l.model, target) == 1);
+                        rewrite(left_model == l.model);
+                        assumption();
+                    }
                     let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
+                    have result == heap_member(old(t.model), target) by {
+                        rewrite(old(t.model)
+                            == HeapTree::Node(node, value, left_model, right_model));
+                        unfold(heap_member(
+                            HeapTree::Node(node, value, left_model, right_model), target));
+                        rewrite(heap_member(left_model, target) == 1);
+                        normalize() using { not(node == target); }
+                    }
                     simp();
                 }
                 else {}
             }
-            step(tree_contains(root->right, target), { t: r });
+            have heap_member(left_model, target) == 0 by {
+                simp() using {
+                    found_left == 0;
+                    found_left == heap_member(left_model, target);
+                }
+            }
+            let found_right = step(tree_contains(root->right, target), { t: r });
             step();
             let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
+            have result == heap_member(right_model, target) by {
+                rewrite(found_right == heap_member(right_model, target));
+                normalize();
+            }
+            have result == heap_member(old(t.model), target) by {
+                rewrite(old(t.model)
+                    == HeapTree::Node(node, value, left_model, right_model));
+                unfold(heap_member(
+                    HeapTree::Node(node, value, left_model, right_model), target));
+                rewrite(heap_member(left_model, target) == 0);
+                rewrite(result == heap_member(right_model, target));
+                normalize() using { not(node == target); }
+            }
             simp();
         },
     }

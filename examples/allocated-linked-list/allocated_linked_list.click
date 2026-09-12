@@ -64,7 +64,7 @@ struct node* list_drop_front(struct node* node) {
 }
 
 void list_destroy(struct node* node) {
-    decreases resource allocated_list(node);
+    decreases allocated_list(node);
     consumes allocated_list(node);
 } by {
     if node == 0 {

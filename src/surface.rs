@@ -424,11 +424,46 @@ pub struct AlgebraicVariantDefinition {
 pub enum AlgebraicFieldType {
     Parameter(String),
     Integer,
-    C(C0Type),
+    /// A C value type. `struct_name` is the pointee's struct tag when the
+    /// field is declared `struct tag*`; every C pointer shares one kernel
+    /// type, so the tag is the only record of which layout a matched
+    /// constructor binding of this field denotes.
+    C {
+        c_type: C0Type,
+        struct_name: Option<String>,
+    },
     Algebraic {
         name: String,
         arguments: Vec<AlgebraicFieldType>,
     },
+}
+
+impl AlgebraicFieldType {
+    /// The struct tag a matched-arm binding of this field is a base for, or
+    /// `None` when the field is not a C struct pointer.
+    pub fn struct_pointer_name(&self) -> Option<&str> {
+        match self {
+            Self::C {
+                c_type,
+                struct_name,
+            } if c_type.is_pointer() => struct_name.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// How this field's type reads in a diagnostic about a match-arm binding.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Parameter(name) => name.clone(),
+            Self::Integer => "Integer".to_string(),
+            Self::C {
+                struct_name: Some(name),
+                ..
+            } => format!("struct {name}*"),
+            Self::C { c_type, .. } => describe_c0_type(*c_type),
+            Self::Algebraic { name, .. } => name.clone(),
+        }
+    }
 }
 
 /// A value type in the Click specification language. C types are one family
@@ -533,6 +568,11 @@ pub struct CompositeResourceBody {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceChildBody {
     name: String,
+    /// The child's own declared resource. It is the parent's definition for a
+    /// directly recursive child and another declared resource otherwise; its
+    /// parameters and fields are what the child's arguments and field
+    /// equations are checked against.
+    resource: String,
     identity: Variable,
     arguments: Vec<ContractExpression>,
     field_bindings: Vec<usize>,
@@ -663,13 +703,17 @@ impl CallBinderBinding {
 /// `step(callee(arguments), { binder: instance, ... })`: one ordinary C call
 /// with every instance binder of the callee bound explicitly. A callee
 /// `produces` binder is introduced by the surrounding
-/// `let name = step(...)` and is carried in `produced`.
+/// `let name = step(...)` and is carried in `produced`. When the callee
+/// declares no `produces` binder, the same `let` names the call's scalar
+/// result instead and is carried in `result`; at most one of the two is
+/// ever set.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallBinderTransport {
     callee: String,
     arguments: Vec<ContractExpression>,
     binders: Vec<CallBinderBinding>,
     produced: Option<CallBinderBinding>,
+    result: Option<String>,
 }
 
 impl CallBinderTransport {
@@ -688,12 +732,20 @@ impl CallBinderTransport {
     pub fn produced(&self) -> Option<&CallBinderBinding> {
         self.produced.as_ref()
     }
+
+    /// The proof-local name this step gives the call's scalar result, when
+    /// the callee produces no resource instance.
+    pub fn result(&self) -> Option<&str> {
+        self.result.as_deref()
+    }
 }
 
 impl std::fmt::Display for CallBinderTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(produced) = &self.produced {
             write!(f, "let {} = ", produced.instance)?;
+        } else if let Some(result) = &self.result {
+            write!(f, "let {result} = ")?;
         }
         write!(f, "step({}(", self.callee)?;
         for (index, argument) in self.arguments.iter().enumerate() {
@@ -774,10 +826,22 @@ pub struct FunctionBlock {
     grouped_proof: Option<SourceProof>,
 }
 
+/// A C function's `decreases` measure.
+///
+/// Decision D6: the clause is one expression, and functions and resources
+/// share one namespace, so the parser cannot tell which kind of measure it
+/// read. It stores [`CFunctionDecrease::Unresolved`], and declared-resource
+/// expansion — the pass that knows every declared resource and every contract
+/// binder — classifies it into one of the resolved forms below.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CFunctionDecrease {
+    /// The parsed expression, before resolution decides what it names.
+    Unresolved(ContractExpression),
     Numeric(ContractExpression),
     Resource(ResourceClause),
+    /// A contract resource binder named without arguments, as in
+    /// `owns t: tree_at(root); decreases t;`.
+    Binder(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2420,6 +2484,11 @@ pub struct CertifiedStatementTransition {
     /// provenance cannot perturb execution paths or fresh identities.
     pub(crate) planning_premises: Vec<Proposition>,
     pub(crate) fact_transports: Vec<CertifiedFactTransport>,
+    /// Kernel-produced load equation metadata from this exact transition.
+    /// This is carried separately from propositions so presentation can use
+    /// the producer's snapshot/pointer identity without inferring it from
+    /// ambient state.
+    pub(crate) generated_load_bindings: Vec<crate::kernel::GeneratedLoadBinding>,
 }
 
 #[doc(hidden)]

@@ -2784,6 +2784,15 @@ impl PureFactContext {
         if let Proposition::And(left, right) = goal {
             return self.states_required_goal(left) && self.states_required_goal(right);
         }
+        // Loads emitted from a callee contract may retain its entry snapshot
+        // while the caller's retained fact uses the registered load variable.
+        // Canonicalize a condition leaf through the kernel's load naming law
+        // before consulting the exact stated-fact index; this is not logical
+        // search and does not apply to memory-loadable/resource predicates.
+        let canonical = crate::kernel::canonical_condition_fact(goal);
+        if canonical != *goal {
+            return self.states_required_goal(&canonical);
+        }
         if let Some(key) = crate::kernel::proof::proposition_identity_key(goal)
             && let Some(bucket) = self.stated_proposition_index.get(&key)
             && let Some(candidate) = bucket.iter().next()
@@ -3989,6 +3998,7 @@ impl ExecutionPureFact {
             certified: false,
             certified_store: None,
             transport: None,
+            generated_load_binding: None,
         }
     }
 
@@ -3999,6 +4009,7 @@ impl ExecutionPureFact {
             certified: false,
             certified_store: None,
             transport: None,
+            generated_load_binding: None,
         }
     }
 
@@ -4009,6 +4020,7 @@ impl ExecutionPureFact {
             certified: true,
             certified_store: None,
             transport: None,
+            generated_load_binding: None,
         }
     }
 
@@ -4035,6 +4047,7 @@ impl ExecutionPureFact {
                 authorized_range,
             }),
             transport: None,
+            generated_load_binding: None,
         }
     }
 
@@ -4044,7 +4057,23 @@ impl ExecutionPureFact {
     }
 
     pub(crate) fn with_proposition(mut self, proposition: Proposition) -> Self {
+        if self.proposition != proposition
+            || self.generated_load_binding.as_ref().is_some_and(|binding| {
+                !generated_load_binding_matches_proposition(binding, &proposition)
+            })
+        {
+            // A transported or rewritten fact no longer denotes the exact
+            // producer equation.  Retaining its binding would let a later
+            // surface consumer infer an epoch or pointer from a different
+            // proposition.
+            self.generated_load_binding = None;
+        }
         self.proposition = proposition;
+        self
+    }
+
+    pub(crate) fn with_generated_load_binding(mut self, binding: GeneratedLoadBinding) -> Self {
+        self.generated_load_binding = Some(binding);
         self
     }
 
@@ -4059,6 +4088,7 @@ impl ExecutionPureFact {
             certified: true,
             certified_store: None,
             transport: Some(CertifiedExecutionFactTransport { source, theorem }),
+            generated_load_binding: None,
         }
     }
 
@@ -4068,6 +4098,10 @@ impl ExecutionPureFact {
 
     pub(crate) fn transport_theorem(&self) -> Option<&Theorem> {
         self.transport.as_ref().map(|transport| &transport.theorem)
+    }
+
+    pub(crate) fn generated_load_binding(&self) -> Option<&GeneratedLoadBinding> {
+        self.generated_load_binding.as_ref()
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {
@@ -4089,6 +4123,40 @@ impl ExecutionPureFact {
     pub(super) fn certified_store_data(&self) -> Option<&CertifiedMemoryStore> {
         self.certified_store.as_ref()
     }
+}
+
+/// A generated-load binding is valid only while its exact defining equation
+/// still embeds the producer's memory snapshot and pointer.  Structural
+/// proposition equality intentionally ignores this distinction for some
+/// memory values, so it cannot be the authority for retaining the binding.
+fn generated_load_binding_matches_proposition(
+    binding: &GeneratedLoadBinding,
+    proposition: &Proposition,
+) -> bool {
+    let GeneratedLoadBinding::Exact {
+        variable,
+        snapshot,
+        pointer,
+        load,
+    } = binding
+    else {
+        return true;
+    };
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = proposition
+    else {
+        return false;
+    };
+    let (
+        Bitvector32Term::Variable(proposition_variable),
+        Bitvector32Term::MemoryLoad(memory, proposition_pointer),
+    ) = (left.as_ref(), right.as_ref())
+    else {
+        return false;
+    };
+    proposition_variable == variable
+        && snapshot == &CMemorySnapshotIdentity::of(memory.memory())
+        && proposition_pointer.as_ref() == pointer
+        && load == right.as_ref()
 }
 
 impl SymbolicCExecution {

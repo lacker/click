@@ -153,6 +153,10 @@ pub struct CLoopPreservationContext {
     loop_entry_state: CState,
     pure_facts: Vec<Proposition>,
     whole_loop_effect_facts: Vec<Proposition>,
+    /// The binders this loop's `owns name: resource(...)` clauses declare.
+    /// The back edge binds those names again on whatever the body ends
+    /// holding, so the join needs them beside the head state.
+    binders: Vec<crate::kernel::CLoopBinder>,
 }
 
 /// A body state produced by a checked preservation proof that may be the
@@ -199,6 +203,11 @@ impl CLoopPreservationContext {
     pub fn whole_loop_effect_facts(&self) -> &[Proposition] {
         &self.whole_loop_effect_facts
     }
+
+    /// The binders this loop's header declares.
+    pub fn binders(&self) -> &[crate::kernel::CLoopBinder] {
+        &self.binders
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -208,6 +217,7 @@ pub fn c_loop_preservation_contexts(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
@@ -217,6 +227,7 @@ pub fn c_loop_preservation_contexts(
         invariant_checks,
         effect_checks,
         resource_specs,
+        definitions,
         body,
         assumptions,
         false,
@@ -232,6 +243,7 @@ pub fn c_do_while_preservation_contexts(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
@@ -241,6 +253,7 @@ pub fn c_do_while_preservation_contexts(
         invariant_checks,
         effect_checks,
         resource_specs,
+        definitions,
         body,
         assumptions,
         true,
@@ -254,6 +267,7 @@ fn c_loop_preservation_contexts_with_mode(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
     do_while: bool,
@@ -275,7 +289,9 @@ fn c_loop_preservation_contexts_with_mode(
     let head = prepare_loop_top_state(
         loop_entry_state,
         effect_checks,
+        invariant_checks,
         resource_specs,
+        definitions,
         body,
         assumptions,
         &mut budget,
@@ -303,8 +319,15 @@ fn c_loop_preservation_contexts_with_mode(
         &[],
         &mut budget,
     )
-    .map_err(|error| format!("could not assume loop invariants: {error:?}"))?
-    {
+    .map_err(|error| {
+        loop_head_invariant_failure(
+            &top_state,
+            loop_entry_state,
+            invariant_checks,
+            assumptions,
+            error,
+        )
+    })? {
         let condition_contexts = if do_while {
             vec![(invariant_facts.clone(), invariant_obligations.clone())]
         } else {
@@ -347,10 +370,48 @@ fn c_loop_preservation_contexts_with_mode(
                 loop_entry_state: loop_entry_state.clone(),
                 pure_facts,
                 whole_loop_effect_facts: whole_loop_effect_summaries.clone(),
+                binders: crate::kernel::c_loop_binders(resource_specs),
             });
         }
     }
     Ok(contexts)
+}
+
+/// Names the loop invariant that could not be read at the abstract loop head.
+///
+/// The usual cause is an invariant that reads a resource instance the loop did
+/// not declare: the body holds exactly the loop's own resources, so a binder
+/// the header does not name has no model to read there. Retrying the checks
+/// one at a time costs one lowering per invariant and only on the failing
+/// path.
+fn loop_head_invariant_failure(
+    top_state: &CState,
+    loop_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &PureFactContext,
+    error: ExecutionLimit,
+) -> String {
+    let mut budget = ExecutionBudget::default();
+    for check in invariant_checks {
+        if assume_invariant_checks(
+            top_state,
+            loop_entry_state,
+            std::slice::from_ref(check),
+            assumptions,
+            &[],
+            &[],
+            &mut budget,
+        )
+        .is_err()
+        {
+            let context = invariant_context(check, InvariantPhase::Preservation)
+                .unwrap_or("a loop invariant");
+            return format!(
+                "{context}: could not be read at the loop head; a loop invariant may only read the resource instances the loop declares"
+            );
+        }
+    }
+    format!("could not assume loop invariants: {error:?}")
 }
 
 pub fn c_loop_invariant_obligations_at_back_edge(
@@ -1195,6 +1256,7 @@ pub fn c_while_with_invariant_and_effect_checks(
         effect_checks,
         resource_specs: Vec::new(),
         ranking_measures: Vec::new(),
+        structural_measure: None,
         do_while: false,
         body: Box::new(body),
     }
@@ -1235,6 +1297,25 @@ impl CStatement {
         }
         self
     }
+
+    /// Declares the loop's structural `decreases` binder (D6).
+    ///
+    /// `None` leaves the loop with whatever numeric components it declared.
+    /// The binder name travels with the loop head for the same reason the
+    /// ranking components do: the back edge, the verified loop rule, and the
+    /// whole-function termination pass read one declared clause.
+    pub fn with_loop_structural_measure(mut self, measure: Option<String>) -> Self {
+        if measure.is_none() {
+            return self;
+        }
+        if let Self::While {
+            structural_measure, ..
+        } = &mut self
+        {
+            *structural_measure = measure;
+        }
+        self
+    }
 }
 
 pub fn c_do_while(condition: CExpression, body: CStatement) -> CStatement {
@@ -1254,6 +1335,7 @@ pub fn c_do_while_with_invariant_and_effect_checks(
         effect_checks,
         resource_specs: Vec::new(),
         ranking_measures: Vec::new(),
+        structural_measure: None,
         do_while: true,
         body: Box::new(body),
     }
@@ -2303,6 +2385,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure,
         body,
         do_while,
     } = &statement
@@ -2330,6 +2413,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure.as_deref(),
         body,
         &assumptions,
         &environment,

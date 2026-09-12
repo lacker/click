@@ -198,7 +198,7 @@ integer types, guards, and decreasing edges before constructing
 when every member has a compatible measure. Whole-function evidence is
 withheld if any reachable loop, recursive component, or callee lacks evidence.
 
-For `decreases resource`, the plan contains only an index into the exact entry
+For a structural `decreases`, the plan contains only an index into the exact entry
 resource requirements. The kernel resolves that requirement and the exact
 composite definition again, instantiates its guard and direct recursive
 children, checks that control flow establishes the active guard before every

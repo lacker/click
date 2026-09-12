@@ -81,7 +81,7 @@ struct node* list_next(struct node* node) {
 }
 
 uint32 list_count_live(struct node* node) {
-    decreases resource marked_list(node);
+    decreases marked_list(node);
     owns marked_list(node);
 } by {
     if node == 0 {
@@ -96,7 +96,7 @@ uint32 list_count_live(struct node* node) {
 }
 
 void list_destroy(struct node* node) {
-    decreases resource marked_list(node);
+    decreases marked_list(node);
     consumes marked_list(node);
 } by {
     if node == 0 {

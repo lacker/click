@@ -108,6 +108,82 @@ enough to become the first regression of the package that fixes them.
    tree_at(root)` is refused ("has fields; bind it with `owns name: ...`")
    and no spelling names a fielded child. Package A4 must accept a matched
    body's named arm children, for functions and loops alike.
+8. **A pure function cannot return a bare pointer type.** Found by package
+   A6: `evaluate_spec_pure_function_application_paths` builds results with
+   `c_value_from_bitvector_term`, which has no opaque pointer term, so an
+   accessor `heap_node(t) -> struct tree_node*` cannot be lowered. Adding one
+   means a new pointer-block variant with congruence, substitution,
+   canonicalization, and block-distinctness rules, which is a
+   soundness-sensitive kernel package. Not scheduled: state traversal results
+   through `inorder` and list constructors instead (`exists (rest) {
+   rb_inorder(m) == List::Cons(result, rest) }`), and revisit only if a
+   required contract cannot be spelled that way.
+9. **A C call result used directly in a condition has no surface name.**
+   Found by package A6 on the scaffold's `tree_contains`: `if
+   (tree_contains(root->left, target)) return 1;` leaves the branch fact
+   `v1000001 != 0` and the contract fact `v1000001 == heap_member(...)` with
+   no way to state the equation between them, so the unguarded `ensures
+   result == heap_member(old(t.model), target)` does not verify; the guarded
+   `root == target implies ...` form does. Package A7.
+10. **An `if` expression cannot produce an algebraic value.** Found by
+    package C2: `if flag == 0 { xs } else { List::Nil }` in a pure function
+    is refused with "algebraic values are only valid in algebraic equality
+    or as a `match` scrutinee", so `list_remove_first` is not definable. C2
+    states erasure as append equations instead (`A ++ [erased] ++ B` at
+    entry, `A ++ B` at exit), which is stronger. Not scheduled unless a
+    required contract needs the conditional form. Also from C2: `predicate`
+    has no `decreases` clause, so recursive invariants are `int32`-valued
+    pure functions; and a `witness` needs a term no pure function can
+    produce for pointers, so the in-order successor is named by hypothesis
+    (`rb_min_list(right) == Cons(successor, Nil)`) that a C proof supplies.
+11. **`click audit` disagrees with `click verify` on the scaffold.** Found by
+    package A7 and reproduced on the sidecar before A7's change: `click audit
+    examples/modeled-binary-tree` fails at the first `branch`'s `simp` in
+    `tree_contains` with "Grouped proof has no source tactic 9" while
+    `verify` passes. Audit is not in `scripts/check.sh`. This is a tooling
+    failure under `AGENTS.md` and is package T1, dispatched ahead of further
+    proof work. Smaller A7 findings, not scheduled: a match-arm binding
+    cannot be a theorem argument inside `have` (`apply_theorem_using` skips
+    the fixed-state local substitution; work around with the instance field
+    plus a bridge equality); `apply`/`extract` at the top level of a `branch`
+    arm is refused by the grouped driver (wrap them in a `have`); and a
+    `simp() using` premise naming a bound call result fails to lower when
+    the goal names it too (use `rewrite` plus `normalize`).
+12. **Proof `match` is capped at two constructors.** Found by package C1:
+    `match c.model` over the three-constructor `Context` is refused with
+    "proof match currently supports one or two constructors; wider execution
+    joins are not implemented" (`src/surface/proof/proof_object/match_cases.rs`).
+    Removing the guard let a three-arm match plan and run through the
+    existing binary range split, so the guard looks stale, but it needs its
+    own regression and review. Package A8. Also from C1, not scheduled: a
+    `have` placed after `execute()` does not reach the post-return fold
+    recheck, so facts a return-path fold needs go before `execute()`; a
+    match-arm binding as a bare argument in a purely pure `have` goal is
+    "not an algebraic binding in this scope" while the same binding beside a
+    C operand works; and `exists` cannot quantify an ADT-typed variable. A
+    failed pure `simp` printed a full Rust debug dump of the proposition and
+    schemas twice, which is the raw-state-dump class of diagnostic defect;
+    package T2.
+13. **A loop body cannot unfold its binder.** Found by package A4: at an
+    arbitrary loop head the binder's model is a fresh symbolic value, arm
+    selection from the invariants yields only the variant, and `unfold`
+    requires constructor evidence ("resource match requires constructor
+    evidence for the instance field"). The two ways to get a constructor
+    are closed: proof `match` on a model is refused at a loop-body frontier
+    ("proof `match` currently requires unchanged function entry"), and a
+    pure `int32 -> enum` function cannot be written because an `if` body
+    cannot produce an algebraic value (gap 10). So A4 landed the parser,
+    the matched-body structural children, the loop back-edge rule, the
+    head-time binder arguments, and arm views at loop heads, but no
+    positive descending, ascending, or rotate-then-ascend loop fixture.
+    Every rbtree loop needs this. Package A9.
+14. **`click audit` fails on other examples.** Found by package T1: a
+    partial `click audit --keep-going examples` run failed at
+    `examples/arena/arena.click:59:9`, `110:13`, `127:13`, `133:13`,
+    `160:13` and `examples/bounded-pool/bounded_pool.click:214:5` with a
+    different mode from gap 11, for example `could not lower 'have'
+    proposition: the kernel lowering produced 0 paths`; confirmed
+    pre-existing on an unmodified base. Package T3.
 
 ## Design decisions
 
@@ -126,8 +202,11 @@ multiplicity claims are stated about that list.
 
 **D2. Parent pointers and color live in the node's own arm.** The tree
 resource takes the parent as a parameter, `rb_at(p, parent)`, and its `Node`
-arm owns `p->__rb_parent_color` and states
-`fact p->__rb_parent_color == address(parent) + color_bit(color)`. Children
+arm owns `p->__rb_parent_color` and states the packed word. C1 landed it as
+two facts, `p->__rb_parent_color == address(parent) + (p->__rb_parent_color
+& 1)` and `(p->__rb_parent_color & 1) == color_bit(color)`, because the
+single fact with an opaque `color_bit(color)` carries no bound for the
+tag-clearing step in `rb_parent`. Children
 are `owns left: rb_at(p->rb_left, p)` and `owns right: rb_at(p->rb_right, p)`.
 Parent/child consistency is therefore a body fact, not a separate claim, and
 no witness inside a matched body is required. Acyclicity is inherent in a
@@ -169,6 +248,17 @@ function plug(ctx: Context, sub: RbTree) -> RbTree decreases ctx { ... }
 ```
 
 `plug` rebuilds the whole model from a context and the focused subtree.
+
+Amendment after C1 (2026-09-12): the frame takes the focused child's parent
+as a resource parameter, `ctx_at(child, parent, root)`, exactly as `rb_at`
+takes it. `Top` states `parent == 0`; `Left(grandparent, color,
+sibling_model, up_model)` owns `parent`'s cells and `up: ctx_at(parent,
+grandparent, root)`. A frame keyed only by the child needs a pure accessor
+from `ctx.model` to the parent pointer in its contracts, and pure functions
+cannot return pointers (gap 8); with the parent as an argument, contracts
+and loop binders name it as the C local the Linux loops already maintain
+(`parent = rb_red_parent(node)`), and no accessor is needed. C1's fixtures
+use concrete frames and predate this amendment; C3 adopts it.
 Every loop invariant in the rbtree algorithms has the form
 `inorder(plug(ctx.model, sub.model)) == inorder(old(t.model))` plus the
 algorithm's shape predicate. `ctx_at` contains `rb_at`; `rb_at` never contains
@@ -264,6 +354,33 @@ a member" step and proof reuse across mirrored cases), a binder map on loop
 headers, loop-entry snapshots such as `at(loop.entry, sub.model)`, and a
 positive constructor test such as `requires c.model is Some`. A package that
 appears to need one reports the need instead of adding it.
+
+## Progress
+
+- 2026-09-11: A1 (arm selection, dff4ebdc), A2 (cross-family arm children,
+  de1da207), A3 (loop binders, 9e62f2a2), A5 (struct-pointer arm bindings
+  as memory bases, 036170c4), B2 and B3 (right rotation, membership,
+  negative rotations, 688e7990) are on master. A5 resolves arm binding
+  types with a bounded pre-scan of `spec enum` declarations in the parser
+  rather than a declaration-order rule. A4 and A6 are in progress; C1 and
+  C2 are dispatched. `tree_contains` verifies model preservation only
+  until A6 lands its membership postcondition.
+- 2026-09-12: A6 (pointer payloads and arm scoping, 7b52373a) and C2 (the
+  pure red-black library in `examples/rbtree-model`, c9d5afee) are on
+  master. `tree_contains` proves the guarded membership form; the
+  unguarded form is package A7. A4, A7, and C1 are in progress.
+- 2026-09-12: C1 (`rb_at`, `ctx_at`, `plug`, the seven link helpers and
+  `__rb_change_child` on verbatim Linux bodies, 05257e8e) is on master. A7
+  is gating; T1 (audit defect) and A8 are dispatched; A4 is in progress.
+- 2026-09-12: A7 (`let r = step(...)` names a call's scalar result when the
+  callee produces no instance, 9c7710ee) is on master; `tree_contains`
+  verifies the unguarded membership postcondition. T2 dispatched.
+- 2026-09-12: A4 (`decreases <expression>` classified after resolution,
+  matched bodies as structural children, loop back-edge rule, head-time
+  binder arguments, arm views at loop heads, 2ab5dba3) is on master with a
+  confirming full gate; its positive loop fixtures wait on A9. T1 (audit on
+  an infeasible `branch` arm, fixed by expanding the dropped arm's tactic by
+  removal) is gating; T3 dispatched for gap 14.
 
 ## Work packages
 
@@ -362,6 +479,55 @@ negative where the pointers are provably different. No new syntax: this is
 lowering and kernel scope. Depends on nothing; C4 and the B2 membership
 result depend on it.
 
+**A7. Name a call result used directly in a condition.**
+Scope: let a proof refer to the scalar result of a C call that appears only
+inside a condition or return expression (gap 9), for example through the
+existing `let r = step(call, {...})` binder form applied at that frontier,
+or through the postcondition being available on the branch fact by the
+call's result identity. Regression: the scaffold's `tree_contains` with the
+unguarded `ensures result == heap_member(old(t.model), target)`, and a
+small fixture with `if (f(x)) return 1;`. No new syntax if the `let ... =
+step(...)` form suffices. Depends on A6.
+
+**T1. Make `click audit` agree with `click verify` on nested arm tactics.**
+Scope: reduce gap 11, fix the grouped-proof source-tactic indexing for
+`branch`/`if` arms, and add audit coverage of the reduction (and of the
+scaffold if cheap) to the gate. No proof or C changes to route around it.
+
+**A8. Lift the two-constructor cap on proof `match`.**
+Scope: remove the stale guard in `match_cases.rs` if the range split
+already handles wider joins, or implement the wider join; regressions with
+a three- and a four-constructor execution `match`, including an all-but-one
+contradiction shape and a negative missing arm. Depends on nothing; C3
+depends on it.
+
+**T2. Bound the failed-`simp` diagnostic.**
+Scope: replace the repeated Rust debug dump of the proposition and
+algebraic schemas in a failed pure `simp` with the bounded goal, premise,
+and search context the diagnostics policy allows. Regression: a fixture
+whose failure message is checked for the absence of the debug dump.
+
+**T3. Make `click audit` agree with `click verify` across `examples/`.**
+Scope: run the audit to completion, reduce each failure mode of gap 14,
+fix it in expansion, and add `verify -> expand -> reverify` regressions per
+mode. No proof or C changes to route around.
+
+**A9. Proof `match` on an instance model at any execution frontier.**
+Scope: let `match name.model { ... }` run at a loop-body frontier and after
+C steps, not only at unchanged function entry, introducing each arm's
+constructor equation and bindings on that arm's path with the same range
+split the entry form uses (coordinate with A8's arity change in
+`match_cases.rs`; land after it). With that, `unfold(sub) as { ... }`
+inside `preserve` has its constructor. Regressions: A4's missing loop
+shapes on the scaffold and small fixtures: a descending loop to the
+leftmost node with `decreases sub;`, an ascending loop through
+`ctx_at(child, parent, root)` frames with `decreases ctx;`, a
+rotate-then-ascend loop, and the negatives for an unrelated node and a
+refolded consumed frame. Also flip or bypass `is_recursive` for matched
+recursive definitions consistently (A4 bypassed it in
+`structural_resource_children` only). No new syntax. Depends on A4 and
+A8; B1 and C3 depend on it.
+
 ### Phase B: models on the fixed scaffold
 
 **B1. Context resource, `plug`, and the iterative walks (D3).**
@@ -370,7 +536,7 @@ Scope: `examples/modeled-binary-tree` sidecar. Add `Context`, `ctx_at`,
 `produces ctx: ctx_at(result); produces sub: tree_at(result); ensures
 plug(ctx.model, sub.model) == old(t.model);` and the leftmost or rightmost
 position stated on the model. Regressions: the example itself plus a focused
-mdtest with a negative that drops a frame. Depends on A1, A2, A3, A4.
+mdtest with a negative that drops a frame. Depends on A1, A2, A3, A4, A5, A9.
 
 **B2. Right rotation, membership, and rotation theorems.**
 Scope: `heap_rotate_right` with its in-order preservation theorem, the
@@ -414,7 +580,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, B1, C1, C2.
+on A4, A8, A9, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with

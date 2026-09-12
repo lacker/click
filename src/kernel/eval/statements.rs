@@ -2197,6 +2197,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             effect_checks: _,
             resource_specs: _,
             ranking_measures: _,
+            structural_measure: _,
             do_while,
             body,
         } => execute_c_while_paths(

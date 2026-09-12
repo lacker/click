@@ -427,6 +427,7 @@ impl CheckedResourceRewrite {
                 before_state,
                 instance,
                 definition,
+                function.composite_resource_definitions(),
                 assumptions,
                 unfold,
                 selected_children.as_deref(),
@@ -3241,6 +3242,7 @@ fn checked_condition_event(
             effect_checks,
             resource_specs,
             ranking_measures,
+            structural_measure,
             body,
             ..
         } if &condition == proved_condition => {
@@ -3252,6 +3254,7 @@ fn checked_condition_event(
                     effect_checks,
                     resource_specs,
                     ranking_measures,
+                    structural_measure,
                     do_while: false,
                     body: body.clone(),
                 };
@@ -3532,6 +3535,7 @@ fn trace_completion(
                             let path_case = crate::kernel::functions::selected_instance_match_arm(
                                 instance,
                                 &rewrite.definition,
+                                function.composite_resource_definitions(),
                                 executed_under,
                             )
                             .map(|(arm, _)| &arm.variant);
@@ -3539,6 +3543,7 @@ fn trace_completion(
                                 crate::kernel::functions::selected_instance_match_arm(
                                     instance,
                                     &rewrite.definition,
+                                    function.composite_resource_definitions(),
                                     rewrite.before_facts.assumptions(),
                                 )
                                 .map(|(arm, _)| &arm.variant);
@@ -3553,6 +3558,7 @@ fn trace_completion(
                                 state,
                                 instance,
                                 &rewrite.definition,
+                                function.composite_resource_definitions(),
                                 executed_under,
                                 false,
                                 rewrite.selected_children.as_deref(),
@@ -4153,6 +4159,7 @@ impl ExecutionProofCore {
                     effect_checks,
                     resource_specs,
                     ranking_measures,
+                    structural_measure,
                     do_while: true,
                     body,
                 } if !matches!(proved_statement, CStatement::While { .. }) => {
@@ -4172,6 +4179,7 @@ impl ExecutionProofCore {
                         effect_checks: effect_checks.clone(),
                         resource_specs: resource_specs.clone(),
                         ranking_measures: ranking_measures.clone(),
+                        structural_measure: structural_measure.clone(),
                         do_while: false,
                         body: body.clone(),
                     };
@@ -4280,6 +4288,7 @@ impl ExecutionProofCore {
                 effect_checks,
                 resource_specs,
                 ranking_measures,
+                structural_measure,
                 body,
                 ..
             } => {
@@ -4291,6 +4300,7 @@ impl ExecutionProofCore {
                         effect_checks: effect_checks.clone(),
                         resource_specs: resource_specs.clone(),
                         ranking_measures: ranking_measures.clone(),
+                        structural_measure: structural_measure.clone(),
                         do_while: false,
                         body: body.clone(),
                     };
@@ -4813,6 +4823,7 @@ impl ExecutionProofCore {
             &before_state,
             instance,
             definition,
+            function.composite_resource_definitions(),
             before_facts.assumptions(),
             false,
             selected_children.as_deref(),

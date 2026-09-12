@@ -735,6 +735,7 @@ fn execute_concrete_loop_head_step(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure,
         do_while,
         body,
     } = loop_statement.clone()
@@ -776,6 +777,7 @@ fn execute_concrete_loop_head_step(
         effect_checks: effect_checks.clone(),
         resource_specs: resource_specs.clone(),
         ranking_measures: ranking_measures.clone(),
+        structural_measure: structural_measure.clone(),
         do_while: false,
         body: body.clone(),
     };
@@ -1830,6 +1832,11 @@ fn execute_step_from_frontier_position_selecting_path(
                     describe_evidence_refusal(&refusal, parameters, arguments)
                 ))
             })?;
+        for transition in &transitions {
+            execution
+                .presentation
+                .record_generated_load_bindings(&transition.generated_load_bindings);
+        }
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
@@ -1945,6 +1952,9 @@ fn execute_step_from_frontier_position_selecting_path(
         .into_iter()
         .next()
         .expect("one statement transition was required");
+    execution
+        .presentation
+        .record_generated_load_bindings(&transition.generated_load_bindings);
     let introduced_facts = transition.introduced_facts.clone();
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)
         && let Some(loop_index) = loop_index

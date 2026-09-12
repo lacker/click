@@ -165,6 +165,7 @@ impl<'a> Proof<'a> {
             before,
             instance,
             definition,
+            context.function.composite_resource_definitions(),
             self.facts().assumptions(),
             unfold,
             selected_children.as_deref(),
