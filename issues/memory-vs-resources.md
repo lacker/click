@@ -1018,6 +1018,27 @@ expiry coverage, and richer prerequisite-load footprints for composite
 observations. No C source, syntax, budgets, quarantine, or unrelated semantics
 changed.
 
+#### W5 checkpoint C handoff (2026-09-12)
+
+Checkpoint C first reproduced the smallest existing scoped resource cases on
+the reviewed B1 integration head: ordinary and counted population opens,
+nested branch scopes, callback borrows, post-close reallocation, and the
+kernel's transactional open-scope test. They were already green, so no new
+representation defect was observed and no scope workaround was added.
+
+The C regressions retain that behavior at the surface boundary. Two
+back-to-back opens prove that close restores the folded representation once;
+an unrelated persistent token survives both closes; and a direct store after
+closing an owned wrapper is rejected, proving the opened body authority cannot
+escape. Existing `token_resource_consumed_by_call` continues to reject double
+consumption, while the kernel test checks rooted nested scopes, forged joins,
+transactional failure, and exactly one recorded `Open` certificate step.
+The added fixtures are `mdtests/resource_scope_preserves_unrelated.md` and
+`mdtests/resource_scope_does_not_escape_body.md`. This is a green partial C
+checkpoint, not a complete W5 claim; callback/table mutation and richer
+composite prerequisite-footprint work remain for D. No C source, syntax,
+budget, quarantine, or unrelated semantics changed.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.
