@@ -277,6 +277,45 @@ enough to become the first regression of the package that fixes them.
     longer lowers to it, the same class as (d), and will resurface if the
     surface-map acceptance rule is tightened. Package T6, not scheduled
     ahead of the rbtree proofs.
+24. **Gaps 19 and 20 were one bug, now fixed by A12.** A proof `fold` or
+    `unfold` lowered its resource arguments with the entry parameter values
+    while its fields used the current locals, so inside a loop body that had
+    moved the cursor `ctx_at(root->left)` named the entry root's cell. Both
+    refusals were the mismatch. `lower_resource_clause_at_current_locals`
+    in `resource_lowering.rs` fixes it.
+25. **Gap 21's root cause: a struct-pointer local has no struct layout.**
+    Found by A12: `have p->value == root->value` fails for any field, not
+    only pointers, because the sidecar parser's `current_struct_params`
+    comes only from `parse_parameters`; `syntax::C0Function` records
+    globals, static locals, and aggregates but not automatic locals' struct
+    names. The C parser must carry them through `parse_c_layouts`. A
+    second, separate confusion: a `have` naming a local before the
+    frontier has executed its assignment reports "0 paths" instead of
+    naming the local. Package A13.
+26. **Publishing the selected arm's facts at contract lowering breaks nine
+    fixtures.** A12 implemented D7's fact publication and reverted it: the
+    fact itself (`p != 0` for the `Node` arm) makes certification fail
+    with "the checked execution started at a different entry state than
+    the contract and could not be rebased onto it" in `rotation_model_preserved`,
+    `resource_tree_node_init`, `rb_at_link_helpers`, `rb_ctx_change_child`,
+    `resource_cross_family_children`, `resource_fields_match_memory_body`,
+    `match_bindings_in_branch_arm`, `model_identity_pointer_payload`, and
+    `proof_match_arm_fact_survives_sibling_write`; the contract candidates
+    then carry nine resource facts against the contract's one. Package A13.
+27. **A refuted arm is not published as a negative model fact.** Found by
+    A12 at the very end of the scaffold's descent: the next iteration's
+    `invariant sub.model != HeapTree::Empty` needs `left_model != Empty`
+    from the loop guard `root->left != 0`, whose only link is `tree_at`'s
+    `Empty` arm fact `p == 0`. A nested `match l.model` cannot close the
+    `Empty` arm because `contradiction` needs the exact fact and its
+    negation in the arm and `root->left == 0` only appears after
+    `unfold(l)`; an unfolding arm becomes live and the driver declines a
+    live `contradiction` arm; running the infeasible arm to the back edge
+    leaves `close_invariants()` a false goal from inconsistent premises.
+    This is the descent shape of every rbtree loop. The mechanism is D7
+    applied to refutation: when a path fact refutes an arm's own fact, the
+    folded instance's model is not that constructor, published at contract
+    lowering, loop heads, and loop back edges. Package A13.
 
 ## Design decisions
 
@@ -499,6 +538,10 @@ appears to need one reports the need instead of adding it.
   A9 and should be re-checked.
 - 2026-09-12: T5 (2cb5669f) is on master; examples audit 401 of 457 with
   one real disagreement left (gap 23, package T6). A12 in progress.
+- 2026-09-12: A12 (0e7d8000) is on master: proof folds read their
+  arguments at the current cursor (gaps 19 and 20), and a fresh loop binder
+  is refused by name. The descent reaches `close_invariants()` and stops
+  on gap 27. A13 dispatched; T4 and T6 in progress.
 
 ## Work packages
 
@@ -678,6 +721,25 @@ refusal for a fresh loop binder. Acceptance is B1's core: the unchanged
 ascending and rotate-then-ascend fixtures and the two context negatives
 A4 and A9 could not land. Depends on A9. B1 then only adds the README and
 docs.
+
+**A13. Complete the descent (gaps 21, 25, 26, 27, and blocker 5).**
+Scope, in this order: (1) publish a refuted arm as a negative model fact
+per gap 27, using `select_resource_model_arm`'s evidence index in reverse,
+at contract lowering, loop heads, and back edges; (2) make the selected
+arm's facts publishable at contract lowering by finding why an extra
+section assumption changes the certified entry state (gap 26), so the
+contract and the checked execution agree; (3) carry struct-pointer locals'
+struct names through the C parser so field places on locals have layouts
+(gap 25), and name the local in the "before its assignment" `have`
+refusal; (4) `old(name.field)` in a loop invariant after an unfold and
+refold before the loop. Acceptance is unchanged from A12: the scaffold's
+`tree_leftmost` and `tree_rightmost` verified and audited with `Context`,
+`ctx_at(child)` keyed by the child with the parent in the payload for this
+C (A12's parent-naming decision; D3's two-argument frame stays for the
+rbtree, whose loops have a `parent` local), `plug`, loop binders, a
+loop-body `match`, and `decreases sub;`, plus the ascending and
+rotate-then-ascend fixtures and the two context negatives. Depends on
+A12.
 
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
