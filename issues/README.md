@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (9)
+## P1: before launch (15)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -56,6 +56,13 @@ them. A gap that only a different program would hit is P2.
 
 Soundness and kernel shape:
 
+- [Preserve lexical aliases under quantifier binders](contract-let-binder-capture.md)
+- [Retain contextual premises in condition-transport theorems](condition-transport-theorem-premises.md)
+- [Preserve object provenance across pointer-parameter boundaries](external-pointer-object-provenance.md)
+- [Resolve declared C identifiers before built-in constant spellings](c-identifier-constant-shadowing.md)
+- [Preserve ordinary operand reads around expression calls](c-expression-call-evaluation-order.md)
+- [Attest every verified dependency before reusing an incremental baseline](incremental-header-attestation.md)
+- [Verify theorem-only sidecars during incremental full rebuilds](incremental-theorem-only-sidecars.md)
 - [Make `arithmetic` smart and expand it to `arithmetic_certificate`](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
@@ -71,7 +78,7 @@ Specification and proof:
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 
-## P2: after launch (19)
+## P2: after launch (24)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 
@@ -82,6 +89,8 @@ normal tooling-first policy and moves up.
 
 C language coverage:
 
+- [Apply Bool integer promotions in ordinary scalar operators](bool-scalar-operator-promotions.md)
+- [Preserve the type of conditional expressions containing calls](conditional-call-result-type.md)
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify Linux rbtree inline helpers from the pinned headers](linux-rbtree-inline-helpers.md)
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
@@ -102,6 +111,9 @@ Semantics and reasoning:
 
 Proof language and tooling:
 
+- [Parse built-in expressions consistently on either side of comparisons](built-in-comparison-parsing.md)
+- [Preserve source context when expansion writes to another directory](expansion-output-source-context.md)
+- [Bound structural nesting beyond parentheses without aborting the CLI](surface-unbounded-recursive-depth.md)
 - [Reduce repeated work in deeply nested `Integer` quantifiers](deep-quantifier-scaling.md)
 - [Complete general-purpose algebraic data type support](algebraic-data-types.md)
 - [Add a smart tactic for dynamic range framing](dynamic-range-frame.md)
