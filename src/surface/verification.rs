@@ -4369,6 +4369,19 @@ pub(in crate::surface) fn composite_resource_definitions(
         } else {
             None
         };
+        // A matched definition keeps its children inside the arms, so the
+        // unmatched `contains` walk above never sees them. `recursive`
+        // describes that unmatched memory body, which instance fold/unfold
+        // rewrites, so it stays as computed; the definition-level answer,
+        // which expansion cycle guards and structural measures ask for, also
+        // counts a same-family child declared inside an arm.
+        let matched_recursive = matched.as_ref().is_some_and(|matched| {
+            matched.arms.iter().any(|arm| {
+                arm.children
+                    .iter()
+                    .any(|child| child.resource == definition.name())
+            })
+        });
         definitions.push(
             if observes_its_population {
                 CCompositeResourceDefinition::counted_population(
@@ -4390,6 +4403,7 @@ pub(in crate::surface) fn composite_resource_definitions(
             }
             .with_witnesses(witnesses)
             .with_resource_match_body(matched)
+            .with_matched_recursion(matched_recursive)
             .with_instance_schema(definition.field_schema().cloned()),
         );
     }

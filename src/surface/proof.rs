@@ -1404,6 +1404,7 @@ mod certificate_tests {
                     case_path: vec![ProofCaseChoice {
                         condition: condition.clone(),
                         value: true,
+                        match_arm: None,
                     }],
                     case_offsets: None,
                     certificate: assumption,
@@ -1412,6 +1413,7 @@ mod certificate_tests {
                     case_path: vec![ProofCaseChoice {
                         condition: condition.clone(),
                         value: false,
+                        match_arm: None,
                     }],
                     case_offsets: None,
                     certificate: normalize,
@@ -1459,6 +1461,7 @@ mod certificate_tests {
                     case_path: vec![ProofCaseChoice {
                         condition,
                         value: true,
+                        match_arm: None,
                     }],
                     case_offsets: None,
                     certificate: assumption,
@@ -1467,6 +1470,7 @@ mod certificate_tests {
                     case_path: vec![ProofCaseChoice {
                         condition: other,
                         value: false,
+                        match_arm: None,
                     }],
                     case_offsets: None,
                     certificate: normalize,

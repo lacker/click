@@ -313,6 +313,43 @@ back-edge invariant bundle. The back edge decides it directly and names the
 binder when it does not descend, as in
 `mdtests/loop_decreases_rejects_same_instance.md`.
 
+### Opening a binder's model inside the body
+
+Arm selection publishes the selected arm's cells, but `unfold(c)` needs the
+constructor itself, and at an arbitrary loop head the binder's model is a
+fresh symbolic value. A proof `match` on that model inside `preserve` supplies
+it:
+
+<!-- verified-example: mdtests/loop_body_proof_match.md -->
+```click
+preserve by {
+    match c.model {
+        Maybe::None => { contradiction(c.model == Maybe::None); },
+        Maybe::Some(value) => {
+            unfold(c);
+            step();
+            let c = fold(cell(node), { model: Maybe::Some(value) });
+            close_invariants();
+        },
+    }
+}
+```
+
+The arms of such a `match` do not rejoin. A preservation path never joins
+across the back edge, so each arm executes one complete iteration, restores
+the loop binder, closes the invariants, and satisfies the structural descent
+on its own path, with the resource state that arm produced. An arm that
+unfolds the binder and never folds it again fails at the back edge by name
+even when its sibling succeeds
+(`mdtests/loop_body_proof_match_arm_drops_binder.md`). An arm the invariants
+exclude closes by `contradiction`; every remaining arm runs, and a `match`
+that omits a constructor is refused exactly as at function entry
+(`mdtests/loop_body_proof_match_missing_arm.md`).
+
+`mdtests/loop_body_proof_match_two_live_arms.md` is the shape where both
+constructors survive: the region splits, each arm certifies its own path, and
+the preservation certificate is reassembled as the `match` that produced them.
+
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or
 produces a resource, must leave the heap lifetime and resource context

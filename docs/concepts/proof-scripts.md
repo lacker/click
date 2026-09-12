@@ -79,6 +79,38 @@ Proof-level `if` splits reasoning; it does not execute a C `if`. Frontier-local
 A mark remembers a state the proof has already reached; it does not move the
 frontier and is not an `execute_until` target.
 
+## Splitting a model by constructor
+
+`match value { Type::Variant(fields) => { ... } ... }` splits an execution proof
+into one arm per constructor, with the constructor equation and fresh field
+bindings on each arm's path. It may run at any frontier the proof has reached:
+at unchanged function entry, after executed statements, and inside a loop's
+`preserve` body.
+
+<!-- verified-example: mdtests/proof_match_after_c_step.md -->
+```click
+step();
+match c.model {
+    Maybe::None => { contradiction(c.model == Maybe::None); },
+    Maybe::Some(value) => {
+        unfold(c);
+        execute();
+        let c = fold(cell(node), { model: Maybe::Some(value) });
+        simp();
+    },
+}
+```
+
+Where the arms end depends on the region. In a function proof each arm runs to
+function exit and the arms are joined there. In a loop's `preserve` body each
+arm runs to the loop's back edge and the arms are not joined at all, because a
+preservation path never joins across it — see
+[Opening a binder's model inside the body](loops-and-invariants.md#opening-a-binders-model-inside-the-body).
+
+The constructor equation is an entry assumption of the whole function only when
+the `match` ran before any C step. At a later frontier it holds on that arm's
+path from the split onwards.
+
 ## Naming a call result
 
 C often uses a call's result without ever storing it: `if (f(x))` and

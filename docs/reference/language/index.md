@@ -1178,7 +1178,10 @@ naming the instance and the field whose arm nothing selects; there is no
 implicit proof by cases. Selection grants read authority only — ownership moves
 only through an explicit `unfold` — and it does not expose contained child
 instances. A loop head decides the same way, with its invariants in the part
-the requirements play. The regressions are
+the requirements play; a proof that needs the constructor itself, to `unfold`
+or to name children, writes an explicit proof `match` on the model, which runs
+at any frontier including a loop's `preserve` body
+(`mdtests/loop_body_proof_match.md`). The regressions are
 `mdtests/resource_match_arm_selected_at_contract.md`,
 `mdtests/resource_match_arm_selected_by_existential.md`, and
 `mdtests/resource_match_arm_needs_one_entailed_arm.md`.
