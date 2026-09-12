@@ -843,10 +843,11 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     if source_requirement_ordinal.is_none() {
         return Ok(false);
     }
-    // The range fixtures are deliberately a separate stateful slice: the
+    // The range clauses are deliberately a separate stateful slice: the
     // source clause is a top-level int32 quantifier whose body names an
-    // external argument range.  Predicate-backed dynamic strings and other
-    // memory requirements remain on their existing compatibility route.
+    // external argument range.  A false add-overflow condition is the
+    // definedness spelling produced for a checked successor expression; it
+    // is admitted with the range and remains an ordinary proof goal.
     let quantified_external_range = matches!(
         proposition,
         Proposition::ForAll { .. } | Proposition::Exists { .. }
@@ -874,7 +875,6 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     let mut visited = 0;
     let mut saw_static_load = false;
     let mut saw_external_range = false;
-    let mut saw_add_definedness_guard = false;
     while let Some(item) = work.pop() {
         visited += 1;
         crate::instrumentation::record_deterministic_work(1);
@@ -885,6 +885,12 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
         }
         super::super::check_verification_deadline()?;
         match item {
+            Work::Proposition(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedAddOverflows(_, _),
+                true,
+            )) if quantified_external_range => {
+                return Ok(false);
+            }
             Work::Proposition(Proposition::ConditionIs(condition, _)) => {
                 work.push(Work::Condition(condition));
             }
@@ -907,8 +913,9 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
                 work.push(Work::Bitvector(bytes));
             }
             Work::Proposition(_) => return Ok(false),
-            Work::Condition(ConditionTerm::Bitvector32SignedAddOverflows(_, _)) => {
-                saw_add_definedness_guard = true;
+            Work::Condition(ConditionTerm::Bitvector32SignedAddOverflows(left, right)) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
             }
             Work::Condition(
                 ConditionTerm::Bitvector32SignedLessThan(left, right)
@@ -994,19 +1001,19 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
         }
     }
     if quantified_external_range {
-        return Ok(saw_external_range && !saw_static_load && !saw_add_definedness_guard);
+        return Ok(saw_external_range && !saw_static_load);
     }
     Ok(static_snapshot.is_none() || saw_static_load)
 }
 
-/// The only stateful source-backed requirement currently admitted is the
-/// static-array family.  A load variable is usable there only if its defining
-/// load was registered and its pointer names a linked/static block.  The
-/// carrier's exact source snapshot is checked by the retained-have source
-/// lookup before any proof is built; this classifier must not confuse the
-/// callee's entry projection with the caller's persistent memory node.  In
-/// particular, external arguments, heap blocks, and unregistered loads remain
-/// on the compatibility path.
+/// Stateful source-backed requirements are admitted only for the audited
+/// static-array and quantified external-range families.  A load variable is
+/// usable in the static-array family only if its defining load was registered
+/// and its pointer names a linked/static block.  The carrier's exact source
+/// snapshot is checked by the retained-have source lookup before any proof is
+/// built; this classifier must not confuse the callee's entry projection with
+/// the caller's persistent memory node.  In particular, heap blocks and
+/// unregistered loads remain on the compatibility path.
 fn registered_static_load_matches_snapshot(
     variable: &Variable,
     source_snapshot: crate::kernel::CMemorySnapshotIdentity,
@@ -1266,7 +1273,52 @@ mod tests {
                 Box::new(quantified.clone()),
             )),
         };
-        assert!(!source_backed_requirement_is_supported(&guarded, Some(0), false, None,).unwrap());
+        assert!(
+            source_backed_requirement_is_supported(&guarded, Some(0), false, None,).unwrap(),
+            "a checked successor guard belongs to the quantified external-range capability"
+        );
+
+        let unsupported_polarity = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(Bitvector32Term::Variable(Variable(3_100_001))),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    true,
+                )),
+                Box::new(quantified.clone()),
+            )),
+        };
+        assert!(
+            !source_backed_requirement_is_supported(&unsupported_polarity, Some(0), false, None,)
+                .unwrap(),
+            "an overflow condition rather than a definedness guard remains unsupported"
+        );
+
+        let load_variable_guard = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(Bitvector32Term::Variable(Variable(1 << 40))),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    false,
+                )),
+                Box::new(quantified.clone()),
+            )),
+        };
+        assert!(
+            !source_backed_requirement_is_supported(&load_variable_guard, Some(0), false, None,)
+                .unwrap(),
+            "a guarded external range must not admit an unregistered load variable"
+        );
 
         let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
             "need_cells",
@@ -1283,7 +1335,7 @@ mod tests {
             None,
         ));
         let obligation =
-            ProofObligation::verification_condition(quantified).with_call_requirement_site(source);
+            ProofObligation::verification_condition(guarded).with_call_requirement_site(source);
         assert!(source_backed_requirement_should_intercept(&obligation, &memory).unwrap());
         let different_epoch = memory.clone().with_block("local:later", 4);
         assert!(
