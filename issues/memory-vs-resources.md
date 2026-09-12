@@ -1304,7 +1304,7 @@ upstream integration from the temporary worktree commit.
 ### Verified integration and temporary-branch commit map
 
 The following was checked after fetching `origin/master` at
-`bb142e1c31289703d7c3bb2f883ff61daca013a0` (`bb142e1c`): a hash is called
+`0dc5283951ff58056a66a24a9ccc41f678ba33bf` (`0dc52839`): a hash is called
 integrated/pushed below only when it is an ancestor of that remote ref.
 Temporary worktree hashes are listed separately and must not be inferred to be
 on master merely because they are described in an earlier handoff.
