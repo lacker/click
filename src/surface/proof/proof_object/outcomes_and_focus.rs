@@ -123,15 +123,11 @@ impl<'a> Proof<'a> {
             })?,
             _ => return Err(self.step_error("outcome facts require a focused outcome goal")),
         };
-        // Path preparation can unfold predicate requirements in place. Keep
-        // the fixed-state view's requirement prefix aligned with the checked fact
-        // context so indexed `choose` sources use that exact form.
-        let requires = match self.context.as_ref() {
-            ProofContext::Execution(context) => context.function_block.requires().len(),
-            _ => 0,
-        };
-        let mut data = data.clone();
-        data.core.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
+        let data = data.clone();
+        // Path facts may add unfoldings and post-state observations, but the
+        // caller source index is permanently aligned with the root entry-fact
+        // vector. Keep that vector unchanged instead of reconstructing a
+        // requirement-count prefix from the moving outcome context.
         let data = Arc::new(data);
         let obligation = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
@@ -224,17 +220,15 @@ impl<'a> Proof<'a> {
             .as_ref()
             .and_then(|execution| frontier_premise_anchor(execution));
         let requirement_surfaces = match self.context.as_ref() {
-            ProofContext::Execution(context) => requirement_facts
-                .iter()
-                .zip(context.function_block.requires())
-                .filter_map(|(fact, requirement)| {
-                    requirement
-                        .proposition()
-                        .cloned()
-                        .map(|surface| (fact.clone(), surface))
-                })
-                .fold(PersistentMap::default(), |index, (fact, surface)| {
-                    index.with_inserted(fact, surface)
+            ProofContext::Execution(context) => context
+                .constants
+                .caller_requirement_index
+                .source_requirements()
+                .fold(PersistentMap::default(), |index, selection| {
+                    index.with_inserted(
+                        selection.principal_fact.clone(),
+                        selection.source_proposition.clone(),
+                    )
                 }),
             _ => PersistentMap::default(),
         };

@@ -2754,6 +2754,34 @@ fn initial_entry_provenance_keeps_nonzero_requirement_identity_after_derived_ins
             .iter()
             .any(|origin| matches!(origin, EntryFactOrigin::Derived))
     );
+
+    let index = CallerRequirementIndex::from_entry_facts(
+        owner.clone(),
+        function_block,
+        parsed_function.parameters(),
+        &context.pure_facts,
+        &context.entry_fact_origins,
+        crate::kernel::CMemorySnapshotIdentity::of(context.state.memory()),
+    );
+    let source_arguments = vec![ContractExpression::CFragment(CExpression::Variable(
+        "x".to_string(),
+    ))];
+    let indexed = index
+        .lookup_unique_caller_requirement(
+            &owner,
+            "selected",
+            0,
+            0,
+            &source_arguments,
+            crate::kernel::CMemorySnapshotIdentity::of(context.state.memory()),
+        )
+        .expect("the real entry pipeline should preserve the selected caller requirement");
+    assert_eq!(indexed.source_id.outer_ordinal, 1);
+    assert_eq!(indexed.principal_fact_index, selected[0].0);
+    assert_ne!(
+        indexed.source_id.outer_ordinal, indexed.principal_fact_index,
+        "source ordinals and lowered fact positions are distinct identities"
+    );
 }
 
 #[test]
