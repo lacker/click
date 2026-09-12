@@ -3616,36 +3616,43 @@ fn validate_certificate_steps(
 ) -> Result<(), CertificateError> {
     for (index, step) in steps.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
-        let result = match certificate_step_class(step) {
-            tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
-                tactic_class,
-                path: path.clone(),
-            }),
-            TacticClass::Control(ControlTactic::Loop) => {
-                let ProofStep::Loop(clause) = step else {
-                    unreachable!("step class and variant must agree")
-                };
-                let mut result = Ok(());
-                for (segment, phase) in [
-                    (
-                        CertificatePathSegment::LoopInitialize,
-                        &clause.initialize_proof,
-                    ),
-                    (CertificatePathSegment::LoopPreserve, &clause.preserve_proof),
-                ] {
-                    if phase.is_none() {
-                        path.push(segment);
-                        result = Err(CertificateError {
-                            tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
-                            path: path.clone(),
-                        });
-                        path.pop();
-                        break;
+        // ArithmeticUsing is classified smart for scheduling, but remains a
+        // checked leaf for legacy preplanned pure proofs. New proof-object
+        // applications replace it with ArithmeticCertificate provenance.
+        let result = if matches!(step, ProofStep::ArithmeticUsing(_)) {
+            Ok(())
+        } else {
+            match certificate_step_class(step) {
+                tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
+                    tactic_class,
+                    path: path.clone(),
+                }),
+                TacticClass::Control(ControlTactic::Loop) => {
+                    let ProofStep::Loop(clause) = step else {
+                        unreachable!("step class and variant must agree")
+                    };
+                    let mut result = Ok(());
+                    for (segment, phase) in [
+                        (
+                            CertificatePathSegment::LoopInitialize,
+                            &clause.initialize_proof,
+                        ),
+                        (CertificatePathSegment::LoopPreserve, &clause.preserve_proof),
+                    ] {
+                        if phase.is_none() {
+                            path.push(segment);
+                            result = Err(CertificateError {
+                                tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
+                                path: path.clone(),
+                            });
+                            path.pop();
+                            break;
+                        }
                     }
+                    result
                 }
-                result
+                TacticClass::Simple(_) | TacticClass::Control(_) => Ok(()),
             }
-            TacticClass::Simple(_) | TacticClass::Control(_) => Ok(()),
         };
         path.pop();
         result?;
@@ -3659,148 +3666,146 @@ fn validate_certificate_tactics(
 ) -> Result<(), CertificateError> {
     for (index, tactic) in tactics.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
-        let result = match tactic.class() {
-            TacticClass::Control(ControlTactic::CloseInvariants) => {
-                let ProofTactic::CloseInvariantsBy(body) = tactic else {
-                    unreachable!()
-                };
-                path.push(CertificatePathSegment::InvariantBody);
-                let result = validate_certificate_tactics(body, path);
-                path.pop();
-                result
-            }
-            TacticClass::Simple(_) => Ok(()),
-            TacticClass::Control(ControlTactic::Both) => {
-                let ProofTactic::Both(both) = tactic else {
-                    unreachable!()
-                };
-                path.push(CertificatePathSegment::LeftConjunct);
-                validate_certificate_tactics(&both.left_tactics, path)?;
-                path.pop();
-                path.push(CertificatePathSegment::RightConjunct);
-                let result = validate_certificate_tactics(&both.right_tactics, path);
-                path.pop();
-                result
-            }
-            tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
-                tactic_class,
-                path: path.clone(),
-            }),
-            TacticClass::Control(ControlTactic::Have) => {
-                let ProofTactic::Have(proof_have) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::HaveBody);
-                let result = validate_certificate_proof(&proof_have.proof, path);
-                path.pop();
-                result
-            }
-            TacticClass::Control(ControlTactic::Open) => {
-                let ProofTactic::Open(proof_open) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::OpenBody);
-                let result = validate_certificate_tactics(&proof_open.tactics, path);
-                path.pop();
-                result
-            }
-            TacticClass::Control(ControlTactic::If) => {
-                let ProofTactic::If(proof_if) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::ThenBranch);
-                let then_result = validate_certificate_tactics(&proof_if.then_tactics, path);
-                path.pop();
-                if then_result.is_err() {
-                    then_result
-                } else {
-                    path.push(CertificatePathSegment::ElseBranch);
-                    let else_result = validate_certificate_tactics(&proof_if.else_tactics, path);
+        // Preserve the parser/source compatibility of arithmetic using in
+        // preplanned pure certificates; interactive proof-object execution
+        // records the structural checked certificate instead.
+        let result = if matches!(tactic, ProofTactic::ArithmeticUsing(_)) {
+            Ok(())
+        } else {
+            match tactic.class() {
+                TacticClass::Control(ControlTactic::CloseInvariants) => {
+                    let ProofTactic::CloseInvariantsBy(body) = tactic else {
+                        unreachable!()
+                    };
+                    path.push(CertificatePathSegment::InvariantBody);
+                    let result = validate_certificate_tactics(body, path);
                     path.pop();
-                    else_result
+                    result
                 }
-            }
-            TacticClass::Control(ControlTactic::Cases) => {
-                let ProofTactic::Cases(proof_cases) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::LeftCase);
-                let left_result = validate_certificate_tactics(&proof_cases.left_tactics, path);
-                path.pop();
-                if left_result.is_err() {
-                    left_result
-                } else {
-                    path.push(CertificatePathSegment::RightCase);
-                    let right_result =
-                        validate_certificate_tactics(&proof_cases.right_tactics, path);
+                TacticClass::Simple(_) => Ok(()),
+                TacticClass::Control(ControlTactic::Both) => {
+                    let ProofTactic::Both(both) = tactic else {
+                        unreachable!()
+                    };
+                    path.push(CertificatePathSegment::LeftConjunct);
+                    validate_certificate_tactics(&both.left_tactics, path)?;
                     path.pop();
-                    right_result
+                    path.push(CertificatePathSegment::RightConjunct);
+                    let result = validate_certificate_tactics(&both.right_tactics, path);
+                    path.pop();
+                    result
                 }
-            }
-            TacticClass::Control(ControlTactic::Match) => {
-                let ProofTactic::Match(proof_match) = tactic else {
-                    unreachable!()
-                };
-                let mut result = Ok(());
-                for (index, arm) in proof_match.arms.iter().enumerate() {
-                    path.push(CertificatePathSegment::MatchArm(index));
-                    result = validate_certificate_tactics(&arm.tactics, path);
+                tactic_class @ TacticClass::Smart(_) => Err(CertificateError {
+                    tactic_class,
+                    path: path.clone(),
+                }),
+                TacticClass::Control(ControlTactic::Have) => {
+                    let ProofTactic::Have(proof_have) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    path.push(CertificatePathSegment::HaveBody);
+                    let result = validate_certificate_proof(&proof_have.proof, path);
                     path.pop();
-                    if result.is_err() {
-                        break;
+                    result
+                }
+                TacticClass::Control(ControlTactic::Open) => {
+                    let ProofTactic::Open(proof_open) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    path.push(CertificatePathSegment::OpenBody);
+                    let result = validate_certificate_tactics(&proof_open.tactics, path);
+                    path.pop();
+                    result
+                }
+                TacticClass::Control(ControlTactic::If) => {
+                    let ProofTactic::If(proof_if) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    path.push(CertificatePathSegment::ThenBranch);
+                    let then_result = validate_certificate_tactics(&proof_if.then_tactics, path);
+                    path.pop();
+                    if then_result.is_err() {
+                        then_result
+                    } else {
+                        path.push(CertificatePathSegment::ElseBranch);
+                        let else_result =
+                            validate_certificate_tactics(&proof_if.else_tactics, path);
+                        path.pop();
+                        else_result
                     }
                 }
-                result
-            }
-            TacticClass::Control(ControlTactic::StructuralInduct) => {
-                let ProofTactic::StructuralInduct { arms, .. } = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                let mut result = Ok(());
-                for (arm_index, arm) in arms.iter().enumerate() {
-                    path.push(CertificatePathSegment::InductionArm(arm_index));
-                    result = validate_certificate_tactics(&arm.tactics, path);
+                TacticClass::Control(ControlTactic::Cases) => {
+                    let ProofTactic::Cases(proof_cases) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    path.push(CertificatePathSegment::LeftCase);
+                    let left_result = validate_certificate_tactics(&proof_cases.left_tactics, path);
                     path.pop();
-                    if result.is_err() {
-                        break;
+                    if left_result.is_err() {
+                        left_result
+                    } else {
+                        path.push(CertificatePathSegment::RightCase);
+                        let right_result =
+                            validate_certificate_tactics(&proof_cases.right_tactics, path);
+                        path.pop();
+                        right_result
                     }
                 }
-                result
-            }
-            TacticClass::Control(ControlTactic::Branch) => {
-                let ProofTactic::Branch(proof_branch) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::ThenBranch);
-                let then_result = validate_certificate_tactics(&proof_branch.then_tactics, path);
-                path.pop();
-                if then_result.is_err() {
-                    then_result
-                } else {
-                    path.push(CertificatePathSegment::ElseBranch);
-                    let else_result =
-                        validate_certificate_tactics(&proof_branch.else_tactics, path);
-                    path.pop();
-                    else_result
+                TacticClass::Control(ControlTactic::Match) => {
+                    let ProofTactic::Match(proof_match) = tactic else {
+                        unreachable!()
+                    };
+                    let mut result = Ok(());
+                    for (index, arm) in proof_match.arms.iter().enumerate() {
+                        path.push(CertificatePathSegment::MatchArm(index));
+                        result = validate_certificate_tactics(&arm.tactics, path);
+                        path.pop();
+                        if result.is_err() {
+                            break;
+                        }
+                    }
+                    result
                 }
-            }
-            TacticClass::Control(ControlTactic::Loop) => {
-                let ProofTactic::Loop(loop_clause) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                let mut result;
-                path.push(CertificatePathSegment::LoopInitialize);
-                result = match loop_clause.initialize_proof() {
-                    Some(proof) => validate_certificate_proof(proof, path),
-                    None => Err(CertificateError {
-                        tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
-                        path: path.clone(),
-                    }),
-                };
-                path.pop();
-                if result.is_ok() {
-                    path.push(CertificatePathSegment::LoopPreserve);
-                    result = match loop_clause.preserve_proof() {
+                TacticClass::Control(ControlTactic::StructuralInduct) => {
+                    let ProofTactic::StructuralInduct { arms, .. } = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    let mut result = Ok(());
+                    for (arm_index, arm) in arms.iter().enumerate() {
+                        path.push(CertificatePathSegment::InductionArm(arm_index));
+                        result = validate_certificate_tactics(&arm.tactics, path);
+                        path.pop();
+                        if result.is_err() {
+                            break;
+                        }
+                    }
+                    result
+                }
+                TacticClass::Control(ControlTactic::Branch) => {
+                    let ProofTactic::Branch(proof_branch) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    path.push(CertificatePathSegment::ThenBranch);
+                    let then_result =
+                        validate_certificate_tactics(&proof_branch.then_tactics, path);
+                    path.pop();
+                    if then_result.is_err() {
+                        then_result
+                    } else {
+                        path.push(CertificatePathSegment::ElseBranch);
+                        let else_result =
+                            validate_certificate_tactics(&proof_branch.else_tactics, path);
+                        path.pop();
+                        else_result
+                    }
+                }
+                TacticClass::Control(ControlTactic::Loop) => {
+                    let ProofTactic::Loop(loop_clause) = tactic else {
+                        unreachable!("tactic class and variant must agree")
+                    };
+                    let mut result;
+                    path.push(CertificatePathSegment::LoopInitialize);
+                    result = match loop_clause.initialize_proof() {
                         Some(proof) => validate_certificate_proof(proof, path),
                         None => Err(CertificateError {
                             tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
@@ -3808,8 +3813,19 @@ fn validate_certificate_tactics(
                         }),
                     };
                     path.pop();
+                    if result.is_ok() {
+                        path.push(CertificatePathSegment::LoopPreserve);
+                        result = match loop_clause.preserve_proof() {
+                            Some(proof) => validate_certificate_proof(proof, path),
+                            None => Err(CertificateError {
+                                tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
+                                path: path.clone(),
+                            }),
+                        };
+                        path.pop();
+                    }
+                    result
                 }
-                result
             }
         };
         path.pop();
