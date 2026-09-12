@@ -129,7 +129,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             step_facts.push(resource_fact);
         }
     }
-    let apply = |policy| {
+    let apply = |policy, selected_context| {
         execute_step_successor_from_frontier_position(
             execution,
             proof_context,
@@ -141,20 +141,48 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             // restored below at their original snapshots.
             StatementFactTransportPolicy::None,
             loop_step_policy,
-            context,
+            selected_context,
         )
     };
-    let successor = match apply(prerequisite_policy) {
+    let successor = match apply(prerequisite_policy, context) {
         Err(error) if matches!(prerequisite_policy, StatementPrerequisitePolicy::Retained) => {
             let exact_retained_requirement =
                 error.unresolved_requirement().is_some_and(|requirement| {
+                    // The execution obligation is an implication from the
+                    // currently refused prerequisite to the remaining call.
+                    // Authorize the retry from that one exact antecedent,
+                    // never from a related ambient fact.
+                    let stated_prerequisite = match &requirement.proposition {
+                        Proposition::Implies(prerequisite, _) => prerequisite.as_ref(),
+                        proposition => proposition,
+                    };
                     requirement.call_site.is_some()
-                        && requirement_pure_facts.contains(&requirement.proposition)
+                        && execution
+                            .presentation
+                            .surface_record
+                            .retained_have_facts
+                            .pure_assumption_available(stated_prerequisite)
                 });
             if !exact_retained_requirement {
                 return Err(error);
             }
-            apply(StatementPrerequisitePolicy::Contextual)?
+            // Contextual checking may now compose the call, but only from
+            // ordinary checked `have`s and this statement's local path or
+            // resource facts. The ambient proof context is deliberately not
+            // visible to the retry.
+            let retained_context = step_facts.iter().fold(
+                execution
+                    .presentation
+                    .surface_record
+                    .retained_have_facts
+                    .assumptions()
+                    .clone(),
+                |context, fact| context.assume_proposition(fact.clone()),
+            );
+            apply(
+                StatementPrerequisitePolicy::Contextual,
+                Some(&retained_context),
+            )?
         }
         result => result?,
     };

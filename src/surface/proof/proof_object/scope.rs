@@ -633,6 +633,11 @@ impl<'a> ProofScope<'a> {
             .surface_record
             .certificate_facts
             .insert(kernel.clone());
+        execution.presentation.surface_record.retained_have_facts = execution
+            .presentation
+            .surface_record
+            .retained_have_facts
+            .with_kernel_checked_fact(kernel.clone());
         Ok(())
     }
 

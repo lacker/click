@@ -22,14 +22,7 @@ int32 libc_contracts(uint8 destination[], uint8 source[]) {
 verifying "stdlib_external_contracts.c";
 
 int32 libc_contracts(uint8 destination[], uint8 source[]) {
-    requires source_readable: exists (len: int32) {
-        0 <= len and
-            loadable(source[0..len + 1]) and
-            forall (k: int32) {
-                0 <= k and k < len implies source[k] != '\0'
-            } and
-            source[len] == '\0'
-    };
+    requires source_readable: cstr_readable(source);
     requires loadable(source[0..3]);
     requires source[0] == '\0';
     owns destination[0..2];

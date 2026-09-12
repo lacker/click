@@ -137,6 +137,11 @@ pub(super) struct SurfaceRecord {
     /// rewrites, and explicit surface transports across each step. Generated
     /// evidence is written against this certificate-visible set.
     pub(super) certificate_facts: ProofFactStore,
+    /// Exact facts established by ordinary checked `have` nodes on this
+    /// execution path. This separate persistent index lets a strict statement
+    /// retry recognize an explicitly retained prerequisite leaf without
+    /// scanning the ambient proof context.
+    pub(super) retained_have_facts: ProofFacts,
 }
 
 /// One planning call's construction gate: the environments the constructed

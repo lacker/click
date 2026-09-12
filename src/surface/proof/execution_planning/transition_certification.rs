@@ -949,7 +949,8 @@ fn certified_transitions_from_execution(
                                 obligation,
                             ));
                         }
-                        if exact_fact_is_available(proposition, pure_facts)
+                        if prerequisite_assumptions.states_required_goal(proposition)
+                            || exact_fact_is_available(proposition, pure_facts)
                             || exactly_available_fact(proposition, pure_facts).is_some()
                             // The same rule for a prerequisite the resolution
                             // above leaves symbolic: an earlier fact about the

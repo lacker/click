@@ -295,17 +295,6 @@ impl CallerRequirementIndex {
         self.by_source.get(source_id)?.clone()
     }
 
-    /// Iterates the uniquely retained source requirements in source-ID order.
-    /// Outcome presentation builds its entry-only surface map from this
-    /// proof-local index rather than zipping source ordinals with fact slots.
-    pub(in crate::surface) fn source_requirements(
-        &self,
-    ) -> impl Iterator<Item = &CallerRequirementSelection> {
-        self.by_source
-            .iter()
-            .filter_map(|(_, resolution)| resolution.as_ref())
-    }
-
     #[cfg(test)]
     fn bucket_count(&self) -> usize {
         self.buckets.len()

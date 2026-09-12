@@ -527,6 +527,16 @@ impl<'a> Proof<'a> {
                 .copied()
                 .ok_or_else(|| self.step_error(format!("unknown requirement label `{label}`")))?,
         };
+        // Outcome proofs maintain a moving fixed-state requirement prefix.
+        // An ordinary caller source instead names the immutable entry vector
+        // from which its principal fact index was minted.
+        let caller_requirement_facts: Option<&[Proposition]> = match self.context.as_ref() {
+            ProofContext::Execution(context) => {
+                Some(context.constants.execution_start_facts.as_slice())
+            }
+            _ => None,
+        };
+        let source_facts = caller_requirement_facts.unwrap_or(view.requirement_facts);
         let source_selection = match self.context.as_ref() {
             ProofContext::Execution(context) => {
                 let owner = context
@@ -550,8 +560,8 @@ impl<'a> Proof<'a> {
                         ))
                     })?;
                 if selection.source_id != source_id
-                    || selection.principal_fact_index >= view.requirement_facts.len()
-                    || view.requirement_facts.get(selection.principal_fact_index)
+                    || selection.principal_fact_index >= source_facts.len()
+                    || source_facts.get(selection.principal_fact_index)
                         != Some(&selection.principal_fact)
                 {
                     return Err(self.step_error(format!(
@@ -578,8 +588,7 @@ impl<'a> Proof<'a> {
         let source_fact_index = source_selection
             .as_ref()
             .map_or(source_ordinal, |selection| selection.principal_fact_index);
-        let mut source = view
-            .requirement_facts
+        let mut source = source_facts
             .get(source_fact_index)
             .cloned()
             .ok_or_else(|| {
@@ -652,7 +661,7 @@ impl<'a> Proof<'a> {
             self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]);
         if let Some(projection) = self.build_chosen_projection(
             &view,
-            view.requirement_facts
+            source_facts
                 .get(source_fact_index)
                 .expect("validated requirement source index")
                 .clone(),
@@ -694,12 +703,7 @@ impl<'a> Proof<'a> {
         // The source ID and final fact position are independent: do not
         // recover an apparently equal requirement from another declaration
         // or from an ambient fact.
-        if view
-            .requirement_facts
-            .get(source_selection.principal_fact_index)
-            != Some(&source_requirement)
-            || source_selection.principal_fact != source_requirement
-        {
+        if source_selection.principal_fact != source_requirement {
             return Ok(None);
         }
         let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
@@ -1501,7 +1505,10 @@ impl<'a> Proof<'a> {
             || retained_source.principal_fact_index != projection.principal_fact_index
             || retained_source.principal_fact != projection.source_requirement
             || retained_source.source_proposition != projection.source_proposition
-            || view.requirement_facts.get(projection.principal_fact_index)
+            || context
+                .constants
+                .execution_start_facts
+                .get(projection.principal_fact_index)
                 != Some(&projection.source_requirement)
             || entry_snapshot != Some(projection.source_snapshot)
             || retained_source.entry_snapshot != projection.source_snapshot

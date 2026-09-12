@@ -1272,12 +1272,12 @@ pub(super) fn finish_ordered_proof<'a>(
             .iter(),
         &mut authoritative_outcome_haves,
     );
-    // Entry facts are not a requirement-count prefix: generated definedness
-    // may be prepended and resource observations appended. Preserve the exact
-    // indexed entry vector so outcome `choose` resolves the same retained fact
-    // positions as the execution frontier.
     let pure_facts = direct_view.facts.clone();
-    let requirement_facts = direct_view.context.constants.execution_start_facts.clone();
+    // The outcome substrate keeps the current fixed-state requirement view.
+    // Caller-source identity is carried independently by the immutable entry
+    // index in `ExecutionProofConstants`.
+    let requirement_facts =
+        Arc::new(pure_facts[..function_block.requires().len().min(pure_facts.len())].to_vec());
     let outcome_substrate = proof.split_function_outcomes(requirement_facts).ok();
     let (state, frontier, proof_execution, proof_context, branch_path) = (
         direct_view.state,

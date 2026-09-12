@@ -860,6 +860,13 @@ fn source_range_capability_is_supported(proposition: &Proposition) -> Option<boo
         else {
             return None;
         };
+        // A source-level existential range may contain the quantified byte
+        // requirement directly. It has the same one nested-quantifier budget
+        // as the guarded form below; all atoms and pointer terms are still
+        // checked by the bounded walk.
+        if source_range_universal_is_supported(body) {
+            return Some(true);
+        }
         let Proposition::And(left, right) = body.as_ref() else {
             return None;
         };
@@ -1382,6 +1389,18 @@ mod tests {
             "a checked successor guard belongs to the quantified external-range capability"
         );
 
+        let existential_range = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(quantified.clone()),
+        };
+        assert!(
+            source_backed_requirement_is_supported(&existential_range, Some(0), false, None,)
+                .unwrap(),
+            "an existential wrapper around the exact byte range remains supported"
+        );
+
         let unsupported_polarity = Proposition::Exists {
             name: "len".to_string(),
             var: Variable(3_100_001),
@@ -1439,12 +1458,11 @@ mod tests {
         );
 
         let mut wide_range = quantified.clone();
-        if let Proposition::ForAll { body, .. } = &mut wide_range {
-            if let Proposition::Implies(_, consequent) = body.as_mut() {
-                if let Proposition::CMemoryLoadable { bytes, .. } = consequent.as_mut() {
-                    *bytes = Bitvector32Term::Constant(2);
-                }
-            }
+        if let Proposition::ForAll { body, .. } = &mut wide_range
+            && let Proposition::Implies(_, consequent) = body.as_mut()
+            && let Proposition::CMemoryLoadable { bytes, .. } = consequent.as_mut()
+        {
+            *bytes = Bitvector32Term::Constant(2);
         }
         let wide_guarded = Proposition::Exists {
             name: "len".to_string(),
@@ -1466,15 +1484,14 @@ mod tests {
         );
 
         let mut unregistered_range = quantified.clone();
-        if let Proposition::ForAll { body, .. } = &mut unregistered_range {
-            if let Proposition::Implies(_, consequent) = body.as_mut() {
-                if let Proposition::CMemoryLoadable { base, .. } = consequent.as_mut() {
-                    base.offset = PointerOffsetTerm::Int32Scaled {
-                        value: Box::new(Bitvector32Term::Variable(Variable(1 << 40))),
-                        byte_width: 1,
-                    };
-                }
-            }
+        if let Proposition::ForAll { body, .. } = &mut unregistered_range
+            && let Proposition::Implies(_, consequent) = body.as_mut()
+            && let Proposition::CMemoryLoadable { base, .. } = consequent.as_mut()
+        {
+            base.offset = PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(1 << 40))),
+                byte_width: 1,
+            };
         }
         let unregistered_guarded = Proposition::Exists {
             name: "len".to_string(),
