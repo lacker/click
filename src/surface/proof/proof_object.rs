@@ -648,11 +648,14 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
 /// proof fact in its own right.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface::proof) struct ChosenProjection {
+    pub(in crate::surface::proof) source_id: RequirementSourceId,
+    pub(in crate::surface::proof) principal_fact_index: usize,
+    pub(in crate::surface::proof) source_token: ProjectionSourceToken,
+    pub(in crate::surface::proof) source_proposition: ClickProposition,
     /// Exact source token selected before any checked predicate unfolding.
     pub(in crate::surface::proof) source_requirement: Proposition,
     /// The existential proposition after the active, checked unfolding path.
     pub(in crate::surface::proof) checked_source: Proposition,
-    pub(in crate::surface::proof) source_index: usize,
     pub(in crate::surface::proof) chosen_name: String,
     pub(in crate::surface::proof) chosen_variable: crate::kernel::Variable,
     pub(in crate::surface::proof) source_snapshot: crate::kernel::CMemorySnapshotIdentity,

@@ -393,7 +393,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
         }
 
-        let source_index = match &choice.source {
+        let source_ordinal = match &choice.source {
             ProofFactSource::Requirement(index) => {
                 if *index >= view.original_requirements.len() {
                     return Err(self.step_error(format!(
@@ -409,12 +409,63 @@ impl<'a> Proof<'a> {
                 .copied()
                 .ok_or_else(|| self.step_error(format!("unknown requirement label `{label}`")))?,
         };
+        let source_selection = match self.context.as_ref() {
+            ProofContext::Execution(context) => {
+                let owner = context
+                    .constants
+                    .caller_source_owner
+                    .as_ref()
+                    .ok_or_else(|| {
+                        self.step_error("`choose` source has no ordinary caller identity")
+                    })?;
+                let source_id = RequirementSourceId {
+                    owner: owner.clone(),
+                    outer_ordinal: source_ordinal,
+                };
+                let selection = context
+                    .constants
+                    .caller_requirement_index
+                    .lookup_source_requirement(&source_id)
+                    .ok_or_else(|| {
+                        self.step_error(format!(
+                            "requirement {source_ordinal} has no unique principal entry fact"
+                        ))
+                    })?;
+                if selection.source_id != source_id
+                    || selection.principal_fact_index >= view.requirement_facts.len()
+                    || view.requirement_facts.get(selection.principal_fact_index)
+                        != Some(&selection.principal_fact)
+                {
+                    return Err(self.step_error(format!(
+                        "requirement {source_ordinal} does not match its retained entry fact"
+                    )));
+                }
+                let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
+                    return Err(self.step_error("`choose` source has no function-entry snapshot"));
+                };
+                if selection.entry_snapshot
+                    != crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory())
+                {
+                    return Err(self.step_error(format!(
+                        "requirement {source_ordinal} does not match the function-entry snapshot"
+                    )));
+                }
+                Some(selection)
+            }
+            // Standalone fixed-state proofs have no ordinary caller owner.
+            // Their existing direct requirement vector remains authoritative;
+            // they cannot create a retained execution projection.
+            _ => None,
+        };
+        let source_fact_index = source_selection
+            .as_ref()
+            .map_or(source_ordinal, |selection| selection.principal_fact_index);
         let mut source = view
             .requirement_facts
-            .get(source_index)
+            .get(source_fact_index)
             .cloned()
             .ok_or_else(|| {
-                self.step_error(format!("requirement {source_index} was not available"))
+                self.step_error(format!("requirement {source_ordinal} was not available"))
             })?;
         let unfolded_predicates = self.active_unfolded_predicates();
         if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
@@ -484,11 +535,11 @@ impl<'a> Proof<'a> {
         if let Some(projection) = self.build_chosen_projection(
             &view,
             view.requirement_facts
-                .get(source_index)
+                .get(source_fact_index)
                 .expect("validated requirement source index")
                 .clone(),
             checked_source,
-            source_index,
+            source_selection.as_ref(),
             chosen_variable,
             choice,
             &chosen,
@@ -511,7 +562,7 @@ impl<'a> Proof<'a> {
         view: &FixedStateOperationView<'_>,
         source_requirement: Proposition,
         checked_source: Proposition,
-        source_index: usize,
+        source_selection: Option<&CallerRequirementSelection>,
         chosen_variable: Variable,
         choice: &ProofChoice,
         chosen: &CValue,
@@ -519,9 +570,18 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
-        // The ordinal is the source token: do not recover an apparently equal
-        // requirement from another declaration or from an ambient fact.
-        if view.requirement_facts.get(source_index) != Some(&source_requirement) {
+        let Some(source_selection) = source_selection else {
+            return Ok(None);
+        };
+        // The source ID and final fact position are independent: do not
+        // recover an apparently equal requirement from another declaration
+        // or from an ambient fact.
+        if view
+            .requirement_facts
+            .get(source_selection.principal_fact_index)
+            != Some(&source_requirement)
+            || source_selection.principal_fact != source_requirement
+        {
             return Ok(None);
         }
         let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
@@ -620,9 +680,15 @@ impl<'a> Proof<'a> {
             }
         }
         Ok((!leaves.is_empty()).then_some(ChosenProjection {
+            source_id: source_selection.source_id.clone(),
+            principal_fact_index: source_selection.principal_fact_index,
+            source_token: ProjectionSourceToken {
+                source_id: source_selection.source_id.clone(),
+                connective_path: Vec::new(),
+            },
+            source_proposition: source_selection.source_proposition.clone(),
             source_requirement,
             checked_source,
-            source_index,
             chosen_name: choice.name.clone(),
             chosen_variable,
             source_snapshot,
@@ -1285,9 +1351,26 @@ impl<'a> Proof<'a> {
         let Some(projection) = execution.presentation.chosen_projection.as_ref() else {
             return Ok(None);
         };
-        if view.requirement_facts.get(projection.source_index)
-            != Some(&projection.source_requirement)
+        let Some(context) = self.execution_context() else {
+            return Ok(None);
+        };
+        let Some(retained_source) = context
+            .constants
+            .caller_requirement_index
+            .lookup_source_requirement(&projection.source_id)
+        else {
+            return Ok(None);
+        };
+        if projection.source_token.source_id != projection.source_id
+            || !projection.source_token.connective_path.is_empty()
+            || retained_source.source_id != projection.source_id
+            || retained_source.principal_fact_index != projection.principal_fact_index
+            || retained_source.principal_fact != projection.source_requirement
+            || retained_source.source_proposition != projection.source_proposition
+            || view.requirement_facts.get(projection.principal_fact_index)
+                != Some(&projection.source_requirement)
             || entry_snapshot != Some(projection.source_snapshot)
+            || retained_source.entry_snapshot != projection.source_snapshot
             || projection.source_selector != expected_selector
         {
             return Ok(None);

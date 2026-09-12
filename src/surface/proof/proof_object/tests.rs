@@ -8610,6 +8610,25 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
             Term::CValue(CValue::Int32(Bitvector32Term::Constant(7))),
         ],
     };
+    let owner = CallerSourceOwnerId::ordinary("test.c", "identity");
+    let source_id = RequirementSourceId {
+        owner: owner.clone(),
+        outer_ordinal: 0,
+    };
+    let entry_origins = vec![EntryFactOrigin::Requirement {
+        source_id: source_id.clone(),
+        role: RequirementFactRole::Principal {
+            unfolding_path: Vec::new(),
+        },
+    }];
+    let caller_requirement_index = CallerRequirementIndex::from_entry_facts(
+        owner.clone(),
+        function_block,
+        parsed_function.parameters(),
+        std::slice::from_ref(&source),
+        &entry_origins,
+        crate::kernel::CMemorySnapshotIdentity::of(state.memory()),
+    );
     let root = Proof::for_execution_frontier(
         "chosen projection",
         0,
@@ -8624,6 +8643,9 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         ExecutionProofConstants {
             function_entry_state: Some(state.clone()),
             execution_start_facts: vec![source].into(),
+            entry_fact_origins: entry_origins.into(),
+            caller_requirement_index: caller_requirement_index.into(),
+            caller_source_owner: Some(owner),
             ..ExecutionProofConstants::default()
         },
         function_block,
@@ -8659,7 +8681,9 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         .and_then(|execution| execution.presentation.chosen_projection.as_ref())
         .expect("choose should retain a checked source projection")
         .clone();
-    assert_eq!(projection.source_index, 0);
+    assert_eq!(projection.source_id, source_id);
+    assert_eq!(projection.principal_fact_index, 0);
+    assert_eq!(projection.source_token.source_id, projection.source_id);
     assert!(matches!(
         projection.source_requirement,
         Proposition::Predicate { ref name, .. } if name == "selected"
@@ -8789,6 +8813,24 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
             sort: Sort::CInt32,
             body: Box::new(body),
         };
+        let owner = CallerSourceOwnerId::ordinary("test.c", "identity");
+        let entry_origins = vec![EntryFactOrigin::Requirement {
+            source_id: RequirementSourceId {
+                owner: owner.clone(),
+                outer_ordinal: 0,
+            },
+            role: RequirementFactRole::Principal {
+                unfolding_path: Vec::new(),
+            },
+        }];
+        let caller_requirement_index = CallerRequirementIndex::from_entry_facts(
+            owner.clone(),
+            function_block,
+            parsed_function.parameters(),
+            std::slice::from_ref(&source),
+            &entry_origins,
+            crate::kernel::CMemorySnapshotIdentity::of(state.memory()),
+        );
         let before = fact_node_allocations();
         let root = Proof::for_execution_frontier(
             "chosen projection scaling",
@@ -8804,6 +8846,9 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
             ExecutionProofConstants {
                 function_entry_state: Some(state.clone()),
                 execution_start_facts: vec![source].into(),
+                entry_fact_origins: entry_origins.into(),
+                caller_requirement_index: caller_requirement_index.into(),
+                caller_source_owner: Some(owner),
                 ..ExecutionProofConstants::default()
             },
             function_block,
