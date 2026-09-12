@@ -393,15 +393,26 @@ the structure itself is the witness. Such a loop names its binder: a loop that
 declares `owns sub: tree_at(cur);` writes `decreases sub;` beside its
 invariants.
 
-The rule is the function-level structural rule applied at the back edge: the
-instance the binder ends holding must be a direct contained child, in the
-exact resource definition, of the instance it held at the loop head, carrying
-the submodel that child names. A model is a finite inductive term, so a
-strictly smaller submodel at every back edge is well-founded. No counter, size
-function, or automatic unfolding takes part, and a descending loop decreases
-its subtree binder while an ascending one decreases its context binder,
-because a rotation may grow the focused subtree while the context strictly
-loses a frame.
+The rule at the back edge is that the instance the binder ends holding must be
+a strict contained descendant, in the exact resource definitions, of the
+instance it held at the loop head, carrying the submodel that child names. A
+model is a finite inductive term, so a strictly deeper submodel at every back
+edge is well-founded. No counter, size function, or automatic unfolding takes
+part, and a descending loop decreases its subtree binder while an ascending one
+decreases its context binder, because a rotation may grow the focused subtree
+while the context strictly loses a frame.
+
+A direct child is one step of that descent, and it is not the only step a body
+takes. The uncle-red case of the Linux insert fixup recolours the parent and
+the uncle, sets `node = gparent`, and goes round again, so the frame the next
+iteration starts at is two above the one this iteration started at. The measure
+follows the body down as far as the body opened: each step needs a premise
+naming that instance's constructor, and the only thing that produces one is the
+body unfolding the instance, so the descent walks the unfold evidence the proof
+already left behind and stops at the first instance nobody opened. It is a walk
+over the constructors the path spelled out, not a search for one, and a back
+edge that hands back an instance the body never reached that way is refused by
+name (`mdtests/loop_decreases_strict_descendant.md` is the two-step positive).
 
 Which arm names the children is decided by the loop's invariants, playing the
 part of a contract's requirements. That is the same arm selection contract
@@ -531,8 +542,16 @@ The walk then hands its final instances to the contract's produced binders by
 refolding them under those names, at the arguments the exit reached. Those
 arguments are the caller's view: `result` is the returned pointer, and the
 root's parent is the null pointer constant rather than the parameter the body
-reassigned. The contract side of that boundary is in
-[the language reference](../reference/language/index.md).
+reassigned.
+
+A `void` walk has no `result`, and a parameter it reassigned still means the
+value the caller passed, so neither names where such a walk ended. A cell the
+contract owns does: a produced clause's cell reads are taken in the exit state,
+so a fixup that owns `root->rb_node` produces `rb_at(root->rb_node)` and hands
+the whole tree back at the position it linked, which is the same cell the
+caller reads after the call
+(`mdtests/rb_produces_through_the_root_cell.md`). The contract side of that
+boundary is in [the language reference](../reference/language/index.md).
 
 `old(name.field)` in an invariant is the function-entry instance of the
 function-level binder of that name, whatever the body did to that instance

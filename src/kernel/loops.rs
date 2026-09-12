@@ -3167,13 +3167,13 @@ fn rebind_one_loop_binder_instance(
 /// Whether a loop's structural `decreases` binder descends at this back edge,
 /// and why not when it does not (D6).
 ///
-/// The rule is the function-level one. The instance the binder ends holding
-/// must be a direct contained child, in the exact resource definition, of the
-/// instance it held at the loop head: the loop head's model selects one arm,
-/// that arm names its children, and the back-edge instance must be one of them
-/// with the submodel that child carries. A model is a finite inductive term,
-/// so a strictly smaller submodel at every back edge is well-founded; no
-/// counter, size function, or automatic unfolding takes part.
+/// The instance the binder ends holding must be a strict contained descendant,
+/// in the exact resource definitions, of the instance it held at the loop head:
+/// the loop head's model selects one arm, that arm names its children, and the
+/// back-edge instance is one of them, or one of *their* children by the same
+/// rule again, with the submodel that child carries. A model is a finite
+/// inductive term, so a strictly deeper submodel at every back edge is
+/// well-founded; no counter, size function, or automatic unfolding takes part.
 ///
 /// The evidence is the unfold that exposed the child: the arm comes from
 /// [`crate::kernel::select_resource_model_arm`] over the premises this path
@@ -3231,15 +3231,67 @@ pub(crate) fn loop_structural_descent_failure(
             head.name
         ));
     };
-    let AlgebraicTermNode::Constructor { variant, fields } = &constructor.node else {
+    let AlgebraicTermNode::Constructor { variant, .. } = &constructor.node else {
         return Some(format!(
             "loop `decreases {measure}` selected a non-constructor model"
         ));
     };
-    let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
+    if body.arms.iter().all(|arm| &arm.variant != variant) {
         return Some(format!(
             "loop `decreases {measure}` selected the unknown constructor `{variant}`"
         ));
+    }
+    let mut seen = BTreeSet::new();
+    if let AlgebraicTermNode::Variable(variable) = &model.node {
+        seen.insert(*variable);
+    }
+    if structural_measure_reaches_instance(
+        &constructor,
+        definition,
+        next,
+        definitions,
+        assumptions,
+        &mut seen,
+    ) {
+        return None;
+    }
+    Some(format!(
+        "loop `decreases {measure}` does not descend: the `{}` the binder holds at the back edge is not a contained child of the `{}` it held at the loop head, through the arms this path decided, starting at the `{variant}` arm of `{}`",
+        next.name, head.name, head.name
+    ))
+}
+
+/// Whether the back-edge instance is a contained child of this arm, or of a
+/// child of it that the path has likewise decided.
+///
+/// A direct child is one step of this walk. The uncle-red case of
+/// `__rb_insert` sets `node = gparent`, so the frame it hands to the next
+/// iteration is `up.up`, two frames above the one the binder held — and the
+/// body unfolded each frame it passed, which is exactly what decides that
+/// frame's constructor here. The walk follows the evidence the body already
+/// produced: it descends only into a child whose own constructor a premise
+/// names, and stops the moment one is undecided. It never proves by cases,
+/// never searches the resource context, and never unfolds anything itself, so
+/// its cost is the constructors this path spelled out.
+///
+/// `seen` closes the walk over model variables: a premise set that equated a
+/// variable with a term mentioning it cannot make this spin.
+fn structural_measure_reaches_instance(
+    constructor: &AlgebraicTerm,
+    definition: &CCompositeResourceDefinition,
+    next: &ResourceInstance,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    seen: &mut BTreeSet<Variable>,
+) -> bool {
+    let Some(body) = definition.matched.as_ref() else {
+        return false;
+    };
+    let AlgebraicTermNode::Constructor { variant, fields } = &constructor.node else {
+        return false;
+    };
+    let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
+        return false;
     };
     for child in &arm.children {
         if child.resource != next.name {
@@ -3265,13 +3317,33 @@ pub(crate) fn loop_structural_descent_failure(
             continue;
         };
         if crate::kernel::resource_arguments_proven_equal(held, submodel, assumptions) {
-            return None;
+            return true;
+        }
+        let AlgebraicValue::Algebraic(submodel) = submodel else {
+            continue;
+        };
+        if let AlgebraicTermNode::Variable(variable) = &submodel.node
+            && !seen.insert(*variable)
+        {
+            continue;
+        }
+        let Some(ResourceModelArmSelection::Constructor(child_constructor)) =
+            crate::kernel::select_resource_model_arm(submodel, assumptions)
+        else {
+            continue;
+        };
+        if structural_measure_reaches_instance(
+            &child_constructor,
+            child_definition,
+            next,
+            definitions,
+            assumptions,
+            seen,
+        ) {
+            return true;
         }
     }
-    Some(format!(
-        "loop `decreases {measure}` does not descend: the `{}` the binder holds at the back edge is not a direct contained child of the `{}` it held at the loop head, in the `{variant}` arm of `{}`",
-        next.name, head.name, head.name
-    ))
+    false
 }
 
 /// The back-edge state as the ownership join compares it: each loop binder

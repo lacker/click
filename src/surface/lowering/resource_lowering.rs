@@ -1382,16 +1382,18 @@ fn lower_resource_clause_facts_with_values_mode(
     }
 }
 
-/// Whether this resource argument is the C null pointer constant standing at
-/// a pointer-typed resource parameter.
+/// Whether this argument is the C null pointer constant standing at a
+/// pointer-typed resource or pure-function parameter.
 ///
 /// A walk that ends at the root of a parent-linked structure reaches a
 /// position whose parent is null, and null is the only truthful spelling of
 /// that argument: the parameter the body reassigned means its entry value at
-/// the boundary, which is a different node. `0` is already a contract
-/// expression, so this is the C null-pointer-constant typing rule rather than
-/// new syntax.
-pub(in crate::surface) fn resource_argument_is_null_pointer_constant(
+/// the boundary, which is a different node. The same holds inside the model:
+/// `rb_parent_is(sub, 0)` is how a pure function says "this subtree is the
+/// root", and a caller should not have to write the null case out by hand.
+/// `0` is already a contract expression, so this is the C null-pointer-constant
+/// typing rule rather than new syntax.
+pub(in crate::surface) fn argument_is_null_pointer_constant(
     argument: &ContractExpression,
     parameter_type: C0Type,
 ) -> bool {
@@ -1406,7 +1408,7 @@ pub(in crate::surface) fn resource_argument_to_typed_c_expression(
     argument: &ContractExpression,
     parameter_type: C0Type,
 ) -> Result<CExpression, ClickError> {
-    if resource_argument_is_null_pointer_constant(argument, parameter_type) {
+    if argument_is_null_pointer_constant(argument, parameter_type) {
         return Ok(c_typed_pointer_value(
             Pointer::null(),
             parameter_type.to_kernel_type(),

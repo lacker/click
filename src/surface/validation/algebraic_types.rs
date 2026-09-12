@@ -1948,6 +1948,15 @@ fn validate_algebraic_expression_node(
                     .unwrap_or_else(|| expected.click_type().clone());
                 match (&expected, actual) {
                     (ClickType::Parameter(_), _) => {}
+                    // The C null pointer constant types as any pointer
+                    // parameter, in a pure function exactly as in a resource
+                    // argument.
+                    (ClickType::C(expected), _)
+                        if arguments.get(index).is_some_and(|argument| {
+                            crate::surface::lowering::argument_is_null_pointer_constant(
+                                argument, *expected,
+                            )
+                        }) => {}
                     (ClickType::Integer, Some(ClickType::Integer)) => {}
                     (ClickType::Integer, _) => {
                         return Err(ClickError::new(format!(

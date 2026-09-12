@@ -294,7 +294,10 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        Some(&assumptions_from_propositions(&pure_facts)),
+        Some(ResourceFrameEntry {
+            assumptions: &assumptions_from_propositions(&pure_facts),
+            checked_entry_state: None,
+        }),
     )?;
     let state = canonical_claim_caller_state(
         state,
@@ -472,7 +475,10 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        Some(&assumptions_from_propositions(&pure_facts)),
+        Some(ResourceFrameEntry {
+            assumptions: &assumptions_from_propositions(&pure_facts),
+            checked_entry_state: None,
+        }),
     )?;
     let state = canonical_claim_caller_state(
         state,
@@ -1287,7 +1293,10 @@ pub(super) fn finish_ordered_proof<'a>(
                 predicate_environment,
                 click_function_environment,
                 resource_environment,
-                Some(&assumptions_from_propositions(entry_pure_facts.as_slice())),
+                Some(ResourceFrameEntry {
+                    assumptions: &assumptions_from_propositions(entry_pure_facts.as_slice()),
+                    checked_entry_state: proof_context.constants.function_entry_state.as_ref(),
+                }),
             )
         })
         .transpose()?;

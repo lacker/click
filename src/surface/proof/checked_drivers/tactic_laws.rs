@@ -261,6 +261,12 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     // those are never allowed to establish an inherited resource frame.
     let entry_assumptions =
         assumptions_from_propositions(proof_context.constants.execution_start_facts.as_slice());
+    // The frame comes from the contract's checked entry transition, so it is
+    // evaluated at the checked function-entry state rather than at the
+    // frontier's start state: a proof that unfolds a consumed instance before
+    // its first `step()` no longer owns that instance where the frontier
+    // begins, and re-evaluating the transition there would fail on a proof
+    // step that is none of the frame's business.
     let annotated = annotated_function_with_assumptions(
         &bound_function_block,
         parsed_function,
@@ -269,7 +275,10 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        Some(&entry_assumptions),
+        Some(ResourceFrameEntry {
+            assumptions: &entry_assumptions,
+            checked_entry_state: proof_context.constants.function_entry_state.as_ref(),
+        }),
     )?;
     if execution.core.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)

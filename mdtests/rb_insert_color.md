@@ -42,34 +42,48 @@ state two arms join in, is the missing piece. So no exit of this loop can be
 certified yet, and the contract below is the one the fixup wants rather than one
 that holds.
 
-What this fixture pins is the refusal that comes first, before the loop tactic
-is reached at all: the contract's own requirement `rb_color_bit(t.model) == 0` —
-the loop invariant "node is red", which is what makes `rb_red_parent`'s
-untagging sound — makes the resource-derived loop frame fail to establish, with
-`named resource instance is not owned`. Dropping just that one clause from the
-same contract lowers and reaches the proof. That is a second, independent
-blocker and it is smaller than the first.
+Four smaller blockers stood in front of that one, and package A24 cleared them.
+The one this fixture used to pin came before the loop tactic was reached at all:
+the contract's own requirement `rb_color_bit(t.model) == 0` — the loop invariant
+"node is red", which is what makes `rb_red_parent`'s untagging sound — made the
+resource-derived loop frame fail to establish, with `named resource instance is
+not owned`. That was the loop-frame pre-pass re-evaluating the contract's entry
+transition at the frontier's start state rather than at the function's checked
+entry state: the preamble unfolds `rb_at(node)` to read the inserted node's
+parent word, so at the frontier `consumes t` named nothing. The frame belongs to
+the contract and is now established where the contract begins.
 
-Two further limits are recorded here because the contract shows them:
+The three the contract still shows:
 
-- `decreases c;` cannot rank this loop even once the exits are certified. The
-  uncle-red cases set `node = gparent`, so the next frame is the context *above*
-  the grandparent — `up.up` — while `loop_structural_descent_failure` accepts
-  only a direct contained child of the instance the binder held at the head.
-  A two-frame climb needs the loop measure to accept a strict descendant, which
-  is for loop measures what package A16 was for induction hypotheses.
-- A pure function cannot take the null constant where a `struct rb_node*`
-  parameter is declared: `rb_parent_is(sub, 0)` is refused with `function
-  `rb_parent_is` argument 1 expects int32*, got int32`, in a pure body and in a
-  contract clause alike. `ctx_holds`'s `Top` case and the whole-tree
-  `rb_tree_parent_consistent` below are written out at null rather than applied
-  at it.
+- `decreases c;` now ranks this loop. The uncle-red cases set `node = gparent`,
+  so the next frame is the context *above* the grandparent — `up.up` — and the
+  measure accepts a strict contained descendant reached through the arms the
+  body actually unfolded, rather than a direct child only
+  ([`loop_decreases_strict_descendant.md`](loop_decreases_strict_descendant.md)).
+- A pure function now takes the null constant where a `struct rb_node*`
+  parameter is declared, so `ctx_holds`'s `Top` case is `rb_parent_is(sub, 0)`
+  and the whole-tree `rb_tree_parent_consistent` is `rb_parent_consistent(t, 0)`
+  rather than a copy of it written out at null
+  ([`rb_pure_null_pointer_argument.md`](rb_pure_null_pointer_argument.md)).
+- The produced instances are named through the root cell the context's `Top`
+  frame owns, `ctx_at(root->rb_node, root)` and `rb_at(root->rb_node)`. A
+  `produces` argument is the caller's view, so a parameter there means the value
+  the caller passed, and `node` is one the body reassigns; `result` is the other
+  spelling and this function is `void`. The root cell is read in the exit state
+  and is the position the fixup links
+  ([`rb_produces_through_the_root_cell.md`](rb_produces_through_the_root_cell.md)).
+
+What the fixture pins now is the loop's own entry: the invariants it declares do
+not follow from the contract by `simp` alone, because relating the C local
+`parent` that `rb_red_parent` computed to the frame's node payload is proof work
+this fixture does not do. `initialize` fails on the fourth invariant, `c.model ==
+ctx_reroot(c.model, parent)`, and package C3 owns both that and the `break`s and
+`continue`s behind it.
 
 The contract itself is D3 and D4 on the node-keyed model. `__rb_insert` returns
-`void` and reassigns `node`, so the cursor at the exit has no C name: the
-instances are `owns` on both sides rather than `consumes`/`produces`, since a
-`produces` clause needs an argument that names the final position and only
-`result` works there. `ctx_holds(c.model, t.model)` is the gluing requirement
+`void` and reassigns `node`, so the cursor at the exit has no C name and the
+produced instances are named at the root cell instead. `ctx_holds(c.model,
+t.model)` is the gluing requirement
 that the frame's own node is the focused subtree's parent payload — the
 replacement for the `parent` parameter the ascent fixtures have and this
 function does not. `ctx_root_black(c.model)` is what refutes `Context::Top` for
@@ -476,19 +490,7 @@ function rb_parent_consistent(t: RbTree, p: struct rb_node*) -> int32
 }
 
 function rb_tree_parent_consistent(t: RbTree) -> int32 {
-    match t {
-        RbTree::Empty => 1,
-        RbTree::Node(node, parent, color, left, right) =>
-            if rb_parent_consistent(left, node) == 1 {
-                if rb_parent_consistent(right, node) == 1 {
-                    if parent == 0 { 1 } else { 0 }
-                } else {
-                    0
-                }
-            } else {
-                0
-            },
-    }
+    rb_parent_consistent(t, 0)
 }
 
 function plug(ctx: Context, sub: RbTree) -> RbTree
@@ -503,17 +505,9 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
     }
 }
 
-function rb_parent_is_null(tree: RbTree) -> int32 {
-    match tree {
-        RbTree::Empty => 1,
-        RbTree::Node(identity, parent, color, left, right) =>
-            if parent == 0 { 1 } else { 0 },
-    }
-}
-
 function ctx_holds(ctx: Context, sub: RbTree) -> int32 {
     match ctx {
-        Context::Top => rb_parent_is_null(sub),
+        Context::Top => rb_parent_is(sub, 0),
         Context::Left(identity, grandparent, color, sibling_model, up_model) =>
             rb_parent_is(sub, identity),
         Context::Right(identity, grandparent, color, sibling_model, up_model) =>
@@ -646,8 +640,8 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
     requires ctx_root_black(c.model) == 1;
     requires almost_rb_insert(plug(c.model, t.model)) == 1;
     requires rb_tree_parent_consistent(plug(c.model, t.model)) == 1;
-    produces ctx: ctx_at(node, root);
-    produces sub: rb_at(node);
+    produces ctx: ctx_at(root->rb_node, root);
+    produces sub: rb_at(root->rb_node);
     ensures rb_inorder(plug(ctx.model, sub.model))
         == rb_inorder(plug(old(c.model), old(t.model)));
     ensures is_rb_root(plug(ctx.model, sub.model)) == 1;
@@ -708,8 +702,8 @@ void rb_insert_color(struct rb_node* node, struct rb_root* root) {
     requires ctx_root_black(c.model) == 1;
     requires almost_rb_insert(plug(c.model, t.model)) == 1;
     requires rb_tree_parent_consistent(plug(c.model, t.model)) == 1;
-    produces ctx: ctx_at(node, root);
-    produces sub: rb_at(node);
+    produces ctx: ctx_at(root->rb_node, root);
+    produces sub: rb_at(root->rb_node);
     ensures rb_inorder(plug(ctx.model, sub.model))
         == rb_inorder(plug(old(c.model), old(t.model)));
     ensures is_rb_root(plug(ctx.model, sub.model)) == 1;
@@ -721,5 +715,5 @@ void rb_insert_color(struct rb_node* node, struct rb_root* root) {
 ```
 
 ```expect
-fail: could not establish resource-derived loop frames for
+fail: `__rb_insert.contract (loop 0 invariant 4 entry)`
 ```

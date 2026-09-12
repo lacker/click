@@ -581,6 +581,21 @@ pub(in crate::surface) fn annotated_function(
     )
 }
 
+/// What a re-annotation needs to re-establish a resource-derived loop frame.
+///
+/// The frame comes from the contract's one checked entry transition, so it
+/// must be evaluated at the function's checked entry state and under its
+/// entry facts. A proof that unfolds a consumed instance before it executes
+/// leaves the frontier's own start state without that instance, and the
+/// frontier is then not a legal place to re-evaluate the transition.
+#[derive(Clone, Copy)]
+pub(in crate::surface) struct ResourceFrameEntry<'a> {
+    pub(in crate::surface) assumptions: &'a crate::kernel::PureFactContext,
+    /// The checked function-entry state, when the proof recorded one. It is
+    /// already argument-bound, so the annotation uses it as it stands.
+    pub(in crate::surface) checked_entry_state: Option<&'a CState>,
+}
+
 pub(in crate::surface) fn annotated_function_with_assumptions(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -589,7 +604,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
-    entry_assumptions: Option<&crate::kernel::PureFactContext>,
+    frame_entry: Option<ResourceFrameEntry<'_>>,
 ) -> Result<CFunction, ClickError> {
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, parsed_function, resource_environment)?;
@@ -744,21 +759,23 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     let function = if resource_derived_mutable_frame {
         let function = function.with_resource_derived_mutable_frame();
         if !function_block.is_external()
-            && let Some(entry_assumptions) = entry_assumptions
+            && let Some(frame_entry) = frame_entry
         {
-            let frame_entry =
-                crate::kernel::c_function_entry_state(entry_state, &function, arguments)
+            let checked_entry = match frame_entry.checked_entry_state {
+                Some(state) => state.clone(),
+                None => crate::kernel::c_function_entry_state(entry_state, &function, arguments)
                     .ok_or_else(|| {
                         ClickError::new(format!(
                             "could not construct the resource-derived loop entry for `{}`",
                             parsed_function.name()
                         ))
-                    })?;
+                    })?,
+            };
             let mut budget = crate::kernel::ExecutionBudget::default();
             match crate::kernel::establish_resource_derived_loop_frames(
                 function,
-                &frame_entry,
-                entry_assumptions,
+                &checked_entry,
+                frame_entry.assumptions,
                 &mut budget,
             ) {
                 Ok(Ok(function)) => function,
@@ -4322,6 +4339,34 @@ impl AnnotationLowerer<'_> {
                 ClickType::Algebraic(_) => self
                     .lower_contract_algebraic_to_spec(argument, environment)
                     .map(crate::kernel::SpecPureFunctionArgument::Algebraic),
+                // The C null pointer constant stands at a pointer-typed pure
+                // parameter and lowers to that pointer type's null value, not
+                // to an `int32` zero, so `rb_parent_is(sub, 0)` compares the
+                // model's parent payload with a pointer.
+                ClickType::C(c_type)
+                    if crate::surface::lowering::argument_is_null_pointer_constant(
+                        argument, *c_type,
+                    ) =>
+                {
+                    let pointer = SpecExpression::Value(CValue::typed_pointer(
+                        crate::kernel::Pointer::null(),
+                        c_type.to_kernel_type(),
+                    ));
+                    Ok(match click_array_element_type(*c_type) {
+                        Some(element_type) => crate::kernel::SpecPureFunctionArgument::ArrayRef {
+                            memory: if memory_independent {
+                                crate::kernel::SpecMemory::Fixed(
+                                    crate::kernel::value_independent_click_memory(),
+                                )
+                            } else {
+                                environment.current_memory.clone()
+                            },
+                            pointer,
+                            element_type,
+                        },
+                        None => crate::kernel::SpecPureFunctionArgument::Value(pointer),
+                    })
+                }
                 ClickType::C(_) if parameter_is_click_array_ref(parameter) => {
                     let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
                     Ok(crate::kernel::SpecPureFunctionArgument::ArrayRef {

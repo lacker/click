@@ -200,13 +200,19 @@ ranked update, so the plan is rejected. Structural measures do not yet support
 mutual C recursion.
 
 A loop may name one of its own resource binders instead of int32 components:
-`decreases sub;` on a loop that declares `owns sub: tree_at(cur);`. The rule is
-the function-level one, applied at the back edge: the instance the binder ends
-holding must be a direct contained child, in the exact resource definition, of
-the instance it held at the loop head, with the submodel that child carries.
-Models are finite inductive terms, so a strictly smaller submodel at every back
-edge is well-founded; there is no counter, size function, or automatic
-unfolding. Which arm names the children is decided by the loop's invariants
+`decreases sub;` on a loop that declares `owns sub: tree_at(cur);`. The rule at
+the back edge is that the instance the binder ends holding must be a strict
+contained descendant, in the exact resource definitions, of the instance it held
+at the loop head, with the submodel that child carries. A direct child is one
+step of it; a body that moves two levels at once, as every rbtree fixup loop
+does when it sets `node = gparent`, is accepted through the arms the path has
+already decided. Each step down needs a premise naming that instance's
+constructor, and the only thing that produces one is the body unfolding the
+instance, so the walk follows the evidence the body left and stops where an
+instance was never opened. Models are finite inductive terms, so a strictly
+deeper submodel at every back edge is well-founded; there is no counter, size
+function, automatic unfolding, or search. See
+`mdtests/loop_decreases_strict_descendant.md`. Which arm names the children is decided by the loop's invariants
 playing the part of a contract's requirements, the same arm selection contract
 lowering uses, so a structural loop measure needs a `match model` resource
 whose constructor the invariants pin down. Unlike the numeric components, the
@@ -1451,6 +1457,18 @@ consumes t: ptree_at(node, parent);
 produces ctx: pctx_at(result, 0);
 produces sub: ptree_at(result, 0);
 ```
+
+A `void` function has no `result`, so a cursor it left somewhere else is named
+through a cell the contract owns. A produced clause's cell reads are taken in
+the exit state, so when the contract owns `root->rb_node`, `produces u:
+rb_at(root->rb_node);` is the whole tree at the position the body linked, and
+the caller reading that same owned cell after the call sees the same object.
+This is the spelling for the Linux insert fixup, which returns nothing and
+reassigns its `node` parameter as it climbs
+(`mdtests/rb_produces_through_the_root_cell.md`). A parameter the body
+reassigned cannot stand there: it means the caller's actual, and a caller
+substitutes its own, so the clause would describe an object the exit does not
+hold.
 
 A produced instance is the one the body folded under that name, so a walk
 hands its final instances over by refolding them under the produced names at

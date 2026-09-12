@@ -323,7 +323,10 @@ pub(super) fn verify_execution_theorem(
         predicates,
         functions,
         resources,
-        Some(&assumptions_from_propositions(&facts)),
+        Some(ResourceFrameEntry {
+            assumptions: &assumptions_from_propositions(&facts),
+            checked_entry_state: None,
+        }),
     )?;
     let artifacts = verified
         .iter()

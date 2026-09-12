@@ -1600,7 +1600,10 @@ fn verify_c0_sources_with_context(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
-            Some(&assumptions_from_propositions(&certification_facts)),
+            Some(ResourceFrameEntry {
+                assumptions: &assumptions_from_propositions(&certification_facts),
+                checked_entry_state: None,
+            }),
         )?;
         if contract_function.resource_derived_mutable_frame() {
             let loop_assumptions = assumptions_from_propositions(&certification_facts);

@@ -1092,6 +1092,13 @@ fn infer_scoped_spec_value_type(
                             "function `{name}` argument {index} expects Integer in {context}"
                         )));
                     }
+                    // The C null pointer constant types as any pointer
+                    // parameter, in a pure function exactly as in a resource
+                    // argument.
+                    ClickType::C(expected)
+                        if crate::surface::lowering::argument_is_null_pointer_constant(
+                            argument, *expected,
+                        ) => {}
                     ClickType::C(expected) => {
                         if matches!(&actual, SpecValueType::Integer) {
                             return Err(ClickError::new(format!(
@@ -1773,7 +1780,7 @@ fn validate_resource_subject_expression_types(
                     infer_contract_expression_type(argument, variables, click_functions, context)?;
                 if let (Some(actual), Some(expected)) = (actual, parameter_types.get(index))
                     && !resource_types_compatible(name, index, actual, *expected)
-                    && !crate::surface::lowering::resource_argument_is_null_pointer_constant(
+                    && !crate::surface::lowering::argument_is_null_pointer_constant(
                         argument, *expected,
                     )
                 {
@@ -2385,6 +2392,11 @@ pub(super) fn infer_contract_expression_type(
                 let Some(expected) = parameter.click_type().c_type() else {
                     continue;
                 };
+                // The C null pointer constant types as any pointer parameter,
+                // in a pure function exactly as in a resource argument.
+                if crate::surface::lowering::argument_is_null_pointer_constant(argument, expected) {
+                    continue;
+                }
                 if let Some(actual) =
                     infer_contract_expression_type(argument, variables, click_functions, context)?
                     && !click_types_compatible(actual, expected)
@@ -2882,7 +2894,7 @@ pub(super) fn validate_resource_clause(
                 )? {
                     let expected = parameter_types[index];
                     if !resource_types_compatible(name, index, actual, expected)
-                        && !crate::surface::lowering::resource_argument_is_null_pointer_constant(
+                        && !crate::surface::lowering::argument_is_null_pointer_constant(
                             argument, expected,
                         )
                     {

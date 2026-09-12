@@ -308,9 +308,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                     ..
                 } = resource.as_ref()
                 && arguments.iter().zip(parameter_types).any(|(argument, ty)| {
-                    crate::surface::lowering::resource_argument_is_null_pointer_constant(
-                        argument, *ty,
-                    )
+                    crate::surface::lowering::argument_is_null_pointer_constant(argument, *ty)
                 })
             {
                 return Err(ClickError::new(format!(

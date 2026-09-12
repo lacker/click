@@ -38,7 +38,10 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         predicate_environment,
         click_function_environment,
         resource_environment,
-        Some(&assumptions_from_propositions(&requirement_facts)),
+        Some(ResourceFrameEntry {
+            assumptions: &assumptions_from_propositions(&requirement_facts),
+            checked_entry_state: None,
+        }),
     )?;
 
     let entry_state = c_function_contract_entry_state(
