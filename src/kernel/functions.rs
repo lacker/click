@@ -1791,7 +1791,10 @@ fn prepare_verified_function_call<'a>(
                 contract_interface
                     .contract_requirement_source(requirement_ordinal)
                     .unwrap_or(None),
-                function
+                // The interface carries the checked source-map capability;
+                // using it keeps this metadata body-independent for named
+                // callbacks while matching concrete direct-call metadata.
+                contract_interface
                     .contract_requirement_source(requirement_ordinal)
                     .is_some_and(|source_requirement_ordinal| {
                         source_requirement_ordinal.is_some()

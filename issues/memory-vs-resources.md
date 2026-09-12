@@ -317,6 +317,14 @@ refinement, and checked-source identity. The added regressions cover
 body/storage-independent named application identity and direct-only
 constructors; the focused gate is now 193/193.
 
+Integration reconciliation on `origin/master` `21586276` retained the
+upstream source-requirement capability and algebraic-equation simplification
+changes. The interface carries the source map used for that capability, so
+named callbacks remain body-independent. The integrated focused command now
+passes `195/195` (the upstream base adds two matching callback tests), the
+upstream callback/algebraic-equation filters pass, and the source-capability
+adapter is not a separate contract evaluator.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different
