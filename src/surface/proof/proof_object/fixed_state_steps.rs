@@ -239,6 +239,7 @@ impl<'a> Proof<'a> {
             result: None,
             recorded_snapshots: &recorded_snapshots,
             integer_values: &integer_values,
+            pointer_element_widths: BTreeMap::new(),
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let applied = apply_theorem_applications_to_available(

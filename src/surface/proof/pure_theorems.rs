@@ -4302,6 +4302,7 @@ fn prove_pure_theorem_goal(
         result: None,
         recorded_snapshots: &recorded_snapshots,
         integer_values: &context.integer_values,
+        pointer_element_widths: BTreeMap::new(),
     };
     available = apply_theorem_applications_to_available(
         theorem_environment,
@@ -4368,6 +4369,7 @@ fn prove_pure_theorem_tactics(
         result: None,
         recorded_snapshots: &recorded_snapshots,
         integer_values: &context.integer_values,
+        pointer_element_widths: BTreeMap::new(),
     };
     let mut available = requires.to_vec();
     let mut unfolded_predicates = Vec::new();

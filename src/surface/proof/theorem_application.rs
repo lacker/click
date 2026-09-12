@@ -9,6 +9,11 @@ pub(super) struct TheoremApplicationContext<'a> {
     pub(super) recorded_snapshots: &'a RecordedSnapshots,
     pub(super) integer_values:
         &'a crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    /// Physical pointee widths for C parameters in the caller's scope.  A
+    /// theorem application may rename such a parameter, so the application
+    /// binding maps this by argument expression before lowering the callee's
+    /// propositions.
+    pub(super) pointer_element_widths: BTreeMap<String, u32>,
 }
 
 pub(super) fn apply_theorem_applications_to_available(
@@ -211,6 +216,8 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     };
     let pre_state = bind(context.pre_state);
     let post_state = bind(context.post_state);
+    let pointer_element_widths =
+        theorem_application_pointer_element_widths(&theorem, application, context);
     let lower = |proposition: &ClickProposition| {
         lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
             proposition,
@@ -226,6 +233,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             predicate_environment,
             click_function_environment,
             &BTreeSet::new(),
+            pointer_element_widths.clone(),
         )
     };
 
@@ -773,6 +781,74 @@ pub(super) fn theorem_application_bindings(
         }
     }
     Ok((values, array_refs, algebraic_values, integer_values))
+}
+
+fn theorem_application_pointer_element_widths(
+    theorem: &TheoremDefinition,
+    application: &TheoremApplication,
+    context: &TheoremApplicationContext<'_>,
+) -> BTreeMap<String, u32> {
+    theorem
+        .parameters()
+        .iter()
+        .zip(&application.arguments)
+        .filter_map(|(parameter, argument)| {
+            pointer_element_width_for_argument(argument, &context.pointer_element_widths)
+                .map(|width| (parameter.name().to_string(), width))
+        })
+        .collect()
+}
+
+/// Preserve a caller's physical pointer width through the expression that is
+/// substituted for a theorem parameter.  Only pointer-preserving C forms are
+/// followed; an opaque expression remains unsupported rather than receiving a
+/// nominal carrier width.
+fn pointer_element_width_for_argument(
+    argument: &ContractExpression,
+    known: &BTreeMap<String, u32>,
+) -> Option<u32> {
+    match argument {
+        ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
+            known.get(name).copied()
+        }
+        ContractExpression::CFragment(expression)
+        | ContractExpression::QualifiedC {
+            lowered: expression,
+            ..
+        }
+        | ContractExpression::Field {
+            lowered: expression,
+            ..
+        } => pointer_element_width_for_c_expression(expression, known),
+        ContractExpression::Add(left, right) => pointer_element_width_for_argument(left, known)
+            .or_else(|| pointer_element_width_for_argument(right, known)),
+        ContractExpression::Subtract(left, _)
+        | ContractExpression::Index(left, _)
+        | ContractExpression::Old(left)
+        | ContractExpression::Negate(left)
+        | ContractExpression::BitwiseNot(left) => pointer_element_width_for_argument(left, known),
+        ContractExpression::At { expression, .. } => {
+            pointer_element_width_for_argument(expression, known)
+        }
+        _ => None,
+    }
+}
+
+fn pointer_element_width_for_c_expression(
+    expression: &CExpression,
+    known: &BTreeMap<String, u32>,
+) -> Option<u32> {
+    match expression {
+        CExpression::Variable(name) => known.get(name).copied(),
+        CExpression::Add(left, right) => pointer_element_width_for_c_expression(left, known)
+            .or_else(|| pointer_element_width_for_c_expression(right, known)),
+        CExpression::Subtract(left, _)
+        | CExpression::PointerOffsetBytes { pointer: left, .. }
+        | CExpression::Cast {
+            expression: left, ..
+        } => pointer_element_width_for_c_expression(left, known),
+        _ => None,
+    }
 }
 
 fn theorem_application_error(

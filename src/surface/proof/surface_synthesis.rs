@@ -585,7 +585,7 @@ fn synthesized_surface_matches_proposition(
     };
     let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
     let (values, array_refs) = contract_environment_at_state(&parameter_values, &array_refs, state);
-    let lowered = crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+    let lowered = crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
         candidate,
         &PureFactContext::new(),
         &values,
@@ -597,6 +597,7 @@ fn synthesized_surface_matches_proposition(
         &PredicateEnvironment::new(&[]),
         &ClickFunctionEnvironment::new(&[]),
         &std::collections::BTreeSet::new(),
+        crate::surface::lowering::parameter_pointer_element_widths(parameters),
     );
     lowered.is_ok_and(|lowered| {
         crate::kernel::proof::propositions_are_alpha_equal(&lowered, proposition)

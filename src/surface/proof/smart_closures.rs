@@ -1256,8 +1256,8 @@ impl<'a> Proof<'a> {
                     }
                 };
                 self.facts()
-                    .to_vec()
-                    .iter()
+                    .special_candidates_mentioning(goal)
+                    .into_iter()
                     .filter(|premise| {
                         matches!(
                             premise,
@@ -1276,7 +1276,7 @@ impl<'a> Proof<'a> {
                         )
                     })
                     .filter_map(|premise| {
-                        self.available_surface_fact(surface_facts, premise_anchor, premise)
+                        self.available_surface_fact(surface_facts, premise_anchor, &premise)
                             .map(|surface| (premise.clone(), surface))
                     })
                     .collect::<Vec<_>>()

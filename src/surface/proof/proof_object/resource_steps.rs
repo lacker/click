@@ -413,6 +413,9 @@ impl<'a> Proof<'a> {
                 predicate_environment,
                 click_function_environment,
                 &BTreeSet::from([application.name.clone()]),
+                crate::surface::lowering::click_parameter_pointer_element_widths(
+                    definition.parameters(),
+                ),
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -512,6 +515,9 @@ impl<'a> Proof<'a> {
                         predicate_environment,
                         click_function_environment,
                         &opaque_calls,
+                        crate::surface::lowering::click_parameter_pointer_element_widths(
+                            definition.parameters(),
+                        ),
                     )
                     .map_err(|message| {
                         self.step_error(format!(

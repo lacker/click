@@ -891,6 +891,57 @@ impl ProofFacts {
             .collect()
     }
 
+    /// Returns the indexed pointer/bitvector relations which share atoms with
+    /// a special-arithmetic goal.  This is deliberately narrower than
+    /// `to_vec`: unrelated ambient facts are never materialized for smart
+    /// certificate planning.
+    pub(crate) fn special_candidates_mentioning(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Proposition> {
+        // A fact can be indexed under both operands of a relation, and the
+        // finite classification lookup below can return the same fact again.
+        // Keep deduplication logarithmic and deterministic instead of using
+        // Vec::contains, whose repeated structural comparisons are quadratic
+        // in a matching bucket.
+        let mut candidates = BTreeSet::new();
+        candidates.extend(self.load_equalities_mentioning(proposition));
+        if let Proposition::ConditionIs(condition, _) = proposition {
+            let finite: Vec<_> = match condition {
+                ConditionTerm::Float32(CFloatCondition::Comparison { left, right, .. }) => {
+                    vec![(32, left), (32, right)]
+                }
+                ConditionTerm::Float64(CFloatCondition::Comparison { left, right, .. }) => {
+                    vec![(64, left), (64, right)]
+                }
+                _ => Vec::new(),
+            };
+            for (width, value) in finite {
+                let classification = match width {
+                    32 => Proposition::ConditionIs(
+                        ConditionTerm::Float32(CFloatCondition::Classification {
+                            classification: CFloatClassification::Finite,
+                            value: value.clone(),
+                        }),
+                        true,
+                    ),
+                    64 => Proposition::ConditionIs(
+                        ConditionTerm::Float64(CFloatCondition::Classification {
+                            classification: CFloatClassification::Finite,
+                            value: value.clone(),
+                        }),
+                        true,
+                    ),
+                    _ => continue,
+                };
+                if let Some(candidate) = self.matching_fact_across_effects(&classification, &[]) {
+                    candidates.insert(candidate);
+                }
+            }
+        }
+        candidates.into_iter().collect()
+    }
+
     /// Returns exact algebraic equalities attached to terms occurring in
     /// this proposition.  The persistent term index keeps constructor
     /// disequality rewrites goal-local; callers never inspect unrelated
@@ -1112,6 +1163,15 @@ fn index_bitvector_equality_fact(
                 _ => return index,
             }
         }
+        Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
+            match (&left.offset, &right.offset) {
+                (
+                    PointerOffsetTerm::Int32Scaled { value: left, .. },
+                    PointerOffsetTerm::Int32Scaled { value: right, .. },
+                ) => (left.as_ref(), right.as_ref()),
+                _ => return index,
+            }
+        }
         _ => return index,
     };
     for term in [left, right] {
@@ -1119,8 +1179,10 @@ fn index_bitvector_equality_fact(
             continue;
         };
         let mut bucket = index.get(&key).cloned().unwrap_or_default();
-        bucket.push(fact.clone());
-        index = index.with_inserted(key, bucket);
+        if !bucket.iter().any(|candidate| candidate == fact) {
+            bucket.push(fact.clone());
+            index = index.with_inserted(key, bucket);
+        }
     }
     index
 }

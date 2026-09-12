@@ -296,7 +296,9 @@ pub(in crate::surface) fn lower_composite_resource_condition(
                 ))
             })
             .collect(),
-        parameter_pointer_element_widths: BTreeMap::new(),
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths(
+            definition.parameters(),
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -370,7 +372,9 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
                 ))
             })
             .collect(),
-        parameter_pointer_element_widths: BTreeMap::new(),
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths(
+            definition.parameters(),
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -1521,6 +1525,24 @@ pub(in crate::surface) fn parameter_pointer_element_widths(
                 })
                 .or_else(|| parameter.struct_layout().map(|layout| layout.size_bytes()))
                 .map(|width| (parameter.name().to_string(), width))
+        })
+        .collect()
+}
+
+/// Widths which remain knowable for Click-defined resource parameters. Such
+/// parameters retain array element types, while a struct-pointer parameter's
+/// layout is unavailable outside the C translation unit.
+pub(in crate::surface) fn click_parameter_pointer_element_widths(
+    parameters: &[FunctionParameter],
+) -> BTreeMap<String, u32> {
+    parameters
+        .iter()
+        .filter_map(|parameter| {
+            parameter
+                .click_type()
+                .c_type()
+                .and_then(click_array_element_type)
+                .map(|element| (parameter.name().to_string(), element.byte_width()))
         })
         .collect()
 }

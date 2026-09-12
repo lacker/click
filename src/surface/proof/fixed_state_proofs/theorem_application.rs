@@ -191,6 +191,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         result,
         recorded_snapshots,
         integer_values,
+        pointer_element_widths: parameter_pointer_element_widths(parameters),
     };
     let conclusions = instantiate_theorem_application_with_assumptions(
         theorem_environment,

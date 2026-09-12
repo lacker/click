@@ -197,6 +197,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_alge
         predicate_environment,
         click_function_environment,
         &std::collections::BTreeSet::new(),
+        BTreeMap::new(),
     )
 }
 
@@ -215,6 +216,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<Proposition, String> {
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
@@ -231,7 +233,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
-        BTreeMap::new(),
+        pointer_element_widths,
     )
     .map(|(proposition, _)| proposition)
 }
@@ -316,6 +318,37 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<Proposition, String> {
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+        BTreeMap::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
+) -> Result<Proposition, String> {
     lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
         proposition,
         assumptions,
@@ -330,6 +363,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     )
 }
 
