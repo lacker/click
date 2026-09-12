@@ -782,12 +782,13 @@ fn synthesize_named_range_loadable_segment(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
-    // A one-element byte range is the producer's reduced representation of
-    // `bytes[index..index + 1]`.  Handle it before the historical folded-range
-    // paths so the source index comes from the exact external parameter
-    // displacement rather than a same-block inference.
+    // A one-element byte range is either the producer's folded representation
+    // of `bytes[index..index + 1]` or its exact constant byte count. Handle it
+    // before the historical folded-range paths so the source index comes from
+    // the exact external parameter displacement rather than a same-block
+    // inference.
     if base.block == PointerBlock::ExternalArgument
-        && is_reduced_one_element_byte_count(bytes)
+        && is_one_element_byte_count(bytes)
         && let Some(special) = synthesize_external_symbolic_element_range(
             base,
             bytes,
@@ -901,11 +902,13 @@ fn synthesize_named_range_loadable_segment(
     })
 }
 
-/// Recover the written range for the reduced one-element byte load emitted by
-/// `loadable(bytes[index..index + 1])`.  This is deliberately narrower than
+/// Recover the written range for a one-element byte load emitted by
+/// `loadable(bytes[index..index + 1])`. This is deliberately narrower than
 /// `Pointer::element_index_from_base_with_width`: only a declared external
 /// parameter, an exact direct displacement from that parameter's pointer, and
 /// a one-byte element are authoritative enough to reconstruct the spelling.
+/// The producer may retain either the exact constant `1` or the unreduced
+/// `(index + 1) - index` form.
 fn synthesize_external_symbolic_element_range(
     base: &Pointer,
     bytes: &Bitvector32Term,
@@ -964,11 +967,34 @@ fn synthesize_external_symbolic_element_range(
                 )),
                 Box::new(index.clone()),
             );
-            if bytes != &one_element {
+            if !matches!(bytes, Bitvector32Term::Constant(1)) && bytes != &one_element {
                 return None;
             }
             (!matches!(index, Bitvector32Term::Constant(_))).then_some((parameter.name(), index))
         })?;
+    if matches!(bytes, Bitvector32Term::Constant(1)) {
+        // Keep the byte count constant in the re-lowered proposition by
+        // moving the symbolic index into the named pointer expression and
+        // spelling a zero-based one-byte range over that displaced pointer.
+        let semantic_base =
+            synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
+        let surface_base = ContractExpression::CFragment(semantic_base.clone());
+        let start = CExpression::Value(int32(0));
+        let end = CExpression::Value(int32(1));
+        return Some(ClickProposition::Loadable {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: semantic_base,
+                start: start.clone(),
+                end: end.clone(),
+                surface: ContractSegmentSurface::Range {
+                    base: surface_base,
+                    start: ContractExpression::CFragment(start),
+                    end: ContractExpression::CFragment(end),
+                },
+            },
+        });
+    }
     let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         &index,
         parameters,
@@ -1005,6 +1031,10 @@ fn is_reduced_one_element_byte_count(bytes: &Bitvector32Term) -> bool {
         return false;
     };
     *end.as_ref() == Bitvector32Term::add(start.as_ref().clone(), Bitvector32Term::Constant(1))
+}
+
+fn is_one_element_byte_count(bytes: &Bitvector32Term) -> bool {
+    matches!(bytes, Bitvector32Term::Constant(1)) || is_reduced_one_element_byte_count(bytes)
 }
 
 fn int32_scaled_value(offset: &PointerOffsetTerm, width: i64) -> Option<Bitvector32Term> {
