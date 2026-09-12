@@ -896,10 +896,17 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         {
             return false;
         }
-        let Some(delta) = offset_difference(&goal_pointer.offset, &base.offset) else {
+        let mut candidates = vec![goal_pointer.offset.clone()];
+        if let Some(reduced) = drop_aligned_scaled_addends(&goal_pointer.offset, goal_alignment) {
+            candidates.push(reduced);
+        }
+        let Some(aligned) = candidates.into_iter().find_map(|candidate| {
+            offset_difference(&candidate, &base.offset)
+                .map(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+        }) else {
             return false;
         };
-        delta.rem_euclid(goal_alignment as i128) == 0
+        aligned
     } else {
         let intrinsic_alignment = if pointer_equal(goal_pointer, &Pointer::null()) {
             // The null address is zero, so every valid power-of-two alignment
@@ -932,6 +939,62 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
     *expected == aligned
 }
 
+/// Remove symbolic scaled addends whose byte scale is divisible by the target
+/// alignment.  Such an addend cannot change the pointer's residue.  The
+/// traversal is iterative because this helper runs on source-shaped pointer
+/// offsets and must not inherit their nesting depth.
+fn drop_aligned_scaled_addends(
+    offset: &PointerOffsetTerm,
+    alignment: u64,
+) -> Option<PointerOffsetTerm> {
+    if !charge_pointer_offset(offset) {
+        return None;
+    }
+    let alignment = i64::try_from(alignment).ok()?;
+    let mut pending = vec![offset];
+    let mut parts = Vec::new();
+    while let Some(offset) = pending.pop() {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            other => parts.push(other.clone()),
+        }
+    }
+    fn constant_factor(term: &Bitvector32Term) -> Option<i64> {
+        match term {
+            Bitvector32Term::Multiply(left, right) => left
+                .as_const()
+                .map(|constant| i64::from(constant as i32))
+                .or_else(|| right.as_const().map(|constant| i64::from(constant as i32))),
+            _ => None,
+        }
+    }
+    let divisible = |part: &PointerOffsetTerm| match part {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+        | PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } => {
+            let scale = constant_factor(value)
+                .and_then(|factor| factor.checked_mul(*byte_width))
+                .unwrap_or(*byte_width);
+            scale != 0 && scale % alignment == 0
+        }
+        _ => false,
+    };
+    if !parts.iter().any(divisible) {
+        return None;
+    }
+    Some(
+        parts
+            .into_iter()
+            .filter(|part| !divisible(part))
+            .reduce(PointerOffsetTerm::add)
+            .unwrap_or(PointerOffsetTerm::Constant(0)),
+    )
+}
+
 #[derive(Clone, Debug)]
 enum TaggedTag<'a> {
     Constant(u64),
@@ -944,7 +1007,11 @@ enum TaggedTag<'a> {
 
 #[derive(Clone, Debug)]
 struct TaggedAddress<'a> {
-    pointer: Pointer,
+    /// Pointer payloads can be large symbolic offset trees.  The iterative
+    /// evaluator keeps one of these forms at every visited term, so sharing
+    /// the payload is essential: cloning a `Pointer` here would turn a tag
+    /// chain over a deep pointer into a payload-depth by tag-depth operation.
+    pointer: Arc<Pointer>,
     tag: Arc<TaggedTag<'a>>,
     /// The tag's constant value, when it is known.  Keeping this alongside
     /// the term is important: a symbolic tag chain must not be recursively
@@ -1439,7 +1506,7 @@ fn tagged_form<'a>(
                     Bitvector32Term::PointerAddress(pointer) => store(
                         identity,
                         Some(TaggedAddress {
-                            pointer: pointer.as_ref().clone(),
+                            pointer: Arc::new(pointer.as_ref().clone()),
                             tag: Arc::new(TaggedTag::Constant(0)),
                             tag_constant: Some(0),
                         }),
@@ -1595,7 +1662,7 @@ fn tagged_form<'a>(
                             |value| Arc::new(TaggedTag::Constant(value & mask)),
                         );
                         alignments
-                            .supports(&form.pointer, alignment)
+                            .supports(form.pointer.as_ref(), alignment)
                             .then_some(TaggedAddress {
                                 pointer: form.pointer,
                                 tag,
@@ -1620,13 +1687,12 @@ fn tagged_form<'a>(
                             || Arc::new(TaggedTag::BitwiseOr(form.tag, constant)),
                             |value| Arc::new(TaggedTag::Constant(value | constant)),
                         );
-                        (constant == 0 || alignments.supports(&form.pointer, alignment)).then_some(
-                            TaggedAddress {
+                        (constant == 0 || alignments.supports(form.pointer.as_ref(), alignment))
+                            .then_some(TaggedAddress {
                                 pointer: form.pointer,
                                 tag,
                                 tag_constant: form.tag_constant.map(|tag| tag | constant),
-                            },
-                        )
+                            })
                     }),
                     &mut active,
                     &mut results,
@@ -1694,7 +1760,7 @@ fn pointer_word_equality(
     let goal_right_form = tagged_form(goal_right, (left, right), &alignment_index);
     let equal = match (goal_left_form, goal_right_form) {
         (Some(goal_left), Some(goal_right)) => {
-            pointer_equal(&goal_left.pointer, &goal_right.pointer)
+            pointer_equal(goal_left.pointer.as_ref(), goal_right.pointer.as_ref())
                 && tagged_tag_equal(&goal_left.tag, &goal_right.tag)
         }
         _ => false,
@@ -1707,7 +1773,7 @@ fn pointer_word_equality(
             tagged_form(goal_right, (left, right), &alignment_index),
         ) {
             (Some(goal_left), Some(goal_right))
-                if pointer_equal(&goal_left.pointer, &goal_right.pointer) =>
+                if pointer_equal(goal_left.pointer.as_ref(), goal_right.pointer.as_ref()) =>
             {
                 matches!(
                     (goal_left.tag_constant, goal_right.tag_constant),
@@ -1817,6 +1883,37 @@ mod tests {
             }
         }
         seen.len()
+    }
+
+    fn deep_pointer(depth: usize) -> Pointer {
+        let mut offset = PointerOffsetTerm::Constant(0);
+        for _ in 0..depth {
+            offset = add(offset, PointerOffsetTerm::Constant(1));
+        }
+        pointer(offset)
+    }
+
+    fn measured_tagged_form(pointer_depth: usize, tag_depth: usize) -> (bool, usize, usize) {
+        let address = Bitvector32Term::PointerAddress(Box::new(deep_pointer(pointer_depth)));
+        let variable = Bitvector32Term::Variable(crate::kernel::Variable(394));
+        let mut tagged = address;
+        for index in 0..tag_depth {
+            tagged = Bitvector32Term::UInt64Add(
+                Box::new(tagged),
+                Box::new(Bitvector32Term::Variable(crate::kernel::Variable(
+                    (400 + index) as u64,
+                ))),
+            );
+        }
+        let alignments = AlignmentIndex::new(&[]).expect("empty alignment index");
+        let (form, work) = crate::instrumentation::measure_deterministic_work(|| {
+            tagged_form(&variable, (&variable, &tagged), &alignments)
+        });
+        let nodes = form
+            .as_ref()
+            .map(|form| tagged_tag_nodes(&form.tag))
+            .unwrap_or(0);
+        (form.is_some(), work, nodes)
     }
 
     fn scaled(value: Bitvector32Term) -> PointerOffsetTerm {
@@ -2122,6 +2219,53 @@ mod tests {
                 Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
             ));
         }
+    }
+
+    #[test]
+    fn alignment_certificate_drops_aligned_symbolic_scaled_displacement() {
+        let base = pointer(PointerOffsetTerm::Variable(crate::kernel::Variable(710)));
+        let aligned_base =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(base.clone(), 8), true);
+        let scaled = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(crate::kernel::Variable(711))),
+            byte_width: 8,
+        };
+        let goal_pointer = Pointer {
+            block: base.block.clone(),
+            offset: PointerOffsetTerm::Add(Box::new(base.offset.clone()), Box::new(scaled)),
+        };
+        let goal = Proposition::ConditionIs(ConditionTerm::pointer_aligned(goal_pointer, 8), true);
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                premise: Some(0),
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&goal, std::slice::from_ref(&aligned_base))
+        .unwrap();
+
+        let unaligned_scaled = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(crate::kernel::Variable(712))),
+            byte_width: 4,
+        };
+        let negative_pointer = Pointer {
+            block: base.block,
+            offset: PointerOffsetTerm::Add(Box::new(base.offset), Box::new(unaligned_scaled)),
+        };
+        let negative =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(negative_pointer, 8), false);
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: Some(0),
+                    result: negative.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&negative, std::slice::from_ref(&aligned_base)),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
     }
 
     #[test]
@@ -2590,6 +2734,33 @@ mod tests {
             assert!(nodes >= previous);
             previous = nodes;
         }
+    }
+
+    #[test]
+    fn tagged_form_shares_deep_pointer_payload_across_tag_depth() {
+        let (small_valid, small_work, small_nodes) = measured_tagged_form(4, 4);
+        let (deep_pointer_valid, deep_pointer_work, deep_pointer_nodes) =
+            measured_tagged_form(64, 4);
+        let (deep_tags_valid, deep_tags_work, deep_tags_nodes) = measured_tagged_form(4, 64);
+        let (cross_valid, cross_work, cross_nodes) = measured_tagged_form(64, 64);
+
+        assert!(small_valid && deep_pointer_valid && deep_tags_valid && cross_valid);
+        assert_eq!(small_nodes, 4);
+        assert_eq!(deep_pointer_nodes, 4);
+        assert_eq!(deep_tags_nodes, 64);
+        assert_eq!(cross_nodes, 64);
+
+        // Sharing the pointer payload makes the two dimensions additive.  A
+        // pointer clone at every tag node would make the cross case grow like
+        // pointer_depth * tag_depth and violate this bound by a wide margin.
+        let additive_bound = small_work
+            .saturating_add(deep_pointer_work)
+            .saturating_add(deep_tags_work)
+            .saturating_add(64);
+        assert!(
+            cross_work <= additive_bound,
+            "cross-product work was not additive: small={small_work}, pointer={deep_pointer_work}, tags={deep_tags_work}, cross={cross_work}"
+        );
     }
 
     #[test]
