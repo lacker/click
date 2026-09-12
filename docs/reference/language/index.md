@@ -513,6 +513,17 @@ abstract exit. It fails if the current frontier is not a loop. Ordinary
 `step()` instead evaluates the loop condition and enters at most one concrete
 iteration; it does not invent a loop summary.
 
+A loop header holds `invariant` items, an optional `decreases` clause, the
+`initialize` and `preserve` phase proofs, and the loop's own resource clauses.
+Those resource clauses take the same forms a contract's do, including the
+instance binder `owns name: resource(args);`. A declared binder takes the one
+enclosing owned instance of that family and arguments, the invariants may read
+`name.field`, and `close_invariants()` binds the name again at the back edge
+from the family and arguments rather than from whatever the body called the
+instance. Instances the loop does not declare are unavailable in the body and
+returned after it. The rules are in
+[loops and invariants](../../concepts/loops-and-invariants.md).
+
 When the two arms need to expose facts or resources about changed state, add an
 optional common-frontier interface to `branch`:
 

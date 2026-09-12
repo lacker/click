@@ -1229,6 +1229,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         iteration_entry: &crate::kernel::CState,
         checks: &[crate::kernel::CLoopInvariantCheck],
         ranking_measures: &[crate::kernel::CExpression],
+        binders: &[crate::kernel::CLoopBinder],
         presentation: impl FnOnce(
             &Proposition,
             &[Option<Arc<crate::kernel::LoweringIntroductions>>],
@@ -1260,8 +1261,17 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         for fact in crate::kernel::certified_store_equations(&execution.core.effect_facts) {
             facts = facts.with_fact(fact);
         }
-        let mut obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+        // The loop's names are bound again before any invariant reads a
+        // binder field: the body may have refolded its instance under another
+        // name, and the binder follows the family and arguments, not the name.
+        let back_edge_state = crate::kernel::c_loop_state_with_loop_binders_rebound(
+            iteration_entry,
             &execution.core.state,
+            binders,
+            facts.assumptions(),
+        )?;
+        let mut obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
+            &back_edge_state,
             loop_entry,
             checks,
             facts.assumptions(),
@@ -1272,7 +1282,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         // site that rechecks it.
         obligations.extend(
             crate::kernel::c_loop_ranking_obligations_at_back_edge(
-                &execution.core.state,
+                &back_edge_state,
                 iteration_entry,
                 ranking_measures,
             )
@@ -2371,7 +2381,7 @@ mod tests {
             let ((body, scope), opening_work) =
                 crate::instrumentation::measure_deterministic_work(|| {
                     frontier
-                        .open_invariant_body(&entry, &entry, &checks, &[], |_, _| ())
+                        .open_invariant_body(&entry, &entry, &checks, &[], &[], |_, _| ())
                         .unwrap()
                 });
             assert!(
@@ -2518,7 +2528,7 @@ mod tests {
             ),
         );
         let (body, scope) = frontier
-            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_, _| ())
+            .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| ())
             .unwrap();
         assert!(body.apply_normalize().is_err());
         assert!(
@@ -2627,7 +2637,7 @@ mod tests {
                     .is_err()
             );
             let (body, scope) = unprepared
-                .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], |_, _| ())
+                .open_invariant_body(&CState::new(), &CState::new(), &checks, &[], &[], |_, _| ())
                 .unwrap();
             let completed = body.apply_normalize().ok().unwrap();
             let prepared = unprepared.retain_invariant_body(scope, &completed).unwrap();

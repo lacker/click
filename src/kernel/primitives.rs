@@ -3548,6 +3548,11 @@ pub(super) struct ResourceContextChange {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
     pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
+    /// Owned instances keyed by the resource family and arity they name. A
+    /// loop binder selects its instance by family and arguments, so that
+    /// selection costs the instances of one family rather than the whole
+    /// resource context.
+    pub(super) instance_shapes: PersistentMap<(String, usize), ResourceEntryIds>,
     pub(super) exact: PersistentMap<CResourceFact, ResourceEntryIds>,
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,

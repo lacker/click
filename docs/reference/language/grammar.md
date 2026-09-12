@@ -39,9 +39,9 @@ documentation inventory keep the following accepted words synchronized.
 | `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`, `short`, `int`, `long`, `long long`, `int16_t`, `int32_t`, `int64_t`, `ssize_t`, `unsigned char`, `unsigned short`, `unsigned int`, `unsigned long`, `unsigned long long`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`, `size_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
 | `let`, `where` | Value abbreviation and existential-binding forms. |
 | `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
-| `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |
+| `owns`, `views`, `consumes`, `produces` | Resource transfer clauses, in a contract and in a loop header. |
 | `constructs` | Authorizes one function to create an abstract resource token. |
-| `invariant`, `initialize`, `preserve` | Loop structural items and phase proofs. |
+| `invariant`, `initialize`, `preserve` | Loop structural items and phase proofs; a loop header also takes `owns` and `views` clauses of its own. |
 | `contains`, `fact`, `field`, `if` | Composite-resource members, pure field declarations, and optional resource guard. `if` also forms expressions and proof splits. |
 | `read`, `write`, `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
 | `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |

@@ -116,6 +116,11 @@ impl ResourceContextIndex {
         if let CResource::Instance(instance) = fact.resource() {
             result.instances =
                 insert_resource_index_entry(&result.instances, instance.identity, entry);
+            result.instance_shapes = insert_resource_index_entry(
+                &result.instance_shapes,
+                (instance.name.clone(), instance.arguments.len()),
+                entry,
+            );
         }
         result.exact = insert_resource_index_entry(&result.exact, fact.clone(), entry);
         result.by_resource =
@@ -175,6 +180,11 @@ impl ResourceContextIndex {
         if let CResource::Instance(instance) = fact.resource() {
             result.instances =
                 remove_resource_index_entry(&result.instances, &instance.identity, entry);
+            result.instance_shapes = remove_resource_index_entry(
+                &result.instance_shapes,
+                &(instance.name.clone(), instance.arguments.len()),
+                entry,
+            );
         }
         result.exact = remove_resource_index_entry(&result.exact, fact, entry);
         result.by_resource =
@@ -251,6 +261,37 @@ impl ResourceContext {
             .get(&instance.identity)
             .is_some_and(|entries| entries.len() == 1);
         (!valid).then(|| ResourceContextValidityError::DuplicateOwnedResourceFact(fact.clone()))
+    }
+
+    /// The owned instances of one resource family and arity.
+    ///
+    /// Selection by family and arguments reads this shape bucket, so a loop
+    /// binder's search costs the instances of its own family rather than the
+    /// whole resource context.
+    pub(crate) fn owned_instances_of_shape(
+        &self,
+        name: &str,
+        arity: usize,
+    ) -> Vec<&ResourceInstance> {
+        let Some(entries) = self
+            .storage
+            .index
+            .instance_shapes
+            .get(&(name.to_string(), arity))
+        else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .filter_map(|entry| match self.fact(*entry) {
+                CResourceFact::Own(CResource::Instance(instance), quantity)
+                    if quantity.as_const() == Some(1) =>
+                {
+                    Some(instance)
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn owned_instance(&self, identity: Variable) -> Option<&ResourceInstance> {
