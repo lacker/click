@@ -834,6 +834,63 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
 /// deliberately narrow quantified external-byte-range slice. Other
 /// stateful propositions remain on the compatibility route until their
 /// snapshot transport is defined.
+const SOURCE_CAPABILITY_MAX_NODES: usize = 4096;
+
+fn is_one_byte_external_range(bytes: &Bitvector32Term) -> bool {
+    matches!(bytes, Bitvector32Term::Constant(1))
+        || matches!(bytes, Bitvector32Term::Subtract(end, start)
+            if end.as_ref() == &Bitvector32Term::add(start.as_ref().clone(), Bitvector32Term::Constant(1)))
+}
+
+/// Recognize only the direct kernel carrier shapes.  The main iterative walk
+/// below checks their terms, epochs, and quantifier depth.
+fn source_range_capability_is_supported(proposition: &Proposition) -> Option<bool> {
+    let Proposition::ForAll { sort, .. } = proposition else {
+        let Proposition::Exists {
+            var,
+            sort: Sort::CInt32,
+            body,
+            ..
+        } = proposition
+        else {
+            return None;
+        };
+        let Proposition::And(left, right) = body.as_ref() else {
+            return None;
+        };
+        let guard = |p: &Proposition| {
+            matches!(p,
+            Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(left, right), false)
+                if left.as_ref() == &Bitvector32Term::Variable(*var)
+                    && right.as_ref() == &Bitvector32Term::Constant(1))
+        };
+        let range = if guard(left) {
+            right
+        } else if guard(right) {
+            left
+        } else {
+            return None;
+        };
+        return source_range_universal_is_supported(range).then_some(true);
+    };
+    (*sort == Sort::CInt32 && source_range_universal_is_supported(proposition)).then_some(false)
+}
+
+fn source_range_universal_is_supported(proposition: &Proposition) -> bool {
+    let Proposition::ForAll { sort, body, .. } = proposition else {
+        return false;
+    };
+    let Proposition::Implies(_, consequent) = body.as_ref() else {
+        return false;
+    };
+    let Proposition::CMemoryLoadable { base, bytes, .. } = consequent.as_ref() else {
+        return false;
+    };
+    *sort == Sort::CInt32
+        && matches!(base.block, crate::kernel::PointerBlock::ExternalArgument)
+        && is_one_byte_external_range(bytes)
+}
+
 pub(in crate::surface) fn source_backed_requirement_is_supported(
     proposition: &Proposition,
     source_requirement_ordinal: Option<usize>,
@@ -843,15 +900,29 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     if source_requirement_ordinal.is_none() {
         return Ok(false);
     }
-    // The range clauses are deliberately a separate stateful slice: the
-    // source clause is a top-level int32 quantifier whose body names an
-    // external argument range.  A false add-overflow condition is the
-    // definedness spelling produced for a checked successor expression; it
-    // is admitted with the range and remains an ordinary proof goal.
-    let quantified_external_range = matches!(
-        proposition,
-        Proposition::ForAll { .. } | Proposition::Exists { .. }
-    ) && !source_requirement_is_state_independent;
+    let range_kind = if source_requirement_is_state_independent {
+        None
+    } else {
+        match proposition {
+            Proposition::ForAll { .. } | Proposition::Exists { .. } => {
+                source_range_capability_is_supported(proposition)
+            }
+            _ => None,
+        }
+    };
+    // A malformed stateful quantifier must fail closed rather than fall
+    // through to the static load-variable compatibility family.
+    if !source_requirement_is_state_independent
+        && matches!(
+            proposition,
+            Proposition::ForAll { .. } | Proposition::Exists { .. }
+        )
+        && range_kind.is_none()
+    {
+        return Ok(false);
+    }
+    let quantified_external_range = range_kind.is_some();
+    let guarded_external_range = range_kind == Some(true);
     // The ordinary source-backed path is restricted to state-independent
     // propositions.  Static-array preconditions are the one deliberately
     // audited exception: their indexed loads are read at the call frontier,
@@ -865,54 +936,62 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
         };
         Some(source_snapshot)
     };
-    const MAX_NODES: usize = 4096;
     enum Work<'a> {
-        Proposition(&'a Proposition),
+        Proposition(&'a Proposition, usize),
         Condition(&'a ConditionTerm),
         Bitvector(&'a Bitvector32Term),
+        PointerOffset(&'a PointerOffsetTerm),
     }
-    let mut work = vec![Work::Proposition(proposition)];
+    let mut work = vec![Work::Proposition(proposition, 0)];
     let mut visited = 0;
     let mut saw_static_load = false;
     let mut saw_external_range = false;
     while let Some(item) = work.pop() {
         visited += 1;
         crate::instrumentation::record_deterministic_work(1);
-        if visited > MAX_NODES {
+        if visited > SOURCE_CAPABILITY_MAX_NODES {
             return Err(ClickError::new(format!(
-                "source-backed requirement capability exceeded structural limit {MAX_NODES}"
+                "source-backed requirement capability exceeded structural limit {SOURCE_CAPABILITY_MAX_NODES}"
             )));
         }
         super::super::check_verification_deadline()?;
         match item {
-            Work::Proposition(Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedAddOverflows(_, _),
-                true,
-            )) if quantified_external_range => {
+            Work::Proposition(
+                Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(_, _), true),
+                _,
+            ) if quantified_external_range => {
                 return Ok(false);
             }
-            Work::Proposition(Proposition::ConditionIs(condition, _)) => {
+            Work::Proposition(Proposition::ConditionIs(condition, _), _) => {
                 work.push(Work::Condition(condition));
             }
-            Work::Proposition(Proposition::And(left, right))
-            | Work::Proposition(Proposition::Or(left, right))
-            | Work::Proposition(Proposition::Implies(left, right)) => {
-                work.push(Work::Proposition(right));
-                work.push(Work::Proposition(left));
+            Work::Proposition(Proposition::And(left, right), depth)
+            | Work::Proposition(Proposition::Or(left, right), depth)
+            | Work::Proposition(Proposition::Implies(left, right), depth) => {
+                work.push(Work::Proposition(right, depth));
+                work.push(Work::Proposition(left, depth));
             }
-            Work::Proposition(Proposition::Not(body))
-            | Work::Proposition(Proposition::ForAll { body, .. })
-            | Work::Proposition(Proposition::Exists { body, .. }) => {
-                work.push(Work::Proposition(body));
+            Work::Proposition(Proposition::Not(body), depth) => {
+                work.push(Work::Proposition(body, depth));
             }
-            Work::Proposition(Proposition::CMemoryLoadable { base, bytes, .. })
+            Work::Proposition(Proposition::ForAll { body, .. }, depth)
+            | Work::Proposition(Proposition::Exists { body, .. }, depth) => {
+                let maximum_depth = usize::from(guarded_external_range);
+                if depth > maximum_depth {
+                    return Ok(false);
+                }
+                work.push(Work::Proposition(body, depth + 1));
+            }
+            Work::Proposition(Proposition::CMemoryLoadable { base, bytes, .. }, _)
                 if quantified_external_range
-                    && matches!(base.block, crate::kernel::PointerBlock::ExternalArgument) =>
+                    && matches!(base.block, crate::kernel::PointerBlock::ExternalArgument)
+                    && is_one_byte_external_range(bytes) =>
             {
                 saw_external_range = true;
                 work.push(Work::Bitvector(bytes));
+                work.push(Work::PointerOffset(&base.offset));
             }
-            Work::Proposition(_) => return Ok(false),
+            Work::Proposition(_, _) => return Ok(false),
             Work::Condition(ConditionTerm::Bitvector32SignedAddOverflows(left, right)) => {
                 work.push(Work::Bitvector(right));
                 work.push(Work::Bitvector(left));
@@ -967,6 +1046,10 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
             Work::Bitvector(Bitvector32Term::Variable(variable))
                 if !crate::kernel::is_load_variable(variable) => {}
             Work::Bitvector(Bitvector32Term::Variable(variable))
+                if quantified_external_range
+                    && crate::kernel::is_load_variable(variable)
+                    && crate::kernel::registered_load_for_variable(variable).is_some() => {}
+            Work::Bitvector(Bitvector32Term::Variable(variable))
                 if static_snapshot.is_some_and(|_| {
                     registered_static_load_matches_snapshot(
                         variable,
@@ -998,6 +1081,22 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
                 work.push(Work::Bitvector(body));
             }
             Work::Bitvector(_) => return Ok(false),
+            Work::PointerOffset(PointerOffsetTerm::Constant(_)) => {}
+            Work::PointerOffset(PointerOffsetTerm::Variable(variable)) => {
+                if crate::kernel::is_load_variable(variable)
+                    && crate::kernel::registered_load_for_variable(variable).is_none()
+                {
+                    return Ok(false);
+                }
+            }
+            Work::PointerOffset(PointerOffsetTerm::Add(left, right)) => {
+                work.push(Work::PointerOffset(right));
+                work.push(Work::PointerOffset(left));
+            }
+            Work::PointerOffset(PointerOffsetTerm::Int32Scaled { value, .. })
+            | Work::PointerOffset(PointerOffsetTerm::Int64Scaled { value, .. }) => {
+                work.push(Work::Bitvector(value));
+            }
         }
     }
     if quantified_external_range {
@@ -1318,6 +1417,104 @@ mod tests {
             !source_backed_requirement_is_supported(&load_variable_guard, Some(0), false, None,)
                 .unwrap(),
             "a guarded external range must not admit an unregistered load variable"
+        );
+
+        let guarded_body = match &guarded {
+            Proposition::Exists { body, .. } => body.clone(),
+            _ => unreachable!(),
+        };
+        let wrong_width = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt64,
+            body: guarded_body.clone(),
+        };
+        assert!(
+            !source_backed_requirement_is_supported(&wrong_width, Some(0), false, None,).unwrap()
+        );
+
+        let mut wide_range = quantified.clone();
+        if let Proposition::ForAll { body, .. } = &mut wide_range {
+            if let Proposition::Implies(_, consequent) = body.as_mut() {
+                if let Proposition::CMemoryLoadable { bytes, .. } = consequent.as_mut() {
+                    *bytes = Bitvector32Term::Constant(2);
+                }
+            }
+        }
+        let wide_guarded = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(Bitvector32Term::Variable(Variable(3_100_001))),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    false,
+                )),
+                Box::new(wide_range),
+            )),
+        };
+        assert!(
+            !source_backed_requirement_is_supported(&wide_guarded, Some(0), false, None,).unwrap()
+        );
+
+        let mut unregistered_range = quantified.clone();
+        if let Proposition::ForAll { body, .. } = &mut unregistered_range {
+            if let Proposition::Implies(_, consequent) = body.as_mut() {
+                if let Proposition::CMemoryLoadable { base, .. } = consequent.as_mut() {
+                    base.offset = PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(Bitvector32Term::Variable(Variable(1 << 40))),
+                        byte_width: 1,
+                    };
+                }
+            }
+        }
+        let unregistered_guarded = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(Bitvector32Term::Variable(Variable(3_100_001))),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    false,
+                )),
+                Box::new(unregistered_range),
+            )),
+        };
+        assert!(
+            !source_backed_requirement_is_supported(&unregistered_guarded, Some(0), false, None,)
+                .unwrap()
+        );
+
+        let nested_guarded = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(Bitvector32Term::Variable(Variable(3_100_001))),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    false,
+                )),
+                Box::new(Proposition::And(
+                    Box::new(quantified.clone()),
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::Constant(true),
+                        true,
+                    )),
+                )),
+            )),
+        };
+        assert!(
+            !source_backed_requirement_is_supported(&nested_guarded, Some(0), false, None,)
+                .unwrap()
         );
 
         let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
