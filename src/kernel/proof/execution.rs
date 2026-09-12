@@ -1019,6 +1019,9 @@ impl CheckedResourceObservation {
             return Err("resource observation changed concrete execution state");
         }
 
+        let observation_support = before_state
+            .resources()
+            .directly_supporting_owned_fact(observed, assumptions);
         let observation_authority = before_state
             .resources()
             .directly_supporting_fact(observed, assumptions)
@@ -1070,6 +1073,15 @@ impl CheckedResourceObservation {
         };
         if resource_delta != expected_views.as_slice() {
             return Err("resource observation produced an unchecked resource delta");
+        }
+        if let Some(support) = observation_support
+            && expected_views.iter().any(|fact| {
+                !after_state
+                    .resources()
+                    .has_supported_projection(fact, support)
+            })
+        {
+            return Err("resource observation views are missing their owned support");
         }
 
         let introduced = after_facts
@@ -6578,7 +6590,7 @@ mod tests {
             before
                 .resources()
                 .clone()
-                .unchecked_with_fact(child_view.clone()),
+                .unchecked_with_supported_facts(&selected, [child_view.clone()]),
         );
         let observation = CheckedResourceObservation::check(
             &function,
@@ -6591,6 +6603,27 @@ mod tests {
             &CheckedCallEvents::default(),
         )
         .expect("the exact one-layer child view should check");
+
+        let untracked_observation = before.clone().with_resource_context(
+            before
+                .resources()
+                .clone()
+                .unchecked_with_fact(child_view.clone()),
+        );
+        assert!(
+            CheckedResourceObservation::check(
+                &function,
+                &before,
+                &facts,
+                &selected,
+                &untracked_observation,
+                &facts,
+                &PersistentOrderedSet::default(),
+                &CheckedCallEvents::default(),
+            )
+            .is_err(),
+            "observation evidence must retain the owned support relation"
+        );
 
         let forged_resource = observed.clone().with_resource_context(
             observed

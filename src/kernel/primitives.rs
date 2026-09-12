@@ -3575,7 +3575,11 @@ pub(super) struct ResourceContextStorage {
     /// Ordinary entries are explicit and therefore absent from this map.
     pub(super) supported_by: PersistentMap<ResourceEntryId, CResourceFact>,
     /// Reverse support index used to remove only the projections of a
-    /// consumed owned resource, without scanning the ambient context.
+    /// consumed owned resource, without scanning the ambient context. The
+    /// support key is a value because all production callers install
+    /// projections only after the resource context has normalized equal
+    /// owned units into one counted entry; unnormalized duplicate authorities
+    /// are confined to low-level construction tests.
     pub(super) projections_by_support: PersistentMap<CResourceFact, ResourceEntryIds>,
     /// Certified, snapshot-stable owned expansions for folded resource
     /// generations. Reusing these avoids re-lowering the same body into

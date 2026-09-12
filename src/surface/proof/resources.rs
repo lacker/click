@@ -785,6 +785,9 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
+    let observation_support = state
+        .resources()
+        .directly_supporting_owned_fact(&requested_resource, &assumptions);
     let abstract_resource = state
         .resources()
         .directly_supporting_fact(&requested_resource, &assumptions)
@@ -1063,10 +1066,21 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         .collect::<Vec<_>>();
     // Holding the folded composite certifies its instantiated body. Observation
     // only adds the body's duplicable cores, so it must not revalidate ownership.
-    let resources = state
-        .resources()
-        .clone()
-        .unchecked_with_facts(viewed_contained_resources);
+    // Keep the projected views attached to that exact owned support: consuming
+    // or changing the support must invalidate the observation, while unrelated
+    // framed resources remain untouched. A view-only observation has no owned
+    // authority to carry this relation and keeps the legacy explicit view.
+    let resources = if let Some(support) = observation_support {
+        state
+            .resources()
+            .clone()
+            .unchecked_with_supported_facts(support, viewed_contained_resources)
+    } else {
+        state
+            .resources()
+            .clone()
+            .unchecked_with_facts(viewed_contained_resources)
+    };
     Ok((
         state.with_memory(memory).with_resource_context(resources),
         abstract_resource,

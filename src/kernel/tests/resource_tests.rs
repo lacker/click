@@ -2297,9 +2297,13 @@ fn resource_context_fork_updates_are_persistent_and_logarithmic() {
 fn consuming_support_removes_only_its_derived_views() {
     let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
     let view = CResourceFact::view_token("derived".to_string(), vec![int32(7)]);
+    let other_authority = CResourceFact::own_composite("other".to_string(), Vec::new());
+    let other_view = CResourceFact::view_token("other_derived".to_string(), vec![int32(8)]);
     let context = ResourceContext::new()
         .unchecked_with_fact(view.clone())
         .unchecked_with_fact(authority.clone())
+        .unchecked_with_fact(other_authority.clone())
+        .unchecked_with_supported_facts(&other_authority, [other_view.clone()])
         .unchecked_with_supported_facts(&authority, [view.clone()]);
     assert_eq!(
         context
@@ -2315,9 +2319,52 @@ fn consuming_support_removes_only_its_derived_views() {
     let remaining = context
         .without_exact_representation(&authority)
         .expect("the authority should be removable");
-    assert_eq!(remaining.facts(), [view]);
-    assert!(remaining.storage.supported_by.is_empty());
-    assert!(remaining.storage.projections_by_support.is_empty());
+    assert!(remaining.contains_exact_representation(&view));
+    assert!(remaining.contains_exact_representation(&other_authority));
+    assert!(remaining.contains_exact_representation(&other_view));
+    assert!(remaining.satisfies_fact(&other_view, &PureFactContext::new()));
+    assert!(!remaining.storage.supported_by.is_empty());
+    assert!(remaining.has_supported_projection(&other_view, &other_authority));
+    assert!(!remaining.has_supported_projection(&view, &authority));
+}
+
+#[test]
+fn owned_support_lookup_follows_observation_projection() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let projected = CResourceFact::view_composite("nested".to_string(), vec![int32(7)]);
+    let context = ResourceContext::new()
+        .unchecked_with_fact(projected.clone())
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts(&authority, [projected.clone()]);
+
+    assert_eq!(
+        context.directly_supporting_owned_fact(&projected, &PureFactContext::new()),
+        Some(&authority),
+        "an observed view must retain the owned support that can invalidate it",
+    );
+}
+
+#[test]
+fn owned_support_lookup_scales_with_unrelated_supported_facts() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let projected = CResourceFact::view_composite("nested".to_string(), vec![int32(7)]);
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let context = unrelated_token_context(size)
+            .unchecked_with_fact(authority.clone())
+            .unchecked_with_supported_facts(&authority, [projected.clone()]);
+        let (support, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.directly_supporting_owned_fact(&projected, &PureFactContext::new())
+        });
+        assert_eq!(support, Some(&authority));
+        samples.push((size, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(16),
+            "indexed support lookup scanned unrelated facts: {samples:?}"
+        );
+    }
 }
 
 #[test]

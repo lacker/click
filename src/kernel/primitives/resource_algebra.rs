@@ -674,6 +674,51 @@ impl ResourceContext {
             .find(|available| resource_fact_entails(available, required, assumptions))
     }
 
+    /// Finds the owned authority that directly supports a requirement. A
+    /// supported projection records an owned fact (never another projection)
+    /// as its support, so this is deliberately one indexed hop rather than a
+    /// recursive search through caller-controlled metadata.
+    pub(crate) fn directly_supporting_owned_fact(
+        &self,
+        required: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<&CResourceFact> {
+        self.direct_match_candidate_positions(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                let candidate = self.fact(*entry);
+                if !resource_fact_entails(candidate, required, assumptions) {
+                    return None;
+                }
+                if candidate.is_own() {
+                    return Some(candidate);
+                }
+                self.storage.supported_by.get(entry).and_then(|support| {
+                    (support.is_own() && self.storage.index.exact.contains_key(support))
+                        .then_some(support)
+                })
+            })
+            .next()
+    }
+
+    /// Whether an exact projected representation is attached to the supplied
+    /// owned support. This is kept indexed by the projected fact so proof
+    /// evidence can validate the support relation without scanning the frame.
+    pub(crate) fn has_supported_projection(
+        &self,
+        fact: &CResourceFact,
+        support: &CResourceFact,
+    ) -> bool {
+        self.storage
+            .index
+            .exact
+            .get(fact)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .any(|entry| self.storage.supported_by.get(entry) == Some(support))
+    }
+
     pub(crate) fn proves_owned_resources_separate(
         &self,
         left: &CResource,

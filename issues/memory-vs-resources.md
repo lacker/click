@@ -945,6 +945,32 @@ one scoped open with owned footprints and no artificial C changes. Add
 deterministic curves varying calls and unrelated supported facts independently.
 Update G1 status only after these tests and the full gate pass.
 
+#### W5 implementation handoff (2026-09-12)
+
+W5's reduction confirmed that callback calls with owned footprints and an
+allowed mutation remain sound on the existing three-call, one-open helper;
+the G1 table-cell reload fix already preserves the callback contracts across
+the unrelated callback footprints. The concrete gap was in composite
+observation: `observe` published the body's view cores with
+`unchecked_with_facts`, unlike the support-indexed projections returned by
+contract calls. Those views therefore had no reverse dependency on the folded
+owner, so nested observations could lose the owner provenance needed for
+precise invalidation. No unconditional callback-fact retention was added.
+
+The fix adds an indexed `directly_supporting_owned_fact` lookup that follows
+an observed view back to its owned support (including nested projections),
+then publishes observation views with `unchecked_with_supported_facts`. The
+support lookup remains local to the resource shape index and retains the
+existing explicit-view fallback where no owned support exists. A regression
+checks duplicate explicit/supported views, transitive support lookup, and
+four-size scaling with unrelated resource facts.
+
+The isolated W5 checkpoint is the implementation commit recorded in the
+handoff message. Focused composite-observation, callback, named-borrow,
+consumption, and 94-test resource-algebra suites pass; formatting and diff
+checks pass. The full `scripts/check.sh` gate remains for the manager's final
+integration run.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.
