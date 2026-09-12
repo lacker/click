@@ -527,7 +527,41 @@ fn expand_declared_resource_tactic(
         | ProofTactic::Loop(_)) => {
             expand_declared_resource_tactic_with_nested_proofs(tactic, resource_definitions)
         }
+        tactic @ (ProofTactic::Both(_) | ProofTactic::CloseInvariantsBy(_)) => {
+            expand_declared_resource_tactic_with_plain_scripts(tactic, resource_definitions)
+        }
         tactic => Ok(tactic),
+    }
+}
+
+/// A tactic whose children are ordinary scripts and nothing else.
+///
+/// `both` nests as deeply as a written conjunction does, so it gets its own
+/// helper rather than sharing the nested-proof dispatcher's frame, which holds
+/// one large syntax temporary per tactic family. `close_invariants() by { .. }`
+/// joins it because generated closers are exactly such a conjunction, and a
+/// resource field named inside one needs the same expansion every other script
+/// gets.
+#[inline(never)]
+fn expand_declared_resource_tactic_with_plain_scripts(
+    tactic: ProofTactic,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<ProofTactic, ClickError> {
+    let expand = |tactics: Vec<ProofTactic>| {
+        tactics
+            .into_iter()
+            .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+            .collect::<Result<Vec<_>, ClickError>>()
+    };
+    match tactic {
+        ProofTactic::Both(proof_both) => Ok(ProofTactic::Both(ProofBoth {
+            left_tactics: expand(proof_both.left_tactics)?,
+            right_tactics: expand(proof_both.right_tactics)?,
+        })),
+        ProofTactic::CloseInvariantsBy(tactics) => {
+            Ok(ProofTactic::CloseInvariantsBy(expand(tactics)?))
+        }
+        _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
     }
 }
 

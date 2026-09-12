@@ -428,6 +428,20 @@ The back edge publishes the same way, so a descent that unfolds a child under
 a guard hands the next iteration the model fact that guard established. The
 rule itself is in [resources](resources.md).
 
+An invariant that fixes a pure function's value at the binder's model refutes
+arms too, and it is the invariant a model keyed by its own payload needs: the
+arms speak about their bindings, while the guard speaks about a C local, and
+the predicate is what relates the two. `invariant list_head_is(l.model, node)
+== 1` with `invariant node != 0` refutes the `Nil` arm, because the declared
+body at `CellList::Nil` is `if node == 0 { 1 } else { 0 }` and this path
+decides it to be `0`
+(`mdtests/loop_head_predicate_refutes_an_arm.md`). The same invariant read at
+the exit refutes the arms *with* bindings, using the arm's own facts about
+them, and when one field-free arm is left the exit learns what the model is
+(`mdtests/contract_predicate_refutes_a_framed_arm.md`). A predicate that is
+the same at both constructors decides nothing and the arm stays live
+(`mdtests/loop_head_predicate_does_not_decide_an_arm.md`).
+
 ### Ascending walks
 
 A descending walk pushes context frames; an ascending one pops them. The loop

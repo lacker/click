@@ -4851,6 +4851,54 @@ fn resource_model_arm_selection_decides_only_entailed_arms() {
     assert!(select_resource_model_arm(&wide_model, &wide_excluded).is_none());
 }
 
+/// A premise that fixes a pure function's value at a symbolic model is
+/// indexed under that model, and nothing else is. This is the lookup arm
+/// refutation reads, so a section with unrelated predicate facts must cost
+/// what a section with none costs.
+#[test]
+fn predicate_facts_are_indexed_by_the_model_they_name() {
+    let ty = arm_selection_type(&["Empty"], "Filled");
+    let model = resource_index_variable(&ty, 11);
+    let other = resource_index_variable(&ty, 12);
+    let application = |value: &AlgebraicTerm| Bitvector32Term::ClickFunctionApplication {
+        name: "head_is".to_string(),
+        arguments: vec![
+            PureFunctionArgument::Algebraic(value.clone()),
+            PureFunctionArgument::Value(CValue::Int32(Bitvector32Term::Variable(Variable(90)))),
+        ],
+    };
+    let fixed = |value: &AlgebraicTerm| {
+        Proposition::ConditionIs(
+            ConditionTerm::equal(application(value), Bitvector32Term::Constant(1)),
+            true,
+        )
+    };
+    let assumptions = PureFactContext::new().assume_proposition(fixed(&model));
+    assert_eq!(
+        assumptions
+            .algebraic_predicate_facts(Variable(11))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![fixed(&model)]
+    );
+    assert_eq!(
+        assumptions.algebraic_predicate_facts(Variable(12)).count(),
+        0
+    );
+
+    // A comparison of two applications fixes no value, so it indexes nothing.
+    let between = Proposition::ConditionIs(
+        ConditionTerm::equal(application(&model), application(&other)),
+        true,
+    );
+    let unindexed = PureFactContext::new().assume_proposition(between);
+    assert_eq!(unindexed.algebraic_predicate_facts(Variable(11)).count(), 0);
+
+    // Forgetting the premise forgets the entry.
+    let forgotten = assumptions.without_exact_fact(&fixed(&model));
+    assert_eq!(forgotten.algebraic_predicate_facts(Variable(11)).count(), 0);
+}
+
 #[test]
 fn resource_model_possible_arms_are_the_unrefuted_ones() {
     let ty = arm_selection_type(&["Empty", "Reserved"], "Filled");

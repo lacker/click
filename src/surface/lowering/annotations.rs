@@ -264,6 +264,120 @@ type FunctionContractSummary = (
     Vec<CPredicateUnfolding>,
 );
 
+/// Records each declared memory-independent pure function's body with the
+/// kernel, once per verification.
+///
+/// This is what lets arm refutation ask what a predicate returns at one
+/// constructor without a proof script to place an `unfold` in (package A21).
+/// The bodies are lowered by the same lowering every other annotation uses,
+/// with the parameters left as the names the kernel's evaluation binds: a C
+/// parameter reads as a local, an algebraic one as a binding.
+///
+/// Only whole, concrete declarations take part. A generic declaration, a
+/// parameter or result that is not a C or algebraic value, a memory-dependent
+/// body, or a body this lowering refuses simply is not recorded, and the
+/// refutation rule then has nothing to say about that function.
+pub(in crate::surface) fn register_kernel_pure_function_definitions(
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) {
+    for definition in click_function_environment.definitions.values() {
+        if !definition.type_parameters().is_empty()
+            || !click_function_environment.is_memory_independent(definition.name())
+            || definition.return_type().c_type().is_none()
+        {
+            continue;
+        }
+        if let Some(lowered) = lower_kernel_pure_function_definition(
+            definition,
+            predicate_environment,
+            click_function_environment,
+            struct_layouts,
+        ) {
+            crate::kernel::register_pure_function_definition(lowered);
+        }
+    }
+}
+
+fn lower_kernel_pure_function_definition(
+    definition: &ClickFunctionDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) -> Option<crate::kernel::CPureFunctionDefinition> {
+    let entry_state = CState::new();
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: &[],
+        implicit_contract_mutable_segments: &[],
+        loop_resources: BTreeMap::new(),
+        inherits_resource_derived_frame: false,
+        predicate_environment,
+        click_function_environment,
+        entry_state: &entry_state,
+        result_type: CType::Int32,
+        entry_values: BTreeMap::new(),
+        parameter_array_element_types: definition
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.click_type().c_type()?)?,
+                ))
+            })
+            .collect(),
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths_with_layouts(
+            definition.parameters(),
+            struct_layouts,
+        ),
+        quantified_values: BTreeMap::new(),
+        algebraic_variables: BTreeMap::new(),
+        algebraic_types: BTreeMap::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 3_200_000,
+        branch_join_target: None,
+        snapshots: None,
+        count_assumptions: None,
+    };
+    let mut parameters = Vec::new();
+    let mut context = SpecElaborationContext::default();
+    for parameter in definition.parameters() {
+        match parameter.click_type() {
+            ClickType::C(c_type) => {
+                parameters.push(crate::kernel::CPureFunctionParameter::c(
+                    parameter.name(),
+                    c_type.to_kernel_type(),
+                ));
+            }
+            ClickType::Algebraic(application) => {
+                let algebraic_type = lowerer.cached_algebraic_kernel_type(application).ok()?;
+                context.algebraic_values.insert(
+                    parameter.name().to_string(),
+                    SpecAlgebraicExpression {
+                        algebraic_type: algebraic_type.clone(),
+                        node: SpecAlgebraicExpressionNode::Binding(parameter.name().to_string()),
+                    },
+                );
+                parameters.push(crate::kernel::CPureFunctionParameter::algebraic(
+                    parameter.name(),
+                    algebraic_type,
+                ));
+            }
+            ClickType::Integer | ClickType::Parameter(_) => return None,
+        }
+    }
+    let body = lowerer
+        .lower_contract_expression_to_spec(definition.body(), &context)
+        .ok()?;
+    Some(crate::kernel::CPureFunctionDefinition::new(
+        definition.name(),
+        parameters,
+        body,
+    ))
+}
+
 pub(in crate::surface) fn lower_composite_resource_condition(
     definition: &ResourceDefinition,
     predicate_environment: &PredicateEnvironment,

@@ -4570,6 +4570,26 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     Ok(paths)
 }
 
+/// Evaluates one specification expression with explicit algebraic bindings
+/// and no loop-entry snapshot. This is the shape a declared pure function
+/// body is evaluated in: its parameters are the bindings and its locals.
+pub(in crate::kernel) fn evaluate_spec_expression_paths_with_bindings(
+    state: &CState,
+    expression: &SpecExpression,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    evaluate_spec_expression_paths_with_algebraic_bindings(
+        state,
+        expression,
+        None,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )
+}
+
 pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
     state: &CState,
     expression: &SpecExpression,
@@ -5512,7 +5532,7 @@ fn evaluate_spec_pure_function_argument_paths(
     }
 }
 
-fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
+pub(in crate::kernel) fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Bool(term) => Some(term.clone()),
         CValue::Int16(term)

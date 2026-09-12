@@ -5269,6 +5269,12 @@ pub struct PureFactContext {
         Variable,
         crate::persistent::PersistentMap<Proposition, AlgebraicVariantEvidence>,
     >,
+    /// Premises that fix the value of a pure function applied to a symbolic
+    /// algebraic value, indexed by that value. Arm refutation reads only the
+    /// entries for the model it decides, so a section with many unrelated
+    /// predicate facts costs what a section with none costs.
+    pub(super) algebraic_variable_predicate_facts:
+        crate::persistent::PersistentMap<Variable, crate::persistent::PersistentSet<Proposition>>,
     /// Exact disjunctive proposition facts. This derived index keeps bounded
     /// case search proportional to possible case splits rather than every
     /// unrelated proposition in the context.

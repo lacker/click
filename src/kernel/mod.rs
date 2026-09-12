@@ -18,6 +18,10 @@ mod nat_integer;
 pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
 pub(crate) mod proof;
+mod pure_functions;
+pub use pure_functions::{
+    CPureFunctionDefinition, CPureFunctionParameter, register_pure_function_definition,
+};
 pub(crate) mod reasoning;
 mod spec;
 pub(crate) use spec::{capture_spec_algebraic_value, capture_spec_integer_value};
@@ -182,6 +186,7 @@ impl VerificationSession {
             primitives::start_fresh_c_memory_arena();
             eval::clear_load_variable_registry();
             primitives::clear_block_alignment_registry();
+            pure_functions::clear_pure_function_definitions();
             eval::clear_load_canonicalization_caches();
             memory_provenance::clear_canonical_form_caches();
             memory_provenance::clear_provenance_memos();

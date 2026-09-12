@@ -543,8 +543,35 @@ refutation leaves exactly one arm and that arm's constructor carries no
 fields, the model has only one value left, so the equation itself is
 published and `unfold` and proof `match` have their constructor.
 
-This is a decision, not a search: each held instance's arms are visited once
-and each arm's own clauses are evaluated once. The conclusions are published
+A premise need not meet an arm's fact head-on. When a pure function over the
+model has a known value -- `ctx_node_is(c.model, parent) == 1` as a section
+requirement or a loop invariant -- refutation asks what that function's
+declared body returns at each arm's constructor, with the arm's bindings
+symbolic and the arm's own facts in force. An arm whose answer cannot be the
+known value is refuted. This is what lets a model keyed by its own payload be
+decided from a C local: the frame's facts speak about `identity`, the guard
+speaks about `parent`, and the predicate is the statement that relates them.
+`ctx_node_is`'s body at `Context::Top` is `if parent == 0 { 1 } else { 0 }`, so
+a guard that holds `parent != 0` refutes `Top`; its body at
+`Context::Left(identity, ..)` is `if identity == parent { 1 } else { 0 }`, and
+the arm's own `fact identity != 0` refutes that arm once the guard has failed
+with `parent == 0`. Only a declared body the kernel can evaluate to one
+unconditional value takes part, and an arm binding a mathematical `Integer`
+takes part in neither direction. The regressions are
+`mdtests/loop_head_predicate_refutes_an_arm.md` for a field-free arm,
+`mdtests/contract_predicate_refutes_a_framed_arm.md` for an arm with bindings,
+and `mdtests/loop_head_predicate_does_not_decide_an_arm.md` for a predicate
+that is the same at both constructors and therefore refutes nothing.
+
+Both directions are exact. An arm goes only when the predicate's value at that
+constructor, or one of the arm's own facts, is contradicted by a premise the
+frozen checkers already decide; a body this kernel cannot evaluate, an arm
+whose clauses it cannot bind, and a premise of any other shape all leave the
+arm standing.
+
+This is a decision, not a search: each held instance's arms are visited once,
+each arm's own clauses are evaluated once, and each predicate premise about
+that exact model is read once. The conclusions are published
 where an instance enters the premises -- at contract lowering, at a loop head,
 at a loop back edge, at a loop exit, at the `unfold` that produces a child, and
 between the conjuncts of a short-circuit guard, where the truth of the earlier

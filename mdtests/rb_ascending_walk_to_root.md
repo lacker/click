@@ -20,21 +20,31 @@ makes it work below is exactly that the frame's `fact parent != 0` names the
 C local the loop reassigns, so the failed guard `parent != 0` refutes the
 `Left` and `Right` arms and the exit learns `c.model == Context::Top`.
 
-What is left of that after package A20 is one step, and it is a *loop-head*
-step rather than the payload bridge the earlier note guessed at. Reading a
-frame's cells through its own `identity` payload works — that is gap 43, fixed,
-and `rb_replace_node.md` verifies all three frames on it — and parent/child
-consistency is now statable as a pure predicate over the model, so a node-keyed
-ascent carries `invariant ctx_node_is(c.model, parent) == 1;` through the loop
-body and reaches its exit. The one thing it cannot do is refute `Context::Top`
-at the guard: arm refutation matches a path fact against an arm's own
-binding-free fact, and with the parent in the payload the `Left` and `Right`
-arms state `identity != 0` about a binding rather than `parent != 0` about the
-C local. Turning `ctx_node_is(c.model, parent) == 1` plus `parent != 0` into
-`c.model != Context::Top` is a case analysis over the model, which neither
-`simp` nor a `contradiction` arm inside `preserve` performs, and a pure lemma
-for it runs into the opaque pointer test of gap 45. That is the next thing a
-node-keyed ascent needs.
+Package A21 supplied both refutations that spelling needs, and they are no
+longer what stops the port. A node-keyed ascent carries
+`invariant ctx_node_is(c.model, parent) == 1;`, and arm refutation now reads
+that premise at each arm of the frame's type: at the head the declared body at
+`Context::Top` is `if parent == 0 { 1 } else { 0 }`, which the guard's
+`parent != 0` decides to be `0`, so `Top` is refuted; at the exit the body at
+`Context::Left(identity, ..)` is `if identity == parent { 1 } else { 0 }` and
+the arm's own `fact identity != 0` decides it against `parent == 0`, so both
+framed arms go and the exit learns `c.model == Context::Top`. The reductions
+are [`loop_head_predicate_refutes_an_arm.md`](loop_head_predicate_refutes_an_arm.md)
+and [`contract_predicate_refutes_a_framed_arm.md`](contract_predicate_refutes_a_framed_arm.md).
+
+What stops the port is the payload bridge after all, in the one shape package
+A20 did not reach. `rb_replace_node.md` reads a frame's cells through
+`identity` because a requirement spells the constructor with the wrapper's
+`parent` in the payload slot, so the arm's clauses denote the C local's own
+cells. A loop cannot spell its binder's constructor, so the best it has is a
+*proved* equality `identity == parent`, obtained in the arm from a
+`ctx_reroot` invariant and `extract`. That equality does not retarget the
+unfolded frame's ownership: `node = parent; parent = rb_parent(node);` refuses
+with `step() produced runtime error: missing resource fact views
+symbolic-pointer:…`, because the frame owns the cells of the arm binding's
+symbolic block and the read is at the parameter's block. Retargeting owned
+cells across a proved pointer equality between two blocks is the remaining
+step, and it is the same one every node-keyed fixup loop will need.
 
 The loop body reads the parent through the unchanged Linux `rb_parent`, so
 each iteration clears the color tag out of the packed word and recovers the

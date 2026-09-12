@@ -397,6 +397,86 @@ pub(crate) fn collect_reasoning_provenance<T>(body: impl FnOnce() -> T) -> (T, V
     (result, premises.into_iter().collect())
 }
 
+/// One premise that fixes a pure function's value: the application, the
+/// constant it is compared against, and whether the premise asserts the two
+/// are equal.
+pub(in crate::kernel) struct AlgebraicPredicateFact<'a> {
+    pub(in crate::kernel) name: &'a str,
+    pub(in crate::kernel) arguments: &'a [PureFunctionArgument],
+    pub(in crate::kernel) constant: &'a Bitvector32Term,
+    pub(in crate::kernel) equal: bool,
+    /// Whether the premise compares at 64-bit width, so a refutation states
+    /// its own comparison at the same width.
+    pub(in crate::kernel) wide: bool,
+}
+
+/// Reads a premise as one pure function application compared to a constant.
+///
+/// Both widths of machine equality are accepted, in either operand order, at
+/// either truth value: `f(m) == 1` and `not (f(m) == 0)` are both facts about
+/// `f(m)`. A comparison of two applications, of an application with a
+/// symbolic term, or a proposition of any other shape is not one of these.
+pub(in crate::kernel) fn algebraic_predicate_fact(
+    proposition: &Proposition,
+) -> Option<AlgebraicPredicateFact<'_>> {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return None;
+    };
+    let (left, right, wide) = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => (left.as_ref(), right.as_ref(), false),
+        ConditionTerm::Bitvector64Equal(left, right) => (left.as_ref(), right.as_ref(), true),
+        _ => return None,
+    };
+    let constant_term = |term: &Bitvector32Term| {
+        matches!(
+            term,
+            Bitvector32Term::Constant(_)
+                | Bitvector32Term::Int64Constant(_)
+                | Bitvector32Term::UInt64Constant(_)
+        )
+    };
+    let (application, constant) = match (left, right) {
+        (Bitvector32Term::ClickFunctionApplication { .. }, constant) if constant_term(constant) => {
+            (left, constant)
+        }
+        (constant, Bitvector32Term::ClickFunctionApplication { .. }) if constant_term(constant) => {
+            (right, constant)
+        }
+        _ => return None,
+    };
+    let Bitvector32Term::ClickFunctionApplication { name, arguments } = application else {
+        unreachable!("the application side was matched above")
+    };
+    Some(AlgebraicPredicateFact {
+        name,
+        arguments,
+        constant,
+        equal: *value,
+        wide,
+    })
+}
+
+/// The arguments of the application a predicate fact speaks about, for the
+/// index that keys such premises by the algebraic values they name.
+fn predicate_fact_application_arguments(
+    condition: &ConditionTerm,
+) -> Option<&[PureFunctionArgument]> {
+    algebraic_predicate_fact(&Proposition::ConditionIs(condition.clone(), true))
+        .map(|_| ())
+        .and_then(|()| match condition {
+            ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right) => [left.as_ref(), right.as_ref()]
+                .into_iter()
+                .find_map(|term| match term {
+                    Bitvector32Term::ClickFunctionApplication { arguments, .. } => {
+                        Some(arguments.as_slice())
+                    }
+                    _ => None,
+                }),
+            _ => None,
+        })
+}
+
 pub(crate) fn record_reasoning_provenance(
     assumptions: &PureFactContext,
     proposition: &Proposition,
@@ -1515,6 +1595,66 @@ impl PureFactContext {
             fingerprint ^= 1 << 61;
         }
         self.content_fingerprint = fingerprint;
+    }
+
+    /// Indexes a premise that fixes the value of a pure function applied to a
+    /// symbolic algebraic value, under every algebraic argument it names.
+    ///
+    /// Only the shape arm refutation can act on is recognized: an equality
+    /// between one pure function application and a constant. `f(m, p) == 1`
+    /// and `f(m, p) != 0` both index under `m`; anything else indexes
+    /// nothing. Cost is the application's own arity.
+    fn adjust_algebraic_predicate_fact(
+        &mut self,
+        condition: &ConditionTerm,
+        value: bool,
+        insert: bool,
+    ) {
+        let Some(arguments) = predicate_fact_application_arguments(condition) else {
+            return;
+        };
+        let proposition = Proposition::ConditionIs(condition.clone(), value);
+        for argument in arguments {
+            crate::instrumentation::record_deterministic_work(1);
+            let PureFunctionArgument::Algebraic(AlgebraicTerm {
+                node: AlgebraicTermNode::Variable(variable),
+                ..
+            }) = argument
+            else {
+                continue;
+            };
+            let entries = self
+                .algebraic_variable_predicate_facts
+                .get(variable)
+                .cloned()
+                .unwrap_or_default();
+            let entries = if insert {
+                entries.with_value(proposition.clone())
+            } else {
+                entries.without_value(&proposition)
+            };
+            self.algebraic_variable_predicate_facts = if entries.is_empty() {
+                self.algebraic_variable_predicate_facts
+                    .without_key(variable)
+            } else {
+                self.algebraic_variable_predicate_facts
+                    .with_inserted(*variable, entries)
+            };
+        }
+    }
+
+    /// Every premise of this context that fixes a pure function's value at
+    /// `variable`, with the premise itself so a refutation can cite it.
+    pub(in crate::kernel) fn algebraic_predicate_facts(
+        &self,
+        variable: Variable,
+    ) -> impl Iterator<Item = &Proposition> {
+        crate::instrumentation::record_deterministic_work(1);
+        self.algebraic_variable_predicate_facts
+            .get(&variable)
+            .into_iter()
+            .flat_map(crate::persistent::PersistentSet::iter)
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
     }
 
     fn adjust_signed_order_bound(&mut self, condition: &ConditionTerm, value: bool, insert: bool) {
@@ -2882,6 +3022,7 @@ impl PureFactContext {
                 false,
             );
             self.adjust_bitvector64_equality(&condition, old, false);
+            self.adjust_algebraic_predicate_fact(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
             self.adjust_null_pointer_offset(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
@@ -2890,6 +3031,7 @@ impl PureFactContext {
             &Proposition::ConditionIs(condition.clone(), value),
             true,
         );
+        self.adjust_algebraic_predicate_fact(&condition, value, true);
         self.adjust_signed_order_bound(&condition, value, true);
         self.adjust_null_pointer_offset(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
@@ -3057,6 +3199,7 @@ impl PureFactContext {
             &Proposition::ConditionIs(condition.clone(), assumed),
             false,
         );
+        self.adjust_algebraic_predicate_fact(condition, assumed, false);
         self.adjust_signed_order_bound(condition, assumed, false);
         self.adjust_null_pointer_offset(condition, assumed, false);
         self.rebuild_memory_load_condition_facts();

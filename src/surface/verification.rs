@@ -1224,6 +1224,16 @@ fn verify_c0_sources_with_context(
             &resource_definitions,
             &resource_struct_layouts,
         );
+        // Arm refutation asks what a declared predicate returns at one
+        // constructor, at contract lowering, loop heads, back edges and guard
+        // prefixes. None of those has a proof script to place an `unfold` in,
+        // so the declared bodies are recorded once here, for this
+        // verification's kernel session.
+        register_kernel_pure_function_definitions(
+            &predicate_environment,
+            &click_function_environment,
+            &resource_struct_layouts,
+        );
         // Frame evidence may look through composite definitions to decide
         // that a call's mutable ranges or a store's written cell cannot
         // touch a loaded pointer inside a composite's footprint. Definitions
