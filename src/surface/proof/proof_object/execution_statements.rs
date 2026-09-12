@@ -3,6 +3,19 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+pub(super) fn retain_mid_execution_have_facts(
+    execution: &mut ExecutionProofState,
+    facts: &[Proposition],
+) {
+    for fact in facts {
+        execution.presentation.surface_record.retained_have_facts = execution
+            .presentation
+            .surface_record
+            .retained_have_facts
+            .with_kernel_checked_fact(fact.clone());
+    }
+}
+
 /// Names the ranking members a ranked loop's bundle carries, so an explicit
 /// `preserve by` body written before the `decreases` clause existed reports
 /// what it now has to close instead of only that the bundle stayed open.
@@ -1584,6 +1597,10 @@ impl<'a> Proof<'a> {
         for fact in &added {
             proof_facts = proof_facts.with_kernel_checked_fact(fact.clone());
         }
+        // This fallback law must publish the same persistent, path-local
+        // provenance as a nested ProofScope::join. A later retained
+        // statement retry may rely on this have, but not on ambient facts.
+        retain_mid_execution_have_facts(&mut execution, &added);
         // Retain the checked `have` as provenance: a smart body keeps the
         // law's selected surface operations; an explicit body keeps its own
         // script. Expansion serializes this node, never the aftermath.

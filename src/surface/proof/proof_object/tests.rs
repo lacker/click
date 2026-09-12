@@ -96,6 +96,48 @@ fn invariant_bundle_leaf_fixture() -> (Proposition, Proposition) {
 }
 
 #[test]
+fn shared_mid_execution_have_retains_checked_facts_path_locally() {
+    let original = ExecutionProofState::at_entry(
+        CState::new(),
+        ExecutionFrontier::default(),
+        RecordedSnapshots::new(),
+        SurfacePropositionMap::default(),
+        PersistentSequence::default(),
+    );
+    let first = indexed_fact(7);
+    let second = indexed_fact(11);
+    let mut advanced = original.clone();
+
+    execution_statements::retain_mid_execution_have_facts(
+        &mut advanced,
+        &[first.clone(), second.clone(), first.clone()],
+    );
+
+    assert!(
+        advanced
+            .presentation
+            .surface_record
+            .retained_have_facts
+            .contains(&first)
+    );
+    assert!(
+        advanced
+            .presentation
+            .surface_record
+            .retained_have_facts
+            .contains(&second)
+    );
+    assert!(
+        !original
+            .presentation
+            .surface_record
+            .retained_have_facts
+            .contains(&first),
+        "retaining a fallback have must not mutate a sibling path"
+    );
+}
+
+#[test]
 fn invariant_bundle_closure_descends_surface_free_both_and_intro_and_rechecks() {
     let (loadable, fold_equality) = invariant_bundle_leaf_fixture();
     let goal = Proposition::And(
