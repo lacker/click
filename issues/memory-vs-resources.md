@@ -502,6 +502,46 @@ excluded semantics changed; no free unfolding or forward-language change was
 introduced. W3 did not merge or push; the manager should cherry-pick this
 follow-up after checking the primary branch base.
 
+## W3 follow-up: interval-aware waiter index (2026-09-11)
+
+This follow-up started from `31b8f93a` and the implementation is committed as
+`8f79f862` on `codex/mvr-w3`, still unmerged and unpushed. The pending-clause
+waiter index now normalizes concrete, comparable memory ranges to a fixed-depth
+sparse segment tree keyed by block, element width, and interval nodes. Queries
+walk only the overlapping interval nodes and their boundary paths; they do not
+enumerate cells or rescan all pending clauses. Ranges with symbolic or
+un-normalizable bases/bounds retain the bounded fact/base/block fallback, so
+symbolic range wakeups remain conservative. Constant base offsets are folded
+into the block coordinate, preserving coverage across comparable bases.
+
+The `ResourceClauseWaiterIndex` interface is used by registration,
+unregistration, and event wakeup. Concrete dependencies retain an exact-fact
+key plus interval nodes; only non-concrete dependencies retain the coarse
+memory keys. Accumulated `section_supply` remains the readiness authority, so
+adjacent providers still wake a wide dependency only after their union covers
+it. The earlier `2*n-1` reverse-chain attempt curve remains unchanged at sizes
+`4, 8, 16, 32`, with deterministic work `70, 168, 412, 1092` and attempts
+`7, 15, 31, 63`. The new same-block disjoint-provider regression uses the same
+four sizes and records exact candidate visits `4, 8, 16, 32`; a coarse
+`MemoryBlock` index would visit every waiter for every provider instead.
+
+Files/interfaces changed in this follow-up are `src/kernel/functions.rs` and
+this issue document. The focused kernel worklist module now covers adjacent
+range union, constant-base comparability, same-block disjoint candidate
+counts, and symbolic fallback. The broader focused resource/callback/
+contract-execution gate passes `172/172`; nested mdtests and examples pass;
+and unfiltered `scripts/check.sh` passes with `2588/2588` tests and `14/14`
+fixture/example checks (one pre-existing quarantined example remains skipped).
+Formatting, clippy, and diff checks also pass.
+
+The replaced path is the coarse same-block `MemoryBlock` candidate fan-out
+for concrete ranges; symbolic fallback, clause provenance, accumulated supply,
+and the kernel's single authority are retained. No blocker remains. No C
+source, Click syntax, budget, quarantine, or excluded semantics changed; no
+free unfolding or forward-language change was introduced. W3 did not merge or
+push; the manager should cherry-pick `8f79f862` and this documentation update
+after checking the primary branch base.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different
