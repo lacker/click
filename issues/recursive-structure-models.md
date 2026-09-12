@@ -125,6 +125,17 @@ enough to become the first regression of the package that fixes them.
    no way to state the equation between them, so the unguarded `ensures
    result == heap_member(old(t.model), target)` does not verify; the guarded
    `root == target implies ...` form does. Package A7.
+10. **An `if` expression cannot produce an algebraic value.** Found by
+    package C2: `if flag == 0 { xs } else { List::Nil }` in a pure function
+    is refused with "algebraic values are only valid in algebraic equality
+    or as a `match` scrutinee", so `list_remove_first` is not definable. C2
+    states erasure as append equations instead (`A ++ [erased] ++ B` at
+    entry, `A ++ B` at exit), which is stronger. Not scheduled unless a
+    required contract needs the conditional form. Also from C2: `predicate`
+    has no `decreases` clause, so recursive invariants are `int32`-valued
+    pure functions; and a `witness` needs a term no pure function can
+    produce for pointers, so the in-order successor is named by hypothesis
+    (`rb_min_list(right) == Cons(successor, Nil)`) that a C proof supplies.
 
 ## Design decisions
 
@@ -292,6 +303,10 @@ appears to need one reports the need instead of adding it.
   rather than a declaration-order rule. A4 and A6 are in progress; C1 and
   C2 are dispatched. `tree_contains` verifies model preservation only
   until A6 lands its membership postcondition.
+- 2026-09-12: A6 (pointer payloads and arm scoping, 7b52373a) and C2 (the
+  pure red-black library in `examples/rbtree-model`, c9d5afee) are on
+  master. `tree_contains` proves the guarded membership form; the
+  unguarded form is package A7. A4, A7, and C1 are in progress.
 
 ## Work packages
 
