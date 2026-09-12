@@ -253,6 +253,14 @@ enough to become the first regression of the package that fixes them.
     "could not lower entry invariants: Paths"; match-arm bindings are out
     of scope in loop clauses; and `observe` cannot name a fielded binder.
     Package A12 owns the first four; the last two are not scheduled.
+22. **Separation from separate unfolds does not reach a later frontier.**
+    Found by package A11: after unfolding a frame and two subtrees
+    separately, the deciding context holds three single-object
+    compositions rather than one merged composition, so the separation of
+    two owned nodes is not projected and `parent->rb_left != old` for a
+    non-empty sibling is undecided. Cross-composition separation is not
+    sound to project blindly; the fix is in how ownership from separate
+    unfolds is composed at the frontier. Not scheduled until C3 needs it.
 
 ## Design decisions
 
@@ -469,6 +477,10 @@ appears to need one reports the need instead of adding it.
   dispatches when A9 lands.
 - 2026-09-12: A9 (66bd8005) is on master. A12 dispatched; A11 and T5 in
   progress.
+- 2026-09-12: A11 (pointer disequality from null-ness or separation, with
+  the verbatim `__rb_change_child` `Right` frame verified and audited on a
+  general frame; ec8ffc4a) is on master. Its nested-match finding predates
+  A9 and should be re-checked.
 
 ## Work packages
 
