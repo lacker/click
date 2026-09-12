@@ -265,6 +265,17 @@ headers, loop-entry snapshots such as `at(loop.entry, sub.model)`, and a
 positive constructor test such as `requires c.model is Some`. A package that
 appears to need one reports the need instead of adding it.
 
+## Progress
+
+- 2026-09-11: A1 (arm selection, dff4ebdc), A2 (cross-family arm children,
+  de1da207), A3 (loop binders, 9e62f2a2), A5 (struct-pointer arm bindings
+  as memory bases, 036170c4), B2 and B3 (right rotation, membership,
+  negative rotations, 688e7990) are on master. A5 resolves arm binding
+  types with a bounded pre-scan of `spec enum` declarations in the parser
+  rather than a declaration-order rule. A4 and A6 are in progress; C1 and
+  C2 are dispatched. `tree_contains` verifies model preservation only
+  until A6 lands its membership postcondition.
+
 ## Work packages
 
 Dependencies are stated per package; everything else may run in parallel.
