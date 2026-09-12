@@ -173,8 +173,11 @@ model — `RbTree` with each node's identity, parent, color, and both submodels
 — with the in-order list, membership, black height, the red-black and
 almost-red-black predicates, parent/child consistency, and the theorems that
 rotation, recolor, leaf insertion, and both erase splices preserve them. The
-proofs about verbatim Linux C that use this model live in the `rb_*` mdtests;
-this project is the library they cite.
+zipper half adds `plug`, a context-level red-black predicate `ctx_rb` from
+which `is_rb_root` of the whole plug follows, its insert-fixup weakening
+`ctx_almost_rb_insert`, and each fixup case restated as one step of the fixup
+loop. The proofs about verbatim Linux C that use this model live in the `rb_*`
+mdtests; this project is the library they cite.
 
 ### Recursive zero list
 

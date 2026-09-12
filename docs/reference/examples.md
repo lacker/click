@@ -585,9 +585,18 @@ sequence:
   recolor, a fresh linked leaf, and both splice lemmas each preserve
   `rb_parent_consistent`. `Context`, `plug`, `plug_inorder_transport`, and
   `plug_parent_consistent_transport` are the zipper half, mirroring
-  `examples/modeled-binary-tree` on the five-payload node. The project has no C
-  of its own; the proofs about verbatim Linux bodies that use this model are the
-  `rb_*` mdtests below.
+  `examples/modeled-binary-tree` on the five-payload node. `ctx_rb(ctx, bh,
+  focus_color)` is the context-level red-black predicate: each frame states its
+  sibling's soundness, its own color rule and the black height it passes up,
+  and nothing about the focus beyond its black height and root color, so
+  `plug_rb_from_ctx_rb` turns a red-black focus in a red-black context into
+  `is_rb_root` of the whole plug. `ctx_almost_rb_insert(ctx, bh)` is the same
+  predicate evaluated as if the focus were black, which is the insert fixup's
+  one permitted red-red violation, and the `ctx_insert_case1_*`,
+  `ctx_insert_case2_*`, `ctx_insert_case3_*`, `ctx_black_frame_*_restores` and
+  `ctx_insert_root_exit` theorems restate every fixup branch as a step of that
+  loop. The project has no C of its own; the proofs about verbatim Linux bodies
+  that use this model are the `rb_*` mdtests below.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads, runtime-sized allocation,
   malloc-copy-free growth, and a resource-neutral in-capacity push shared by

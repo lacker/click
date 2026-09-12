@@ -238,7 +238,9 @@ subtree across the rotation, so the case result names it as
   followed by the outer step satisfies `is_rb`.
 
 Both mirrors are written out. Per decision D9 there is no proof reuse across
-them.
+them. [Frame-level insert fixup](#frame-level-insert-fixup) below restates each
+case as a step of the fixup loop, with the table of which theorem a C proof
+applies in which branch.
 
 ## Erase: splice lemmas
 
@@ -317,6 +319,210 @@ frame and the focused subtree while no C local names the focus's parent.
 time; `ctx_consistent_top_frame`, `ctx_consistent_left_frame`, and
 `ctx_consistent_right_frame` build a frame back up, which is the step a descent
 loop takes when it pushes a frame.
+
+## Colors as summaries
+
+Three small pure functions turn a node's own color into the summaries the
+context predicate threads, so that no proof has to case-split on a color a
+constructor has already fixed:
+
+- `color_black(color)` is 1 for `Black` and 0 for `Red`.
+  `rb_root_black_is_color_black` and `color_black_of_rb_color` bridge it to
+  `rb_root_black` in both directions, because `rewrite` only replaces its
+  left-hand side and a goal needs whichever orientation it already mentions.
+- `frame_black_height(color, bh)` is the black height of a node of that color
+  whose left subtree has black height `bh`; `black_height_node_frame` is that
+  equation at a node, and `frame_black_height_red`/`_black` reduce it at a
+  literal color.
+- `node_color_ok(color, left_color, right_color)` is the red-child condition on
+  its own: 1 for a black node, and for a red node 1 exactly when both children
+  are black or empty. `is_rb_node_from_parts` builds `is_rb` at a node from
+  `is_rb` of the parts, equal black heights and `node_color_ok`, and
+  `is_rb_node_colors` recovers `node_color_ok` from `is_rb`.
+  `node_color_ok_weaken_left` and `_weaken_right` replace one child's color by
+  `Black`, which is the weakening the insert cursor needs.
+
+Two shape rules govern these bodies, both consequences of what
+`normalize() using` will reduce.
+
+First, the flags are `Color`-typed rather than `int32`. A test `if flag == 1`
+on a bare `int32` parameter unfolds to a single opaque bitvector operation that
+no listed premise decides, exactly as gap 45 records for a raw pointer test;
+`if color_black(flag) == 1` is a pure-call condition a premise does decide.
+
+Second, every `if` in a new definition has **constant** branches. Reduction of
+a decided `if` produces its branch, and a branch that is itself a call leaves a
+term `normalize` cannot compare with 1. `is_rb`'s own red arm returns
+`rb_root_black(right)`, so `is_rb_red_node_value` first states that branch as an
+equation and `is_rb_red_node_right_child_is_black` rewrites through it. The new
+color functions avoid the detour by ending every path in 0 or 1; `ctx_rb`'s
+recursive branch below cannot, and pays for it with a `_value` lemma per frame.
+
+## The context-level red-black predicate
+
+`ctx_rb(ctx, bh, focus_color)` is 1 when the frames around the focus are
+red-black **given** a focus that is itself a red-black subtree of black height
+`bh` whose root has color `focus_color`. The focus is not an argument: two
+subtrees with the same black height and root color plug into the same context
+equally well, which is what a fixup step needs, since each step replaces the
+focus and leaves the frames alone.
+
+```click
+function ctx_rb(ctx: Context, bh: Nat, focus_color: Color) -> int32
+    decreases ctx
+{
+    match ctx {
+        Context::Top => if color_black(focus_color) == 1 { 1 } else { 0 },
+        Context::Left(identity, grandparent, color, sibling_model, up_model) =>
+            if is_rb(sibling_model) == 1 {
+                if bh == black_height(sibling_model) {
+                    if node_color_ok(color, focus_color, rb_color(sibling_model)) == 1 {
+                        ctx_rb(up_model, frame_black_height(color, bh), color)
+                    } else { 0 }
+                } else { 0 }
+            } else { 0 },
+        Context::Right(...) => /* mirror: the focus is the right child */
+    }
+}
+```
+
+Each frame contributes exactly its own facts: the sibling is red-black, the
+sibling's black height equals the focus's, the frame node's color is compatible
+with both children's colors, and the rest of the context holds around the node
+this frame builds, whose black height is `frame_black_height(color, bh)` and
+whose root color is `color`. `Top` contributes the root-is-black rule. Nothing
+in a frame mentions the focus except through `bh` and `focus_color`.
+
+The payoff is
+
+```click
+theorem plug_rb_from_ctx_rb(ctx: Context, sub: RbTree) {
+    requires is_rb(sub) == 1;
+    requires ctx_rb(ctx, black_height(sub), rb_color(sub)) == 1;
+
+    ensures is_rb_root(plug(ctx, sub)) == 1;
+}
+```
+
+proved by induction on the context with A16's generalized `ih`, instantiated at
+the focused subtree one frame up, `RbTree::Node(identity, grandparent, color,
+sub, sibling_model)`. `is_rb_root_from_parts`, `is_rb_root_is_rb` and
+`is_rb_root_root_black` are the matching construction and decomposition lemmas
+for `is_rb_root` itself.
+
+The `Left` arm writes its height test as `bh == black_height(sibling_model)`
+and the `Right` arm as `black_height(sibling_model) == bh`. The orientation is
+not cosmetic: each destructor hands its equation straight to
+`is_rb_node_from_parts`, whose `black_height(left) == black_height(right)`
+premise puts the focus on the left in one arm and the sibling on the left in
+the other. `rewrite` replaces only the left-hand side of an equality it already
+matches, so `nat_eq_symmetric` and `nat_eq_transitive` are the two one-line
+`Nat` lemmas the case proofs use wherever the orientation cannot be chosen in
+advance.
+
+`ctx_rb_top`, `ctx_rb_left_sibling`, `_left_height`, `_left_colors`, `_left_up`
+and their right mirrors take the predicate apart one frame at a time;
+`ctx_rb_top_frame`, `ctx_rb_left_frame` and `ctx_rb_right_frame` build a frame
+back up. Each `_up` destructor goes through a `_value` lemma that states the
+frame's own value as an equation, because the recursive call is not a constant
+branch. `ctx_rb_left_red_up`, `ctx_rb_left_black_up` and their mirrors are the
+two specializations a fixup uses: with the frame's color a literal,
+`frame_black_height` has already reduced to `bh` or `Nat::Succ(bh)`.
+
+### The insert cursor: one permitted red-red violation
+
+```click
+function ctx_almost_rb_insert(ctx: Context, bh: Nat) -> int32 {
+    ctx_rb(ctx, bh, Color::Black)
+}
+```
+
+Evaluating the context as if the focus were black exempts exactly the two
+places a frame reads the focus's color: the bottom frame's red-child test and
+`Top`'s root-is-black test. That is precisely the Linux insert invariant. The
+whole tree is red-black except for at most one red-red edge, between the cursor
+and its parent, and a red cursor that has reached the root is repaired by
+blackening it. Every frame above the bottom one is still checked in full, so
+the predicate permits one violation and no more.
+
+The loop invariant `__rb_insert` wants is therefore two clauses:
+
+```click
+is_rb(sub.model) == 1
+ctx_almost_rb_insert(ctx.model, black_height(sub.model)) == 1
+```
+
+`ctx_rb_weaken_to_almost` is the weakening (a context good for any focus color
+is good for a black one); `ctx_almost_rb_insert_holds` and
+`ctx_almost_rb_insert_black_focus` fold and unfold the name.
+
+## Frame-level insert fixup
+
+The five model functions above rewrite the three-level subtree at the
+grandparent. The theorems in this section restate each case as a step of the
+loop: the hypothesis is the loop invariant instantiated at that case's frame
+shape, and the conclusion is either the next iteration's invariant or the exit
+claim `is_rb_root(plug(...)) == 1`. A C proof unfolds its instances down to the
+case shape and applies one theorem; it never rebuilds `is_rb` or
+`almost_rb_insert` from the parts by hand.
+
+| Fixup case | C branch | cursor frames | theorem | conclusion |
+| --- | --- | --- | --- | --- |
+| cursor is the root | `!parent` | `Context::Top` | `ctx_insert_root_exit` | exit |
+| black parent | `rb_is_black(parent)` | one `Left` frame, `Color::Black` | `ctx_black_frame_left_restores` then `ctx_insert_black_parent_exit` | exit |
+| black parent, mirror | `rb_is_black(parent)` | one `Right` frame, `Color::Black` | `ctx_black_frame_right_restores` then `ctx_insert_black_parent_exit` | exit |
+| uncle red | case 1, `parent != tmp` | parent is the grandparent's left child | `ctx_insert_case1_left` | next iteration |
+| uncle red, mirror | case 1, `parent == tmp` | parent is the grandparent's right child | `ctx_insert_case1_right` | next iteration |
+| uncle black, inner | case 2 then 3 | `Right` frame inside a `Left` frame | `ctx_insert_case2_left` | exit |
+| uncle black, inner, mirror | case 2 then 3 | `Left` frame inside a `Right` frame | `ctx_insert_case2_right` | exit |
+| uncle black, outer | case 3 | `Left` frame inside a `Left` frame | `ctx_insert_case3_left` | exit |
+| uncle black, outer, mirror | case 3 | `Right` frame inside a `Right` frame | `ctx_insert_case3_right` | exit |
+
+The two uncle-red theorems are stated one level higher than the others, at the
+parent's subtree rather than the cursor's, because Linux's case 1 does not care
+whether the cursor is the parent's inner or outer child.
+`ctx_insert_cursor_left_parent` and `ctx_insert_cursor_right_parent` are the
+bridge: from `is_rb(sub) == 1` and the cursor's own frame they produce
+`almost_rb_insert` at the parent's subtree, the parent's black height, the
+sibling's blackness, and the grandparent frame's `ctx_rb(up_g, _, Color::Red)`,
+which is exactly `ctx_insert_case1_*`'s hypothesis. Each case-1 theorem then
+delivers three `ensures`: the recolored grandparent subtree is fully red-black,
+its black height is one more than the parent's subtree's, and the context two
+frames up satisfies `ctx_almost_rb_insert` at that height. Its root is red,
+which is the next iteration's cursor color; `rb_insert_fix_recolor_root_is_red`
+states that separately, and `rb_insert_fix_recolor_shape`,
+`rb_insert_fix_outer_left_shape` and `rb_insert_fix_outer_right_shape` are the
+unconditional equations that name each case function's result.
+
+All six case theorems spell the grandparent's frame color as the literal
+`Color::Black`, which the Linux code never tests: a red parent forces a black
+grandparent, and `node_color_ok_red_focus_is_black` is that step, deriving
+`color == Color::Black` from a frame whose focus is red.
+
+The four uncle-black theorems close the loop outright. Their hypotheses are
+`is_rb` at the cursor, the uncle's root being black, and the two-frame
+`ctx_rb`; their conclusion applies `plug_rb_from_ctx_rb` at the frame above the
+grandparent, so the C proof gets `is_rb_root(plug(up2, ...)) == 1` in one step.
+The black heights are stated in reduced form — the cursor is red, so its black
+height is that of its left child — which saves the C proof one rewrite at the
+point where the model is already destructured.
+
+Sequence preservation is separate and unconditional.
+`plug_insert_fix_recolor_inorder`, `plug_insert_fix_outer_left_inorder`,
+`plug_insert_fix_outer_right_inorder`, `plug_insert_fix_inner_left_inorder`,
+`plug_insert_fix_inner_right_inorder` and `plug_recolor_inorder` say that
+applying a case function (or blackening the root) under any context leaves
+`rb_inorder(plug(...))` unchanged; each is the case's own in-order theorem
+transported by `plug_inorder_transport`. The two inner theorems cover the whole
+inner-then-outer composition, which is what the C performs between one loop
+head and its exit.
+
+Finally, `plug_left_frame` and `plug_right_frame` unfold one frame, and
+`plug_left_in_left`, `plug_right_in_left`, `plug_left_in_right` and
+`plug_right_in_right` rewrite a two-frame `plug` into `plug(up2, ...)` at the
+grandparent-level shape the case theorems name. A fixup proof uses one of these
+to move between the loop invariant's `plug(ctx.model, sub.model)` and the case
+shape, with no induction of its own.
 
 ## Standard library
 

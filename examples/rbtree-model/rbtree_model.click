@@ -2429,3 +2429,2245 @@ theorem plug_parent_consistent_transport(ctx: Context, sub: RbTree,
         }
     }
 }
+
+function color_black(color: Color) -> int32 {
+    match color {
+        Color::Red => 0,
+        Color::Black => 1,
+    }
+}
+
+function frame_black_height(color: Color, bh: Nat) -> Nat {
+    match color {
+        Color::Red => bh,
+        Color::Black => Nat::Succ(bh),
+    }
+}
+
+function node_color_ok(color: Color, left_color: Color, right_color: Color) -> int32 {
+    match color {
+        Color::Red =>
+            if color_black(left_color) == 1 {
+                if color_black(right_color) == 1 {
+                    1
+                } else {
+                    0
+                }
+            } else {
+                0
+            },
+        Color::Black => 1,
+    }
+}
+
+theorem color_black_red() {
+    ensures color_black(Color::Red) == 0 by {
+        unfold(color_black(Color::Red));
+        normalize();
+    }
+}
+
+theorem color_black_black() {
+    ensures color_black(Color::Black) == 1 by {
+        unfold(color_black(Color::Black));
+        normalize();
+    }
+}
+
+theorem frame_black_height_red(bh: Nat) {
+    ensures frame_black_height(Color::Red, bh) == bh by {
+        unfold(frame_black_height(Color::Red, bh));
+        normalize();
+    }
+}
+
+theorem frame_black_height_black(bh: Nat) {
+    ensures frame_black_height(Color::Black, bh) == Nat::Succ(bh) by {
+        unfold(frame_black_height(Color::Black, bh));
+        normalize();
+    }
+}
+
+theorem rb_root_black_is_color_black(tree: RbTree) {
+    ensures rb_root_black(tree) == color_black(rb_color(tree)) by {
+        induct(tree) as ih {
+            RbTree::Empty => {
+                unfold(rb_root_black(RbTree::Empty));
+                unfold(rb_color(RbTree::Empty));
+                unfold(color_black(Color::Black));
+                normalize();
+            }
+            RbTree::Node(node, parent, color, left, right) => {
+                unfold(rb_root_black(RbTree::Node(node, parent, color, left, right)));
+                unfold(rb_color(RbTree::Node(node, parent, color, left, right)));
+                unfold(color_black(color));
+                normalize();
+            }
+        }
+    }
+}
+
+theorem color_black_of_rb_color(tree: RbTree) {
+    ensures color_black(rb_color(tree)) == rb_root_black(tree) by {
+        induct(tree) as ih {
+            RbTree::Empty => {
+                unfold(rb_root_black(RbTree::Empty));
+                unfold(rb_color(RbTree::Empty));
+                unfold(color_black(Color::Black));
+                normalize();
+            }
+            RbTree::Node(node, parent, color, left, right) => {
+                unfold(rb_root_black(RbTree::Node(node, parent, color, left, right)));
+                unfold(rb_color(RbTree::Node(node, parent, color, left, right)));
+                unfold(color_black(color));
+                normalize();
+            }
+        }
+    }
+}
+
+theorem black_height_node_frame(node: struct rb_node*, parent: struct rb_node*, color: Color,
+                                left: RbTree, right: RbTree) {
+    ensures black_height(RbTree::Node(node, parent, color, left, right))
+        == frame_black_height(color, black_height(left)) by {
+        unfold(black_height(RbTree::Node(node, parent, color, left, right)));
+        unfold(frame_black_height(color, black_height(left)));
+        normalize();
+    }
+}
+
+theorem rb_color_node(node: struct rb_node*, parent: struct rb_node*, color: Color,
+                      left: RbTree, right: RbTree) {
+    ensures rb_color(RbTree::Node(node, parent, color, left, right)) == color by {
+        unfold(rb_color(RbTree::Node(node, parent, color, left, right)));
+        normalize();
+    }
+}
+
+theorem node_color_ok_black(left_color: Color, right_color: Color) {
+    ensures node_color_ok(Color::Black, left_color, right_color) == 1 by {
+        unfold(node_color_ok(Color::Black, left_color, right_color));
+        normalize();
+    }
+}
+
+theorem node_color_ok_red(left_color: Color, right_color: Color) {
+    requires color_black(left_color) == 1;
+    requires color_black(right_color) == 1;
+
+    ensures node_color_ok(Color::Red, left_color, right_color) == 1 by {
+        unfold(node_color_ok(Color::Red, left_color, right_color));
+        normalize() using {
+            color_black(left_color) == 1;
+            color_black(right_color) == 1;
+        }
+    }
+}
+
+theorem node_color_ok_red_left(left_color: Color, right_color: Color) {
+    requires node_color_ok(Color::Red, left_color, right_color) == 1;
+
+    ensures color_black(left_color) == 1 by {
+        if color_black(left_color) == 1 {
+            assumption();
+        } else {
+            have node_color_ok(Color::Red, left_color, right_color) != 1 by {
+                unfold(node_color_ok(Color::Red, left_color, right_color));
+                normalize() using { not(color_black(left_color) == 1); }
+            }
+            contradiction(node_color_ok(Color::Red, left_color, right_color) == 1);
+        }
+    }
+}
+
+theorem node_color_ok_red_right(left_color: Color, right_color: Color) {
+    requires node_color_ok(Color::Red, left_color, right_color) == 1;
+
+    ensures color_black(right_color) == 1 by {
+        if color_black(right_color) == 1 {
+            assumption();
+        } else {
+            apply(node_color_ok_red_left(left_color, right_color));
+            have node_color_ok(Color::Red, left_color, right_color) != 1 by {
+                unfold(node_color_ok(Color::Red, left_color, right_color));
+                normalize() using {
+                    color_black(left_color) == 1;
+                    not(color_black(right_color) == 1);
+                }
+            }
+            contradiction(node_color_ok(Color::Red, left_color, right_color) == 1);
+        }
+    }
+}
+
+theorem is_rb_red_node_value(node: struct rb_node*, parent: struct rb_node*,
+                             left: RbTree, right: RbTree) {
+    requires is_rb(left) == 1;
+    requires is_rb(right) == 1;
+    requires black_height(left) == black_height(right);
+    requires rb_root_black(left) == 1;
+
+    ensures rb_root_black(right)
+        == is_rb(RbTree::Node(node, parent, Color::Red, left, right)) by {
+        unfold(is_rb(RbTree::Node(node, parent, Color::Red, left, right)));
+        normalize() using {
+            is_rb(left) == 1;
+            is_rb(right) == 1;
+            black_height(left) == black_height(right);
+            rb_root_black(left) == 1;
+        }
+    }
+}
+
+theorem is_rb_red_node_right_child_is_black(node: struct rb_node*, parent: struct rb_node*,
+                                            left: RbTree, right: RbTree) {
+    requires is_rb(RbTree::Node(node, parent, Color::Red, left, right)) == 1;
+
+    ensures rb_root_black(right) == 1 by {
+        apply(is_rb_node_left(node, parent, Color::Red, left, right));
+        apply(is_rb_node_right(node, parent, Color::Red, left, right));
+        apply(is_rb_node_black_heights(node, parent, Color::Red, left, right));
+        apply(is_rb_red_node_children_are_black(node, parent, left, right));
+        apply(is_rb_red_node_value(node, parent, left, right));
+        rewrite(rb_root_black(right)
+            == is_rb(RbTree::Node(node, parent, Color::Red, left, right)));
+        assumption();
+    }
+}
+
+theorem is_rb_node_from_parts(node: struct rb_node*, parent: struct rb_node*, color: Color,
+                              left: RbTree, right: RbTree) {
+    requires is_rb(left) == 1;
+    requires is_rb(right) == 1;
+    requires black_height(left) == black_height(right);
+    requires node_color_ok(color, rb_color(left), rb_color(right)) == 1;
+
+    ensures is_rb(RbTree::Node(node, parent, color, left, right)) == 1 by {
+        induct(color) as ih {
+            Color::Black => {
+                apply(is_rb_black_node(node, parent, left, right));
+                assumption();
+            }
+            Color::Red => {
+                apply(node_color_ok_red_left(rb_color(left), rb_color(right)));
+                apply(node_color_ok_red_right(rb_color(left), rb_color(right)));
+                apply(rb_root_black_is_color_black(left));
+                apply(rb_root_black_is_color_black(right));
+                have rb_root_black(left) == 1 by {
+                    rewrite(rb_root_black(left) == color_black(rb_color(left)));
+                    assumption();
+                }
+                have rb_root_black(right) == 1 by {
+                    rewrite(rb_root_black(right) == color_black(rb_color(right)));
+                    assumption();
+                }
+                apply(is_rb_red_node(node, parent, left, right));
+                assumption();
+            }
+        }
+    }
+}
+
+theorem is_rb_node_colors(node: struct rb_node*, parent: struct rb_node*, color: Color,
+                          left: RbTree, right: RbTree) {
+    requires is_rb(RbTree::Node(node, parent, color, left, right)) == 1;
+
+    ensures node_color_ok(color, rb_color(left), rb_color(right)) == 1 by {
+        induct(color) as ih {
+            Color::Black => {
+                apply(node_color_ok_black(rb_color(left), rb_color(right)));
+                assumption();
+            }
+            Color::Red => {
+                apply(is_rb_red_node_children_are_black(node, parent, left, right));
+                apply(is_rb_red_node_right_child_is_black(node, parent, left, right));
+                apply(color_black_of_rb_color(left));
+                apply(color_black_of_rb_color(right));
+                have color_black(rb_color(left)) == 1 by {
+                    rewrite(color_black(rb_color(left)) == rb_root_black(left));
+                    assumption();
+                }
+                have color_black(rb_color(right)) == 1 by {
+                    rewrite(color_black(rb_color(right)) == rb_root_black(right));
+                    assumption();
+                }
+                apply(node_color_ok_red(rb_color(left), rb_color(right)));
+                assumption();
+            }
+        }
+    }
+}
+
+theorem is_rb_root_from_parts(tree: RbTree) {
+    requires is_rb(tree) == 1;
+    requires rb_root_black(tree) == 1;
+
+    ensures is_rb_root(tree) == 1 by {
+        unfold(is_rb_root(tree));
+        rewrite(rb_root_black(tree) == 1);
+        normalize() using { is_rb(tree) == 1; }
+    }
+}
+
+function ctx_rb(ctx: Context, bh: Nat, focus_color: Color) -> int32
+    decreases ctx
+{
+    match ctx {
+        Context::Top =>
+            if color_black(focus_color) == 1 {
+                1
+            } else {
+                0
+            },
+        Context::Left(identity, grandparent, color, sibling_model, up_model) =>
+            if is_rb(sibling_model) == 1 {
+                if bh == black_height(sibling_model) {
+                    if node_color_ok(color, focus_color, rb_color(sibling_model)) == 1 {
+                        ctx_rb(up_model, frame_black_height(color, bh), color)
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            },
+        Context::Right(identity, grandparent, color, sibling_model, up_model) =>
+            if is_rb(sibling_model) == 1 {
+                if black_height(sibling_model) == bh {
+                    if node_color_ok(color, rb_color(sibling_model), focus_color) == 1 {
+                        ctx_rb(up_model, frame_black_height(color, bh), color)
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            },
+    }
+}
+
+theorem ctx_rb_top(bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Top, bh, focus_color) == 1;
+
+    ensures color_black(focus_color) == 1 by {
+        if color_black(focus_color) == 1 {
+            assumption();
+        } else {
+            have ctx_rb(Context::Top, bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Top, bh, focus_color));
+                normalize() using { not(color_black(focus_color) == 1); }
+            }
+            contradiction(ctx_rb(Context::Top, bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_top_frame(bh: Nat, focus_color: Color) {
+    requires color_black(focus_color) == 1;
+
+    ensures ctx_rb(Context::Top, bh, focus_color) == 1 by {
+        unfold(ctx_rb(Context::Top, bh, focus_color));
+        normalize() using { color_black(focus_color) == 1; }
+    }
+}
+
+theorem ctx_rb_left_sibling(identity: struct rb_node*, grandparent: struct rb_node*,
+                            color: Color, sibling_model: RbTree, up_model: Context,
+                            bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures is_rb(sibling_model) == 1 by {
+        if is_rb(sibling_model) == 1 {
+            assumption();
+        } else {
+            have ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Left(identity, grandparent, color, sibling_model,
+                    up_model), bh, focus_color));
+                normalize() using { not(is_rb(sibling_model) == 1); }
+            }
+            contradiction(ctx_rb(
+                Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_left_height(identity: struct rb_node*, grandparent: struct rb_node*,
+                           color: Color, sibling_model: RbTree, up_model: Context,
+                           bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures bh == black_height(sibling_model) by {
+        if bh == black_height(sibling_model) {
+            assumption();
+        } else {
+            apply(ctx_rb_left_sibling(identity, grandparent, color, sibling_model, up_model,
+                bh, focus_color));
+            have ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Left(identity, grandparent, color, sibling_model,
+                    up_model), bh, focus_color));
+                normalize() using {
+                    is_rb(sibling_model) == 1;
+                    not(bh == black_height(sibling_model));
+                }
+            }
+            contradiction(ctx_rb(
+                Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_left_colors(identity: struct rb_node*, grandparent: struct rb_node*,
+                           color: Color, sibling_model: RbTree, up_model: Context,
+                           bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures node_color_ok(color, focus_color, rb_color(sibling_model)) == 1 by {
+        if node_color_ok(color, focus_color, rb_color(sibling_model)) == 1 {
+            assumption();
+        } else {
+            apply(ctx_rb_left_sibling(identity, grandparent, color, sibling_model, up_model,
+                bh, focus_color));
+            apply(ctx_rb_left_height(identity, grandparent, color, sibling_model, up_model,
+                bh, focus_color));
+            have ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Left(identity, grandparent, color, sibling_model,
+                    up_model), bh, focus_color));
+                normalize() using {
+                    is_rb(sibling_model) == 1;
+                    bh == black_height(sibling_model);
+                    not(node_color_ok(color, focus_color, rb_color(sibling_model)) == 1);
+                }
+            }
+            contradiction(ctx_rb(
+                Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_left_value(identity: struct rb_node*, grandparent: struct rb_node*,
+                          color: Color, sibling_model: RbTree, up_model: Context,
+                          bh: Nat, focus_color: Color) {
+    requires is_rb(sibling_model) == 1;
+    requires bh == black_height(sibling_model);
+    requires node_color_ok(color, focus_color, rb_color(sibling_model)) == 1;
+
+    ensures ctx_rb(up_model, frame_black_height(color, bh), color)
+        == ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+            bh, focus_color) by {
+        unfold(ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+            bh, focus_color));
+        normalize() using {
+            is_rb(sibling_model) == 1;
+            bh == black_height(sibling_model);
+            node_color_ok(color, focus_color, rb_color(sibling_model)) == 1;
+        }
+    }
+}
+
+theorem ctx_rb_left_up(identity: struct rb_node*, grandparent: struct rb_node*,
+                       color: Color, sibling_model: RbTree, up_model: Context,
+                       bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures ctx_rb(up_model, frame_black_height(color, bh), color) == 1 by {
+        apply(ctx_rb_left_sibling(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_height(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_colors(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_value(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        rewrite(ctx_rb(up_model, frame_black_height(color, bh), color)
+            == ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_rb_left_frame(identity: struct rb_node*, grandparent: struct rb_node*,
+                          color: Color, sibling_model: RbTree, up_model: Context,
+                          bh: Nat, focus_color: Color) {
+    requires is_rb(sibling_model) == 1;
+    requires bh == black_height(sibling_model);
+    requires node_color_ok(color, focus_color, rb_color(sibling_model)) == 1;
+    requires ctx_rb(up_model, frame_black_height(color, bh), color) == 1;
+
+    ensures ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1 by {
+        unfold(ctx_rb(Context::Left(identity, grandparent, color, sibling_model, up_model),
+            bh, focus_color));
+        rewrite(ctx_rb(up_model, frame_black_height(color, bh), color) == 1);
+        normalize() using {
+            is_rb(sibling_model) == 1;
+            bh == black_height(sibling_model);
+            node_color_ok(color, focus_color, rb_color(sibling_model)) == 1;
+        }
+    }
+}
+
+theorem ctx_rb_right_sibling(identity: struct rb_node*, grandparent: struct rb_node*,
+                             color: Color, sibling_model: RbTree, up_model: Context,
+                             bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures is_rb(sibling_model) == 1 by {
+        if is_rb(sibling_model) == 1 {
+            assumption();
+        } else {
+            have ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Right(identity, grandparent, color, sibling_model,
+                    up_model), bh, focus_color));
+                normalize() using { not(is_rb(sibling_model) == 1); }
+            }
+            contradiction(ctx_rb(
+                Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_right_height(identity: struct rb_node*, grandparent: struct rb_node*,
+                            color: Color, sibling_model: RbTree, up_model: Context,
+                            bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures black_height(sibling_model) == bh by {
+        if black_height(sibling_model) == bh {
+            assumption();
+        } else {
+            apply(ctx_rb_right_sibling(identity, grandparent, color, sibling_model, up_model,
+                bh, focus_color));
+            have ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Right(identity, grandparent, color, sibling_model,
+                    up_model), bh, focus_color));
+                normalize() using {
+                    is_rb(sibling_model) == 1;
+                    not(black_height(sibling_model) == bh);
+                }
+            }
+            contradiction(ctx_rb(
+                Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_right_colors(identity: struct rb_node*, grandparent: struct rb_node*,
+                            color: Color, sibling_model: RbTree, up_model: Context,
+                            bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures node_color_ok(color, rb_color(sibling_model), focus_color) == 1 by {
+        if node_color_ok(color, rb_color(sibling_model), focus_color) == 1 {
+            assumption();
+        } else {
+            apply(ctx_rb_right_sibling(identity, grandparent, color, sibling_model, up_model,
+                bh, focus_color));
+            apply(ctx_rb_right_height(identity, grandparent, color, sibling_model, up_model,
+                bh, focus_color));
+            have ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) != 1 by {
+                unfold(ctx_rb(Context::Right(identity, grandparent, color, sibling_model,
+                    up_model), bh, focus_color));
+                normalize() using {
+                    is_rb(sibling_model) == 1;
+                    black_height(sibling_model) == bh;
+                    not(node_color_ok(color, rb_color(sibling_model), focus_color) == 1);
+                }
+            }
+            contradiction(ctx_rb(
+                Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color) == 1);
+        }
+    }
+}
+
+theorem ctx_rb_right_value(identity: struct rb_node*, grandparent: struct rb_node*,
+                           color: Color, sibling_model: RbTree, up_model: Context,
+                           bh: Nat, focus_color: Color) {
+    requires is_rb(sibling_model) == 1;
+    requires black_height(sibling_model) == bh;
+    requires node_color_ok(color, rb_color(sibling_model), focus_color) == 1;
+
+    ensures ctx_rb(up_model, frame_black_height(color, bh), color)
+        == ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+            bh, focus_color) by {
+        unfold(ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+            bh, focus_color));
+        normalize() using {
+            is_rb(sibling_model) == 1;
+            black_height(sibling_model) == bh;
+            node_color_ok(color, rb_color(sibling_model), focus_color) == 1;
+        }
+    }
+}
+
+theorem ctx_rb_right_up(identity: struct rb_node*, grandparent: struct rb_node*,
+                        color: Color, sibling_model: RbTree, up_model: Context,
+                        bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures ctx_rb(up_model, frame_black_height(color, bh), color) == 1 by {
+        apply(ctx_rb_right_sibling(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_height(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_colors(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_value(identity, grandparent, color, sibling_model, up_model,
+            bh, focus_color));
+        rewrite(ctx_rb(up_model, frame_black_height(color, bh), color)
+            == ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+                bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_rb_right_frame(identity: struct rb_node*, grandparent: struct rb_node*,
+                           color: Color, sibling_model: RbTree, up_model: Context,
+                           bh: Nat, focus_color: Color) {
+    requires is_rb(sibling_model) == 1;
+    requires black_height(sibling_model) == bh;
+    requires node_color_ok(color, rb_color(sibling_model), focus_color) == 1;
+    requires ctx_rb(up_model, frame_black_height(color, bh), color) == 1;
+
+    ensures ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+        bh, focus_color) == 1 by {
+        unfold(ctx_rb(Context::Right(identity, grandparent, color, sibling_model, up_model),
+            bh, focus_color));
+        rewrite(ctx_rb(up_model, frame_black_height(color, bh), color) == 1);
+        normalize() using {
+            is_rb(sibling_model) == 1;
+            black_height(sibling_model) == bh;
+            node_color_ok(color, rb_color(sibling_model), focus_color) == 1;
+        }
+    }
+}
+
+theorem plug_rb_from_ctx_rb(ctx: Context, sub: RbTree) {
+    requires is_rb(sub) == 1;
+    requires ctx_rb(ctx, black_height(sub), rb_color(sub)) == 1;
+
+    ensures is_rb_root(plug(ctx, sub)) == 1 by {
+        induct(ctx) as ih {
+            Context::Top => {
+                apply(ctx_rb_top(black_height(sub), rb_color(sub)));
+                apply(rb_root_black_is_color_black(sub));
+                have rb_root_black(sub) == 1 by {
+                    rewrite(rb_root_black(sub) == color_black(rb_color(sub)));
+                    assumption();
+                }
+                apply(is_rb_root_from_parts(sub));
+                unfold(plug(Context::Top, sub));
+                assumption();
+            }
+            Context::Left(identity, grandparent, color, sibling_model, up_model) => {
+                apply(ctx_rb_left_sibling(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(ctx_rb_left_height(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(ctx_rb_left_colors(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(ctx_rb_left_up(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(is_rb_node_from_parts(identity, grandparent, color, sub, sibling_model));
+                apply(black_height_node_frame(identity, grandparent, color, sub, sibling_model));
+                apply(rb_color_node(identity, grandparent, color, sub, sibling_model));
+                have ctx_rb(up_model,
+                        black_height(RbTree::Node(identity, grandparent, color, sub,
+                            sibling_model)),
+                        rb_color(RbTree::Node(identity, grandparent, color, sub,
+                            sibling_model))) == 1 by {
+                    rewrite(black_height(RbTree::Node(identity, grandparent, color, sub,
+                        sibling_model)) == frame_black_height(color, black_height(sub)));
+                    rewrite(rb_color(RbTree::Node(identity, grandparent, color, sub,
+                        sibling_model)) == color);
+                    assumption();
+                }
+                apply(ih(up_model,
+                    RbTree::Node(identity, grandparent, color, sub, sibling_model)));
+                unfold(plug(Context::Left(identity, grandparent, color, sibling_model, up_model),
+                    sub));
+                assumption();
+            }
+            Context::Right(identity, grandparent, color, sibling_model, up_model) => {
+                apply(ctx_rb_right_sibling(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(ctx_rb_right_height(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(ctx_rb_right_colors(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(ctx_rb_right_up(identity, grandparent, color, sibling_model, up_model,
+                    black_height(sub), rb_color(sub)));
+                apply(is_rb_node_from_parts(identity, grandparent, color, sibling_model, sub));
+                apply(black_height_node_frame(identity, grandparent, color, sibling_model, sub));
+                apply(rb_color_node(identity, grandparent, color, sibling_model, sub));
+                have ctx_rb(up_model,
+                        black_height(RbTree::Node(identity, grandparent, color, sibling_model,
+                            sub)),
+                        rb_color(RbTree::Node(identity, grandparent, color, sibling_model,
+                            sub))) == 1 by {
+                    rewrite(rb_color(RbTree::Node(identity, grandparent, color, sibling_model,
+                        sub)) == color);
+                    rewrite(black_height(RbTree::Node(identity, grandparent, color,
+                        sibling_model, sub))
+                        == frame_black_height(color, black_height(sibling_model)));
+                    rewrite(black_height(sibling_model) == black_height(sub));
+                    assumption();
+                }
+                apply(ih(up_model,
+                    RbTree::Node(identity, grandparent, color, sibling_model, sub)));
+                unfold(plug(Context::Right(identity, grandparent, color, sibling_model,
+                    up_model), sub));
+                assumption();
+            }
+        }
+    }
+}
+
+theorem is_rb_root_is_rb(tree: RbTree) {
+    requires is_rb_root(tree) == 1;
+
+    ensures is_rb(tree) == 1 by {
+        if is_rb(tree) == 1 {
+            assumption();
+        } else {
+            have is_rb_root(tree) != 1 by {
+                unfold(is_rb_root(tree));
+                normalize() using { not(is_rb(tree) == 1); }
+            }
+            contradiction(is_rb_root(tree) == 1);
+        }
+    }
+}
+
+theorem is_rb_root_value(tree: RbTree) {
+    requires is_rb(tree) == 1;
+
+    ensures rb_root_black(tree) == is_rb_root(tree) by {
+        unfold(is_rb_root(tree));
+        normalize() using { is_rb(tree) == 1; }
+    }
+}
+
+theorem is_rb_root_root_black(tree: RbTree) {
+    requires is_rb_root(tree) == 1;
+
+    ensures rb_root_black(tree) == 1 by {
+        apply(is_rb_root_is_rb(tree));
+        apply(is_rb_root_value(tree));
+        rewrite(rb_root_black(tree) == is_rb_root(tree));
+        assumption();
+    }
+}
+
+theorem node_color_ok_weaken_left(color: Color, left_color: Color, right_color: Color) {
+    requires node_color_ok(color, left_color, right_color) == 1;
+
+    ensures node_color_ok(color, Color::Black, right_color) == 1 by {
+        induct(color) as ih {
+            Color::Black => {
+                apply(node_color_ok_black(Color::Black, right_color));
+                assumption();
+            }
+            Color::Red => {
+                apply(node_color_ok_red_right(left_color, right_color));
+                apply(color_black_black());
+                apply(node_color_ok_red(Color::Black, right_color));
+                assumption();
+            }
+        }
+    }
+}
+
+theorem node_color_ok_weaken_right(color: Color, left_color: Color, right_color: Color) {
+    requires node_color_ok(color, left_color, right_color) == 1;
+
+    ensures node_color_ok(color, left_color, Color::Black) == 1 by {
+        induct(color) as ih {
+            Color::Black => {
+                apply(node_color_ok_black(left_color, Color::Black));
+                assumption();
+            }
+            Color::Red => {
+                apply(node_color_ok_red_left(left_color, right_color));
+                apply(color_black_black());
+                apply(node_color_ok_red(left_color, Color::Black));
+                assumption();
+            }
+        }
+    }
+}
+
+function ctx_almost_rb_insert(ctx: Context, bh: Nat) -> int32 {
+    ctx_rb(ctx, bh, Color::Black)
+}
+
+theorem ctx_almost_rb_insert_unfolds(ctx: Context, bh: Nat) {
+    ensures ctx_almost_rb_insert(ctx, bh) == ctx_rb(ctx, bh, Color::Black) by {
+        unfold(ctx_almost_rb_insert(ctx, bh));
+        normalize();
+    }
+}
+
+theorem ctx_almost_rb_insert_folds(ctx: Context, bh: Nat) {
+    ensures ctx_rb(ctx, bh, Color::Black) == ctx_almost_rb_insert(ctx, bh) by {
+        unfold(ctx_almost_rb_insert(ctx, bh));
+        normalize();
+    }
+}
+
+theorem ctx_almost_rb_insert_holds(ctx: Context, bh: Nat) {
+    requires ctx_rb(ctx, bh, Color::Black) == 1;
+
+    ensures ctx_almost_rb_insert(ctx, bh) == 1 by {
+        apply(ctx_almost_rb_insert_unfolds(ctx, bh));
+        rewrite(ctx_almost_rb_insert(ctx, bh) == ctx_rb(ctx, bh, Color::Black));
+        assumption();
+    }
+}
+
+theorem ctx_almost_rb_insert_black_focus(ctx: Context, bh: Nat) {
+    requires ctx_almost_rb_insert(ctx, bh) == 1;
+
+    ensures ctx_rb(ctx, bh, Color::Black) == 1 by {
+        apply(ctx_almost_rb_insert_folds(ctx, bh));
+        rewrite(ctx_rb(ctx, bh, Color::Black) == ctx_almost_rb_insert(ctx, bh));
+        assumption();
+    }
+}
+
+theorem ctx_rb_weaken_to_almost(ctx: Context, bh: Nat, focus_color: Color) {
+    requires ctx_rb(ctx, bh, focus_color) == 1;
+
+    ensures ctx_almost_rb_insert(ctx, bh) == 1 by {
+        induct(ctx) as ih {
+            Context::Top => {
+                apply(color_black_black());
+                apply(ctx_rb_top_frame(bh, Color::Black));
+                apply(ctx_almost_rb_insert_holds(Context::Top, bh));
+                assumption();
+            }
+            Context::Left(identity, grandparent, color, sibling_model, up_model) => {
+                apply(ctx_rb_left_sibling(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(ctx_rb_left_height(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(ctx_rb_left_colors(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(ctx_rb_left_up(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(node_color_ok_weaken_left(color, focus_color, rb_color(sibling_model)));
+                apply(ctx_rb_left_frame(identity, grandparent, color, sibling_model, up_model,
+                    bh, Color::Black));
+                apply(ctx_almost_rb_insert_holds(
+                    Context::Left(identity, grandparent, color, sibling_model, up_model), bh));
+                assumption();
+            }
+            Context::Right(identity, grandparent, color, sibling_model, up_model) => {
+                apply(ctx_rb_right_sibling(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(ctx_rb_right_height(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(ctx_rb_right_colors(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(ctx_rb_right_up(identity, grandparent, color, sibling_model, up_model,
+                    bh, focus_color));
+                apply(node_color_ok_weaken_right(color, rb_color(sibling_model), focus_color));
+                apply(ctx_rb_right_frame(identity, grandparent, color, sibling_model, up_model,
+                    bh, Color::Black));
+                apply(ctx_almost_rb_insert_holds(
+                    Context::Right(identity, grandparent, color, sibling_model, up_model), bh));
+                assumption();
+            }
+        }
+    }
+}
+
+theorem ctx_rb_left_red_up(identity: struct rb_node*, grandparent: struct rb_node*,
+                           sibling_model: RbTree, up_model: Context,
+                           bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Left(identity, grandparent, Color::Red, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures ctx_rb(up_model, bh, Color::Red) == 1 by {
+        apply(ctx_rb_left_sibling(identity, grandparent, Color::Red, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_height(identity, grandparent, Color::Red, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_colors(identity, grandparent, Color::Red, sibling_model, up_model,
+            bh, focus_color));
+        have ctx_rb(up_model, bh, Color::Red)
+            == ctx_rb(Context::Left(identity, grandparent, Color::Red, sibling_model, up_model),
+                bh, focus_color) by {
+            unfold(ctx_rb(
+                Context::Left(identity, grandparent, Color::Red, sibling_model, up_model),
+                bh, focus_color));
+            unfold(frame_black_height(Color::Red, bh));
+            normalize() using {
+                is_rb(sibling_model) == 1;
+                bh == black_height(sibling_model);
+                node_color_ok(Color::Red, focus_color, rb_color(sibling_model)) == 1;
+            }
+        }
+        rewrite(ctx_rb(up_model, bh, Color::Red)
+            == ctx_rb(Context::Left(identity, grandparent, Color::Red, sibling_model, up_model),
+                bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_rb_left_black_up(identity: struct rb_node*, grandparent: struct rb_node*,
+                             sibling_model: RbTree, up_model: Context,
+                             bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Left(identity, grandparent, Color::Black, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures ctx_rb(up_model, Nat::Succ(bh), Color::Black) == 1 by {
+        apply(ctx_rb_left_sibling(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_height(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_left_colors(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        have ctx_rb(up_model, Nat::Succ(bh), Color::Black)
+            == ctx_rb(Context::Left(identity, grandparent, Color::Black, sibling_model, up_model),
+                bh, focus_color) by {
+            unfold(ctx_rb(
+                Context::Left(identity, grandparent, Color::Black, sibling_model, up_model),
+                bh, focus_color));
+            unfold(frame_black_height(Color::Black, bh));
+            normalize() using {
+                is_rb(sibling_model) == 1;
+                bh == black_height(sibling_model);
+                node_color_ok(Color::Black, focus_color, rb_color(sibling_model)) == 1;
+            }
+        }
+        rewrite(ctx_rb(up_model, Nat::Succ(bh), Color::Black)
+            == ctx_rb(Context::Left(identity, grandparent, Color::Black, sibling_model, up_model),
+                bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_rb_right_red_up(identity: struct rb_node*, grandparent: struct rb_node*,
+                            sibling_model: RbTree, up_model: Context,
+                            bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Right(identity, grandparent, Color::Red, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures ctx_rb(up_model, bh, Color::Red) == 1 by {
+        apply(ctx_rb_right_sibling(identity, grandparent, Color::Red, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_height(identity, grandparent, Color::Red, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_colors(identity, grandparent, Color::Red, sibling_model, up_model,
+            bh, focus_color));
+        have ctx_rb(up_model, bh, Color::Red)
+            == ctx_rb(Context::Right(identity, grandparent, Color::Red, sibling_model, up_model),
+                bh, focus_color) by {
+            unfold(ctx_rb(
+                Context::Right(identity, grandparent, Color::Red, sibling_model, up_model),
+                bh, focus_color));
+            unfold(frame_black_height(Color::Red, bh));
+            normalize() using {
+                is_rb(sibling_model) == 1;
+                black_height(sibling_model) == bh;
+                node_color_ok(Color::Red, rb_color(sibling_model), focus_color) == 1;
+            }
+        }
+        rewrite(ctx_rb(up_model, bh, Color::Red)
+            == ctx_rb(Context::Right(identity, grandparent, Color::Red, sibling_model, up_model),
+                bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_rb_right_black_up(identity: struct rb_node*, grandparent: struct rb_node*,
+                              sibling_model: RbTree, up_model: Context,
+                              bh: Nat, focus_color: Color) {
+    requires ctx_rb(Context::Right(identity, grandparent, Color::Black, sibling_model, up_model),
+        bh, focus_color) == 1;
+
+    ensures ctx_rb(up_model, Nat::Succ(bh), Color::Black) == 1 by {
+        apply(ctx_rb_right_sibling(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_height(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        apply(ctx_rb_right_colors(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        have ctx_rb(up_model, Nat::Succ(bh), Color::Black)
+            == ctx_rb(
+                Context::Right(identity, grandparent, Color::Black, sibling_model, up_model),
+                bh, focus_color) by {
+            unfold(ctx_rb(
+                Context::Right(identity, grandparent, Color::Black, sibling_model, up_model),
+                bh, focus_color));
+            unfold(frame_black_height(Color::Black, bh));
+            normalize() using {
+                is_rb(sibling_model) == 1;
+                black_height(sibling_model) == bh;
+                node_color_ok(Color::Black, rb_color(sibling_model), focus_color) == 1;
+            }
+        }
+        rewrite(ctx_rb(up_model, Nat::Succ(bh), Color::Black)
+            == ctx_rb(
+                Context::Right(identity, grandparent, Color::Black, sibling_model, up_model),
+                bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_black_frame_left_restores(identity: struct rb_node*, grandparent: struct rb_node*,
+                                      sibling_model: RbTree, up_model: Context,
+                                      bh: Nat, focus_color: Color) {
+    requires ctx_almost_rb_insert(
+        Context::Left(identity, grandparent, Color::Black, sibling_model, up_model), bh) == 1;
+
+    ensures ctx_rb(Context::Left(identity, grandparent, Color::Black, sibling_model, up_model),
+        bh, focus_color) == 1 by {
+        apply(ctx_almost_rb_insert_black_focus(
+            Context::Left(identity, grandparent, Color::Black, sibling_model, up_model), bh));
+        apply(ctx_rb_left_sibling(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, Color::Black));
+        apply(ctx_rb_left_height(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, Color::Black));
+        apply(ctx_rb_left_up(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, Color::Black));
+        apply(node_color_ok_black(focus_color, rb_color(sibling_model)));
+        apply(ctx_rb_left_frame(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_black_frame_right_restores(identity: struct rb_node*, grandparent: struct rb_node*,
+                                       sibling_model: RbTree, up_model: Context,
+                                       bh: Nat, focus_color: Color) {
+    requires ctx_almost_rb_insert(
+        Context::Right(identity, grandparent, Color::Black, sibling_model, up_model), bh) == 1;
+
+    ensures ctx_rb(Context::Right(identity, grandparent, Color::Black, sibling_model, up_model),
+        bh, focus_color) == 1 by {
+        apply(ctx_almost_rb_insert_black_focus(
+            Context::Right(identity, grandparent, Color::Black, sibling_model, up_model), bh));
+        apply(ctx_rb_right_sibling(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, Color::Black));
+        apply(ctx_rb_right_height(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, Color::Black));
+        apply(ctx_rb_right_up(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, Color::Black));
+        apply(node_color_ok_black(rb_color(sibling_model), focus_color));
+        apply(ctx_rb_right_frame(identity, grandparent, Color::Black, sibling_model, up_model,
+            bh, focus_color));
+        assumption();
+    }
+}
+
+theorem ctx_insert_black_parent_exit(ctx: Context, sub: RbTree) {
+    requires is_rb(sub) == 1;
+    requires ctx_rb(ctx, black_height(sub), rb_color(sub)) == 1;
+
+    ensures is_rb_root(plug(ctx, sub)) == 1 by {
+        apply(plug_rb_from_ctx_rb(ctx, sub));
+        assumption();
+    }
+}
+
+theorem ctx_insert_root_exit(sub: RbTree) {
+    requires is_rb(sub) == 1;
+
+    ensures is_rb_root(plug(Context::Top, rb_recolor(sub, Color::Black))) == 1 by {
+        apply(is_rb_is_almost_rb_insert(sub));
+        apply(rb_blacken_root_restores_rb(sub));
+        unfold(plug(Context::Top, rb_recolor(sub, Color::Black)));
+        assumption();
+    }
+}
+
+theorem node_color_ok_red_focus_is_black(color: Color, right_color: Color) {
+    requires node_color_ok(color, Color::Red, right_color) == 1;
+
+    ensures color == Color::Black by {
+        induct(color) as ih {
+            Color::Black => {
+                normalize();
+            }
+            Color::Red => {
+                apply(node_color_ok_red_left(Color::Red, right_color));
+                apply(color_black_red());
+                have color_black(Color::Red) != 1 by {
+                    rewrite(color_black(Color::Red) == 0);
+                    normalize();
+                }
+                contradiction(color_black(Color::Red) == 1);
+            }
+        }
+    }
+}
+
+theorem nat_eq_symmetric(x: Nat, y: Nat) {
+    requires x == y;
+
+    ensures y == x by {
+        rewrite(x == y);
+        normalize();
+    }
+}
+
+theorem nat_eq_transitive(x: Nat, y: Nat, z: Nat) {
+    requires x == y;
+    requires y == z;
+
+    ensures x == z by {
+        rewrite(x == y);
+        assumption();
+    }
+}
+
+theorem ctx_insert_cursor_left_parent(parent: struct rb_node*, grandparent: struct rb_node*,
+                                      sub: RbTree, sibling_model: RbTree, up_g: Context) {
+    requires is_rb(sub) == 1;
+    requires ctx_rb(Context::Left(parent, grandparent, Color::Red, sibling_model, up_g),
+        black_height(sub), Color::Black) == 1;
+
+    ensures almost_rb_insert(
+        RbTree::Node(parent, grandparent, Color::Red, sub, sibling_model)) == 1 by {
+        apply(ctx_rb_left_sibling(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        apply(ctx_rb_left_height(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        apply(almost_rb_insert_node(parent, grandparent, Color::Red, sub, sibling_model));
+        assumption();
+    }
+
+    ensures rb_root_black(sibling_model) == 1 by {
+        apply(ctx_rb_left_colors(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        apply(node_color_ok_red_right(Color::Black, rb_color(sibling_model)));
+        apply(rb_root_black_is_color_black(sibling_model));
+        rewrite(rb_root_black(sibling_model) == color_black(rb_color(sibling_model)));
+        assumption();
+    }
+
+    ensures black_height(RbTree::Node(parent, grandparent, Color::Red, sub, sibling_model))
+        == black_height(sub) by {
+        apply(black_height_red_node(parent, grandparent, sub, sibling_model));
+        assumption();
+    }
+
+    ensures ctx_rb(up_g, black_height(sub), Color::Red) == 1 by {
+        apply(ctx_rb_left_red_up(parent, grandparent, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        assumption();
+    }
+}
+
+theorem ctx_insert_cursor_right_parent(parent: struct rb_node*, grandparent: struct rb_node*,
+                                       sub: RbTree, sibling_model: RbTree, up_g: Context) {
+    requires is_rb(sub) == 1;
+    requires ctx_rb(Context::Right(parent, grandparent, Color::Red, sibling_model, up_g),
+        black_height(sub), Color::Black) == 1;
+
+    ensures almost_rb_insert(
+        RbTree::Node(parent, grandparent, Color::Red, sibling_model, sub)) == 1 by {
+        apply(ctx_rb_right_sibling(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        apply(ctx_rb_right_height(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        apply(almost_rb_insert_node(parent, grandparent, Color::Red, sibling_model, sub));
+        assumption();
+    }
+
+    ensures rb_root_black(sibling_model) == 1 by {
+        apply(ctx_rb_right_colors(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        apply(node_color_ok_red_left(rb_color(sibling_model), Color::Black));
+        apply(rb_root_black_is_color_black(sibling_model));
+        rewrite(rb_root_black(sibling_model) == color_black(rb_color(sibling_model)));
+        assumption();
+    }
+
+    ensures black_height(sibling_model) == black_height(sub) by {
+        apply(ctx_rb_right_height(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        assumption();
+    }
+
+    ensures black_height(RbTree::Node(parent, grandparent, Color::Red, sibling_model, sub))
+        == black_height(sub) by {
+        apply(black_height_red_node(parent, grandparent, sibling_model, sub));
+        apply(ctx_rb_right_height(parent, grandparent, Color::Red, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        rewrite(black_height(RbTree::Node(parent, grandparent, Color::Red, sibling_model, sub))
+            == black_height(sibling_model));
+        assumption();
+    }
+
+    ensures ctx_rb(up_g, black_height(sub), Color::Red) == 1 by {
+        apply(ctx_rb_right_red_up(parent, grandparent, sibling_model, up_g,
+            black_height(sub), Color::Black));
+        assumption();
+    }
+}
+
+theorem rb_insert_fix_recolor_shape(grandparent: struct rb_node*, above: struct rb_node*,
+                                    left_node: struct rb_node*, right_node: struct rb_node*,
+                                    ll: RbTree, lr: RbTree, rl: RbTree, rr: RbTree) {
+    ensures rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Red, rl, rr)))
+        == RbTree::Node(grandparent, above, Color::Red,
+            RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Black, rl, rr)) by {
+        unfold(rb_insert_fix_recolor(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Red, rl, rr))));
+        unfold(rb_recolor_right(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Red, rl, rr)), Color::Black));
+        unfold(rb_recolor(RbTree::Node(right_node, grandparent, Color::Red, rl, rr),
+            Color::Black));
+        unfold(rb_recolor_left(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Black, rl, rr)), Color::Black));
+        unfold(rb_recolor(RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+            Color::Black));
+        unfold(rb_recolor(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Black, rl, rr)), Color::Red));
+        normalize();
+    }
+}
+
+theorem rb_insert_fix_recolor_black_height(grandparent: struct rb_node*,
+                                           above: struct rb_node*,
+                                           left_node: struct rb_node*,
+                                           right_node: struct rb_node*,
+                                           ll: RbTree, lr: RbTree, rl: RbTree, rr: RbTree) {
+    ensures black_height(rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Red, rl, rr))))
+        == Nat::Succ(black_height(ll)) by {
+        apply(rb_insert_fix_recolor_shape(grandparent, above, left_node, right_node,
+            ll, lr, rl, rr));
+        apply(black_height_red_node(grandparent, above,
+            RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Black, rl, rr)));
+        apply(black_height_black_node(left_node, grandparent, ll, lr));
+        rewrite(rb_insert_fix_recolor(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Red, rl, rr)))
+            == RbTree::Node(grandparent, above, Color::Red,
+                RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Black, rl, rr)));
+        rewrite(black_height(RbTree::Node(grandparent, above, Color::Red,
+            RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Black, rl, rr)))
+            == black_height(RbTree::Node(left_node, grandparent, Color::Black, ll, lr)));
+        rewrite(black_height(RbTree::Node(left_node, grandparent, Color::Black, ll, lr))
+            == Nat::Succ(black_height(ll)));
+        normalize();
+    }
+}
+
+theorem rb_insert_fix_recolor_root_is_red(grandparent: struct rb_node*,
+                                          above: struct rb_node*,
+                                          left_node: struct rb_node*,
+                                          right_node: struct rb_node*,
+                                          ll: RbTree, lr: RbTree, rl: RbTree, rr: RbTree) {
+    ensures rb_color(rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Red, rl, rr)))) == Color::Red by {
+        apply(rb_insert_fix_recolor_shape(grandparent, above, left_node, right_node,
+            ll, lr, rl, rr));
+        apply(rb_color_node(grandparent, above, Color::Red,
+            RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Black, rl, rr)));
+        rewrite(rb_insert_fix_recolor(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(left_node, grandparent, Color::Red, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Red, rl, rr)))
+            == RbTree::Node(grandparent, above, Color::Red,
+                RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+                RbTree::Node(right_node, grandparent, Color::Black, rl, rr)));
+        rewrite(rb_color(RbTree::Node(grandparent, above, Color::Red,
+            RbTree::Node(left_node, grandparent, Color::Black, ll, lr),
+            RbTree::Node(right_node, grandparent, Color::Black, rl, rr))) == Color::Red);
+        normalize();
+    }
+}
+
+theorem ctx_insert_case1_left(above: struct rb_node*, grandparent: struct rb_node*,
+                              parent: struct rb_node*, uncle: struct rb_node*,
+                              a: RbTree, b: RbTree, c: RbTree, d: RbTree, up2: Context) {
+    requires almost_rb_insert(RbTree::Node(parent, grandparent, Color::Red, a, b)) == 1;
+    requires ctx_rb(Context::Left(grandparent, above, Color::Black,
+        RbTree::Node(uncle, grandparent, Color::Red, c, d), up2),
+        black_height(a), Color::Red) == 1;
+
+    ensures is_rb(rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(parent, grandparent, Color::Red, a, b),
+            RbTree::Node(uncle, grandparent, Color::Red, c, d)))) == 1 by {
+        apply(almost_rb_insert_node_left(parent, grandparent, Color::Red, a, b));
+        apply(almost_rb_insert_node_right(parent, grandparent, Color::Red, a, b));
+        apply(almost_rb_insert_node_black_heights(parent, grandparent, Color::Red, a, b));
+        apply(ctx_rb_left_sibling(grandparent, above, Color::Black,
+            RbTree::Node(uncle, grandparent, Color::Red, c, d), up2,
+            black_height(a), Color::Red));
+        apply(is_rb_node_left(uncle, grandparent, Color::Red, c, d));
+        apply(is_rb_node_right(uncle, grandparent, Color::Red, c, d));
+        apply(is_rb_node_black_heights(uncle, grandparent, Color::Red, c, d));
+        apply(ctx_rb_left_height(grandparent, above, Color::Black,
+            RbTree::Node(uncle, grandparent, Color::Red, c, d), up2,
+            black_height(a), Color::Red));
+        apply(black_height_red_node(uncle, grandparent, c, d));
+        have black_height(a) == black_height(c) by {
+            rewrite(black_height(a)
+                == black_height(RbTree::Node(uncle, grandparent, Color::Red, c, d)));
+            assumption();
+        }
+        apply(is_rb_black_node(parent, grandparent, a, b));
+        apply(is_rb_black_node(uncle, grandparent, c, d));
+        apply(rb_root_black_black_node(parent, grandparent, a, b));
+        apply(rb_root_black_black_node(uncle, grandparent, c, d));
+        apply(black_height_black_node(parent, grandparent, a, b));
+        apply(black_height_black_node(uncle, grandparent, c, d));
+        have black_height(RbTree::Node(parent, grandparent, Color::Black, a, b))
+            == black_height(RbTree::Node(uncle, grandparent, Color::Black, c, d)) by {
+            rewrite(black_height(RbTree::Node(parent, grandparent, Color::Black, a, b))
+                == Nat::Succ(black_height(a)));
+            rewrite(black_height(RbTree::Node(uncle, grandparent, Color::Black, c, d))
+                == Nat::Succ(black_height(c)));
+            rewrite(black_height(a) == black_height(c));
+            normalize();
+        }
+        apply(is_rb_red_node(grandparent, above,
+            RbTree::Node(parent, grandparent, Color::Black, a, b),
+            RbTree::Node(uncle, grandparent, Color::Black, c, d)));
+        apply(rb_insert_fix_recolor_shape(grandparent, above, parent, uncle, a, b, c, d));
+        rewrite(rb_insert_fix_recolor(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(parent, grandparent, Color::Red, a, b),
+                RbTree::Node(uncle, grandparent, Color::Red, c, d)))
+            == RbTree::Node(grandparent, above, Color::Red,
+                RbTree::Node(parent, grandparent, Color::Black, a, b),
+                RbTree::Node(uncle, grandparent, Color::Black, c, d)));
+        assumption();
+    }
+
+    ensures black_height(rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(parent, grandparent, Color::Red, a, b),
+            RbTree::Node(uncle, grandparent, Color::Red, c, d))))
+        == Nat::Succ(black_height(a)) by {
+        apply(rb_insert_fix_recolor_black_height(grandparent, above, parent, uncle,
+            a, b, c, d));
+        assumption();
+    }
+
+    ensures ctx_almost_rb_insert(up2, Nat::Succ(black_height(a))) == 1 by {
+        apply(ctx_rb_left_black_up(grandparent, above,
+            RbTree::Node(uncle, grandparent, Color::Red, c, d), up2,
+            black_height(a), Color::Red));
+        apply(ctx_almost_rb_insert_holds(up2, Nat::Succ(black_height(a))));
+        assumption();
+    }
+}
+
+theorem ctx_insert_case1_right(above: struct rb_node*, grandparent: struct rb_node*,
+                               parent: struct rb_node*, uncle: struct rb_node*,
+                               a: RbTree, b: RbTree, c: RbTree, d: RbTree, up2: Context) {
+    requires almost_rb_insert(RbTree::Node(parent, grandparent, Color::Red, c, d)) == 1;
+    requires ctx_rb(Context::Right(grandparent, above, Color::Black,
+        RbTree::Node(uncle, grandparent, Color::Red, a, b), up2),
+        black_height(c), Color::Red) == 1;
+
+    ensures is_rb(rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(uncle, grandparent, Color::Red, a, b),
+            RbTree::Node(parent, grandparent, Color::Red, c, d)))) == 1 by {
+        apply(almost_rb_insert_node_left(parent, grandparent, Color::Red, c, d));
+        apply(almost_rb_insert_node_right(parent, grandparent, Color::Red, c, d));
+        apply(almost_rb_insert_node_black_heights(parent, grandparent, Color::Red, c, d));
+        apply(ctx_rb_right_sibling(grandparent, above, Color::Black,
+            RbTree::Node(uncle, grandparent, Color::Red, a, b), up2,
+            black_height(c), Color::Red));
+        apply(is_rb_node_left(uncle, grandparent, Color::Red, a, b));
+        apply(is_rb_node_right(uncle, grandparent, Color::Red, a, b));
+        apply(is_rb_node_black_heights(uncle, grandparent, Color::Red, a, b));
+        apply(ctx_rb_right_height(grandparent, above, Color::Black,
+            RbTree::Node(uncle, grandparent, Color::Red, a, b), up2,
+            black_height(c), Color::Red));
+        apply(black_height_red_node(uncle, grandparent, a, b));
+        have black_height(a) == black_height(c) by {
+            rewrite(black_height(a)
+                == black_height(RbTree::Node(uncle, grandparent, Color::Red, a, b)));
+            assumption();
+        }
+        apply(is_rb_black_node(uncle, grandparent, a, b));
+        apply(is_rb_black_node(parent, grandparent, c, d));
+        apply(rb_root_black_black_node(uncle, grandparent, a, b));
+        apply(rb_root_black_black_node(parent, grandparent, c, d));
+        apply(black_height_black_node(uncle, grandparent, a, b));
+        apply(black_height_black_node(parent, grandparent, c, d));
+        have black_height(RbTree::Node(uncle, grandparent, Color::Black, a, b))
+            == black_height(RbTree::Node(parent, grandparent, Color::Black, c, d)) by {
+            rewrite(black_height(RbTree::Node(uncle, grandparent, Color::Black, a, b))
+                == Nat::Succ(black_height(a)));
+            rewrite(black_height(RbTree::Node(parent, grandparent, Color::Black, c, d))
+                == Nat::Succ(black_height(c)));
+            rewrite(black_height(a) == black_height(c));
+            normalize();
+        }
+        apply(is_rb_red_node(grandparent, above,
+            RbTree::Node(uncle, grandparent, Color::Black, a, b),
+            RbTree::Node(parent, grandparent, Color::Black, c, d)));
+        apply(rb_insert_fix_recolor_shape(grandparent, above, uncle, parent, a, b, c, d));
+        rewrite(rb_insert_fix_recolor(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(uncle, grandparent, Color::Red, a, b),
+                RbTree::Node(parent, grandparent, Color::Red, c, d)))
+            == RbTree::Node(grandparent, above, Color::Red,
+                RbTree::Node(uncle, grandparent, Color::Black, a, b),
+                RbTree::Node(parent, grandparent, Color::Black, c, d)));
+        assumption();
+    }
+
+    ensures black_height(rb_insert_fix_recolor(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(uncle, grandparent, Color::Red, a, b),
+            RbTree::Node(parent, grandparent, Color::Red, c, d))))
+        == Nat::Succ(black_height(a)) by {
+        apply(rb_insert_fix_recolor_black_height(grandparent, above, uncle, parent,
+            a, b, c, d));
+        assumption();
+    }
+
+    ensures ctx_almost_rb_insert(up2, Nat::Succ(black_height(c))) == 1 by {
+        apply(ctx_rb_right_black_up(grandparent, above,
+            RbTree::Node(uncle, grandparent, Color::Red, a, b), up2,
+            black_height(c), Color::Red));
+        apply(ctx_almost_rb_insert_holds(up2, Nat::Succ(black_height(c))));
+        assumption();
+    }
+}
+
+theorem rb_insert_fix_outer_left_shape(grandparent: struct rb_node*, above: struct rb_node*,
+                                       parent: struct rb_node*, cursor: struct rb_node*,
+                                       a: RbTree, b: RbTree, c: RbTree, d: RbTree) {
+    ensures rb_insert_fix_outer_left(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(parent, grandparent, Color::Red,
+                RbTree::Node(cursor, parent, Color::Red, a, b), c),
+            d))
+        == RbTree::Node(parent, above, Color::Black,
+            RbTree::Node(cursor, parent, Color::Red, a, b),
+            RbTree::Node(grandparent, parent, Color::Red,
+                rb_reparent(c, grandparent), d)) by {
+        unfold(rb_insert_fix_outer_left(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(parent, grandparent, Color::Red,
+                    RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                d)));
+        unfold(rb_rotate_right(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(parent, grandparent, Color::Red,
+                    RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                d)));
+        unfold(rb_recolor_right(
+            RbTree::Node(parent, above, Color::Red,
+                RbTree::Node(cursor, parent, Color::Red, a, b),
+                RbTree::Node(grandparent, parent, Color::Black,
+                    rb_reparent(c, grandparent), d)), Color::Red));
+        unfold(rb_recolor(RbTree::Node(grandparent, parent, Color::Black,
+            rb_reparent(c, grandparent), d), Color::Red));
+        unfold(rb_recolor(
+            RbTree::Node(parent, above, Color::Red,
+                RbTree::Node(cursor, parent, Color::Red, a, b),
+                RbTree::Node(grandparent, parent, Color::Red,
+                    rb_reparent(c, grandparent), d)), Color::Black));
+        normalize();
+    }
+}
+
+theorem rb_insert_fix_outer_right_shape(grandparent: struct rb_node*, above: struct rb_node*,
+                                        parent: struct rb_node*, cursor: struct rb_node*,
+                                        a: RbTree, b: RbTree, c: RbTree, d: RbTree) {
+    ensures rb_insert_fix_outer_right(
+        RbTree::Node(grandparent, above, Color::Black, a,
+            RbTree::Node(parent, grandparent, Color::Red, b,
+                RbTree::Node(cursor, parent, Color::Red, c, d))))
+        == RbTree::Node(parent, above, Color::Black,
+            RbTree::Node(grandparent, parent, Color::Red, a,
+                rb_reparent(b, grandparent)),
+            RbTree::Node(cursor, parent, Color::Red, c, d)) by {
+        unfold(rb_insert_fix_outer_right(
+            RbTree::Node(grandparent, above, Color::Black, a,
+                RbTree::Node(parent, grandparent, Color::Red, b,
+                    RbTree::Node(cursor, parent, Color::Red, c, d)))));
+        unfold(rb_rotate_left(
+            RbTree::Node(grandparent, above, Color::Black, a,
+                RbTree::Node(parent, grandparent, Color::Red, b,
+                    RbTree::Node(cursor, parent, Color::Red, c, d)))));
+        unfold(rb_recolor_left(
+            RbTree::Node(parent, above, Color::Red,
+                RbTree::Node(grandparent, parent, Color::Black, a,
+                    rb_reparent(b, grandparent)),
+                RbTree::Node(cursor, parent, Color::Red, c, d)), Color::Red));
+        unfold(rb_recolor(RbTree::Node(grandparent, parent, Color::Black, a,
+            rb_reparent(b, grandparent)), Color::Red));
+        unfold(rb_recolor(
+            RbTree::Node(parent, above, Color::Red,
+                RbTree::Node(grandparent, parent, Color::Red, a,
+                    rb_reparent(b, grandparent)),
+                RbTree::Node(cursor, parent, Color::Red, c, d)), Color::Black));
+        normalize();
+    }
+}
+
+theorem ctx_insert_case3_left(above: struct rb_node*, grandparent: struct rb_node*,
+                              parent: struct rb_node*, cursor: struct rb_node*,
+                              a: RbTree, b: RbTree, c: RbTree, d: RbTree, up2: Context) {
+    requires is_rb(RbTree::Node(cursor, parent, Color::Red, a, b)) == 1;
+    requires rb_root_black(d) == 1;
+    requires ctx_rb(
+        Context::Left(parent, grandparent, Color::Red, c,
+            Context::Left(grandparent, above, Color::Black, d, up2)),
+        black_height(a), Color::Black) == 1;
+
+    ensures is_rb_root(plug(up2, rb_insert_fix_outer_left(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(parent, grandparent, Color::Red,
+                RbTree::Node(cursor, parent, Color::Red, a, b), c),
+            d)))) == 1 by {
+        apply(is_rb_node_left(cursor, parent, Color::Red, a, b));
+        apply(is_rb_node_right(cursor, parent, Color::Red, a, b));
+        apply(is_rb_node_black_heights(cursor, parent, Color::Red, a, b));
+        apply(is_rb_red_node_children_are_black(cursor, parent, a, b));
+        apply(is_rb_red_node_right_child_is_black(cursor, parent, a, b));
+        apply(ctx_rb_left_sibling(parent, grandparent, Color::Red, c,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(a), Color::Black));
+        apply(ctx_rb_left_height(parent, grandparent, Color::Red, c,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(a), Color::Black));
+        apply(ctx_rb_left_colors(parent, grandparent, Color::Red, c,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(a), Color::Black));
+        apply(node_color_ok_red_right(Color::Black, rb_color(c)));
+        apply(rb_root_black_is_color_black(c));
+        have rb_root_black(c) == 1 by {
+            rewrite(rb_root_black(c) == color_black(rb_color(c)));
+            assumption();
+        }
+        apply(ctx_rb_left_red_up(parent, grandparent, c,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(a), Color::Black));
+        apply(ctx_rb_left_sibling(grandparent, above, Color::Black, d, up2,
+            black_height(a), Color::Red));
+        apply(ctx_rb_left_height(grandparent, above, Color::Black, d, up2,
+            black_height(a), Color::Red));
+        apply(ctx_rb_left_black_up(grandparent, above, d, up2,
+            black_height(a), Color::Red));
+        apply(nat_eq_symmetric(black_height(a), black_height(b)));
+        apply(nat_eq_transitive(black_height(b), black_height(a), black_height(c)));
+        apply(nat_eq_symmetric(black_height(a), black_height(c)));
+        apply(nat_eq_transitive(black_height(c), black_height(a), black_height(d)));
+        apply(rb_insert_fix_outer_left_restores(grandparent, above, parent, cursor,
+            a, b, c, d));
+        apply(rb_insert_fix_outer_left_shape(grandparent, above, parent, cursor, a, b, c, d));
+        apply(black_height_black_node(parent, above,
+            RbTree::Node(cursor, parent, Color::Red, a, b),
+            RbTree::Node(grandparent, parent, Color::Red, rb_reparent(c, grandparent), d)));
+        apply(black_height_red_node(cursor, parent, a, b));
+        apply(rb_color_node(parent, above, Color::Black,
+            RbTree::Node(cursor, parent, Color::Red, a, b),
+            RbTree::Node(grandparent, parent, Color::Red, rb_reparent(c, grandparent), d)));
+        have black_height(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                    d))) == Nat::Succ(black_height(a)) by {
+            rewrite(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                    d))
+                == RbTree::Node(parent, above, Color::Black,
+                    RbTree::Node(cursor, parent, Color::Red, a, b),
+                    RbTree::Node(grandparent, parent, Color::Red,
+                        rb_reparent(c, grandparent), d)));
+            rewrite(black_height(RbTree::Node(parent, above, Color::Black,
+                RbTree::Node(cursor, parent, Color::Red, a, b),
+                RbTree::Node(grandparent, parent, Color::Red,
+                    rb_reparent(c, grandparent), d)))
+                == Nat::Succ(black_height(RbTree::Node(cursor, parent, Color::Red, a, b))));
+            rewrite(black_height(RbTree::Node(cursor, parent, Color::Red, a, b))
+                == black_height(a));
+            normalize();
+        }
+        have rb_color(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                    d))) == Color::Black by {
+            rewrite(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                    d))
+                == RbTree::Node(parent, above, Color::Black,
+                    RbTree::Node(cursor, parent, Color::Red, a, b),
+                    RbTree::Node(grandparent, parent, Color::Red,
+                        rb_reparent(c, grandparent), d)));
+            rewrite(rb_color(RbTree::Node(parent, above, Color::Black,
+                RbTree::Node(cursor, parent, Color::Red, a, b),
+                RbTree::Node(grandparent, parent, Color::Red,
+                    rb_reparent(c, grandparent), d))) == Color::Black);
+            normalize();
+        }
+        have ctx_rb(up2,
+                black_height(rb_insert_fix_outer_left(
+                    RbTree::Node(grandparent, above, Color::Black,
+                        RbTree::Node(parent, grandparent, Color::Red,
+                            RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                        d))),
+                rb_color(rb_insert_fix_outer_left(
+                    RbTree::Node(grandparent, above, Color::Black,
+                        RbTree::Node(parent, grandparent, Color::Red,
+                            RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                        d)))) == 1 by {
+            rewrite(black_height(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                    d))) == Nat::Succ(black_height(a)));
+            rewrite(rb_color(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                    d))) == Color::Black);
+            assumption();
+        }
+        apply(plug_rb_from_ctx_rb(up2, rb_insert_fix_outer_left(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(parent, grandparent, Color::Red,
+                    RbTree::Node(cursor, parent, Color::Red, a, b), c),
+                d))));
+        assumption();
+    }
+}
+
+theorem ctx_insert_case3_right(above: struct rb_node*, grandparent: struct rb_node*,
+                               parent: struct rb_node*, cursor: struct rb_node*,
+                               a: RbTree, b: RbTree, c: RbTree, d: RbTree, up2: Context) {
+    requires is_rb(RbTree::Node(cursor, parent, Color::Red, c, d)) == 1;
+    requires rb_root_black(a) == 1;
+    requires ctx_rb(
+        Context::Right(parent, grandparent, Color::Red, b,
+            Context::Right(grandparent, above, Color::Black, a, up2)),
+        black_height(c), Color::Black) == 1;
+
+    ensures is_rb_root(plug(up2, rb_insert_fix_outer_right(
+        RbTree::Node(grandparent, above, Color::Black, a,
+            RbTree::Node(parent, grandparent, Color::Red, b,
+                RbTree::Node(cursor, parent, Color::Red, c, d)))))) == 1 by {
+        apply(is_rb_node_left(cursor, parent, Color::Red, c, d));
+        apply(is_rb_node_right(cursor, parent, Color::Red, c, d));
+        apply(is_rb_node_black_heights(cursor, parent, Color::Red, c, d));
+        apply(is_rb_red_node_children_are_black(cursor, parent, c, d));
+        apply(is_rb_red_node_right_child_is_black(cursor, parent, c, d));
+        apply(ctx_rb_right_sibling(parent, grandparent, Color::Red, b,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(c), Color::Black));
+        apply(ctx_rb_right_height(parent, grandparent, Color::Red, b,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(c), Color::Black));
+        apply(ctx_rb_right_colors(parent, grandparent, Color::Red, b,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(c), Color::Black));
+        apply(node_color_ok_red_left(rb_color(b), Color::Black));
+        apply(rb_root_black_is_color_black(b));
+        have rb_root_black(b) == 1 by {
+            rewrite(rb_root_black(b) == color_black(rb_color(b)));
+            assumption();
+        }
+        apply(ctx_rb_right_red_up(parent, grandparent, b,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(c), Color::Black));
+        apply(ctx_rb_right_sibling(grandparent, above, Color::Black, a, up2,
+            black_height(c), Color::Red));
+        apply(ctx_rb_right_height(grandparent, above, Color::Black, a, up2,
+            black_height(c), Color::Red));
+        apply(ctx_rb_right_black_up(grandparent, above, a, up2,
+            black_height(c), Color::Red));
+        apply(nat_eq_symmetric(black_height(b), black_height(c)));
+        apply(nat_eq_transitive(black_height(a), black_height(c), black_height(b)));
+        apply(rb_insert_fix_outer_right_restores(grandparent, above, parent, cursor,
+            a, b, c, d));
+        apply(rb_insert_fix_outer_right_shape(grandparent, above, parent, cursor, a, b, c, d));
+        apply(black_height_black_node(parent, above,
+            RbTree::Node(grandparent, parent, Color::Red, a, rb_reparent(b, grandparent)),
+            RbTree::Node(cursor, parent, Color::Red, c, d)));
+        apply(black_height_red_node(grandparent, parent, a, rb_reparent(b, grandparent)));
+        apply(rb_color_node(parent, above, Color::Black,
+            RbTree::Node(grandparent, parent, Color::Red, a, rb_reparent(b, grandparent)),
+            RbTree::Node(cursor, parent, Color::Red, c, d)));
+        have black_height(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red, b,
+                        RbTree::Node(cursor, parent, Color::Red, c, d)))))
+            == Nat::Succ(black_height(c)) by {
+            rewrite(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red, b,
+                        RbTree::Node(cursor, parent, Color::Red, c, d))))
+                == RbTree::Node(parent, above, Color::Black,
+                    RbTree::Node(grandparent, parent, Color::Red, a,
+                        rb_reparent(b, grandparent)),
+                    RbTree::Node(cursor, parent, Color::Red, c, d)));
+            rewrite(black_height(RbTree::Node(parent, above, Color::Black,
+                RbTree::Node(grandparent, parent, Color::Red, a, rb_reparent(b, grandparent)),
+                RbTree::Node(cursor, parent, Color::Red, c, d)))
+                == Nat::Succ(black_height(RbTree::Node(grandparent, parent, Color::Red, a,
+                    rb_reparent(b, grandparent)))));
+            rewrite(black_height(RbTree::Node(grandparent, parent, Color::Red, a,
+                rb_reparent(b, grandparent))) == black_height(a));
+            rewrite(black_height(a) == black_height(c));
+            normalize();
+        }
+        have rb_color(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red, b,
+                        RbTree::Node(cursor, parent, Color::Red, c, d)))))
+            == Color::Black by {
+            rewrite(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red, b,
+                        RbTree::Node(cursor, parent, Color::Red, c, d))))
+                == RbTree::Node(parent, above, Color::Black,
+                    RbTree::Node(grandparent, parent, Color::Red, a,
+                        rb_reparent(b, grandparent)),
+                    RbTree::Node(cursor, parent, Color::Red, c, d)));
+            rewrite(rb_color(RbTree::Node(parent, above, Color::Black,
+                RbTree::Node(grandparent, parent, Color::Red, a, rb_reparent(b, grandparent)),
+                RbTree::Node(cursor, parent, Color::Red, c, d))) == Color::Black);
+            normalize();
+        }
+        have ctx_rb(up2,
+                black_height(rb_insert_fix_outer_right(
+                    RbTree::Node(grandparent, above, Color::Black, a,
+                        RbTree::Node(parent, grandparent, Color::Red, b,
+                            RbTree::Node(cursor, parent, Color::Red, c, d))))),
+                rb_color(rb_insert_fix_outer_right(
+                    RbTree::Node(grandparent, above, Color::Black, a,
+                        RbTree::Node(parent, grandparent, Color::Red, b,
+                            RbTree::Node(cursor, parent, Color::Red, c, d)))))) == 1 by {
+            rewrite(black_height(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red, b,
+                        RbTree::Node(cursor, parent, Color::Red, c, d)))))
+                == Nat::Succ(black_height(c)));
+            rewrite(rb_color(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red, b,
+                        RbTree::Node(cursor, parent, Color::Red, c, d)))))
+                == Color::Black);
+            assumption();
+        }
+        apply(plug_rb_from_ctx_rb(up2, rb_insert_fix_outer_right(
+            RbTree::Node(grandparent, above, Color::Black, a,
+                RbTree::Node(parent, grandparent, Color::Red, b,
+                    RbTree::Node(cursor, parent, Color::Red, c, d))))));
+        assumption();
+    }
+}
+
+theorem ctx_insert_case2_left(above: struct rb_node*, grandparent: struct rb_node*,
+                              parent: struct rb_node*, cursor: struct rb_node*,
+                              a: RbTree, b: RbTree, c: RbTree, d: RbTree, up2: Context) {
+    requires is_rb(RbTree::Node(cursor, parent, Color::Red, b, c)) == 1;
+    requires rb_root_black(d) == 1;
+    requires ctx_rb(
+        Context::Right(parent, grandparent, Color::Red, a,
+            Context::Left(grandparent, above, Color::Black, d, up2)),
+        black_height(b), Color::Black) == 1;
+
+    ensures is_rb_root(plug(up2, rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+        RbTree::Node(grandparent, above, Color::Black,
+            RbTree::Node(parent, grandparent, Color::Red, a,
+                RbTree::Node(cursor, parent, Color::Red, b, c)),
+            d))))) == 1 by {
+        apply(is_rb_node_left(cursor, parent, Color::Red, b, c));
+        apply(is_rb_node_right(cursor, parent, Color::Red, b, c));
+        apply(is_rb_node_black_heights(cursor, parent, Color::Red, b, c));
+        apply(is_rb_red_node_children_are_black(cursor, parent, b, c));
+        apply(is_rb_red_node_right_child_is_black(cursor, parent, b, c));
+        apply(ctx_rb_right_sibling(parent, grandparent, Color::Red, a,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(b), Color::Black));
+        apply(ctx_rb_right_height(parent, grandparent, Color::Red, a,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(b), Color::Black));
+        apply(ctx_rb_right_colors(parent, grandparent, Color::Red, a,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(b), Color::Black));
+        apply(node_color_ok_red_left(rb_color(a), Color::Black));
+        apply(rb_root_black_is_color_black(a));
+        have rb_root_black(a) == 1 by {
+            rewrite(rb_root_black(a) == color_black(rb_color(a)));
+            assumption();
+        }
+        apply(ctx_rb_right_red_up(parent, grandparent, a,
+            Context::Left(grandparent, above, Color::Black, d, up2),
+            black_height(b), Color::Black));
+        apply(ctx_rb_left_sibling(grandparent, above, Color::Black, d, up2,
+            black_height(b), Color::Red));
+        apply(ctx_rb_left_height(grandparent, above, Color::Black, d, up2,
+            black_height(b), Color::Red));
+        apply(ctx_rb_left_black_up(grandparent, above, d, up2,
+            black_height(b), Color::Red));
+        apply(nat_eq_symmetric(black_height(b), black_height(c)));
+        apply(nat_eq_transitive(black_height(c), black_height(b), black_height(d)));
+        apply(rb_insert_fix_inner_left_restores(grandparent, above, parent, cursor,
+            a, b, c, d));
+        apply(rb_insert_fix_inner_left_becomes_outer(grandparent, above, parent, cursor,
+            a, b, c, d));
+        apply(rb_insert_fix_outer_left_shape(grandparent, above, cursor, parent,
+            a, rb_reparent(b, parent), c, d));
+        apply(black_height_black_node(cursor, above,
+            RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)),
+            RbTree::Node(grandparent, cursor, Color::Red, rb_reparent(c, grandparent), d)));
+        apply(black_height_red_node(parent, cursor, a, rb_reparent(b, parent)));
+        apply(rb_color_node(cursor, above, Color::Black,
+            RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)),
+            RbTree::Node(grandparent, cursor, Color::Red, rb_reparent(c, grandparent), d)));
+        have black_height(rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red, a,
+                        RbTree::Node(cursor, parent, Color::Red, b, c)),
+                    d)))) == Nat::Succ(black_height(b)) by {
+            rewrite(rb_insert_fix_inner_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red, a,
+                        RbTree::Node(cursor, parent, Color::Red, b, c)),
+                    d))
+                == RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(cursor, grandparent, Color::Red,
+                        RbTree::Node(parent, cursor, Color::Red, a,
+                            rb_reparent(b, parent)), c),
+                    d));
+            rewrite(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(cursor, grandparent, Color::Red,
+                        RbTree::Node(parent, cursor, Color::Red, a,
+                            rb_reparent(b, parent)), c),
+                    d))
+                == RbTree::Node(cursor, above, Color::Black,
+                    RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)),
+                    RbTree::Node(grandparent, cursor, Color::Red,
+                        rb_reparent(c, grandparent), d)));
+            rewrite(black_height(RbTree::Node(cursor, above, Color::Black,
+                RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)),
+                RbTree::Node(grandparent, cursor, Color::Red,
+                    rb_reparent(c, grandparent), d)))
+                == Nat::Succ(black_height(RbTree::Node(parent, cursor, Color::Red, a,
+                    rb_reparent(b, parent)))));
+            rewrite(black_height(RbTree::Node(parent, cursor, Color::Red, a,
+                rb_reparent(b, parent))) == black_height(a));
+            rewrite(black_height(a) == black_height(b));
+            normalize();
+        }
+        have rb_color(rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red, a,
+                        RbTree::Node(cursor, parent, Color::Red, b, c)),
+                    d)))) == Color::Black by {
+            rewrite(rb_insert_fix_inner_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red, a,
+                        RbTree::Node(cursor, parent, Color::Red, b, c)),
+                    d))
+                == RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(cursor, grandparent, Color::Red,
+                        RbTree::Node(parent, cursor, Color::Red, a,
+                            rb_reparent(b, parent)), c),
+                    d));
+            rewrite(rb_insert_fix_outer_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(cursor, grandparent, Color::Red,
+                        RbTree::Node(parent, cursor, Color::Red, a,
+                            rb_reparent(b, parent)), c),
+                    d))
+                == RbTree::Node(cursor, above, Color::Black,
+                    RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)),
+                    RbTree::Node(grandparent, cursor, Color::Red,
+                        rb_reparent(c, grandparent), d)));
+            rewrite(rb_color(RbTree::Node(cursor, above, Color::Black,
+                RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)),
+                RbTree::Node(grandparent, cursor, Color::Red,
+                    rb_reparent(c, grandparent), d))) == Color::Black);
+            normalize();
+        }
+        have ctx_rb(up2,
+                black_height(rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+                    RbTree::Node(grandparent, above, Color::Black,
+                        RbTree::Node(parent, grandparent, Color::Red, a,
+                            RbTree::Node(cursor, parent, Color::Red, b, c)),
+                        d)))),
+                rb_color(rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+                    RbTree::Node(grandparent, above, Color::Black,
+                        RbTree::Node(parent, grandparent, Color::Red, a,
+                            RbTree::Node(cursor, parent, Color::Red, b, c)),
+                        d))))) == 1 by {
+            rewrite(black_height(rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red, a,
+                        RbTree::Node(cursor, parent, Color::Red, b, c)),
+                    d)))) == Nat::Succ(black_height(b)));
+            rewrite(rb_color(rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+                RbTree::Node(grandparent, above, Color::Black,
+                    RbTree::Node(parent, grandparent, Color::Red, a,
+                        RbTree::Node(cursor, parent, Color::Red, b, c)),
+                    d)))) == Color::Black);
+            assumption();
+        }
+        apply(plug_rb_from_ctx_rb(up2, rb_insert_fix_outer_left(rb_insert_fix_inner_left(
+            RbTree::Node(grandparent, above, Color::Black,
+                RbTree::Node(parent, grandparent, Color::Red, a,
+                    RbTree::Node(cursor, parent, Color::Red, b, c)),
+                d)))));
+        assumption();
+    }
+}
+
+theorem ctx_insert_case2_right(above: struct rb_node*, grandparent: struct rb_node*,
+                               parent: struct rb_node*, cursor: struct rb_node*,
+                               a: RbTree, b: RbTree, c: RbTree, d: RbTree, up2: Context) {
+    requires is_rb(RbTree::Node(cursor, parent, Color::Red, b, c)) == 1;
+    requires rb_root_black(a) == 1;
+    requires ctx_rb(
+        Context::Left(parent, grandparent, Color::Red, d,
+            Context::Right(grandparent, above, Color::Black, a, up2)),
+        black_height(b), Color::Black) == 1;
+
+    ensures is_rb_root(plug(up2, rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+        RbTree::Node(grandparent, above, Color::Black, a,
+            RbTree::Node(parent, grandparent, Color::Red,
+                RbTree::Node(cursor, parent, Color::Red, b, c), d)))))) == 1 by {
+        apply(is_rb_node_left(cursor, parent, Color::Red, b, c));
+        apply(is_rb_node_right(cursor, parent, Color::Red, b, c));
+        apply(is_rb_node_black_heights(cursor, parent, Color::Red, b, c));
+        apply(is_rb_red_node_children_are_black(cursor, parent, b, c));
+        apply(is_rb_red_node_right_child_is_black(cursor, parent, b, c));
+        apply(ctx_rb_left_sibling(parent, grandparent, Color::Red, d,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(b), Color::Black));
+        apply(ctx_rb_left_height(parent, grandparent, Color::Red, d,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(b), Color::Black));
+        apply(ctx_rb_left_colors(parent, grandparent, Color::Red, d,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(b), Color::Black));
+        apply(node_color_ok_red_right(Color::Black, rb_color(d)));
+        apply(rb_root_black_is_color_black(d));
+        have rb_root_black(d) == 1 by {
+            rewrite(rb_root_black(d) == color_black(rb_color(d)));
+            assumption();
+        }
+        apply(ctx_rb_left_red_up(parent, grandparent, d,
+            Context::Right(grandparent, above, Color::Black, a, up2),
+            black_height(b), Color::Black));
+        apply(ctx_rb_right_sibling(grandparent, above, Color::Black, a, up2,
+            black_height(b), Color::Red));
+        apply(ctx_rb_right_height(grandparent, above, Color::Black, a, up2,
+            black_height(b), Color::Red));
+        apply(ctx_rb_right_black_up(grandparent, above, a, up2,
+            black_height(b), Color::Red));
+        apply(nat_eq_symmetric(black_height(b), black_height(c)));
+        apply(nat_eq_transitive(black_height(c), black_height(b), black_height(d)));
+        apply(rb_insert_fix_inner_right_restores(grandparent, above, parent, cursor,
+            a, b, c, d));
+        apply(rb_insert_fix_inner_right_becomes_outer(grandparent, above, parent, cursor,
+            a, b, c, d));
+        apply(rb_insert_fix_outer_right_shape(grandparent, above, cursor, parent,
+            a, b, rb_reparent(c, parent), d));
+        apply(black_height_black_node(cursor, above,
+            RbTree::Node(grandparent, cursor, Color::Red, a, rb_reparent(b, grandparent)),
+            RbTree::Node(parent, cursor, Color::Red, rb_reparent(c, parent), d)));
+        apply(black_height_red_node(grandparent, cursor, a, rb_reparent(b, grandparent)));
+        apply(rb_color_node(cursor, above, Color::Black,
+            RbTree::Node(grandparent, cursor, Color::Red, a, rb_reparent(b, grandparent)),
+            RbTree::Node(parent, cursor, Color::Red, rb_reparent(c, parent), d)));
+        have black_height(rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, b, c), d)))))
+            == Nat::Succ(black_height(b)) by {
+            rewrite(rb_insert_fix_inner_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, b, c), d)))
+                == RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(cursor, grandparent, Color::Red, b,
+                        RbTree::Node(parent, cursor, Color::Red,
+                            rb_reparent(c, parent), d))));
+            rewrite(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(cursor, grandparent, Color::Red, b,
+                        RbTree::Node(parent, cursor, Color::Red,
+                            rb_reparent(c, parent), d))))
+                == RbTree::Node(cursor, above, Color::Black,
+                    RbTree::Node(grandparent, cursor, Color::Red, a,
+                        rb_reparent(b, grandparent)),
+                    RbTree::Node(parent, cursor, Color::Red, rb_reparent(c, parent), d)));
+            rewrite(black_height(RbTree::Node(cursor, above, Color::Black,
+                RbTree::Node(grandparent, cursor, Color::Red, a, rb_reparent(b, grandparent)),
+                RbTree::Node(parent, cursor, Color::Red, rb_reparent(c, parent), d)))
+                == Nat::Succ(black_height(RbTree::Node(grandparent, cursor, Color::Red, a,
+                    rb_reparent(b, grandparent)))));
+            rewrite(black_height(RbTree::Node(grandparent, cursor, Color::Red, a,
+                rb_reparent(b, grandparent))) == black_height(a));
+            rewrite(black_height(a) == black_height(b));
+            normalize();
+        }
+        have rb_color(rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, b, c), d)))))
+            == Color::Black by {
+            rewrite(rb_insert_fix_inner_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, b, c), d)))
+                == RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(cursor, grandparent, Color::Red, b,
+                        RbTree::Node(parent, cursor, Color::Red,
+                            rb_reparent(c, parent), d))));
+            rewrite(rb_insert_fix_outer_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(cursor, grandparent, Color::Red, b,
+                        RbTree::Node(parent, cursor, Color::Red,
+                            rb_reparent(c, parent), d))))
+                == RbTree::Node(cursor, above, Color::Black,
+                    RbTree::Node(grandparent, cursor, Color::Red, a,
+                        rb_reparent(b, grandparent)),
+                    RbTree::Node(parent, cursor, Color::Red, rb_reparent(c, parent), d)));
+            rewrite(rb_color(RbTree::Node(cursor, above, Color::Black,
+                RbTree::Node(grandparent, cursor, Color::Red, a, rb_reparent(b, grandparent)),
+                RbTree::Node(parent, cursor, Color::Red, rb_reparent(c, parent), d)))
+                == Color::Black);
+            normalize();
+        }
+        have ctx_rb(up2,
+                black_height(rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+                    RbTree::Node(grandparent, above, Color::Black, a,
+                        RbTree::Node(parent, grandparent, Color::Red,
+                            RbTree::Node(cursor, parent, Color::Red, b, c), d))))),
+                rb_color(rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+                    RbTree::Node(grandparent, above, Color::Black, a,
+                        RbTree::Node(parent, grandparent, Color::Red,
+                            RbTree::Node(cursor, parent, Color::Red, b, c), d)))))) == 1 by {
+            rewrite(black_height(rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, b, c), d)))))
+                == Nat::Succ(black_height(b)));
+            rewrite(rb_color(rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+                RbTree::Node(grandparent, above, Color::Black, a,
+                    RbTree::Node(parent, grandparent, Color::Red,
+                        RbTree::Node(cursor, parent, Color::Red, b, c), d)))))
+                == Color::Black);
+            assumption();
+        }
+        apply(plug_rb_from_ctx_rb(up2, rb_insert_fix_outer_right(rb_insert_fix_inner_right(
+            RbTree::Node(grandparent, above, Color::Black, a,
+                RbTree::Node(parent, grandparent, Color::Red,
+                    RbTree::Node(cursor, parent, Color::Red, b, c), d))))));
+        assumption();
+    }
+}
+
+theorem plug_left_frame(identity: struct rb_node*, grandparent: struct rb_node*, color: Color,
+                        sibling_model: RbTree, up_model: Context, sub: RbTree) {
+    ensures plug(Context::Left(identity, grandparent, color, sibling_model, up_model), sub)
+        == plug(up_model, RbTree::Node(identity, grandparent, color, sub, sibling_model)) by {
+        unfold(plug(Context::Left(identity, grandparent, color, sibling_model, up_model), sub));
+        normalize();
+    }
+}
+
+theorem plug_right_frame(identity: struct rb_node*, grandparent: struct rb_node*, color: Color,
+                         sibling_model: RbTree, up_model: Context, sub: RbTree) {
+    ensures plug(Context::Right(identity, grandparent, color, sibling_model, up_model), sub)
+        == plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, sub)) by {
+        unfold(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), sub));
+        normalize();
+    }
+}
+
+theorem plug_left_in_left(above: struct rb_node*, grandparent: struct rb_node*,
+                          parent: struct rb_node*, gcolor: Color, pcolor: Color,
+                          sibling_model: RbTree, uncle: RbTree, up2: Context, sub: RbTree) {
+    ensures plug(Context::Left(parent, grandparent, pcolor, sibling_model,
+            Context::Left(grandparent, above, gcolor, uncle, up2)), sub)
+        == plug(up2, RbTree::Node(grandparent, above, gcolor,
+            RbTree::Node(parent, grandparent, pcolor, sub, sibling_model), uncle)) by {
+        apply(plug_left_frame(parent, grandparent, pcolor, sibling_model,
+            Context::Left(grandparent, above, gcolor, uncle, up2), sub));
+        apply(plug_left_frame(grandparent, above, gcolor, uncle, up2,
+            RbTree::Node(parent, grandparent, pcolor, sub, sibling_model)));
+        rewrite(plug(Context::Left(parent, grandparent, pcolor, sibling_model,
+                Context::Left(grandparent, above, gcolor, uncle, up2)), sub)
+            == plug(Context::Left(grandparent, above, gcolor, uncle, up2),
+                RbTree::Node(parent, grandparent, pcolor, sub, sibling_model)));
+        assumption();
+    }
+}
+
+theorem plug_right_in_left(above: struct rb_node*, grandparent: struct rb_node*,
+                           parent: struct rb_node*, gcolor: Color, pcolor: Color,
+                           sibling_model: RbTree, uncle: RbTree, up2: Context, sub: RbTree) {
+    ensures plug(Context::Right(parent, grandparent, pcolor, sibling_model,
+            Context::Left(grandparent, above, gcolor, uncle, up2)), sub)
+        == plug(up2, RbTree::Node(grandparent, above, gcolor,
+            RbTree::Node(parent, grandparent, pcolor, sibling_model, sub), uncle)) by {
+        apply(plug_right_frame(parent, grandparent, pcolor, sibling_model,
+            Context::Left(grandparent, above, gcolor, uncle, up2), sub));
+        apply(plug_left_frame(grandparent, above, gcolor, uncle, up2,
+            RbTree::Node(parent, grandparent, pcolor, sibling_model, sub)));
+        rewrite(plug(Context::Right(parent, grandparent, pcolor, sibling_model,
+                Context::Left(grandparent, above, gcolor, uncle, up2)), sub)
+            == plug(Context::Left(grandparent, above, gcolor, uncle, up2),
+                RbTree::Node(parent, grandparent, pcolor, sibling_model, sub)));
+        assumption();
+    }
+}
+
+theorem plug_left_in_right(above: struct rb_node*, grandparent: struct rb_node*,
+                           parent: struct rb_node*, gcolor: Color, pcolor: Color,
+                           sibling_model: RbTree, uncle: RbTree, up2: Context, sub: RbTree) {
+    ensures plug(Context::Left(parent, grandparent, pcolor, sibling_model,
+            Context::Right(grandparent, above, gcolor, uncle, up2)), sub)
+        == plug(up2, RbTree::Node(grandparent, above, gcolor, uncle,
+            RbTree::Node(parent, grandparent, pcolor, sub, sibling_model))) by {
+        apply(plug_left_frame(parent, grandparent, pcolor, sibling_model,
+            Context::Right(grandparent, above, gcolor, uncle, up2), sub));
+        apply(plug_right_frame(grandparent, above, gcolor, uncle, up2,
+            RbTree::Node(parent, grandparent, pcolor, sub, sibling_model)));
+        rewrite(plug(Context::Left(parent, grandparent, pcolor, sibling_model,
+                Context::Right(grandparent, above, gcolor, uncle, up2)), sub)
+            == plug(Context::Right(grandparent, above, gcolor, uncle, up2),
+                RbTree::Node(parent, grandparent, pcolor, sub, sibling_model)));
+        assumption();
+    }
+}
+
+theorem plug_right_in_right(above: struct rb_node*, grandparent: struct rb_node*,
+                            parent: struct rb_node*, gcolor: Color, pcolor: Color,
+                            sibling_model: RbTree, uncle: RbTree, up2: Context, sub: RbTree) {
+    ensures plug(Context::Right(parent, grandparent, pcolor, sibling_model,
+            Context::Right(grandparent, above, gcolor, uncle, up2)), sub)
+        == plug(up2, RbTree::Node(grandparent, above, gcolor, uncle,
+            RbTree::Node(parent, grandparent, pcolor, sibling_model, sub))) by {
+        apply(plug_right_frame(parent, grandparent, pcolor, sibling_model,
+            Context::Right(grandparent, above, gcolor, uncle, up2), sub));
+        apply(plug_right_frame(grandparent, above, gcolor, uncle, up2,
+            RbTree::Node(parent, grandparent, pcolor, sibling_model, sub)));
+        rewrite(plug(Context::Right(parent, grandparent, pcolor, sibling_model,
+                Context::Right(grandparent, above, gcolor, uncle, up2)), sub)
+            == plug(Context::Right(grandparent, above, gcolor, uncle, up2),
+                RbTree::Node(parent, grandparent, pcolor, sibling_model, sub)));
+        assumption();
+    }
+}
+
+theorem plug_recolor_inorder(ctx: Context, tree: RbTree, color: Color) {
+    ensures rb_inorder(plug(ctx, rb_recolor(tree, color))) == rb_inorder(plug(ctx, tree)) by {
+        apply(rb_recolor_preserves_inorder(tree, color));
+        apply(plug_inorder_transport(ctx, rb_recolor(tree, color), tree));
+        assumption();
+    }
+}
+
+theorem plug_insert_fix_recolor_inorder(ctx: Context, tree: RbTree) {
+    ensures rb_inorder(plug(ctx, rb_insert_fix_recolor(tree)))
+        == rb_inorder(plug(ctx, tree)) by {
+        apply(rb_insert_fix_recolor_preserves_inorder(tree));
+        apply(plug_inorder_transport(ctx, rb_insert_fix_recolor(tree), tree));
+        assumption();
+    }
+}
+
+theorem plug_insert_fix_outer_left_inorder(ctx: Context, tree: RbTree) {
+    ensures rb_inorder(plug(ctx, rb_insert_fix_outer_left(tree)))
+        == rb_inorder(plug(ctx, tree)) by {
+        apply(rb_insert_fix_outer_left_preserves_inorder(tree));
+        apply(plug_inorder_transport(ctx, rb_insert_fix_outer_left(tree), tree));
+        assumption();
+    }
+}
+
+theorem plug_insert_fix_outer_right_inorder(ctx: Context, tree: RbTree) {
+    ensures rb_inorder(plug(ctx, rb_insert_fix_outer_right(tree)))
+        == rb_inorder(plug(ctx, tree)) by {
+        apply(rb_insert_fix_outer_right_preserves_inorder(tree));
+        apply(plug_inorder_transport(ctx, rb_insert_fix_outer_right(tree), tree));
+        assumption();
+    }
+}
+
+theorem plug_insert_fix_inner_left_inorder(ctx: Context, tree: RbTree) {
+    ensures rb_inorder(plug(ctx, rb_insert_fix_outer_left(rb_insert_fix_inner_left(tree))))
+        == rb_inorder(plug(ctx, tree)) by {
+        apply(plug_insert_fix_outer_left_inorder(ctx, rb_insert_fix_inner_left(tree)));
+        apply(rb_insert_fix_inner_left_preserves_inorder(tree));
+        apply(plug_inorder_transport(ctx, rb_insert_fix_inner_left(tree), tree));
+        rewrite(rb_inorder(plug(ctx, rb_insert_fix_outer_left(rb_insert_fix_inner_left(tree))))
+            == rb_inorder(plug(ctx, rb_insert_fix_inner_left(tree))));
+        assumption();
+    }
+}
+
+theorem plug_insert_fix_inner_right_inorder(ctx: Context, tree: RbTree) {
+    ensures rb_inorder(plug(ctx, rb_insert_fix_outer_right(rb_insert_fix_inner_right(tree))))
+        == rb_inorder(plug(ctx, tree)) by {
+        apply(plug_insert_fix_outer_right_inorder(ctx, rb_insert_fix_inner_right(tree)));
+        apply(rb_insert_fix_inner_right_preserves_inorder(tree));
+        apply(plug_inorder_transport(ctx, rb_insert_fix_inner_right(tree), tree));
+        rewrite(rb_inorder(plug(ctx, rb_insert_fix_outer_right(rb_insert_fix_inner_right(tree))))
+            == rb_inorder(plug(ctx, rb_insert_fix_inner_right(tree))));
+        assumption();
+    }
+}
