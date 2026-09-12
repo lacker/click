@@ -39,7 +39,7 @@ spec enum Color { Red, Black }
 
 spec enum RbTree {
     Empty,
-    Node(struct rb_node*, Color, RbTree, RbTree),
+    Node(struct rb_node*, struct rb_node*, Color, RbTree, RbTree),
 }
 
 function color_bit(color: Color) -> int {
@@ -49,16 +49,16 @@ function color_bit(color: Color) -> int {
     }
 }
 
-resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
+resource rb_at(p: struct rb_node*) {
     field model: RbTree;
     match model {
         RbTree::Empty => { fact p == 0; },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
             owns p->rb_left;
             owns p->rb_right;
-            owns left: rb_at(p->rb_left, p);
-            owns right: rb_at(p->rb_right, p);
+            owns left: rb_at(p->rb_left);
+            owns right: rb_at(p->rb_right);
             fact p != 0;
             fact p == identity;
             fact aligned(p, 8);
@@ -72,22 +72,22 @@ resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
 }
 
 void set_parent_black(struct rb_node* node, struct rb_node* old_parent, struct rb_node* parent) {
-    consumes t: rb_at(node, old_parent);
+    consumes t: rb_at(node);
     requires t.model != RbTree::Empty;
     requires aligned(parent, 8);
-    produces u: rb_at(node, parent);
+    produces u: rb_at(node);
 } by {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             unfold(t) as { left: l, right: r };
             have color_bit(Color::Red) == 0 by {
                 unfold(color_bit(Color::Red));
                 normalize();
             }
             execute();
-            let u = fold(rb_at(node, parent), {
-                model: RbTree::Node(identity, Color::Red, left_model, right_model)
+            let u = fold(rb_at(node), {
+                model: RbTree::Node(identity, parent, Color::Red, left_model, right_model)
             }, { left: l, right: r });
             simp();
         },

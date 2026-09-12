@@ -563,15 +563,23 @@ sequence:
   `mdtests/loop_context_frame_refold_rejected.md`.
 - `examples/rbtree-model/`: the pure red-black library, with no C and no
   `verifying` line. `RbTree` carries each node's `struct rb_node*` identity,
-  color, and both submodels; `rb_inorder`, `rb_member`, `black_height`,
-  `is_rb`, `is_rb_root`, `almost_rb_insert`, and `almost_rb_erase` are its
-  summaries. It proves that both rotations, both one-sided recolorings, and
-  each insert-fixup case preserve the in-order identity list; that the
-  uncle-red case propagates the almost-red-black invariant one level up while
-  the inner and outer cases restore `is_rb`; that blackening the root of an
-  almost-red-black tree yields `is_rb_root`; and the erase splice lemmas
-  relating `rb_remove_min` and the in-order successor to the entry sequence
-  with one identity removed.
+  its parent, color, and both submodels, the node-keyed shape the rbtree
+  fixtures use; `rb_inorder`, `rb_member`, `black_height`, `is_rb`,
+  `is_rb_root`, `almost_rb_insert`, `almost_rb_erase`, and
+  `rb_parent_consistent` are its summaries. It proves that both rotations,
+  both one-sided recolorings, and each insert-fixup case preserve the in-order
+  identity list; that the uncle-red case propagates the almost-red-black
+  invariant one level up while the inner and outer cases restore `is_rb`; that
+  blackening the root of an almost-red-black tree yields `is_rb_root`; and the
+  erase splice lemmas relating `rb_remove_min` and the in-order successor to
+  the entry sequence with one identity removed. Rotations, the splice, and the
+  erase of a leftmost node re-parent exactly the subtrees whose parent word the
+  C writes, through `rb_reparent`, whose four `rb_reparent_preserves_*`
+  theorems say that no color, height, or sequence summary sees it; rotations,
+  recolor, a fresh linked leaf, and both splice lemmas each preserve
+  `rb_parent_consistent`. `Context`, `plug`, `plug_inorder_transport`, and
+  `plug_parent_consistent_transport` are the zipper half, mirroring
+  `examples/modeled-binary-tree` on the five-payload node.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads, runtime-sized allocation,
   malloc-copy-free growth, and a resource-neutral in-capacity push shared by

@@ -500,13 +500,24 @@ two-constructor model selects `Some`, and so does
 
 Selection is entailment, not search. A disequality against a constructor with
 fields rules out nothing, and requirements that leave two arms possible select
-neither: the resource stays folded, the read is refused, and the diagnostic
-names the instance rather than leaving an unexplained missing loadability.
-Click does not split the contract into cases to find out which arm the caller
-meant. Selection also grants nothing but reading: ownership of the arm's cells,
-and its contained child resources, still come only from an explicit `unfold`.
-A loop head selects an arm the same way, with its invariants playing the part
-the requirements play in a contract.
+neither. Click does not split the contract into cases to find out which arm the
+caller meant. Selection also grants nothing but reading: ownership of the arm's
+cells, and its contained child resources, still come only from an explicit
+`unfold`. A loop head selects an arm the same way, with its invariants playing
+the part the requirements play in a contract.
+
+Requirements that select no arm may still have refuted some, and the arms they
+leave can agree about a cell. What every possible arm owns is then published,
+as the same read authority a selected arm publishes: on a three-constructor
+frame, `requires c.model != Context::Top` decides nothing, but the `Left` and
+`Right` arms it leaves both own `parent->rb_right`, so that cell is readable
+however the model turns out. What is published is the intersection of those
+arms' own memory clauses, evaluated once per arm. A cell one possible arm does
+not own is never published: the read is refused, and the diagnostic names the
+instance and the arms the requirements left possible rather than leaving an
+unexplained missing loadability. The positive is
+`mdtests/resource_match_common_arm_cells.md` and the refusal is
+`mdtests/resource_match_arm_needs_one_entailed_arm.md`.
 
 A selected arm supplies its facts as well as its cells. The `Maybe::Some` arm
 above states `fact p->value == value`, which names a constructor binding and
@@ -535,8 +546,9 @@ published and `unfold` and proof `match` have their constructor.
 This is a decision, not a search: each held instance's arms are visited once
 and each arm's own clauses are evaluated once. The conclusions are published
 where an instance enters the premises -- at contract lowering, at a loop head,
-at a loop back edge, at a loop exit, and at the `unfold` that produces a
-child. A loop exit reads the invariants together with the failed guard, which
+at a loop back edge, at a loop exit, at the `unfold` that produces a child, and
+between the conjuncts of a short-circuit guard, where the truth of the earlier
+conjuncts is what refutes an arm. A loop exit reads the invariants together with the failed guard, which
 is how an ascending walk learns that the frame it is left holding is the top
 one: `parent == 0` refutes every arm that states `fact parent != 0`. The
 regressions are `mdtests/resource_refuted_arm_model_fact.md` for both

@@ -1040,6 +1040,7 @@ fn unreadable_guard_operand_leaves_the_condition_undecided() {
         let assumptions = crate::kernel::loops::assume_condition_truthiness(
             &state,
             &condition,
+            &[],
             &PureFactContext::new(),
             &[],
             &[],

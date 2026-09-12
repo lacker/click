@@ -61,7 +61,7 @@ spec enum Color { Red, Black }
 
 spec enum RbTree {
     Empty,
-    Node(struct rb_node*, Color, RbTree, RbTree),
+    Node(struct rb_node*, struct rb_node*, Color, RbTree, RbTree),
 }
 
 spec enum Context {
@@ -77,16 +77,16 @@ function color_bit(color: Color) -> int {
     }
 }
 
-resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
+resource rb_at(p: struct rb_node*) {
     field model: RbTree;
     match model {
         RbTree::Empty => { fact p == 0; },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
             owns p->rb_left;
             owns p->rb_right;
-            owns left: rb_at(p->rb_left, p);
-            owns right: rb_at(p->rb_right, p);
+            owns left: rb_at(p->rb_left);
+            owns right: rb_at(p->rb_right);
             fact p != 0;
             fact p == identity;
             fact aligned(p, 8);
@@ -111,7 +111,7 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
             owns parent->__rb_parent_color;
             owns parent->rb_left;
             owns parent->rb_right;
-            owns sibling: rb_at(parent->rb_right, parent);
+            owns sibling: rb_at(parent->rb_right);
             owns up: ctx_at(parent, root);
             fact parent != 0;
             fact aligned(parent, 8);
@@ -127,7 +127,7 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
             owns parent->__rb_parent_color;
             owns parent->rb_left;
             owns parent->rb_right;
-            owns sibling: rb_at(parent->rb_left, parent);
+            owns sibling: rb_at(parent->rb_left);
             owns up: ctx_at(parent, root);
             fact parent != 0;
             fact aligned(parent, 8);
@@ -146,7 +146,7 @@ void change_child_left(struct rb_node* old_child, struct rb_node* new_child,
                        struct rb_node* parent, struct rb_node* grandparent,
                        struct rb_root* root) {
     consumes c: ctx_at(old_child, root);
-    owns s: rb_at(new_child, parent);
+    owns s: rb_at(new_child);
     requires c.model
         == Context::Left(parent, grandparent, Color::Black, RbTree::Empty, Context::Top);
     produces d: ctx_at(new_child, root);

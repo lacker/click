@@ -4958,72 +4958,68 @@ impl<'a> Proof<'a> {
                     // In particular, do not synthesize from the caller's
                     // reduced snapshot or use the kernel candidate ordinal
                     // as a source selector.
-                    let mut surface = if requirement.call_site.is_some() {
-                        match source_backed_call_requirement_surface(
-                            &requirement,
-                            &step,
-                            execution,
-                            context,
-                        ) {
-                            Some(surface) => surface,
-                            None => return Err(error),
+                    // Lower and compare each candidate independently; no
+                    // surface is admitted merely because it parses or because
+                    // lowering succeeds.  The caller below invokes this at
+                    // most twice in a fixed order.
+                    let admit_candidate = |candidate: ClickProposition| match proof
+                        .lower_surface_goal(&candidate, "smart retained-have requirement")
+                    {
+                        Ok(lowered)
+                            if propositions_match_after_canonical_loads(
+                                &lowered,
+                                &requirement.proposition,
+                            ) =>
+                        {
+                            Ok(Some(candidate))
                         }
-                    } else {
-                        let Some(surface) = synthesize_surface_proposition(
+                        Ok(_) | Err(_) => {
+                            check_verification_deadline()?;
+                            Ok(None)
+                        }
+                    };
+                    let synthesize_candidate = || {
+                        synthesize_surface_proposition(
                             &requirement.proposition,
                             context.parsed_function.parameters(),
                             context.arguments,
                             &execution.core.state,
+                        )
+                    };
+                    let surface = if requirement.call_site.is_some() {
+                        // A source-backed call may only use the source form
+                        // after all carrier/call/frontier/ordinal checks have
+                        // passed.  A missing authoritative registry entry is
+                        // still a hard refusal; synthesis is only the second
+                        // spelling of an admitted source candidate.
+                        let Some(registry_surface) = source_backed_call_requirement_surface(
+                            &requirement,
+                            &step,
+                            execution,
+                            context,
                         ) else {
+                            return Err(error);
+                        };
+                        if let Some(surface) = admit_candidate(registry_surface)? {
+                            surface
+                        } else {
+                            let Some(synthesized) = synthesize_candidate() else {
+                                return Err(error);
+                            };
+                            let Some(surface) = admit_candidate(synthesized)? else {
+                                return Err(error);
+                            };
+                            surface
+                        }
+                    } else {
+                        let Some(synthesized) = synthesize_candidate() else {
+                            return Err(error);
+                        };
+                        let Some(surface) = admit_candidate(synthesized)? else {
                             return Err(error);
                         };
                         surface
                     };
-                    let lowered = match proof
-                        .lower_surface_goal(&surface, "smart retained-have requirement")
-                    {
-                        Ok(lowered) => lowered,
-                        Err(_) if requirement.call_site.is_some() => {
-                            // The immutable source registry names the callee
-                            // clause, but a memory-backed static clause may
-                            // require the caller's recorded qualified source
-                            // spelling.  Synthesize that spelling only under
-                            // the same authoritative source/snapshot scope;
-                            // the exact round-trip check below remains the
-                            // admission gate.
-                            let Some(qualified) = synthesize_surface_proposition(
-                                &requirement.proposition,
-                                context.parsed_function.parameters(),
-                                context.arguments,
-                                &execution.core.state,
-                            ) else {
-                                check_verification_deadline()?;
-                                return Err(error);
-                            };
-                            surface = qualified;
-                            match proof
-                                .lower_surface_goal(&surface, "smart retained-have requirement")
-                            {
-                                Ok(lowered) => lowered,
-                                Err(_) => {
-                                    check_verification_deadline()?;
-                                    return Err(error);
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            check_verification_deadline()?;
-                            return Err(error);
-                        }
-                    };
-                    // Contract lowering may retain the load term while the
-                    // caller's qualified spelling lowers to its registered
-                    // load variable.  Compare their shared canonical load
-                    // representation, without weakening snapshot identity.
-                    if !propositions_match_after_canonical_loads(&lowered, &requirement.proposition)
-                    {
-                        return Err(error);
-                    }
                     let have = match proof.begin_have(surface.clone()) {
                         Ok(have) => have,
                         Err(_) => {
@@ -5365,8 +5361,21 @@ fn source_backed_call_requirement_surface(
     };
     let source_registry = context.function_source_registry();
     let ordinary_source = source_registry.ordinary_function(site.callee.as_ref());
+    // Named callback application records the selected contract name as both
+    // callee and interface, while the C statement names the callback
+    // expression.  This is the one authorized alias for an indirect call;
+    // every other carrier must name the exact current C callee.
+    let named_interface_alias =
+        site.callee.as_str() == site.interface.as_ref() && ordinary_source.is_none();
     match step {
-        ProofStep::StepContract(_) => {}
+        ProofStep::StepContract(_) => {
+            // A named callback interface still belongs to the exact C call
+            // that produced the refusal.  The selected named-contract alias
+            // above is the only indirect representation that may differ.
+            if callee != site.callee && !named_interface_alias {
+                return None;
+            }
+        }
         ProofStep::StepCall(_) => {
             // StepCall is the concrete-call operation: both the C symbol and
             // the selected interface must be the carrier's concrete callee.
@@ -5375,14 +5384,10 @@ fn source_backed_call_requirement_surface(
             }
         }
         ProofStep::Step => {
-            // A plain step may execute an indirect callback.  When the
-            // selected interface differs from the concrete callee, the C
-            // statement names only its function-pointer symbol and the
-            // authoritative carrier routes source lookup through that named
-            // interface.  Ordinary direct calls still require the concrete
-            // source symbol to agree with the carrier.
-            let indirect = site.interface.as_ref() != site.callee;
-            if !indirect && ordinary_source.is_some() && callee != site.callee {
+            // Even an indirect callback must retain the exact function-pointer
+            // expression named by the carrier before routing through its
+            // selected interface, except for the named-contract alias above.
+            if callee != site.callee && !named_interface_alias {
                 return None;
             }
         }
