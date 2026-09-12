@@ -213,7 +213,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "have",
     "if",
     "implies",
-    "integer_certificate",
+    "arithmetic_certificate",
     "in",
     "induct",
     "initialize",
@@ -2761,8 +2761,8 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
-        id: "integer-certificate",
-        syntax: "integer_certificate { premise ...; conclusion N; }",
+        id: "arithmetic-certificate",
+        syntax: "arithmetic_certificate { premise ...; conclusion N; }",
         class: "simple",
     },
     PublicTacticForm {

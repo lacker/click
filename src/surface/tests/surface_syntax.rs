@@ -102,7 +102,7 @@ fn integer_simp_expansion_rechecks_without_smart_search() {
         );
         let verified = verify_click_theorems(&source).unwrap();
         let expanded = verified[0].expanded_proof_source().unwrap();
-        assert!(expanded.contains("integer_certificate"), "{expanded}");
+        assert!(expanded.contains("arithmetic_certificate"), "{expanded}");
         assert!(!expanded.contains("simp"), "{expanded}");
         let rechecked = source.replace(&format!("by {{ {proof} }}"), &expanded);
         verify_click_theorems(&rechecked)
@@ -174,7 +174,7 @@ fn integer_alias_certificates_preserve_types_and_linear_source_on_expansion() {
         ));
         let verified = verify_click_theorems(&source).unwrap();
         let expanded = verified[0].expanded_proof_source().unwrap();
-        assert!(expanded.contains("integer_certificate"), "{expanded}");
+        assert!(expanded.contains("arithmetic_certificate"), "{expanded}");
         assert!(
             expanded.len() < 400 * (depth + 1),
             "expansion must retain aliases"
@@ -812,6 +812,27 @@ fn parses_and_prints_arithmetic_certificates() {
         reparsed.theorem_definitions()[0].ensures()[0].proof(),
         file.theorem_definitions()[0].ensures()[0].proof()
     );
+}
+
+#[test]
+fn arithmetic_certificate_is_canonical_with_integer_alias_compatibility() {
+    for spelling in ["arithmetic_certificate", "integer_certificate"] {
+        let source = format!(
+            "theorem certificate_spelling(n: Integer) {{ ensures n == n by {{ {spelling} {{ trivial => 0 <= 1; conclusion 0; }} }} }}"
+        );
+        let file = parse(&source).expect("arithmetic certificate spelling should parse");
+        let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof()
+        else {
+            panic!("expected an explicit theorem proof");
+        };
+        assert!(matches!(
+            tactics.as_slice(),
+            [ProofTactic::IntegerCertificate(_)]
+        ));
+        let printed = super::printing::format_partial_tactic_sequence(tactics);
+        assert!(printed.contains("arithmetic_certificate {"), "{printed}");
+        assert!(!printed.contains("integer_certificate {"), "{printed}");
+    }
 }
 
 #[test]

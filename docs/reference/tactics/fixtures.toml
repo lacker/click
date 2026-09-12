@@ -103,9 +103,9 @@ path = "mdtests/pure_arithmetic_affine.md"
 needle = "arithmetic() using {"
 
 [[form]]
-id = "integer-certificate"
-path = "mdtests/integer_certificate_surface.md"
-needle = "integer_certificate {"
+id = "arithmetic-certificate"
+path = "mdtests/arithmetic_certificate_surface.md"
+needle = "arithmetic_certificate {"
 
 [[form]]
 id = "apply-theorem"

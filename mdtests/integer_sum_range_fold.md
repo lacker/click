@@ -52,7 +52,7 @@ int32 sum(int32 a[], int32 n) {
         }
     }
     have 0 <= (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) by {
-        integer_certificate {
+        arithmetic_certificate {
             premise 0: (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) == 0 =>
                 (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) == 0;
             eq_to_le 0 reverse =>
@@ -61,7 +61,7 @@ int32 sum(int32 a[], int32 n) {
         }
     }
     have (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) <= 0 by {
-        integer_certificate {
+        arithmetic_certificate {
             premise 0: (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) == 0 =>
                 (0..0).fold(0, |acc, k| { acc + to_integer(a[k]) }) == 0;
             eq_to_le 0 =>

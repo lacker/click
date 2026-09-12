@@ -2288,7 +2288,7 @@ fn nat_addition_agrees_with_integer_addition_and_rechecks_expansion() {
 }
 
 #[test]
-fn integer_certificates_accept_checked_mixed_atoms_without_erasing_domains() {
+fn arithmetic_certificates_accept_checked_mixed_atoms_without_erasing_domains() {
     for (parameters, requirements, term) in [
         ("x: int32", "", "to_integer(x)"),
         ("x: int32", "requires defined(x + 1);", "to_integer(x + 1)"),
@@ -2296,7 +2296,7 @@ fn integer_certificates_accept_checked_mixed_atoms_without_erasing_domains() {
         ("n: Nat", "", "to_integer(n)"),
     ] {
         let source = format!(
-            "function f(x: int32) -> Integer {{ to_integer(x) }} theorem client({parameters}) {{ {requirements} ensures {term} == {term} by {{ integer_certificate {{ trivial => {term} == {term}; conclusion 0; }} }} }}"
+            "function f(x: int32) -> Integer {{ to_integer(x) }} theorem client({parameters}) {{ {requirements} ensures {term} == {term} by {{ arithmetic_certificate {{ trivial => {term} == {term}; conclusion 0; }} }} }}"
         );
         verify_c0_sources(&source, &[])
             .unwrap_or_else(|error| panic!("{source}\n{}", error.message()));
@@ -2307,14 +2307,14 @@ fn integer_certificates_accept_checked_mixed_atoms_without_erasing_domains() {
 }
 
 #[test]
-fn integer_certificate_mixed_atom_lowering_scales_with_selected_inputs() {
+fn arithmetic_certificate_mixed_atom_lowering_scales_with_selected_inputs() {
     let mut work = Vec::new();
     for width in [8, 16, 32, 64] {
         let mut parameters = vec!["x: int32".to_string()];
         parameters.extend((0..width).map(|i| format!("unused{i}: int32")));
         let nodes = "trivial => to_integer(x) == to_integer(x);\n".repeat(width);
         let source = format!(
-            "theorem selected({}) {{ ensures to_integer(x) == to_integer(x) by {{ integer_certificate {{ {nodes} conclusion 0; }} }} }}",
+            "theorem selected({}) {{ ensures to_integer(x) == to_integer(x) by {{ arithmetic_certificate {{ {nodes} conclusion 0; }} }} }}",
             parameters.join(", ")
         );
         let (result, measured) =

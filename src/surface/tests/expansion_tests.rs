@@ -65,7 +65,7 @@ theorem integer_exists_choose() {
             .expect("the Integer quantifier claim should expand");
         if label.ends_with("ordered") {
             assert!(
-                expanded.contains("integer_certificate"),
+                expanded.contains("arithmetic_certificate"),
                 "{label}: {expanded}"
             );
         } else if label.ends_with("witnessed") {

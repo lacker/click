@@ -83,7 +83,7 @@ theorem nat_integer_add(n: Nat, m: Nat) {
             Nat::Zero => {
                 unfold(nat_add(Nat::Zero, m));
                 apply(nat_integer_zero());
-                integer_certificate {
+                arithmetic_certificate {
                     premise 0: to_integer(Nat::Zero) == 0 => to_integer(Nat::Zero) == 0;
                     scale 0 by -1 => to_integer(m) == to_integer(Nat::Zero) + to_integer(m);
                     conclusion 1;
@@ -94,7 +94,7 @@ theorem nat_integer_add(n: Nat, m: Nat) {
                 apply(nat_integer_succ(nat_add(previous, m)));
                 apply(ih(previous));
                 apply(nat_integer_succ(previous));
-                integer_certificate {
+                arithmetic_certificate {
                     premise 0: to_integer(Nat::Succ(nat_add(previous, m))) == to_integer(nat_add(previous, m)) + 1 => to_integer(Nat::Succ(nat_add(previous, m))) == to_integer(nat_add(previous, m)) + 1;
                     premise 1: to_integer(nat_add(previous, m)) == to_integer(previous) + to_integer(m) => to_integer(nat_add(previous, m)) == to_integer(previous) + to_integer(m);
                     premise 2: to_integer(Nat::Succ(previous)) == to_integer(previous) + 1 => to_integer(Nat::Succ(previous)) == to_integer(previous) + 1;

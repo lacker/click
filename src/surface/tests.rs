@@ -2049,7 +2049,7 @@ int32 keep(int32 x, int32 y) {
     let expanded = expand_c0_claim_source_by_label(source, &c_sources, "keep.weakened")
         .expect("Integer weakening should expand to a checked certificate");
     assert!(
-        expanded.contains("integer_certificate"),
+        expanded.contains("arithmetic_certificate"),
         "execution-context expansion should contain its checked certificate: {expanded}"
     );
     verify_c0_sources(&expanded, &c_sources)
@@ -2079,7 +2079,7 @@ theorem integer_affine_two_premise_constant_weakening(x: Integer, y: Integer) {
     )
     .expect("two-premise Integer weakening should expand");
     assert!(
-        expanded.contains("integer_certificate"),
+        expanded.contains("arithmetic_certificate"),
         "two-premise expansion should contain its checked certificate: {expanded}"
     );
     verify_click_theorems(&expanded)
@@ -2115,7 +2115,7 @@ int32 fixed_c_params(int32 i, int32 total, int32 value) {
     let expanded = expand_c0_claim_source_by_label(source, &c_sources, "fixed_c_params.bounded")
         .expect("fixed execution scaled lower bound should expand");
     assert!(
-        expanded.contains("integer_certificate"),
+        expanded.contains("arithmetic_certificate"),
         "scaled lower bound expansion should contain its checked certificate: {expanded}"
     );
     verify_c0_sources(&expanded, &c_sources)

@@ -1,9 +1,9 @@
 # explicit mathematical Integer certificate
 
 ```click
-theorem integer_certificate_success(x: Integer) {
+theorem arithmetic_certificate_success(x: Integer) {
     ensures x + 1 > x by {
-        integer_certificate {
+        arithmetic_certificate {
             trivial => x + 1 > x;
             conclusion 0;
         }
@@ -12,7 +12,7 @@ theorem integer_certificate_success(x: Integer) {
 
 theorem integer_constant_certificate(x: Integer) {
     ensures 0 == 0 by {
-        integer_certificate {
+        arithmetic_certificate {
             trivial => 0 == 0;
             conclusion 0;
         }

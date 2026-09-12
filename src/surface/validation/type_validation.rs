@@ -1921,7 +1921,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::InstantiateUsing { .. } => "instantiate",
         ProofTactic::Simp => "simp",
         ProofTactic::SimpUsing(_) => "simp",
-        ProofTactic::IntegerCertificate(_) => "integer_certificate",
+        ProofTactic::IntegerCertificate(_) => "arithmetic_certificate",
     }
 }
 

@@ -4242,7 +4242,9 @@ impl Parser {
                 }
                 ProofTactic::ArithmeticUsing(Vec::new())
             }
-            "integer_certificate" => return self.parse_integer_certificate_tactic(),
+            "arithmetic_certificate" | "integer_certificate" => {
+                return self.parse_arithmetic_certificate_tactic();
+            }
             "intro" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Intro
@@ -4520,14 +4522,14 @@ impl Parser {
         Ok(premises)
     }
 
-    fn parse_integer_certificate_tactic(&mut self) -> Result<ProofTactic, ClickError> {
+    fn parse_arithmetic_certificate_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let previous = std::mem::replace(&mut self.integer_literal_context, true);
-        let parsed = self.parse_integer_certificate_body();
+        let parsed = self.parse_arithmetic_certificate_body();
         self.integer_literal_context = previous;
         parsed
     }
 
-    fn parse_integer_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {
+    fn parse_arithmetic_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {
         self.expect(Token::LBrace)?;
         let mut nodes = Vec::new();
         let mut conclusion = None;

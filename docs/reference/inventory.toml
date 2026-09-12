@@ -479,7 +479,7 @@ id = "language.word.eq_to_le"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
-id = "language.word.integer_certificate"
+id = "language.word.arithmetic_certificate"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
@@ -1269,7 +1269,7 @@ id = "tactic.arithmetic"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
-id = "tactic.integer_certificate"
+id = "tactic.arithmetic_certificate"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
@@ -1520,7 +1520,7 @@ path = "reference/tactics/index.md#proposition-reasoning"
 id = "tactic-form.arithmetic-using"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
-id = "tactic-form.integer-certificate"
+id = "tactic-form.arithmetic-certificate"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.intro"
