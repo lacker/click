@@ -214,6 +214,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "if",
     "implies",
     "arithmetic_certificate",
+    "signed_int32",
     "in",
     "induct",
     "initialize",
