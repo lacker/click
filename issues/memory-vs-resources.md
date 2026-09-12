@@ -1304,7 +1304,7 @@ upstream integration from the temporary worktree commit.
 ### Verified integration and temporary-branch commit map
 
 The following was checked after fetching `origin/master` at
-`266d0d449ae5ed41b5583884b2a40a12c0ee4122` (`266d0d44`): a hash is called
+`bb142e1c31289703d7c3bb2f883ff61daca013a0` (`bb142e1c`): a hash is called
 integrated/pushed below only when it is an ancestor of that remote ref.
 Temporary worktree hashes are listed separately and must not be inferred to be
 on master merely because they are described in an earlier handoff.
@@ -1317,8 +1317,8 @@ on master merely because they are described in an earlier handoff.
 | W3 | `2faebefc`, `b4661346`, `6193066c`, `dab51408`, `648654c0`, plus documentation commits `217c17cc`, `53ba9913`, `b621c561`, `9f6b83ca`, and `2f5e4f4d` | `09267e5a`, `8b260cc9`, `25711aa6`, `ec820946`, and `56958fa6` are temporary worker hashes. Their corresponding integrated implementations are the hashes at left, verified by subject and ancestry. |
 | W4 | `28aae600`, `9fd0fc56`, `a3112b70`, and integration merge `93f80505` | `e82f2946`, `27f8cca8`, `b7a764da`, and `05da2753` are temporary W4 variants; they are not remote ancestors. |
 | W5-A | `839aae90`, `4b2fed41`, `d3b7405e`, `9e66590b`, `c7e21ab1`, `2e5cbb8a` | These checkpoint-A hashes are integrated, but A is only partial W5 and not a completion claim. |
-| W5-B1 | `d3ec5b26`, `0a1bd260`, `4b726370`, `cb6b2d5f`, `4705b1f2` | These B1 hashes are integrated; the documented opaque/barrier fallback and its O(U) limitation remain relevant. |
-| W5-C/D | `bc5ba4a5`, `a526c820`, `8460125c`, `a005ac28` | These C/D hashes are integrated regression checkpoints, not proof that all W5 behavior is complete. |
+| W5-B1 | Integration branch head `7947edc3`; component commits `d3ec5b26`, `0a1bd260`, `4b726370`, `cb6b2d5f`, `4705b1f2` | The branch head and component hashes are integrated; the documented opaque/barrier fallback and its O(U) limitation remain relevant. |
+| W5-C/D | C integration branch head `ed532b05`; D integration branch head `f03f28cd`; component commits `bc5ba4a5`, `a526c820`, `8460125c`, `a005ac28` | The branch heads and component hashes are integrated regression checkpoints, not proof that all W5 behavior is complete. |
 | W5-E1 | `a5ec4580`, `7dc0d6ba`, `49ed348b`, `b6fdd9ef`, and integration merge `29d7071e` | The E1 worktree hashes are integrated. E2 remains an investigation, not a landed implementation. |
 | W5-E2/docs | `f4ae6dd4`, `0b1953e4` | `f7d61b76` is a temporary docs-only hash; its net blocker text is represented by integrated `0b1953e4`. The rollback branch also contains local-only `4e6ca3bb`, `f270b748`, and `809812fd`; none is integrated. |
 
@@ -1490,8 +1490,10 @@ the selected leaves/edges and logarithmic in indexed universe where promised.
 ### Remaining W5, then W6/W7
 
 After the tooling boundary is repaired, W5 still needs the real three-call
-callback-table/resource-context matrix, scoped-open expiry under actual
-permitted mutation, fresh ensures after overlapping invalidation, nested and
+callback-table/resource-context matrix, specifically the combined case where
+an actual permitted callback mutation is followed by scoped-open expiry; the
+generic open-body mutation and post-close rejection cases are already covered
+by W5-C. It also needs fresh ensures after overlapping invalidation, nested and
 opaque composite prerequisite footprints, and exact support-preservation and
 rejection cases. Pure exact-pointer theorem behavior must remain separate from
 composite-supported predicate invalidation. W5 is complete only when those
