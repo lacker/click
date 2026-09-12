@@ -381,6 +381,39 @@ enough to become the first regression of the package that fixes them.
     guard `while ((parent = rb_parent(node)) && node == parent->rb_right)`
     does not parse in C0 (assignment expressions), which
     kernel-scale-preprocessing owns.
+35. **The parent-as-parameter spelling is unspellable for top-level
+    traversals.** Found by C4: `rb_first(root)` and `rb_next(node)` have no
+    C local naming the focused node's parent, and both `rb_at(p, parent)`
+    (D2) and `ctx_at(child, parent, root)` (amended D3) need it in every
+    loop binder and every `produces` clause; pure functions cannot return
+    pointers (gap 8) and `exists` cannot bind a `produces` argument. A13
+    keyed the scaffold frame by the child alone because `tree_at(p)` takes
+    no parent. Decision: re-key the rbtree model by node with the parent as
+    a model payload, `RbTree::Node(identity, parent, color, left, right)`,
+    the node's own arm stating its parent word from the payload, and a
+    child's parent tied to `p` by a pure `int32` predicate over the child's
+    model (`rb_parent_is(left_model, p) == 1`); the frame becomes
+    `ctx_at(child, root)` with the parent in the `Left`/`Right` payload.
+    This is a spelling change within D1 to D3. Package C1b re-spells C1,
+    A14's rbtree ascent, and C4's replacement, and delivers the traversal
+    descents.
+36. **A `while` guard with two evaluable conjuncts is refused.** After S1,
+    `while (a != 0 && p[0] != 0)` with both operands readable still refuses
+    with "requires exactly one statement successor, got 2": the `loop`
+    tactic certifies one successor and a conjunctive guard has two exit
+    paths. The verbatim `rb_next` ascent `while ((parent = rb_parent(node))
+    && node == parent->rb_right)` has this shape (once the assignment
+    expression is handled by the preprocessing issue). Package A17.
+37. **Proof-shape limits met by C4.** Four nested proof `match` scrutinees
+    are declined ("proof-shape limitation") while three work; refolding a
+    child after the inlined `rb_set_parent` needs the arm fact `((old & 1)
+    | address(new)) & 1 == color_bit(color)`, which `fold` requires
+    exactly and `simp` cannot close for a child named only by
+    `victim->rb_left` (`have` lowers to three paths); a loop inside a
+    `static inline` helper cannot be addressed from a contracted wrapper
+    (`step()` executes the whole inlined call). Package A17 owns the first
+    two; the third is not needed for the Linux functions, which are
+    top-level.
 
 ## Design decisions
 
@@ -640,6 +673,13 @@ appears to need one reports the need instead of adding it.
   so a symbolic argument unrolls until the budget is exhausted), and the
   termination SCC step runs a reachability query per ordered function pair,
   quadratic in function count, which a kernel-scale import would hit.
+- 2026-09-12: A16 (24517c61; `ih` over all theorem parameters,
+  `plug_inorder_transport` verifies), S1 (841126d4; the while-guard
+  soundness hole closed in `assume_condition_truthiness` with six failing
+  regressions, no fixture relied on it), and C4 (32992501; `rb_replace_node`
+  for a childless victim on the verbatim body) are on master. C4's
+  traversal functions are blocked by gap 35; C1b and A17 dispatched. C3
+  waits on C1b and A17.
 
 ## Work packages
 
@@ -871,6 +911,25 @@ accepting a strict structural descendant and the others any well-typed
 term, with the theorem's `requires` checked at the instance. Regressions:
 `plug_inorder_transport` on the scaffold, a two-parameter list theorem,
 negatives for a non-descendant and a violated premise. C3 depends on it.
+
+**C1b. Re-key the rbtree model by node (gap 35).** Scope: `rb_at(p)` with
+`RbTree::Node(identity, parent, color, left, right)`, `ctx_at(child,
+root)` with the parent in the frame payload, `rb_parent_is`, `plug`; re-verify
+C1's link helpers and `__rb_change_child`, A14's ascending walk, and C4's
+`rb_replace_node` on the new spelling (old fixtures replaced, not kept in
+parallel); then the unchanged `rb_first`, `rb_last`, and the descending
+half of `rb_next`/`rb_prev`, with results stated through `rb_inorder`.
+Depends on A14, A15, C4. C3 and C5 depend on it.
+
+**A17. Conjunctive loop guards and deeper proof shapes (gaps 36, 37).**
+Scope: let the `loop` tactic certify a guard with several exit paths
+(each exit path assumes its own conjunct's negation and the earlier
+conjuncts' truth), so `while (a && b)` verifies without a C rewrite; lift
+the three-scrutinee nesting limit on proof `match`; and make a bit-masked
+parent-word fact closable after `rb_set_parent` for a child named through
+a field path. Regressions: a two-conjunct guard loop, a four-level match,
+and C4's general-children `rb_replace_node`. C3's ascent depends on the
+guard part; C1b's `rb_next` ascent depends on it too.
 
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
