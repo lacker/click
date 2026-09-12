@@ -6,12 +6,15 @@ mod contract_evaluation;
 mod integer_affine_planner;
 mod predicates;
 mod segments;
+mod signed_arithmetic_planner;
 mod simp;
 use crate::kernel::memory_effect_write_pointers;
 pub(super) use contract_evaluation::*;
 pub(super) use integer_affine_planner::*;
 pub(super) use predicates::*;
 pub(super) use segments::*;
+#[allow(unused_imports)]
+pub(super) use signed_arithmetic_planner::*;
 pub(super) use simp::*;
 
 pub(super) fn prove_ensure_resource(
