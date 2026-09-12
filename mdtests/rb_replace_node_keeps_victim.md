@@ -1,12 +1,10 @@
-# A replacement that claims the victim survives in the model fails
+# the replacement does not keep the victim's identity
 
-`rb_replace_node` writes `new`'s address into the parent word of every node
-that pointed at `victim`, so the focused subtree's identity is `new` and not
-`victim`. A contract that claims the model is unchanged is claiming that the
-node sequence still names `victim`, and the exit fold produces
-`RbTree::Node(new, color, l, r)` instead, so the postcondition is left
-unproved. This is the negative for
-[`rb_replace_node.md`](rb_replace_node.md)'s identity substitution.
+The model effect of `rb_replace_node` is exactly the identity substitution, so
+the produced subtree is `rb_substitute(old(t.model), new_node)` and not
+`old(t.model)`. Claiming the latter says the tree still contains the victim
+after the splice, and the fold at `new_node` refuses it: `rb_at`'s own arm fact
+`p == identity` is what makes a model name the node it is folded at.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -71,7 +69,7 @@ static inline void rb_replace_node(struct rb_node *victim, struct rb_node *new,
 #endif
 ```
 
-```c filename=rb_replace_node_keeps_victim.c
+```c filename=rb_replace_keeps_victim.c
 #include "rbtree.h"
 
 void replace_root_node(struct rb_node *victim, struct rb_node *new_node,
@@ -81,18 +79,18 @@ void replace_root_node(struct rb_node *victim, struct rb_node *new_node,
 ```
 
 ```click
-verifying "rb_replace_node_keeps_victim.c";
+verifying "rb_replace_keeps_victim.c";
 
 spec enum Color { Red, Black }
 
 spec enum RbTree {
     Empty,
-    Node(struct rb_node*, Color, RbTree, RbTree),
+    Node(struct rb_node*, struct rb_node*, Color, RbTree, RbTree),
 }
 
 spec enum Context {
     Top,
-    Left(struct rb_node*, Color, RbTree, Context),
+    Left(struct rb_node*, struct rb_node*, Color, RbTree, Context),
 }
 
 function color_bit(color: Color) -> int {
@@ -105,21 +103,21 @@ function color_bit(color: Color) -> int {
 function rb_substitute(tree: RbTree, replacement: struct rb_node*) -> RbTree {
     match tree {
         RbTree::Empty => RbTree::Empty,
-        RbTree::Node(identity, color, left, right) =>
-            RbTree::Node(replacement, color, left, right),
+        RbTree::Node(identity, parent, color, left, right) =>
+            RbTree::Node(replacement, parent, color, left, right),
     }
 }
 
-resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
+resource rb_at(p: struct rb_node*) {
     field model: RbTree;
     match model {
         RbTree::Empty => { fact p == 0; },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
             owns p->rb_left;
             owns p->rb_right;
-            owns left: rb_at(p->rb_left, p);
-            owns right: rb_at(p->rb_right, p);
+            owns left: rb_at(p->rb_left);
+            owns right: rb_at(p->rb_right);
             fact p != 0;
             fact p == identity;
             fact aligned(p, 8);
@@ -132,29 +130,27 @@ resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
     }
 }
 
-resource ctx_at(child: struct rb_node*, parent: struct rb_node*,
-                root: struct rb_root*) {
+resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
     field model: Context;
     match model {
         Context::Top => {
             owns root->rb_node;
             fact root != 0;
-            fact parent == 0;
             fact root->rb_node == child;
         },
-        Context::Left(grandparent, color, sibling_model, up_model) => {
-            owns parent->__rb_parent_color;
-            owns parent->rb_left;
-            owns parent->rb_right;
-            owns sibling: rb_at(parent->rb_right, parent);
-            owns up: ctx_at(parent, grandparent, root);
-            fact parent != 0;
-            fact aligned(parent, 8);
+        Context::Left(identity, grandparent, color, sibling_model, up_model) => {
+            owns identity->__rb_parent_color;
+            owns identity->rb_left;
+            owns identity->rb_right;
+            owns sibling: rb_at(identity->rb_right);
+            owns up: ctx_at(identity, root);
+            fact identity != 0;
+            fact aligned(identity, 8);
             fact aligned(grandparent, 8);
-            fact parent->rb_left == child;
-            fact parent->__rb_parent_color
-                == address(grandparent) + (parent->__rb_parent_color & 1);
-            fact (parent->__rb_parent_color & 1) == color_bit(color);
+            fact identity->rb_left == child;
+            fact identity->__rb_parent_color
+                == address(grandparent) + (identity->__rb_parent_color & 1);
+            fact (identity->__rb_parent_color & 1) == color_bit(color);
             fact sibling.model == sibling_model;
             fact up.model == up_model;
         },
@@ -163,42 +159,44 @@ resource ctx_at(child: struct rb_node*, parent: struct rb_node*,
 
 void replace_root_node(struct rb_node* victim, struct rb_node* new_node,
                        struct rb_node* parent, struct rb_root* root) {
-    consumes c: ctx_at(victim, parent, root);
-    consumes t: rb_at(victim, parent);
+    consumes c: ctx_at(victim, root);
+    consumes t: rb_at(victim);
     consumes new_node->__rb_parent_color;
     consumes new_node->rb_left;
     consumes new_node->rb_right;
-    requires t.model != RbTree::Empty;
+    requires parent == 0;
     requires c.model == Context::Top;
+    requires t.model
+        == RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty);
     requires victim->rb_left == 0;
     requires victim->rb_right == 0;
     requires new_node != 0;
     requires aligned(new_node, 8);
-    produces d: ctx_at(new_node, parent, root);
-    produces u: rb_at(new_node, parent);
+    produces d: ctx_at(new_node, root);
+    produces u: rb_at(new_node);
     ensures d.model == old(c.model);
     ensures u.model == old(t.model);
 } by {
-    match t.model {
-        RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
-        RbTree::Node(identity, color, left_model, right_model) => {
-            unfold(t) as { left: l, right: r };
-            unfold(c);
-            unfold(l);
-            unfold(r);
-            execute();
-            let l2 = fold(rb_at(new_node->rb_left, new_node), { model: left_model }, {});
-            let r2 = fold(rb_at(new_node->rb_right, new_node), { model: right_model }, {});
-            let u = fold(rb_at(new_node, parent), {
-                model: RbTree::Node(new_node, color, left_model, right_model)
-            }, { left: l2, right: r2 });
-            let d = fold(ctx_at(new_node, parent, root), { model: old(c.model) }, {});
-            simp();
-        },
+    unfold(t) as { left: l, right: r };
+    unfold(c);
+    unfold(l);
+    unfold(r);
+    have color_bit(Color::Black) == 1 by {
+        unfold(color_bit(Color::Black));
+        normalize();
     }
+    execute();
+    let l2 = fold(rb_at(new_node->rb_left), { model: RbTree::Empty }, {});
+    let r2 = fold(rb_at(new_node->rb_right), { model: RbTree::Empty }, {});
+    let u = fold(rb_at(new_node), {
+        model: RbTree::Node(victim, parent, Color::Black, RbTree::Empty, RbTree::Empty)
+    }, { left: l2, right: r2 });
+    let d = fold(ctx_at(new_node, root), { model: old(c.model) }, {});
+    simp();
 }
+
 ```
 
 ```expect
-fail: unclosed goal: u.model == old(t.model)
+fail: fold requires the instance body facts for the proposed fields
 ```

@@ -2,12 +2,28 @@
 
 This is the ascent of
 [`loop_ascending_walk_to_root.md`](loop_ascending_walk_to_root.md) on the
-shapes package C1 landed: `rb_at(p, parent)`, whose `Node` arm owns the packed
-parent word and states it as the parent's address plus the color bit, and
-`ctx_at(child, parent, root)`, whose `Top` frame owns `root->rb_node` and says
-the root struct points at the focused node. Every rbtree fixup loop climbs
-this way, so the boundary the walk ends at is the one `rb_insert_color`,
-`rb_next` and `__rb_erase_color` need.
+parameter-keyed rbtree shapes package C1 landed: `rb_at(p, parent)`, whose
+`Node` arm owns the packed parent word and states it as the parent's address
+plus the color bit, and `ctx_at(child, parent, root)`, whose `Top` frame owns
+`root->rb_node` and says the root struct points at the focused node. Every
+rbtree fixup loop climbs this way, so the boundary the walk ends at is the one
+`rb_insert_color`, `rb_next` and `__rb_erase_color` need.
+
+This fixture keeps the parameter spelling on purpose, and that is a gap rather
+than a preference. Package C1b re-keyed the rbtree model by node with the
+parent in the payload — `rb_at(p)` and `ctx_at(child, root)`, verified in
+[`rb_first_last.md`](rb_first_last.md), [`rb_at_link_helpers.md`](rb_at_link_helpers.md)
+and [`rb_ctx_change_child.md`](rb_ctx_change_child.md) — because the top-level
+traversals have no C local naming the focused node's parent. A *descent* needs
+no such local, so it re-keys cleanly. This *ascent* is the opposite case: what
+makes it work below is exactly that the frame's `fact parent != 0` names the
+C local the loop reassigns, so the failed guard `parent != 0` refutes the
+`Left` and `Right` arms and the exit learns `c.model == Context::Top`. With the
+parent in the payload the arm fact is about a payload the `unfold` binds
+freshly, the failed guard refutes nothing, and the exit cannot name `Top`. The
+bridge a node-keyed ascent needs — a C pointer equated to a frame payload that
+survives `unfold` — is the same one
+[`rb_replace_node.md`](rb_replace_node.md)'s closing note records.
 
 The loop body reads the parent through the unchanged Linux `rb_parent`, so
 each iteration clears the color tag out of the packed word and recovers the
@@ -30,7 +46,8 @@ Its C0 form is refused twice over: an assignment is not an expression in the
 supported subset, and a short-circuit guard whose second conjunct reads memory
 leaves the `loop` tactic two statement successors. That
 guard also stops at the first left frame, a position no contract can name,
-which is why package C4 owns `rb_next` in full.
+which is why package C4 owns `rb_next` in full; see
+[`rb_next_conjunctive_guard.md`](rb_next_conjunctive_guard.md).
 
 The loop carries the same structural measure the scaffold ascent does,
 `decreases c;`, even though its body calls the contract-less inline
