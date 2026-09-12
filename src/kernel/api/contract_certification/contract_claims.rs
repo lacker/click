@@ -2412,4 +2412,51 @@ int32 array_fold_append_at_zero(int32 a[]) {
         )
         .unwrap_or_else(|error| panic!("array fold surface smoke failed: {error:?}"));
     }
+
+    #[test]
+    fn certification_does_not_promote_body_facts_to_entry_premises() {
+        let function = CFunction::new(
+            CType::Int32,
+            "entry_resource_fact_boundary",
+            Vec::new(),
+            c_return(c_int32_literal(0)),
+        );
+        // This is deliberately a fact recorded by execution after entry.  It
+        // must not make an entry-dependent resource term evaluable during
+        // certification setup.
+        let body_fact = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(
+                Bitvector32Term::Variable(Variable(93_001)),
+                Bitvector32Term::Constant(8),
+            ),
+            true,
+        );
+        let state = CState::new();
+        let proposition = Proposition::CFunctionExecutes {
+            state: state.clone(),
+            function: function.clone(),
+            arguments: Vec::new(),
+            outcome: CFunctionOutcome::Return {
+                value: CValue::Int32(Bitvector32Term::Constant(0)),
+                state,
+            },
+        };
+        let fact = ExecutionPureFact::new(body_fact.clone());
+        let path = SymbolicCExecutionPath {
+            assumptions: PureFactContext::new(),
+            facts: vec![fact.clone()],
+            effect_facts: Vec::new(),
+            obligations: Vec::new(),
+            theorem: Theorem::new(wrap_proof_facts(
+                proposition,
+                &PureFactContext::new(),
+                &[fact],
+                &[],
+            )),
+        };
+        let (_, _, _, entry_assumptions) =
+            super::super::certified_function_path_parts(&function, &path)
+                .expect("the exact function path should be accepted");
+        assert!(!entry_assumptions.contains_proposition_fact(&body_fact));
+    }
 }

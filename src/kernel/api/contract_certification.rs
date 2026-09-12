@@ -1912,16 +1912,10 @@ fn certified_function_path_parts<'a>(
     if proved_function != function {
         return None;
     }
-    let mut assumptions = path.assumptions.clone();
-    assumptions = assumptions_with_propositions(
-        &assumptions,
-        &path
-            .execution_facts()
-            .iter()
-            .map(|fact| fact.proposition().clone())
-            .collect::<Vec<_>>(),
-    );
-    Some((state, arguments, outcome, assumptions))
+    // `path.assumptions` contains only entry premises. Execution facts are
+    // body/post evidence and are added by claim preparation after required
+    // entry resources and their definitions have been evaluated.
+    Some((state, arguments, outcome, path.assumptions.clone()))
 }
 
 fn resource_contexts_definitionally_equal(

@@ -256,7 +256,12 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
     let initial_state = execution.core.frontier.execution_start_state(state).clone();
-    let annotated = annotated_function(
+    // Re-annotation of a frontier-local loop must carry the proof's original
+    // entry facts. Current frontier facts may include body/post observations;
+    // those are never allowed to establish an inherited resource frame.
+    let entry_assumptions =
+        assumptions_from_propositions(proof_context.constants.execution_start_facts.as_slice());
+    let annotated = annotated_function_with_assumptions(
         &bound_function_block,
         parsed_function,
         &initial_state,
@@ -264,6 +269,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        Some(&entry_assumptions),
     )?;
     if execution.core.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
