@@ -2,8 +2,8 @@
 
 ## Status
 
-P2. Forward plan ready for Phase 0. Production implementation remains paused
-until the identity contract is frozen and reviewed.
+P2. Phase 0 identity contract frozen and independently reviewed. Phase 1 is
+ready to implement on a dedicated integration branch.
 
 The kernel no longer contains a production proposition prover. The target
 defect is unretained prerequisite derivation during simple call/statement
@@ -154,16 +154,30 @@ Required properties:
 
 ### Caller-requirement path
 
-Build an immutable caller-requirement index once while establishing the
-initial claim context and store it in shared execution-proof constants. Phase
-0 must freeze a query equivalent to:
+Build an immutable caller-requirement index while establishing the initial
+claim context and store it in shared execution-proof constants. The frozen
+selection boundary is:
 
 ```text
 lookup_unique_caller_requirement(
-    owner, call_site, scope, predicate_or_interface,
-    parameter_slot, source_arguments, expected_entry_snapshot
+    owner, predicate_name, predicate_argument_slot, caller_parameter_slot,
+    source_arguments, expected_entry_snapshot
 ) -> Option<CallerRequirementSelection>
 ```
+
+The current statement index, scope, callee/interface, and callee requirement
+ordinal remain in the retry's call-use validation envelope. They are checked
+before this lookup but are not caller-index keys: one entry requirement may
+legitimately support several call sites. Phase 1 accepts only an ordinary
+caller function, a direct concrete call, and a top-level predicate requirement
+whose selected argument is a direct caller parameter. Other owners and
+argument shapes fail closed until a later phase gives them explicit identity.
+The lookup key comes from the exact callee source clause already selected by
+the unresolved carrier: resolve its source ordinal through the ordinary
+function registry, require a top-level predicate call, substitute the checked
+call arguments, then map its selected direct variable argument to the caller's
+parsed parameter ordinal. This is direct indexed source access, not recovery
+from the generated kernel obligation or a scan of caller requirements.
 
 The result keeps three identities separate: the outer source declaration
 ordinal, the lowered requirement-fact index, and the source token retained by
@@ -175,13 +189,14 @@ occurrences are rejected unless Phase 0 represents them explicitly. The outer
 `RequirementSourceId` must survive predicate unfolding and definedness
 lowering into `ChosenProjection`; derived facts do not replace that identity.
 
-The index uses a shallow owner/call-site/scope/parameter-slot key and bounded
-candidate buckets. Exact expressions may be retained for collision validation,
-but not used as an unbounded selection index. Repeated, generic, and callback
-calls must not collide merely because their expressions print alike. Repeated
-equal-looking requirements at different ordinals remain distinguishable when
-provenance distinguishes them; only candidates the available source identity
-cannot distinguish fail closed as ambiguous.
+The index uses a shallow owner/predicate/argument-slot/parameter-slot key and
+candidate buckets bounded at eight records. Exact expressions may be retained
+for collision validation, but not used as an unbounded selection index.
+Repeated equal-looking requirements at different ordinals remain
+separate records, but a query that does not itself name one of those source IDs
+must reject multiple exact matches as ambiguous. The nonzero-ordinal vertical
+probe places a differently keyed unrelated requirement before the target; it
+does not rely on selecting one of two otherwise identical declarations.
 
 The selected record supplies the caller declaration ordinal and exact source
 presentation. `Choose` remains the authority: it revalidates that ordinal and
@@ -192,23 +207,23 @@ vertical probe proves the proof-local mapping cannot be made sound.
 
 ### Generated-load path
 
-Mint a `LoadSourceId` before source access form is erased. Phase 0 must name the
-exact seam from source expression lowering through
-`read_c_lvalue_expression_paths` to `memory_loads::mint_load_variable`, and
-freeze a concrete cross-layer transport for the opaque source event. A
-Surface-owned sidecar is viable only if the vertical probe demonstrates that
-the event crosses this seam exactly; otherwise use a narrow kernel API
-parameter or result. Carry the ID on each generated-load producer event before
-bindings are aggregated, then record:
+Mint a `LoadSourceId` before source access form is erased. A parallel source
+plan enters `certified_statement_transitions`, follows the evaluated expression
+tree through `read_c_lvalue_expression_paths` to
+`memory_loads::mint_load_variable`, and returns producer events on the
+ephemeral execution-path results. Carry the ID on each event before bindings
+are aggregated, then record:
 
 ```text
-GeneratedLoadKey -> Unique(LoadSourceId) | Ambiguous
+Variable -> Unique(exact GeneratedLoadBinding, LoadSourceId) | Ambiguous
 ```
 
-Keep `GeneratedLoadBinding` as the semantic load key. A presentation consumer
-may retrieve a source spelling only after validating the exact variable,
-pointer, canonical load, and snapshot. Equivalent generated bindings from
-different source occurrences become ambiguous rather than selecting the first.
+The shallow variable is the map key; the complete binding is validation data,
+not a deep hot-path key. Keep `GeneratedLoadBinding` source-independent. A
+presentation consumer may retrieve a source spelling only after validating the
+exact variable, pointer, canonical load, and snapshot. Equivalent generated
+bindings from different source occurrences become ambiguous rather than
+selecting the first.
 
 The sidecar is transition-local proof metadata backed by persistent maps. It
 must define fork sharing, output-sized delta updates, conflict/ambiguity
@@ -216,10 +231,10 @@ tombstones at joins, and rollback on a failed retry. A post-aggregation map
 keyed only by variable or `GeneratedLoadBinding` is too late to recover which
 source occurrence produced an ambiguous binding.
 
-If current lowering APIs cannot return this sidecar without changing semantic
-terms, introduce a narrow lowered-source result containing the proposition and
-its source-load bindings. Do not put source syntax into kernel proposition
-equality.
+Source plans and events are explicit parameters/results, never thread-local or
+global observers. Do not put source syntax or IDs into `CExpression`, kernel
+proposition equality, `GeneratedLoadBinding`, contract identity, or ordinary
+certificate serialization.
 
 ## Primary code touch points
 
@@ -238,29 +253,183 @@ equality.
 Work proceeds through two vertical landings, followed by orchestration and
 cutover. A helper that has no production consumer does not land on master.
 
-### Phase 0 — freeze the identity contract
+### Phase 0 — frozen identity contract
 
-Root owns the design and integration decision. Before production edits:
+The following contract is the implementation boundary. The two identity
+domains are deliberately separate even if a later refactor gives both a common
+source-unit component.
 
-1. Freeze the concrete types, owner model, four lifetimes, propagation paths,
-   join/rollback behavior, and equality/hash/serialization rules. Resolve
-   callbacks, generics, wrappers, repeated occurrences, and snapshots.
-2. Freeze deterministic work bounds, four-size scaling tests, and the typed
-   `CallerRequirementSelection` handoff consumed by root's planner.
+Caller-side types, with private Rust names allowed to vary:
 
-Independent Luna reviews cover soundness/snapshot separation and asymptotic
-persistent-state costs, in parallel or serially as slots permit. Root
-reconciles them and freezes one interface before implementation begins.
+```text
+CallerSourceOwnerId =
+    (OrdinaryFunction, canonical source unit, declaration name)
+RequirementSourceId = (CallerSourceOwnerId, outer requirement ordinal)
+CallerRequirementKey =
+    (predicate name, predicate argument slot, caller parameter slot)
+RequirementFactRole = Principal(bounded unfolding path) | LoweringGuard(ordinal)
+EntryFactOrigin = Requirement(RequirementSourceId, RequirementFactRole) | Derived
+CallerRequirementRecord = {
+    source ID, source proposition, shallow key,
+    principal lowered fact index and exact fact,
+    source arguments, entry snapshot
+}
+CallerRequirementSelection = {
+    source ID, principal lowered fact index and exact fact,
+    source proposition, source arguments, entry snapshot
+}
+ProjectionSourceToken = (RequirementSourceId, bounded connective path)
+```
+
+`initial_claim_context` must construct entry facts with a parallel
+`EntryFactOrigin` stream. Requirement lowering, structural unfolding,
+definedness replacement, and derived-fact insertion preserve or explicitly
+replace those tags; the implementation never rediscovers them by comparing or
+slicing the final proposition vector. Once final entry order is known, one
+linear pass builds the proof-local index and projects the propositions used by
+existing consumers. An eligible record has exactly one principal fact;
+generated definedness and resource/population facts remain `Derived` and cannot
+stand in for it. Structural predicate unfolding updates the principal fact's
+bounded unfolding path while preserving its `RequirementSourceId`; it never
+promotes an unfolded leaf or generated guard to a new source declaration.
+
+Verification threads the exact verified-source-map key already called
+`source_path` into proof construction. Together with the ordinary-function
+declaration name, that is `CallerSourceOwnerId`; the file-scoped registry gains
+this owner input rather than inventing identity from insertion order or a
+display-only name.
+
+`ProofFactSource::Requirement` and labels continue to serialize the outer
+source ordinal. `apply_fixed_state_choose` resolves that source ID through the
+index, then separately checks the recorded fact index and proposition against
+the active fixed-state view. `ChosenProjection` replaces its overloaded
+`source_index` with the source ID, lowered fact index, and projection token.
+Checked unfolding and binder substitution remain proof authority; the token
+only preserves the exact source leaf for presentation.
+
+The caller index uses a persistent map of shallow keys to at most eight
+records. Build time is linear in entry records. Lookup is logarithmic in keys
+plus at most eight exact comparisons of source ID, arguments, fact, and entry
+snapshot. Overfull buckets, duplicate exact candidates, unsupported labels or
+nested/resource/generated forms, a stale fact position, a mismatched
+call-use envelope, or any missing provenance fails with the original unmet
+requirement. Direct concrete calls from ordinary caller proofs are the Phase 1
+scope; callbacks, generic wrappers, and other caller-owner kinds remain a
+fail-closed Phase 3 extension.
+
+Load-side types:
+
+```text
+CSourceOwnerId =
+    (canonical verified source unit, function declaration identity)
+CSourceRegionId = source-layout statement index
+LoadSourceId = (CSourceOwnerId, CSourceRegionId, access occurrence ordinal)
+SourceLoadSite = (LoadSourceId, retained C0 source expression)
+SourceLoadUse = {
+    LoadSourceId, statement-entry SnapshotSelector,
+    expected CMemorySnapshotIdentity, instantiated Surface C expression
+}
+GeneratedLoadSourceEvent = (exact GeneratedLoadBinding, SourceLoadUse)
+GeneratedLoadSourceResolution =
+    Unique(exact GeneratedLoadBinding, SourceLoadUse) | Ambiguous(variable)
+```
+
+Build an immutable source-load table and a statement/expression plan from the
+parsed C0 tree before `to_kernel_expression` erases `Field`, `UnionField`,
+`Index`, `Load`, and `SequentialRead`. Owners are ordered by canonical source
+unit and declaration identity, regions reuse `SourceExecutionLayout` statement
+indices, and occurrences use a documented preorder child traversal. Loop
+iterations reuse the source ID; the binding's snapshot distinguishes uses.
+
+The source plan is a parallel tree, not a map keyed by a deep expression path.
+Alignment is created atomically: recursive C0 lowering returns
+`LoweredExpressionWithSources { expression, plan }` and
+`LoweredStatementWithSources { statement, plan }` (names illustrative), and
+`AnnotationLowerer::lower_statement` composes both members in the same match
+arm. `For` expansion, annotation checks, lowered calls/statement expressions,
+and every other shape-changing rewrite create explicit synthetic `None` plan
+nodes at the moment they create the kernel node. A separately reconstructed
+preorder plan is forbidden.
+
+The annotated-function result exposes the kernel function and its immutable
+owner-tagged source plan/table separately; only the kernel function enters
+semantic contract/theorem identity. Surface execution passes the current
+statement plan explicitly into `certified_statement_transitions`. Kernel
+expression evaluation carries the matching child plan and appends an event at
+the same producer operation that mints the exact `GeneratedLoadBinding`.
+Ephemeral expression, argument, statement, and function paths carry the event
+vector to the certified transition. Every evaluated node consumes exactly its
+aligned plan node; missing, duplicate, or out-of-order consumption fails
+closed. Unsupported or synthetic expressions cannot later acquire provenance
+by inference.
+
+Surface execution forms `SourceLoadUse` from the immutable site plus the exact
+recorded statement-entry selector and memory identity before entering the
+kernel. Its instantiated Surface expression retains the written identifiers
+but no mutable `CState`. The producer checks that the plan node corresponds to
+the evaluated source access and returns it with the exact binding. A later
+consumer must still resolve the selector to a recorded state with the expected
+memory identity and re-lower the spelling there; a missing or overwritten loop
+snapshot therefore fails closed instead of guessing from the current state.
+
+Only an accepted checked transition updates proof presentation. Presentation
+stores a persistent `Variable -> GeneratedLoadSourceResolution` map and an
+append-only event sequence. The first exact binding/source pair is unique; the
+same pair is idempotent; a different binding or source for that variable makes
+a permanent ambiguity tombstone. Forks share roots, joins consume only each
+arm's suffix since the parent, terminal outcomes retain path-local roots, and a
+failed retry records nothing. The existing source-independent generated-load
+map remains unchanged.
+
+The active execution context carries the same `CSourceOwnerId` as its source
+plan. Every transition, event recorder, join, terminal-outcome view, and
+consumer checks that owner before accepting a site. Derived contexts that
+still execute the same function share the owner-tagged table; a context that
+changes the executing function must construct new constants and cannot reuse a
+valid-looking ID from the old table.
+
+A consumer queries by variable, requires a unique resolution, validates every
+field of the exact binding, resolves the source ID in the current function's
+immutable table, checks the retained and instantiated source forms agree,
+resolves the recorded selector to the expected snapshot, re-lowers the Surface
+expression there, and requires the exact defining equation. Missing/wrong
+owners, regions, occurrences, pointers, loads, snapshots, selectors, event
+ancestry, or source spellings fail closed. No pointer/name/hash heuristic or
+ambient scan is an alternate route.
+
+Both layers are presentation/planning metadata. Their IDs, tables, tags,
+events, and resolutions do not participate in `CExpression`, `Proposition`,
+`GeneratedLoadBinding`, contract, theorem, or certificate semantic equality,
+hashing, ordering, or serialization. Expanded proofs contain only ordinary
+Surface operations.
+
+Each corresponding vertical landing includes deterministic tests at four
+sizes; the tests and implementation land with their first production consumer:
+
+- caller index sizes 1, 8, 64, and 512: linear construction, logarithmic
+  shallow lookup, at most eight candidate validations, plus duplicate and
+  overfull ambiguity cases; and
+- load event sizes 8, 32, 128, and 512: logarithmic persistent updates and
+  lookup, output-sized suffix joins, root sharing, rollback, and permanent
+  conflict tombstones; include synthetic-node alignment and branch-plan
+  mismatch cases.
+
+Root owns both interfaces and the eventual retry/cutover wiring. Luna work may
+implement a bounded layer only after these inputs are fixed; independent Luna
+review must check snapshot authority and scaling before each vertical landing.
 
 ### Phase 1 — caller identity through one dynamic proof
 
 Use one integration branch. Master receives this phase only when the complete
 vertical behavior is green.
 
-Root owns shared declarations, retry wiring, and integration. Sequential Luna
-assignments own the bounded caller index and explicit-`have` composition after
-their input interface is frozen; neither edits the retry state machine. An
-independent Luna review audits the combined commit for ambiguity, snapshots,
+Root first commits the tagged-entry/index/selection interfaces on the Phase 1
+integration branch. A Luna branch based on that exact commit implements only
+the bounded index and its unit/scaling tests. Root integrates it and wires the
+retry state machine and `ChosenProjection`; a separate Luna task may implement
+only the explicit-`have` composition after that interface is fixed. Nothing
+reaches master until the whole vertical behavior is green. An independent Luna
+review audits the combined commit for ambiguity, snapshots,
 expansion/deletion, and scaling.
 
 Required vertical evidence:
@@ -296,12 +465,15 @@ Keep the existing dynamic boundary fixtures in the acceptance set, including
 
 Continue on a fresh integration branch based on the landed Phase 1 result.
 
-Root owns the load-sidecar interface, the exact
-`read_c_lvalue_expression_paths` to `mint_load_variable` integration seam, and
-generated-binding integration. Sequential Luna assignments own source
-occurrence propagation and then Surface synthesis/reduced real obligations.
-An independent Luna review checks ambiguity, epochs, source spelling, cold
-expansion, and scaling on the combined candidate.
+Root first commits the atomic lowering/plan and ephemeral evaluator-event
+interfaces on the Phase 2 integration branch, including explicit file/API
+ownership. A Luna branch based on that commit owns only source-occurrence
+propagation and scaling tests. After root integrates it, a second Luna task
+owns only the Surface sidecar/synthesis consumer and reduced real obligations.
+Root owns generated-binding integration and retry interactions. Nothing reaches
+master until the whole vertical behavior is green. An independent Luna review
+checks ambiguity, epochs, source spelling, cold expansion, and scaling on the
+combined candidate.
 
 Required vertical evidence:
 
