@@ -10,7 +10,7 @@ use super::reasoning::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
 mod contracts;
@@ -3937,13 +3937,18 @@ pub enum CResourceSnapshot {
     Post,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct CResourceSpec {
     term: CResourceTerm,
     access: CResourceAccessMode,
     quantity: CResourceQuantity,
     role: CResourceTransferRole,
     snapshot: CResourceSnapshot,
+    /// Source-level clause identity, when lowering expanded one source
+    /// clause into more than one normalized specification.  Keeping this on
+    /// the spec lets kernel diagnostics retain the surface clause numbering
+    /// without making the evaluator know about surface syntax.
+    clause_position: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4067,6 +4072,7 @@ impl CResourceSpec {
             quantity,
             role,
             snapshot,
+            clause_position: None,
         };
         spec.validate()?;
         Ok(spec)
@@ -4233,6 +4239,18 @@ impl CResourceSpec {
         self.snapshot
     }
 
+    /// Attach the zero-based source clause position and the total number of
+    /// source resource clauses represented by this normalized specification.
+    /// All leaves produced from one aggregate carry the same position.
+    pub fn with_clause_position(mut self, index: usize, total: usize) -> Self {
+        self.clause_position = Some((index, total));
+        self
+    }
+
+    pub(crate) fn clause_position(&self) -> Option<(usize, usize)> {
+        self.clause_position
+    }
+
     pub fn family(&self) -> ResourceFamily {
         self.term.family()
     }
@@ -4346,6 +4364,58 @@ impl CResourceSpec {
 
     fn validate(&self) -> Result<(), CResourceSpecError> {
         crate::kernel::primitives::resource_algebra::validate_resource_spec(self)
+    }
+}
+
+// Clause positions are diagnostic provenance, not part of a resource's
+// identity.  In particular, the same normalized term may occur in a
+// precondition and a postcondition (or in two separately expanded source
+// clauses); changing its source position must not change contract identity,
+// resource indexing, or equality used by the algebra.
+impl PartialEq for CResourceSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.term == other.term
+            && self.access == other.access
+            && self.quantity == other.quantity
+            && self.role == other.role
+            && self.snapshot == other.snapshot
+    }
+}
+
+impl Eq for CResourceSpec {}
+
+impl Hash for CResourceSpec {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.term.hash(state);
+        self.access.hash(state);
+        self.quantity.hash(state);
+        self.role.hash(state);
+        self.snapshot.hash(state);
+    }
+}
+
+impl Ord for CResourceSpec {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (
+            &self.term,
+            self.access,
+            &self.quantity,
+            self.role,
+            self.snapshot,
+        )
+            .cmp(&(
+                &other.term,
+                other.access,
+                &other.quantity,
+                other.role,
+                other.snapshot,
+            ))
+    }
+}
+
+impl PartialOrd for CResourceSpec {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

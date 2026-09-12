@@ -325,6 +325,72 @@ passes `195/195` (the upstream base adds two matching callback tests), the
 upstream callback/algebraic-equation filters pass, and the source-capability
 adapter is not a separate contract evaluator.
 
+## W3 handoff (2026-09-11)
+
+W3 started from the green pushed master checkpoint `2b7e9e32` in the isolated
+`/tmp/click-mvr-w3` worktree on `codex/mvr-w3`. The completed branch tip is
+intentionally unmerged and unpushed; the manager should cherry-pick the green
+commit reported with this handoff. No C source, Click syntax, budget,
+quarantine, or excluded semantics changed.
+
+Entry resource clauses now lower symbolically only as a provisional surface
+context, then the shared kernel `evaluate_function_resource_context` evaluates
+the complete clause set for both direct functions and body-independent named
+contracts. Pure loadability requirements become checked read views, while
+only entry instance identities are seeded; postconditions, arbitrary owned
+composite bodies, and concrete function bodies never become entry authority.
+Quantified nonnegative assumptions are supplied through the same entry setup.
+Successful composite clauses incrementally expose only their checked memory
+children to the bounded dependency worklist, so dependent arguments can be
+evaluated without a whole-context fixed-point rescan for every dependency
+depth. Named-contract refusals therefore reach the kernel evaluator; the
+surface segment check remains only a source-rich diagnostic fallback after a
+kernel refusal.
+
+Normalized specifications produced from a `MemoryAggregate` now carry source
+clause provenance on every leaf, and the kernel uses that provenance for the
+same one-based clause numbering as the surface. Provenance is deliberately
+ignored by resource equality, ordering, hashing, and contract identity.
+
+Files changed: `src/kernel/functions.rs`, `src/kernel/mod.rs`,
+`src/kernel/primitives.rs`, `src/kernel/tests/resource_tests.rs`,
+`src/surface/lowering/resource_lowering.rs`, `src/surface/proof.rs`,
+`src/surface/verification.rs`, this issue document, and the new
+`mdtests/contract_owns_composite_argument.md` plus
+`mdtests/contract_owns_composite_argument_rejects_missing_access.md`.
+
+The new direct and named-contract regression evaluates dependent composite
+arguments through three authorized dependency levels and independently keeps
+the missing-access variant rejected by the kernel. The source-position unit
+regression covers several normalized leaves from one aggregate and a second
+stalled source clause. Existing callback, explicit execution-theorem,
+automatic-formation, and certification fixtures continue to exercise their
+body-independent entry paths; their applicability and bounded candidate
+rules were not broadened. G2 is classified as already fixed upstream by
+`7e55fdc7` and retained by this work (`contract_owns_through_composite_field.md`).
+G3 is fixed here for named dependent/composite entry evaluation; the existing
+unheld-link rejection remains a rejection, with the kernel authoritative and
+the surface check diagnostic-only.
+
+The dependency work curve is deterministic over sizes `4, 8, 16, 32`, with
+observed work `70, 168, 412, 1092`; each node uses a distinct concrete block
+so the measurement charges dependency nodes/edges rather than same-block
+range normalization, and adjacent sizes satisfy the test's `4x + 256` bound.
+
+Checks passed: `cargo check --all-targets`, `cargo fmt --all -- --check`, and
+`git diff --check`; focused kernel tests `172/172`; the complete resource
+mdtest filter; the examples gate `3/3` including bounded-pool; and the
+unfiltered `scripts/check.sh` gate with `2584` tests and all `14` fixture /
+example checks passing (only the repository's existing quarantined example
+is skipped). No tooling-stop condition or stale verifier process was found.
+
+Removed paths are the old unconditional surface-only entry authority, the
+per-depth batch retry behavior, and the temporary composite reduction. The
+result preserves clause roles, snapshots, lexical scopes, local missing
+authority/guard/cycle diagnostics, no free unfolding, and no forward-language
+change. The manager should record the final commit hash when integrating; W3
+did not merge or push from this worktree.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

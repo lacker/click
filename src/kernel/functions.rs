@@ -12021,7 +12021,7 @@ pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
         && resource_context_definitionally_contains(right, left, definitions, memory, assumptions)
 }
 
-pub(super) fn evaluate_function_resource_context(
+pub(crate) fn evaluate_function_resource_context(
     state: &CState,
     resources: &[CResourceSpec],
     definitions: &[CCompositeResourceDefinition],
@@ -12124,17 +12124,19 @@ fn evaluate_resource_clauses_against_whole_section(
         }
     }
     while !pending.is_empty() {
-        let evaluation_state = state
-            .clone()
-            .with_resource_context(resource_clause_section_supply(
-                state,
-                &supplied,
-                definitions,
-                assumptions,
-            ));
+        // Treat pending clauses as a worklist rather than a fixed-point
+        // batch.  Rebuild the supplied read view after each successful
+        // clause, so a dependency chain can flow through the same pass; a
+        // batch snapshot would force one full retry per depth.  The stack
+        // order also keeps the usual reverse-written dependent clauses close
+        // to the clause that supplies their first cell.
         let mut progressed = false;
         let mut still_pending = Vec::new();
-        for index in pending {
+        let pending_count = pending.len();
+        let mut section_supply =
+            resource_clause_section_supply(state, &supplied, definitions, assumptions);
+        while let Some(index) = pending.pop() {
+            let evaluation_state = state.clone().with_resource_context(section_supply.clone());
             match evaluate_function_resource_spec(
                 &evaluation_state,
                 &resources[index],
@@ -12142,6 +12144,13 @@ fn evaluate_resource_clauses_against_whole_section(
                 budget,
             )? {
                 Ok(resource) => {
+                    section_supply = resource_clause_supply_with_fact(
+                        section_supply,
+                        resource.clone(),
+                        definitions,
+                        state.memory(),
+                        assumptions,
+                    );
                     supplied.push(resource.clone());
                     evaluated[index] = Some(resource);
                     failures.remove(&index);
@@ -12154,29 +12163,51 @@ fn evaluate_resource_clauses_against_whole_section(
             }
         }
         pending = still_pending;
-        if !progressed {
+        if !progressed || pending.len() == pending_count {
             break;
         }
     }
     // A clause refused for its own shape is reported at its own position: no
     // other clause's authority was ever going to repair it, so naming a pair
     // would send the user to a clause that is fine.
-    let refused = pending.iter().copied().find(|index| {
-        failures
-            .get(index)
-            .is_none_or(|error| !resource_clause_failure_awaits_supply(error))
-    });
-    if let Some(index) = refused.or_else(|| pending.first().copied()) {
+    let refused = pending
+        .iter()
+        .copied()
+        .filter(|index| {
+            failures
+                .get(index)
+                .is_none_or(|error| !resource_clause_failure_awaits_supply(error))
+        })
+        .min_by_key(|index| resource_clause_position(resources, *index));
+    if let Some(index) = refused.or_else(|| {
+        pending
+            .iter()
+            .copied()
+            .min_by_key(|index| resource_clause_position(resources, *index))
+    }) {
         let error = failures
             .remove(&index)
             .unwrap_or_else(|| CRuntimeError::FunctionContract("unevaluated".to_string()));
         let cycle = refused
             .is_none()
-            .then(|| pending.iter().copied().find(|other| *other != index))
+            .then(|| {
+                let source_index = resource_clause_position(resources, index).0;
+                pending
+                    .iter()
+                    .copied()
+                    .filter(|other| {
+                        *other != index
+                            && resource_clause_position(resources, *other).0 != source_index
+                    })
+                    .min_by_key(|other| resource_clause_position(resources, *other))
+                    .map(|other| (index, other))
+            })
             .flatten();
         return Ok(Err(match cycle {
-            Some(other) => resource_clause_cycle_runtime_error(error, index, other),
-            None => resource_clause_runtime_error(error, index, resources.len()),
+            Some((index, other)) => {
+                resource_clause_cycle_runtime_error(error, index, other, resources)
+            }
+            None => resource_clause_runtime_error(error, index, resources),
         }));
     }
     Ok(Ok(evaluated.into_iter().flatten().collect()))
@@ -12316,6 +12347,51 @@ fn selected_instance_arm_read_authority(
         .collect()
 }
 
+/// Incrementally exposes the memory cells beneath one newly evaluated
+/// composite clause.  The outer section supply already expanded all facts
+/// from the previous pass; walking only this fact and its nested children
+/// keeps a dependency chain proportional to its own nodes and edges instead
+/// of rescanning the complete section after every successful retry.
+fn resource_clause_supply_with_fact(
+    mut supply: ResourceContext,
+    fact: CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> ResourceContext {
+    supply = supply.unchecked_with_fact(fact.clone());
+    if definitions.is_empty() || !matches!(fact.resource(), CResource::Composite { .. }) {
+        return supply;
+    }
+    let mut pending = VecDeque::from([fact]);
+    let mut seen = BTreeSet::new();
+    while let Some(composite) = pending.pop_front() {
+        if !seen.insert(composite.clone()) {
+            continue;
+        }
+        let expansion_context = supply.clone().unchecked_with_fact(composite.clone());
+        let Some((_, children, _)) = expand_composite_resource_fact_with_children(
+            &expansion_context,
+            &composite,
+            definitions,
+            memory,
+            assumptions,
+        ) else {
+            continue;
+        };
+        for child in children {
+            match child.resource() {
+                CResource::Memory(range) => {
+                    supply = supply.unchecked_with_fact(CResourceFact::view_memory(range.clone()));
+                }
+                CResource::Composite { .. } => pending.push_back(child),
+                CResource::Token { .. } | CResource::Instance(_) => {}
+            }
+        }
+    }
+    supply
+}
+
 /// Names which resource clause of a contract section could not be addressed.
 ///
 /// Two checks reach this conclusion about the same contract: the surface
@@ -12344,14 +12420,22 @@ pub(crate) fn resource_clause_stall_note(index: usize, other: usize) -> String {
 /// identification available here, and it is enough for a user to find the
 /// clause. Structured errors already print the offending resource and are
 /// passed through unchanged.
+fn resource_clause_position(resources: &[CResourceSpec], index: usize) -> (usize, usize) {
+    resources
+        .get(index)
+        .and_then(CResourceSpec::clause_position)
+        .unwrap_or((index, resources.len()))
+}
+
 fn resource_clause_runtime_error(
     error: CRuntimeError,
     index: usize,
-    total: usize,
+    resources: &[CResourceSpec],
 ) -> CRuntimeError {
     let CRuntimeError::FunctionContract(message) = error else {
         return error;
     };
+    let (index, total) = resource_clause_position(resources, index);
     CRuntimeError::FunctionContract(format!(
         "{message} ({})",
         resource_clause_position_note(index, total)
@@ -12375,10 +12459,13 @@ fn resource_clause_cycle_runtime_error(
     error: CRuntimeError,
     index: usize,
     other: usize,
+    resources: &[CResourceSpec],
 ) -> CRuntimeError {
     let CRuntimeError::FunctionContract(message) = error else {
         return error;
     };
+    let (index, _) = resource_clause_position(resources, index);
+    let (other, _) = resource_clause_position(resources, other);
     CRuntimeError::FunctionContract(format!(
         "{message} ({})",
         resource_clause_stall_note(index, other)
@@ -12565,7 +12652,7 @@ pub(super) fn evaluate_function_resource_spec(
 /// requirements. A function may assume these at its own entry just as it may
 /// assume its ordinary `requires`; call sites still use
 /// `evaluate_function_resource_spec` and must prove every condition.
-pub(super) fn quantified_resource_requirement_assumptions(
+pub(crate) fn quantified_resource_requirement_assumptions(
     state: &CState,
     resources: &[CResourceSpec],
     assumptions: &PureFactContext,

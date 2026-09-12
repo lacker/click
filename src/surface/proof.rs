@@ -2379,19 +2379,24 @@ pub(super) fn initial_claim_context(
             requirement_pure_facts.insert(0, kernel);
         }
     }
-    // Resources are addressed in the same entry state that lowered the
-    // requirements, so a clause reading through a parameter cell and a
-    // requirement reading the same cell are justified by the same facts.
-    crate::surface::lowering::check_resource_segment_base_loadability(
-        function_block.requires(),
-        parsed_function.parameters(),
+    // Resource terms are first built provisionally so dependent arguments can
+    // retain their symbolic loads.  The kernel then evaluates the complete
+    // clause section against its explicit supplies and the pure requirements;
+    // this is the authority for both direct and named contracts.  A surface
+    // segment diagnostic is used only to enrich a kernel refusal, never to
+    // authorize a clause independently.
+    state = evaluate_entry_resource_context(
+        function_block,
+        parsed_function,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        state,
         &arguments,
-        &state,
-        &assumptions_from_propositions(&requirement_pure_facts),
-    )
-    .map_err(|error| {
-        ClickError::new(format!("`{claim_label}` setup failed: {}", error.message()))
-    })?;
+        &requirement_pure_facts,
+        include_owned_composite_cores,
+        claim_label,
+    )?;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
             continue;
@@ -2420,6 +2425,159 @@ pub(super) fn initial_claim_context(
         requirement_pure_facts,
         surface_propositions,
     ))
+}
+
+/// Evaluates entry resource clauses once, after all pure requirements have
+/// been lowered.  Surface entry setup needs a provisional resource context in
+/// order to materialize folded composite cells, but that context is not
+/// authority: the kernel section evaluator starts from only the named
+/// instance identities that a `Named` clause must validate and derives every
+/// other read supply from clauses that it successfully evaluates.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_entry_resource_context(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    state: CState,
+    arguments: &[CExpression],
+    pure_facts: &[Proposition],
+    include_owned_composite_cores: bool,
+    claim_label: &str,
+) -> Result<CState, ClickError> {
+    let (resource_specs, _) = crate::surface::verification::function_resource_summary(
+        function_block,
+        parsed_function,
+        resource_environment,
+    )?;
+    if resource_specs.is_empty() {
+        return Ok(state);
+    }
+
+    // The kernel evaluator resolves source parameter names through its local
+    // environment.  Entry lowering already has their exact symbolic values;
+    // install those values without rebinding frames or inspecting a concrete
+    // function body (named contracts deliberately have none).
+    let values =
+        crate::surface::lowering::parameter_values(parsed_function.parameters(), arguments)?;
+    let instance_facts = state
+        .resources()
+        .facts()
+        .iter()
+        .filter(|fact| matches!(fact.resource(), CResource::Instance(_)))
+        .cloned()
+        .collect::<Vec<_>>();
+    // A function assumes its pure preconditions at entry.  A loadability
+    // precondition is therefore a checked read capability for evaluating a
+    // dependent resource argument, but it is never ownership or body
+    // authority.  Keep a read view for each concrete loadability atom,
+    // matching the projection used by certification.
+    let precondition_read_facts = pure_facts
+        .iter()
+        .filter_map(|fact| {
+            let Proposition::CMemoryLoadable { base, bytes, .. } = fact else {
+                return None;
+            };
+            bytes.as_const().map(|bytes| {
+                CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+                    base.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(bytes),
+                    1,
+                ))
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut evaluation_state = state.clone().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_facts(instance_facts)
+            .unchecked_with_facts(precondition_read_facts),
+    );
+    for parameter in parsed_function.parameters() {
+        if let Some(value) = values.get(parameter.name()) {
+            evaluation_state = evaluation_state.with_local(parameter.name(), value.clone());
+        }
+    }
+    let assumptions = assumptions_from_propositions(pure_facts);
+    let definitions = crate::surface::verification::composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let mut assumptions = assumptions;
+    let mut budget = ExecutionBudget::default();
+    let quantity_assumptions = match crate::kernel::quantified_resource_requirement_assumptions(
+        &evaluation_state,
+        &resource_specs,
+        &assumptions,
+        &mut budget,
+    ) {
+        Ok(Ok(propositions)) => propositions,
+        Ok(Err(error)) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
+            )));
+        }
+        Err(limit) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+            )));
+        }
+    };
+    for proposition in quantity_assumptions {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
+    let evaluated = match crate::kernel::evaluate_function_resource_context(
+        &evaluation_state,
+        &resource_specs,
+        &definitions,
+        &assumptions,
+        &mut budget,
+    ) {
+        Ok(Ok(resources)) => resources,
+        Ok(Err(error)) => {
+            // Keep the established source-rich spelling for a dependent
+            // memory segment.  This is a diagnostic projection of the
+            // kernel's already-final refusal, not a second acceptance path;
+            // declared/composite argument failures have no surface fallback
+            // and retain the kernel's clause-positioned error.
+            if let Err(surface_error) =
+                crate::surface::lowering::check_resource_segment_base_loadability(
+                    function_block.requires(),
+                    parsed_function.parameters(),
+                    arguments,
+                    &evaluation_state,
+                    &assumptions,
+                )
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` setup failed: {}",
+                    surface_error.message()
+                )));
+            }
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
+            )));
+        }
+        Err(limit) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: execution limit {limit:?}"
+            )));
+        }
+    };
+    let state = state.with_resource_context(evaluated);
+    project_initial_composite_resource_cores(
+        resource_environment,
+        parsed_function.parameters(),
+        arguments,
+        state,
+        pure_facts,
+        claim_label,
+        include_owned_composite_cores,
+        predicate_environment,
+        click_function_environment,
+    )
 }
 
 fn click_proposition_mentions_defined(proposition: &ClickProposition) -> bool {
