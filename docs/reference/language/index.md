@@ -1483,12 +1483,30 @@ let node = step(init(p, left, right, value), { l: a, r: b });
 
 The introduced name is an ordinary owned instance afterwards: it can be folded
 into a parent as a child, or returned by the caller's own `produces` clause.
-A `produces` binder that no `let` introduces is an error, and so is a `let` on
-a call that produces nothing. A callee that produces more than one instance is
-not yet callable this way. The callee's binder names come from its own
-sidecar, so that sidecar must be declared before the proof that calls it.
-A named contract takes its instances positionally instead, as
-`step(Exact(k))`, because it declares a parameter list.
+A `produces` binder that no `let` introduces is an error. A callee that
+produces more than one instance is not yet callable this way.
+
+On a callee that declares no `produces` binder, the same `let` names the
+call's scalar result:
+
+<!-- verified-example: mdtests/call_result_in_condition.md -->
+```click
+let r = step(classify(x), { });
+```
+
+This is how a proof refers to a result the C never stores, as in
+`if (f(x))` and `return f(x);`, where the branch fact and the callee's
+guarantee are otherwise about a value with no name. The bound name is an
+ordinary value in propositions and keeps denoting that returned value after
+later statements; `result` on a `return f(x);` path is that same value. A
+`let` on a call whose result the C discards is an error, and so is a name that
+is already a C local or a proof-local binding. The map is still written, as
+`{ }` when the callee declares no instance binder at all.
+
+The callee's binder names come from its own sidecar, so that sidecar must be
+declared before the proof that calls it. A named contract takes its instances
+positionally instead, as `step(Exact(k))`, because it declares a parameter
+list.
 
 ## Propositions
 

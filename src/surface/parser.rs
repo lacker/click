@@ -2923,6 +2923,7 @@ impl Parser {
                 "`{callee}` produces more than one resource instance; a call step introduces one"
             )));
         }
+        let mut result = None;
         let produced = match (produced, produced_declaration) {
             (None, None) => None,
             (None, Some((produced, _))) => {
@@ -2930,10 +2931,21 @@ impl Parser {
                     "`{callee}` produces `{produced}`; introduce it with `let {produced} = step(...)`"
                 )));
             }
+            // The callee produces no instance, so the same `let` names the
+            // call's scalar result. The frontier's call statement decides
+            // whether there is one; the parser only records the name.
             (Some(name), None) => {
-                return Err(self.error(format!(
-                    "`{callee}` produces no resource instance, so `let {name} = step(...)` introduces nothing"
-                )));
+                if self.current_contract_bindings.contains(&name)
+                    || self.current_integer_params.contains(&name)
+                    || self.current_integer_lets.contains(&name)
+                    || self.current_resource_bindings.contains_key(&name)
+                {
+                    return Err(self.error(format!(
+                        "call result name `{name}` conflicts with a C, pure, or resource binding"
+                    )));
+                }
+                result = Some(name);
+                None
             }
             (Some(name), Some((produced, declaration))) => {
                 if self.current_contract_bindings.contains(&name)
@@ -2974,6 +2986,7 @@ impl Parser {
             arguments,
             binders,
             produced,
+            result,
         })
     }
 

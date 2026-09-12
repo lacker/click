@@ -539,9 +539,13 @@ sequence:
   records each node's address, payload, and both submodels. It verifies the
   unchanged initializer, both rotations against `heap_rotate_left` and
   `heap_rotate_right` with in-order preservation, and the recursive
-  depth-first search's model preservation, alongside pure in-order and
-  membership theorems. The negative rotations are
-  `mdtests/rotation_model_rejects_dropped_subtree.md`,
+  depth-first search against `heap_member`, alongside pure in-order and
+  membership theorems. Both of its recursive calls appear only in a condition
+  or a return expression, and each is named with the call step's `let` binder;
+  `mdtests/call_result_in_condition.md` is the minimal form of that naming,
+  with `mdtests/call_result_wrong_value.md` and
+  `mdtests/call_result_discarded.md` as its negatives. The negative rotations
+  are `mdtests/rotation_model_rejects_dropped_subtree.md`,
   `mdtests/rotation_model_rejects_reused_child.md`, and
   `mdtests/rotation_model_rejects_swapped_order.md`, with
   `mdtests/rotation_model_preserved.md` as their passing sibling.

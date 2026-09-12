@@ -239,6 +239,42 @@ impl<'a> Proof<'a> {
         self.try_simp_closure()
     }
 
+    /// The C local the call at the current frontier assigns its result to.
+    ///
+    /// A call whose result is used in a condition or a return expression is
+    /// lowered as an assignment to one synthesized local, so naming that
+    /// local's post-call value is what gives a proof a surface name for the
+    /// result. A call in statement position discards its result and has no
+    /// such local; naming it is an error rather than a silent no-op.
+    fn frontier_call_result_local(&self, name: &String) -> Result<String, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`step` requires an execution-frontier proof"));
+        };
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        if self.state().locals().values.contains_key(name)
+            || execution.core.state.locals().contains_name(name)
+        {
+            return Err(self.step_error(format!("call result name `{name}` is already in scope")));
+        }
+        let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
+            execution.view(context),
+            &execution.core.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "step",
+        )?;
+        match statement {
+            CStatement::CallAssign { target, .. } => Ok(target),
+            _ => Err(self.step_error(format!(
+                "`let {name} = step(...)` names a call result, but this call's result is unused"
+            ))),
+        }
+    }
+
     pub(super) fn apply_execution_statement_step(
         &self,
         step: ProofStep,
@@ -256,6 +292,22 @@ impl<'a> Proof<'a> {
     ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step` requires an execution-frontier proof"));
+        };
+        // `let name = step(callee(...), { ... })` on a callee that produces no
+        // resource instance names the call's scalar result. Resolve the C
+        // local this one call assigns before the step runs, so the name can be
+        // bound to its post-call value below. This reads the statement the
+        // frontier already points at; it searches nothing.
+        let call_result_target = match &step {
+            ProofStep::StepCall(transport) => match transport.result() {
+                Some(name) => {
+                    let name = name.to_string();
+                    let target = self.frontier_call_result_local(&name)?;
+                    Some((name, target))
+                }
+                None => None,
+            },
+            _ => None,
         };
         let selected_environment;
         let selected_context;
@@ -396,6 +448,28 @@ impl<'a> Proof<'a> {
                     .record_lowering(&surface, fact);
             }
         }
+        // The call's result is the value its own assignment left in the C
+        // local the frontier statement named: one indexed read of that name,
+        // bound as the proof-local value the surface name denotes from here on.
+        let call_result_binding = match &call_result_target {
+            Some((name, target)) => {
+                let value = checked
+                    .execution
+                    .core
+                    .state
+                    .locals()
+                    .get(target)
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.step_error(format!("`let {name} = step(...)` found no call result"))
+                    })?;
+                Some((
+                    name.clone(),
+                    ContractExpression::CFragment(CExpression::Value(value)),
+                ))
+            }
+            None => None,
+        };
         let added_facts = checked.added_facts;
         let state = self
             .state
@@ -406,6 +480,14 @@ impl<'a> Proof<'a> {
                 added_facts,
             )
             .map_err(|error| self.execution_update_error("`step`", error))?;
+        let state = match call_result_binding {
+            Some((name, value)) => {
+                let mut locals = state.locals().clone();
+                locals.values = locals.values.with_inserted(name, value);
+                state.with_locals(locals)
+            }
+            None => state,
+        };
         Ok(Self {
             site: self.site.clone(),
             context: self.context.clone(),

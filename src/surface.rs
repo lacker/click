@@ -703,13 +703,17 @@ impl CallBinderBinding {
 /// `step(callee(arguments), { binder: instance, ... })`: one ordinary C call
 /// with every instance binder of the callee bound explicitly. A callee
 /// `produces` binder is introduced by the surrounding
-/// `let name = step(...)` and is carried in `produced`.
+/// `let name = step(...)` and is carried in `produced`. When the callee
+/// declares no `produces` binder, the same `let` names the call's scalar
+/// result instead and is carried in `result`; at most one of the two is
+/// ever set.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallBinderTransport {
     callee: String,
     arguments: Vec<ContractExpression>,
     binders: Vec<CallBinderBinding>,
     produced: Option<CallBinderBinding>,
+    result: Option<String>,
 }
 
 impl CallBinderTransport {
@@ -728,12 +732,20 @@ impl CallBinderTransport {
     pub fn produced(&self) -> Option<&CallBinderBinding> {
         self.produced.as_ref()
     }
+
+    /// The proof-local name this step gives the call's scalar result, when
+    /// the callee produces no resource instance.
+    pub fn result(&self) -> Option<&str> {
+        self.result.as_deref()
+    }
 }
 
 impl std::fmt::Display for CallBinderTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(produced) = &self.produced {
             write!(f, "let {} = ", produced.instance)?;
+        } else if let Some(result) = &self.result {
+            write!(f, "let {result} = ")?;
         }
         write!(f, "step({}(", self.callee)?;
         for (index, argument) in self.arguments.iter().enumerate() {
