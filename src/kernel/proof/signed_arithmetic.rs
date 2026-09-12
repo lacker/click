@@ -73,6 +73,15 @@ pub(crate) struct SignedArithmeticAtom {
     tokens: Vec<SignedArithmeticAtomToken>,
 }
 
+impl SignedArithmeticAtom {
+    /// Build the bounded identity used by claims and checked term arenas.
+    /// Unsupported payload families fail closed until their own flat token
+    /// encoding is added here.
+    pub(crate) fn from_term(term: &Bitvector32Term) -> Option<Self> {
+        signed_arithmetic_atom_key(term)
+    }
+}
+
 fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmeticAtom> {
     // Validate the whole supported fragment once.  In particular, do not
     // re-walk every nested pure application while emitting its flat key.
