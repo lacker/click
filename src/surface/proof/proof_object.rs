@@ -380,11 +380,11 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
         }),
         ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument,
+            arguments,
             premises,
         } => Some(ProofStep::ApplyInduction {
             hypothesis: hypothesis.clone(),
-            argument: argument.clone(),
+            arguments: arguments.clone(),
             premises: premises.clone(),
         }),
         ProofTactic::UnfoldPredicate(name) => Some(ProofStep::UnfoldPredicate(name.clone())),

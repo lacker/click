@@ -236,6 +236,28 @@ moves the cursor to a node of another tree the contract owns, and
 [loop_context_frame_refold_rejected](../../mdtests/loop_context_frame_refold_rejected.md)
 folds a second frame from children the first frame already consumed.
 
+## Transporting a context's sequence
+
+A fixup replaces the focused subtree, so a proof about the whole tree needs
+that the surrounding context carries an in-order equality down to the root:
+
+```click
+theorem plug_inorder_transport(ctx: Context, a: HeapTree, b: HeapTree) {
+    requires heap_inorder(a) == heap_inorder(b);
+    ensures heap_inorder(plug(ctx, a)) == heap_inorder(plug(ctx, b)) by {
+        induct(ctx) as ih { ... }
+    }
+}
+```
+
+Each frame arm plugs its own node between the context and the subtree, so the
+residual goal is this theorem for `up` at the two *larger* subtrees
+`Node(parent, value, a, sibling)` and `Node(parent, value, b, sibling)`, not at
+`a` and `b`. The hypothesis is therefore instantiated at the complete parameter
+list, `ih(up, Node(...), Node(...))`, and its requirement at those arguments is
+established by the `have` just above the application. A hypothesis fixed at the
+theorem's own `a` and `b` has no applicable instance here.
+
 ## Negative rotation regressions
 
 Three focused mdtests keep the model honest against rotations that are wrong

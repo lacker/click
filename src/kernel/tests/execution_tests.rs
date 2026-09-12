@@ -1017,6 +1017,48 @@ fn unknown_call_assign_is_runtime_error() {
     );
 }
 
+/// A guard operand the function has no authority to read leaves the guard
+/// undecided. Neither truthiness request may answer with the operands that
+/// happened to evaluate: assuming `!(a != 0)` alone at the exit is strictly
+/// weaker than assuming `!(a != 0 && p[0] != 0)`, and that gap once proved
+/// `result == 0` for a function that can return a nonzero `a`.
+#[test]
+fn unreadable_guard_operand_leaves_the_condition_undecided() {
+    let pointer = Pointer {
+        block: "external".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("a", int32(Bitvector32Term::Variable(Variable(1))))
+        .with_local("p", CValue::typed_pointer(pointer, CType::Int32Pointer));
+    let condition = c_and(
+        c_not_equal(c_variable("a"), c_int32_literal(0)),
+        c_not_equal(c_load(c_variable("p")), c_int32_literal(0)),
+    );
+    let mut budget = ExecutionBudget::for_c_expression(&condition);
+    for desired_truthiness in [false, true] {
+        let assumptions = crate::kernel::loops::assume_condition_truthiness(
+            &state,
+            &condition,
+            &PureFactContext::new(),
+            &[],
+            &[],
+            desired_truthiness,
+            &mut budget,
+        )
+        .expect("the guard should evaluate within its budget");
+        assert!(
+            assumptions.iter().any(|assumption| matches!(
+                assumption.undecided_outcome(),
+                Some(CStatementOutcome::RuntimeError(
+                    CRuntimeError::MissingResource { .. }
+                ))
+            )),
+            "the unreadable operand must be reported, not dropped (truthiness {desired_truthiness})"
+        );
+    }
+}
+
 #[test]
 fn while_loop_executes_concrete_countdown() {
     let state = CState::new().with_local("x", int32(3));

@@ -552,18 +552,24 @@ fn expand_declared_resource_tactic_with_expressions(
         }
         ProofTactic::ApplyInduction {
             hypothesis,
-            argument,
+            arguments,
         } => Ok(ProofTactic::ApplyInduction {
             hypothesis,
-            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| expand_declared_resource_expression(argument, resource_definitions))
+                .collect::<Result<_, _>>()?,
         }),
         ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument,
+            arguments,
             premises,
         } => Ok(ProofTactic::ApplyInductionUsing {
             hypothesis,
-            argument: expand_declared_resource_expression(argument, resource_definitions)?,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| expand_declared_resource_expression(argument, resource_definitions))
+                .collect::<Result<_, _>>()?,
             premises: premises
                 .into_iter()
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))

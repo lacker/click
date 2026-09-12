@@ -519,6 +519,182 @@ fn external_symbolic_element_requirement_term(
     }
 }
 
+fn external_symbolic_element_constant_byte_requirement(
+    memory: CMemory,
+    index: Variable,
+) -> Proposition {
+    let mut requirement = external_symbolic_element_requirement(memory, index);
+    let Proposition::CMemoryLoadable { bytes, .. } = &mut requirement else {
+        unreachable!();
+    };
+    *bytes = Bitvector32Term::Constant(1);
+    requirement
+}
+
+/// The unresolved `strlen` carrier: an existential length whose successor is
+/// defined, followed by a guarded universal one-byte loadability range. The
+/// caller's outer `loadable(bytes[0..len + 1])` fact is a separate premise;
+/// this regression targets the quantified `k` carrier that retains `1`.
+fn full_external_guarded_range_surface() -> ClickProposition {
+    let length = ContractExpression::CFragment(CExpression::Variable("__click_q0".into()));
+    let index = ContractExpression::CFragment(CExpression::Variable("__click_q1".into()));
+    let quantified_range = ClickProposition::Loadable {
+        segment: ContractSegment {
+            state: ContractSegmentState::Current,
+            base: CExpression::Variable("bytes".into()),
+            start: CExpression::Variable("__click_q1".into()),
+            end: CExpression::Add(
+                Box::new(CExpression::Variable("__click_q1".into())),
+                Box::new(CExpression::Value(int32(1))),
+            ),
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(CExpression::Variable("bytes".into())),
+                start: index.clone(),
+                end: ContractExpression::Add(
+                    Box::new(index.clone()),
+                    Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+                ),
+            },
+        },
+    };
+    let all_before_loadable = ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "__click_q1".into(),
+        body: Box::new(ClickProposition::Implies(
+            Box::new(ClickProposition::And(
+                Box::new(ClickProposition::Comparison {
+                    left: index.clone(),
+                    operator: ComparisonOperator::GreaterEqual,
+                    right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                }),
+                Box::new(ClickProposition::Comparison {
+                    left: index.clone(),
+                    operator: ComparisonOperator::LessThan,
+                    right: length.clone(),
+                }),
+            )),
+            Box::new(quantified_range),
+        )),
+    };
+    ClickProposition::Exists {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "__click_q0".into(),
+        body: Box::new(ClickProposition::And(
+            Box::new(ClickProposition::Defined {
+                expression: ContractExpression::CFragment(CExpression::Add(
+                    Box::new(CExpression::Variable("__click_q0".into())),
+                    Box::new(CExpression::Value(int32(1))),
+                )),
+            }),
+            Box::new(all_before_loadable),
+        )),
+    }
+}
+
+fn replace_full_external_cstr_range_with_constant_byte_count(requirement: &mut Proposition) {
+    fn replace(proposition: &mut Proposition, inside_forall: bool) -> bool {
+        match proposition {
+            Proposition::CMemoryLoadable { bytes, .. } if inside_forall => {
+                *bytes = Bitvector32Term::Constant(1);
+                true
+            }
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                replace(left, inside_forall) || replace(right, inside_forall)
+            }
+            Proposition::Not(body) | Proposition::Exists { body, .. } => {
+                replace(body, inside_forall)
+            }
+            Proposition::ForAll { body, .. } => replace(body, true),
+            _ => false,
+        }
+    }
+    assert!(
+        replace(requirement, false),
+        "the strlen requirement must contain a quantified range"
+    );
+}
+
+#[test]
+fn full_guarded_requirement_with_variable_argument_round_trips() {
+    let memory = CMemory::new().with_block("strlen:production-bytes", 16);
+    let (parameters, concrete_arguments, state) = external_symbolic_element_context(memory.clone());
+    let pointer = match &concrete_arguments[0] {
+        CExpression::Value(CValue::Pointer(pointer)) => pointer.clone(),
+        _ => panic!("the production-shaped argument must be a pointer"),
+    };
+    let arguments = vec![
+        CExpression::Variable("bytes".to_string()),
+        concrete_arguments[1].clone(),
+    ];
+    let requirement_surface = full_external_guarded_range_surface();
+    let requirement = relower_written_proposition(&requirement_surface, &state)
+        .expect("the production-shaped strlen requirement must lower");
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("the guarded strlen requirement must be spellable")
+    };
+    assert!(matches!(synthesized, ClickProposition::Exists { .. }));
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the synthesized existential must lower through the have path");
+    let resolve = crate::kernel::resolve_load_variables_from_registry;
+    assert!(
+        crate::kernel::proof::propositions_are_alpha_equal(
+            &resolve(&lowered),
+            &resolve(&requirement)
+        ),
+        "lowered: {lowered:?}\nrequirement: {requirement:?}"
+    );
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&resolve(&lowered)),
+        crate::kernel::proof::proposition_identity_key(&resolve(&requirement)),
+        "the variable argument must preserve canonical load identity"
+    );
+    assert_eq!(state.locals().get("bytes"), Some(&CValue::Pointer(pointer)));
+}
+
+#[test]
+fn full_guarded_constant_byte_requirement_with_variable_argument_round_trips() {
+    let memory = CMemory::new().with_block("strlen:production-constant-bytes", 16);
+    let (parameters, concrete_arguments, state) = external_symbolic_element_context(memory.clone());
+    let pointer = match &concrete_arguments[0] {
+        CExpression::Value(CValue::Pointer(pointer)) => pointer.clone(),
+        _ => panic!("the production-shaped argument must be a pointer"),
+    };
+    let arguments = vec![
+        CExpression::Variable("bytes".to_string()),
+        concrete_arguments[1].clone(),
+    ];
+    let requirement_surface = full_external_guarded_range_surface();
+    let mut requirement = relower_written_proposition(&requirement_surface, &state)
+        .expect("the production-shaped strlen requirement must lower");
+    replace_full_external_cstr_range_with_constant_byte_count(&mut requirement);
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("the guarded constant-byte strlen requirement must be spellable")
+    };
+    assert!(matches!(synthesized, ClickProposition::Exists { .. }));
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the synthesized existential must lower through the have path");
+    let resolve = crate::kernel::resolve_load_variables_from_registry;
+    assert!(
+        crate::kernel::proof::propositions_are_alpha_equal(
+            &resolve(&lowered),
+            &resolve(&requirement)
+        ),
+        "lowered: {lowered:?}\nrequirement: {requirement:?}"
+    );
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&resolve(&lowered)),
+        crate::kernel::proof::proposition_identity_key(&resolve(&requirement)),
+        "the variable argument must preserve canonical load identity"
+    );
+    assert_eq!(state.locals().get("bytes"), Some(&CValue::Pointer(pointer)));
+}
+
 #[test]
 fn strlen_symbolic_element_range_round_trips_exactly() {
     let memory = CMemory::new().with_block("strlen:bytes", 16);
@@ -544,6 +720,35 @@ fn strlen_symbolic_element_range_round_trips_exactly() {
     let lowered = relower_written_proposition(&synthesized, &state)
         .expect("the synthesized range must lower through the have path");
     assert_eq!(lowered, requirement);
+}
+
+#[test]
+fn strlen_symbolic_element_constant_byte_range_round_trips_exactly() {
+    let memory = CMemory::new().with_block("strlen:constant-symbolic-bytes", 16);
+    let (parameters, arguments, state) = external_symbolic_element_context(memory.clone());
+    let requirement =
+        external_symbolic_element_constant_byte_requirement(memory, Variable(100_001));
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("a constant one-byte symbolic range must be spellable")
+    };
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the requirement must remain one loadability: {synthesized:?}");
+    };
+    assert_eq!(
+        segment.base,
+        CExpression::Add(
+            Box::new(CExpression::Variable("bytes".into())),
+            Box::new(CExpression::Variable("index".into())),
+        )
+    );
+    assert_eq!(segment.start, CExpression::Value(int32(0)));
+    assert_eq!(segment.end, CExpression::Value(int32(1)));
+    assert_eq!(
+        relower_written_proposition(&synthesized, &state),
+        Ok(requirement)
+    );
 }
 
 #[test]

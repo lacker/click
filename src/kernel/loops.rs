@@ -1543,7 +1543,7 @@ fn execute_c_while_exit_paths(
         for candidate in final_exit_candidates {
             let candidate_assumptions =
                 assumptions_with_propositions(assumptions, candidate.pure_facts());
-            for (facts, obligations) in assume_condition_truthiness(
+            for assumption in assume_condition_truthiness(
                 candidate.state(),
                 condition,
                 &candidate_assumptions,
@@ -1561,12 +1561,23 @@ fn execute_c_while_exit_paths(
                 let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &candidate_facts,
                     &[],
-                    &facts,
-                    &obligations,
+                    &assumption.facts,
+                    &assumption.obligations,
                     assumptions,
                 ) else {
                     continue;
                 };
+                // A guard that did not evaluate here decides nothing: this is
+                // not an exit, it is a refusal that carries the guard's own
+                // outcome.
+                if let Some(outcome) = assumption.undecided_outcome() {
+                    paths.push(CStatementExecutionPath {
+                        outcome: outcome.clone(),
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::Normal(head.restored_exit_state(candidate.state())),
                     facts,
@@ -1613,12 +1624,30 @@ fn execute_c_while_exit_paths(
                 false,
                 budget,
             )?;
-            for (mut facts, mut obligations) in condition_contexts {
+            for assumption in condition_contexts {
+                let CConditionAssumption {
+                    branch,
+                    mut facts,
+                    mut obligations,
+                } = assumption;
                 append_required_proof_obligations(
                     &mut obligations,
                     assumptions,
                     &loop_check_obligations,
                 );
+                // An operand the function has no authority to read leaves the
+                // guard undecided. This is not the exit: assuming the
+                // negation of the operands that did evaluate would assume
+                // strictly less than `!condition`, and the loop would export
+                // an exit state the C never reaches that way.
+                if let CConditionBranch::Undecided(outcome) = branch {
+                    paths.push(CStatementExecutionPath {
+                        outcome,
+                        facts,
+                        obligations,
+                    });
+                    continue;
+                }
                 // D7 applied to refutation at the loop exit, the same way the
                 // head and the back edge apply it. The invariants and the
                 // failed loop condition are the exit's premises, and a
@@ -1956,7 +1985,11 @@ pub(super) fn collect_loop_preservation_summary(
         budget,
     )? {
         let condition_contexts = if do_while {
-            vec![(invariant_facts.clone(), invariant_obligations.clone())]
+            vec![CConditionAssumption {
+                branch: CConditionBranch::Decided(true),
+                facts: invariant_facts.clone(),
+                obligations: invariant_obligations.clone(),
+            }]
         } else {
             assume_condition_truthiness(
                 top_state,
@@ -1968,7 +2001,22 @@ pub(super) fn collect_loop_preservation_summary(
                 budget,
             )?
         };
-        for (condition_facts, condition_obligations) in condition_contexts {
+        for assumption in condition_contexts {
+            // The body cannot run from a guard that produced no value: this
+            // iteration is not entered, it is unproven. Refuse it here rather
+            // than letting the iteration disappear from the rule.
+            if let Some(outcome) = assumption.undecided_outcome() {
+                obligations.push(
+                    ProofObligation::verification_condition(false_equals_true_proposition())
+                        .with_context(undecided_loop_guard_context(outcome)),
+                );
+                continue;
+            }
+            let CConditionAssumption {
+                facts: condition_facts,
+                obligations: condition_obligations,
+                ..
+            } = assumption;
             for body_path in execute_c_statement_verification_paths_with_prefix(
                 top_state,
                 body,
@@ -2003,164 +2051,166 @@ pub(super) fn collect_loop_preservation_summary(
                                 Ok(rebound) => (rebound, None),
                                 Err(failure) => (next_state, Some(failure)),
                             };
-                        for (may_continue, condition_contexts) in [
-                            (
-                                true,
-                                assume_condition_truthiness(
-                                    &next_state,
-                                    condition,
-                                    assumptions,
-                                    &body_path.facts,
-                                    &body_path.obligations,
-                                    true,
-                                    budget,
-                                )?,
-                            ),
-                            (
-                                false,
-                                assume_condition_truthiness(
-                                    &next_state,
-                                    condition,
-                                    assumptions,
-                                    &body_path.facts,
-                                    &body_path.obligations,
-                                    false,
-                                    budget,
-                                )?,
-                            ),
-                        ] {
-                            for (condition_facts, condition_obligations) in condition_contexts {
-                                let path_assumptions = assumptions_with_path_context(
-                                    assumptions,
-                                    &condition_facts,
-                                    &condition_obligations,
+                        // Both back-edge directions come from one evaluation
+                        // of the guard, so a path the guard did not decide is
+                        // reported once instead of twice.
+                        let condition_contexts = assume_condition_branches(
+                            &next_state,
+                            condition,
+                            assumptions,
+                            &body_path.facts,
+                            &body_path.obligations,
+                            budget,
+                        )?;
+                        for assumption in condition_contexts {
+                            // Neither the back edge nor the exit is taken
+                            // when the guard produced no value; the loop
+                            // rule cannot certify this edge at all.
+                            if let Some(outcome) = assumption.undecided_outcome() {
+                                obligations.push(
+                                    ProofObligation::verification_condition(
+                                        false_equals_true_proposition(),
+                                    )
+                                    .with_context(undecided_loop_guard_context(outcome)),
                                 );
-                                let effect_obligations = collect_loop_effect_check_obligations(
-                                    top_state,
+                                continue;
+                            }
+                            let CConditionAssumption {
+                                branch,
+                                facts: condition_facts,
+                                obligations: condition_obligations,
+                            } = assumption;
+                            let may_continue = matches!(branch, CConditionBranch::Decided(true));
+                            let path_assumptions = assumptions_with_path_context(
+                                assumptions,
+                                &condition_facts,
+                                &condition_obligations,
+                            );
+                            let effect_obligations = collect_loop_effect_check_obligations(
+                                top_state,
+                                &next_state,
+                                effect_checks,
+                                &condition_facts,
+                                &condition_obligations,
+                                assumptions,
+                                budget,
+                            )?;
+                            let mut path_obligations = if do_while && !may_continue {
+                                Vec::new()
+                            } else {
+                                collect_invariant_check_obligations(
                                     &next_state,
-                                    effect_checks,
-                                    &condition_facts,
-                                    &condition_obligations,
-                                    assumptions,
+                                    loop_entry_state,
+                                    invariant_checks,
+                                    InvariantPhase::Preservation,
+                                    &path_assumptions,
                                     budget,
-                                )?;
-                                let mut path_obligations = if do_while && !may_continue {
-                                    Vec::new()
-                                } else {
-                                    collect_invariant_check_obligations(
-                                        &next_state,
-                                        loop_entry_state,
-                                        invariant_checks,
-                                        InvariantPhase::Preservation,
-                                        &path_assumptions,
-                                        budget,
-                                    )?
-                                };
-                                // A ranked loop's back edge carries the same
-                                // ranking members the surface bundle spells.
-                                // Only a continuing edge is a back edge.
-                                if may_continue {
-                                    path_obligations.extend(loop_ranking_obligations_or_refusal(
-                                        &next_state,
+                                )?
+                            };
+                            // A ranked loop's back edge carries the same
+                            // ranking members the surface bundle spells.
+                            // Only a continuing edge is a back edge.
+                            if may_continue {
+                                path_obligations.extend(loop_ranking_obligations_or_refusal(
+                                    &next_state,
+                                    top_state,
+                                    ranking_measures,
+                                ));
+                                // A structural measure is not a ranking
+                                // member: the kernel decides the descent
+                                // here and reports a refusal obligation
+                                // naming the binder when it does not hold.
+                                if let Some(measure) = structural_measure
+                                    && let Some(failure) = loop_structural_descent_failure(
                                         top_state,
-                                        ranking_measures,
-                                    ));
-                                    // A structural measure is not a ranking
-                                    // member: the kernel decides the descent
-                                    // here and reports a refusal obligation
-                                    // naming the binder when it does not hold.
-                                    if let Some(measure) = structural_measure
-                                        && let Some(failure) = loop_structural_descent_failure(
-                                            top_state,
-                                            &next_state,
-                                            &binders,
-                                            measure,
-                                            composite_resource_definitions,
-                                            &path_assumptions,
-                                        )
-                                    {
-                                        path_obligations.push(
-                                            ProofObligation::verification_condition(
-                                                false_equals_true_proposition(),
-                                            )
-                                            .with_context(failure),
-                                        );
-                                    }
-                                }
-                                let mut state_obligations = condition_obligations.clone();
-                                // A binder the body did not hand back is the
-                                // whole verdict for this edge; the ownership
-                                // join would only repeat it less precisely.
-                                let join_failure = if !may_continue {
-                                    None
-                                } else if let Some(failure) = &binder_failure {
-                                    Some(failure.clone())
-                                } else {
-                                    c_loop_state_components_match_at_back_edge_inner(
-                                        top_state,
-                                        &c_loop_state_with_head_binder_models(
-                                            &next_state,
-                                            top_state,
-                                            &binders,
-                                        ),
+                                        &next_state,
+                                        &binders,
+                                        measure,
                                         composite_resource_definitions,
                                         &path_assumptions,
                                     )
-                                    .err()
-                                };
-                                if let Some(message) = join_failure {
-                                    state_obligations.push(
+                                {
+                                    path_obligations.push(
                                         ProofObligation::verification_condition(
                                             false_equals_true_proposition(),
                                         )
-                                        .with_context(message),
+                                        .with_context(failure),
                                     );
                                 }
-                                append_required_proof_obligations(
-                                    &mut obligations,
-                                    assumptions,
-                                    &state_obligations,
+                            }
+                            let mut state_obligations = condition_obligations.clone();
+                            // A binder the body did not hand back is the
+                            // whole verdict for this edge; the ownership
+                            // join would only repeat it less precisely.
+                            let join_failure = if !may_continue {
+                                None
+                            } else if let Some(failure) = &binder_failure {
+                                Some(failure.clone())
+                            } else {
+                                c_loop_state_components_match_at_back_edge_inner(
+                                    top_state,
+                                    &c_loop_state_with_head_binder_models(
+                                        &next_state,
+                                        top_state,
+                                        &binders,
+                                    ),
+                                    composite_resource_definitions,
+                                    &path_assumptions,
+                                )
+                                .err()
+                            };
+                            if let Some(message) = join_failure {
+                                state_obligations.push(
+                                    ProofObligation::verification_condition(
+                                        false_equals_true_proposition(),
+                                    )
+                                    .with_context(message),
                                 );
+                            }
+                            append_required_proof_obligations(
+                                &mut obligations,
+                                assumptions,
+                                &state_obligations,
+                            );
+                            append_required_proof_obligations_under_path_context(
+                                &mut obligations,
+                                assumptions,
+                                &effect_obligations,
+                                &condition_facts,
+                                &condition_obligations,
+                            );
+                            append_required_proof_obligations_under_path_context(
+                                &mut obligations,
+                                assumptions,
+                                &path_obligations,
+                                &condition_facts,
+                                &condition_obligations,
+                            );
+                            if !may_continue {
+                                let final_path_facts = condition_facts.clone();
+                                let final_path_obligations = condition_obligations.clone();
+                                let mut final_obligations = condition_obligations;
                                 append_required_proof_obligations_under_path_context(
-                                    &mut obligations,
+                                    &mut final_obligations,
                                     assumptions,
                                     &effect_obligations,
-                                    &condition_facts,
-                                    &condition_obligations,
+                                    &final_path_facts,
+                                    &final_path_obligations,
                                 );
                                 append_required_proof_obligations_under_path_context(
-                                    &mut obligations,
+                                    &mut final_obligations,
                                     assumptions,
                                     &path_obligations,
-                                    &condition_facts,
-                                    &condition_obligations,
+                                    &final_path_facts,
+                                    &final_path_obligations,
                                 );
-                                if !may_continue {
-                                    let final_path_facts = condition_facts.clone();
-                                    let final_path_obligations = condition_obligations.clone();
-                                    let mut final_obligations = condition_obligations;
-                                    append_required_proof_obligations_under_path_context(
-                                        &mut final_obligations,
-                                        assumptions,
-                                        &effect_obligations,
-                                        &final_path_facts,
-                                        &final_path_obligations,
-                                    );
-                                    append_required_proof_obligations_under_path_context(
-                                        &mut final_obligations,
-                                        assumptions,
-                                        &path_obligations,
-                                        &final_path_facts,
-                                        &final_path_obligations,
-                                    );
-                                    final_exit_paths.push(CStatementExecutionPath {
-                                        outcome: CStatementOutcome::Normal(
-                                            head.restored_exit_state(&next_state),
-                                        ),
-                                        facts: final_path_facts,
-                                        obligations: final_obligations,
-                                    });
-                                }
+                                final_exit_paths.push(CStatementExecutionPath {
+                                    outcome: CStatementOutcome::Normal(
+                                        head.restored_exit_state(&next_state),
+                                    ),
+                                    facts: final_path_facts,
+                                    obligations: final_obligations,
+                                });
                             }
                         }
                     }
@@ -3600,15 +3650,50 @@ pub(super) fn assume_invariant_checks(
     Ok(contexts)
 }
 
-pub(super) fn assume_condition_truthiness(
+/// What one evaluation path of a loop guard settled.
+#[derive(Clone, Debug)]
+pub(super) enum CConditionBranch {
+    /// The guard produced a value, and its truthiness is this.
+    Decided(bool),
+    /// The guard produced no value at all on this path: an operand the
+    /// function has no authority to read, an unresolved allocation, or
+    /// undefined behavior reached while evaluating it. Such a path selects
+    /// neither the iteration nor the exit, so it may never be dropped — the
+    /// exit assumption would otherwise be the negation of the operands that
+    /// happened to be evaluable, which is not the negation of the guard.
+    Undecided(CStatementOutcome),
+}
+
+/// One way a loop guard can leave a state, with the facts and obligations
+/// that path carries.
+#[derive(Clone, Debug)]
+pub(super) struct CConditionAssumption {
+    pub(super) branch: CConditionBranch,
+    pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
+}
+
+impl CConditionAssumption {
+    /// The statement outcome an undecided guard must be reported as, or
+    /// `None` when the guard decided this path.
+    pub(super) fn undecided_outcome(&self) -> Option<&CStatementOutcome> {
+        match &self.branch {
+            CConditionBranch::Decided(_) => None,
+            CConditionBranch::Undecided(outcome) => Some(outcome),
+        }
+    }
+}
+
+/// Every way this guard can leave `state`: one entry per feasible value path,
+/// plus one entry for each path on which the guard could not be evaluated.
+pub(super) fn assume_condition_branches(
     state: &CState,
     condition: &CExpression,
     assumptions: &PureFactContext,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
-    desired_truthiness: bool,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>> {
+) -> ExecutionResult<Vec<CConditionAssumption>> {
     let effective_assumptions =
         assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
     let mut contexts = Vec::new();
@@ -3629,16 +3714,79 @@ pub(super) fn assume_condition_truthiness(
         ) else {
             continue;
         };
-        let CExpressionOutcome::Value(value) = condition_path.outcome else {
-            continue;
+        let value = match condition_path.outcome {
+            CExpressionOutcome::Value(value) => value,
+            // The guard itself did not run to a value here. Keep the path and
+            // name its outcome; every caller reports it rather than choosing
+            // an arm for it.
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                contexts.push(CConditionAssumption {
+                    branch: CConditionBranch::Undecided(CStatementOutcome::UndefinedBehavior(
+                        undefined_behavior,
+                    )),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                contexts.push(CConditionAssumption {
+                    branch: CConditionBranch::Undecided(CStatementOutcome::RuntimeError(error)),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
         };
         for truthiness_path in c_truthiness_paths(value, facts, obligations, assumptions) {
-            if truthiness_path.is_true == desired_truthiness {
-                contexts.push((truthiness_path.facts, truthiness_path.obligations));
-            }
+            contexts.push(CConditionAssumption {
+                branch: CConditionBranch::Decided(truthiness_path.is_true),
+                facts: truthiness_path.facts,
+                obligations: truthiness_path.obligations,
+            });
         }
     }
     Ok(contexts)
+}
+
+/// The guard paths that select `desired_truthiness`, together with every path
+/// the guard did not decide. An undecided path belongs to both requests: it
+/// rules out neither the iteration nor the exit.
+pub(super) fn assume_condition_truthiness(
+    state: &CState,
+    condition: &CExpression,
+    assumptions: &PureFactContext,
+    prefix_facts: &[ExecutionPureFact],
+    prefix_obligations: &[ProofObligation],
+    desired_truthiness: bool,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CConditionAssumption>> {
+    Ok(assume_condition_branches(
+        state,
+        condition,
+        assumptions,
+        prefix_facts,
+        prefix_obligations,
+        budget,
+    )?
+    .into_iter()
+    .filter(|assumption| !matches!(assumption.branch, CConditionBranch::Decided(is_true) if is_true != desired_truthiness))
+    .collect())
+}
+
+/// Names an undecided loop guard for a refusal context, without dumping the
+/// guard's internal representation.
+pub(super) fn undecided_loop_guard_context(outcome: &CStatementOutcome) -> String {
+    let reason = match outcome {
+        CStatementOutcome::UndefinedBehavior(undefined_behavior) => {
+            format!("it reaches undefined behavior ({undefined_behavior:?})")
+        }
+        CStatementOutcome::RuntimeError(error) => {
+            crate::kernel::api::describe_certification_runtime_error(error)
+        }
+        _ => "it produced no value".to_string(),
+    };
+    format!("the loop condition could not be evaluated on this path: {reason}")
 }
 
 pub(super) fn havoc_loop_modified_locals(

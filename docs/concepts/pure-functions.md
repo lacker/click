@@ -182,10 +182,10 @@ Bare `apply(ih(m))` is smart because it plans explicit proofs of those fixed
 obligations. Expansion ends in `apply(ih(m)) using { ... }`, the simple form
 that checks exactly the listed obligations without searching.
 
-The induction variable must currently be an `int32` theorem parameter. Other theorem
-parameters remain fixed, so `ih` takes only the replacement value for the
-named induction parameter. This is strong induction, so calls such as
-`ih(n - 2)` are supported when the branch facts prove the argument is
+The measure form's induction variable must be an `int32` theorem parameter. It
+quantifies that one variable, so other theorem parameters remain fixed and
+`ih` takes only the replacement measure. This is strong induction, so calls
+such as `ih(n - 2)` are supported when the branch facts prove the argument is
 nonnegative and smaller. The local hypothesis is not a global theorem and is
 not available in C execution proofs.
 
@@ -208,10 +208,36 @@ induct(xs) as ih {
 Every constructor must appear exactly once with its exact field arity. Pattern
 bindings exist only inside their arm. The local hypothesis may be instantiated
 at each immediate field of the same recursive datatype; a binary-tree node
-therefore supplies hypotheses for both children. The theorem's other
-parameters stay fixed, and its requirements are substituted and checked at
-the chosen child just as for integer induction. Mutual induction across
+therefore supplies hypotheses for both children. Mutual induction across
 different datatype families is not yet generated.
+
+The structural hypothesis is the theorem generalized over its other
+parameters, so it takes the complete parameter list in declaration order:
+
+<!-- verified-example: mdtests/algebraic_structural_induction_generalizes_parameters.md -->
+```click
+apply(ih(tail, List<int32>::Cons(head, acc)));
+```
+
+Only the inducted position is restricted, and the kernel checks it: it must
+name a field the current arm bound, of the datatype being inducted on.
+Every other position may name any well-typed term. This is what a recursive
+case that changes another parameter needs — an accumulator, or a zipper frame
+that grows the focused subtree — because its residual goal is the theorem at a
+smaller inducted argument and *different* other arguments. The requirements
+are substituted and checked at exactly the arguments given, just as for
+integer induction, so an instantiation the theorem's `requires` does not
+support is refused.
+
+Passing the inducted argument alone still means "every other parameter
+unchanged", so `ih(tail)` and a complete list that repeats the other
+parameters name the same instance.
+
+[`examples/modeled-binary-tree`](https://github.com/lacker/click/tree/master/examples/modeled-binary-tree)
+proves `plug_inorder_transport` this way: in the `Context::Left` arm the goal
+is the theorem for the enclosing frame `up` at two rebuilt subtrees, and the
+proof writes `ih(up, HeapTree::Node(parent, value, a, sibling),
+HeapTree::Node(parent, value, b, sibling))`.
 
 Expression-level `match` remains symbolic and does not itself split a proof or
 introduce proof-scope names. Only the explicit constructor-branching induction

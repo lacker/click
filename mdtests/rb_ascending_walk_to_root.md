@@ -32,11 +32,14 @@ leaves the `loop` tactic two statement successors. That
 guard also stops at the first left frame, a position no contract can name,
 which is why package C4 owns `rb_next` in full.
 
-This loop declares no `decreases`. The scaffold ascent carries the structural
-measure; here the body calls the contract-less inline `rb_parent`, and
-termination certification requires every callee named in the body to have a
-verified rule of its own, so `decreases c;` is refused for want of a ranking
-proof for that callee.
+The loop carries the same structural measure the scaffold ascent does,
+`decreases c;`, even though its body calls the contract-less inline
+`rb_parent`. An inline body has no contract boundary: it executes at the call
+site, so termination reads it as a call-graph node of its own rather than as
+an opaque callee needing a verified rule. `rb_parent`'s body is one return of
+a masked load, with no loop, no recursion, and no further call, so it
+terminates by construction and the ascent's own ranking is the whole of the
+obligation.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -188,6 +191,7 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
     ensures sub.model == plug(old(c.model), old(t.model));
 } by {
     loop {
+        decreases c;
         owns c: ctx_at(node, parent, root);
         owns t: rb_at(node, parent);
         invariant t.model != RbTree::Empty;

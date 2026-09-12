@@ -1977,16 +1977,55 @@ fn reachable(start: &str, target: &str, calls: &BTreeMap<String, BTreeSet<String
     false
 }
 
+/// The callees of one body, with a callee spelled like an object the function
+/// binds recorded under a name no function can have.
+///
+/// C11 6.2.1p4 hides a file-scope function of the same name behind a
+/// parameter or local, so such a call goes through that object. Resolving it
+/// to the function would hand the call that function's ranking proof, so it is
+/// left unranked, which is the treatment every indirect call gets.
+fn termination_callees(function: &CFunction) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    statement_calls(&function.source_body, &mut found);
+    let objects = function_object_names(function);
+    found
+        .into_iter()
+        .map(|callee| {
+            if objects.contains(&callee) {
+                format!("{callee}#indirect")
+            } else {
+                callee
+            }
+        })
+        .collect()
+}
+
 /// Checks untrusted ranking plans against exact partially-correct function
 /// rules and returns the independently usable subset proved to terminate.
+///
+/// `inline_bodies` carries the project's contract-less `static inline`
+/// helpers. A call to one of them executes that body at the call site, so the
+/// helper is a node of this call graph exactly like the function whose body
+/// contains the call: its own loops must be ranked and certified, its own
+/// recursion is a cycle needing a checked rule, and a straight-line body over
+/// terminating callees terminates by construction. Only the helpers the
+/// verified bodies actually reach are pulled in, and each is read once.
 pub fn c_verified_function_termination_rules(
     partial_rules: &[CVerifiedFunctionRule],
     plan_entries: &[CFunctionTerminationPlan],
     verified_loop_rules: &BTreeMap<String, Vec<CVerifiedLoopRule>>,
+    inline_bodies: &[&CFunction],
 ) -> Result<Vec<CVerifiedFunctionTerminationRule>, CTerminationError> {
-    let functions = partial_rules
+    let mut functions = partial_rules
         .iter()
         .map(|rule| (rule.function.name.clone(), &rule.function))
+        .collect::<BTreeMap<_, _>>();
+    // A helper that carries its own sidecar contract already has a verified
+    // rule above and stays that node; only the contract-less ones are added.
+    let available_inline_bodies = inline_bodies
+        .iter()
+        .filter(|function| function.has_inline_body() && !functions.contains_key(function.name()))
+        .map(|function| (function.name().to_string(), *function))
         .collect::<BTreeMap<_, _>>();
     let plans = plan_entries
         .iter()
@@ -1996,31 +2035,28 @@ pub fn c_verified_function_termination_rules(
         return Err(error("termination plans contain a duplicate function"));
     }
 
-    let calls = functions
-        .iter()
-        .map(|(name, function)| {
-            let mut found = BTreeSet::new();
-            statement_calls(&function.source_body, &mut found);
-            // A callee spelled like an object this function binds is a call
-            // through that object: C11 6.2.1p4 hides a file-scope function of
-            // the same name behind the parameter or local. Resolving it to the
-            // function would hand the call that function's ranking proof, so
-            // record it under a spelling no function can have and leave it
-            // unranked, which is the treatment every indirect call gets.
-            let objects = function_object_names(function);
-            let found = found
-                .into_iter()
-                .map(|callee| {
-                    if objects.contains(&callee) {
-                        format!("{callee}#indirect")
-                    } else {
-                        callee
-                    }
-                })
-                .collect::<BTreeSet<_>>();
-            (name.clone(), found)
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut pending = functions.keys().cloned().collect::<Vec<_>>();
+    while let Some(name) = pending.pop() {
+        if calls.contains_key(&name) {
+            continue;
+        }
+        let function = *functions
+            .get(&name)
+            .expect("every pending name was added with its function");
+        let found = termination_callees(function);
+        for callee in &found {
+            if functions.contains_key(callee) {
+                continue;
+            }
+            let Some(helper) = available_inline_bodies.get(callee) else {
+                continue;
+            };
+            functions.insert(callee.clone(), *helper);
+            pending.push(callee.clone());
+        }
+        calls.insert(name, found);
+    }
 
     let mut components = Vec::<BTreeSet<String>>::new();
     for name in functions.keys() {
