@@ -1183,8 +1183,18 @@ fn verify_c0_sources_with_context(
     let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
         &external_and_user_function_blocks,
     )?);
-    let (mut termination_plans, mut requested_termination) =
-        c_function_termination_plans(&file, selected_functions.as_ref())?;
+    // A sidecar contract names a C function with its ordinary spelling, but a
+    // header `static inline` body executes under a translation-unit-qualified
+    // name, which is the name its call sites carry and the name the kernel
+    // function has. Every termination table the kernel reads is keyed by that
+    // executing name, so a helper's own ranked loop is planned where its body
+    // runs instead of under a spelling no call graph mentions.
+    let termination_kernel_names = executing_function_names(&parsed_sources);
+    let (mut termination_plans, mut requested_termination) = c_function_termination_plans(
+        &file,
+        selected_functions.as_ref(),
+        &termination_kernel_names,
+    )?;
     let standard_library_theorems = standard_library_theorem_definitions()?;
     let (
         predicate_environment,
@@ -1469,7 +1479,10 @@ fn verify_c0_sources_with_context(
             }
         }
         let function_termination_loop_rules = termination_loop_rules
-            .entry(function_block.signature().name().to_string())
+            .entry(executing_function_name(
+                &termination_kernel_names,
+                function_block.signature().name(),
+            ))
             .or_default();
         for rule in function_verified
             .iter()
@@ -1911,14 +1924,18 @@ fn verify_c0_sources_with_context(
                     }
                 }
                 if !loop_measures.is_empty() {
+                    let executing_name = executing_function_name(
+                        &termination_kernel_names,
+                        function_block.signature.name(),
+                    );
                     if let Some(plan) = termination_plans
                         .iter_mut()
-                        .find(|plan| plan.function_name() == function_block.signature.name())
+                        .find(|plan| plan.function_name() == executing_name)
                     {
                         plan.extend_loop_measures(loop_measures);
                     } else {
                         termination_plans.push(c_function_termination_plan(
-                            function_block.signature.name(),
+                            &executing_name,
                             None,
                             loop_measures,
                         ));
@@ -2046,16 +2063,19 @@ fn verify_c0_sources_with_context(
     }
 
     let partial_rules = function_environment.verified_function_rules();
+    let inline_bodies = function_environment.inline_body_functions();
     let termination_rules = c_verified_function_termination_rules(
         &partial_rules,
         &termination_plans,
         &termination_loop_rules,
+        &inline_bodies,
     )
     .map_err(|error| ClickError::new(format!("could not certify C termination: {error}")))?;
     for name in &requested_termination {
+        let executing_name = executing_function_name(&termination_kernel_names, name);
         if !termination_rules
             .iter()
-            .any(|rule| rule.function_name() == name)
+            .any(|rule| rule.function_name() == executing_name)
         {
             return Err(ClickError::new(format!(
                 "could not certify termination for `{name}`: every reachable loop, recursive cycle, and callee must have a checked ranking proof"
@@ -2736,9 +2756,48 @@ pub(in crate::surface) fn loop_termination_measure(
     )))
 }
 
+/// Maps each Click-visible C spelling to the name its body executes under.
+/// Only a header-provided `static inline` helper has two names; every other
+/// function maps to itself and is left out of the map.
+pub(in crate::surface) fn executing_function_names(
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    let mut ambiguous = BTreeSet::new();
+    for (kernel_name, (_, function)) in parsed_sources {
+        if function.source_name() == kernel_name.as_str() {
+            continue;
+        }
+        if names
+            .insert(function.source_name().to_string(), kernel_name.clone())
+            .is_some()
+        {
+            ambiguous.insert(function.source_name().to_string());
+        }
+    }
+    // Two translation units defining the same helper make the spelling
+    // ambiguous, and `parsed_function_for_source_name` refuses a contract that
+    // names it. Leave such a name unmapped rather than binding a plan to one
+    // unit's body.
+    for name in ambiguous {
+        names.remove(&name);
+    }
+    names
+}
+
+/// The name `source_name`'s body executes under, which is its own spelling
+/// unless it is a header-provided `static inline` helper.
+fn executing_function_name(names: &BTreeMap<String, String>, source_name: &str) -> String {
+    names
+        .get(source_name)
+        .cloned()
+        .unwrap_or_else(|| source_name.to_string())
+}
+
 pub(in crate::surface) fn c_function_termination_plans(
     file: &ClickFile,
     selected_functions: Option<&BTreeSet<String>>,
+    executing_names: &BTreeMap<String, String>,
 ) -> Result<
     (
         Vec<crate::kernel::CFunctionTerminationPlan>,
@@ -2923,7 +2982,7 @@ pub(in crate::surface) fn c_function_termination_plans(
         if selected && (recursive_measure.is_some() || !loop_measures.is_empty()) {
             requested.insert(function.signature().name().to_string());
             plans.push(c_function_termination_plan(
-                function.signature().name(),
+                executing_function_name(executing_names, function.signature().name()),
                 recursive_measure,
                 loop_measures,
             ));

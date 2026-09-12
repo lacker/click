@@ -137,7 +137,11 @@ inline helper by its ordinary C spelling for direct verification, but is not
 applied as a call boundary. Every call executes the header body; Click
 never emits a standalone definition or selects an external one, matching
 the observable `always_inline` behavior under the single supported
-`x86_64-linux-kernel` profile. `extern inline` has profile-dependent
+`x86_64-linux-kernel` profile. Termination follows that execution: a helper
+is a node of the caller's call graph rather than an opaque callee, so a
+straight-line helper needs no ranking of its own and a ranked loop may call
+one, while a helper carrying a loop still needs that loop ranked and a
+recursive helper needs a checked rule for its cycle. `extern inline` has profile-dependent
 emission rules and stays rejected, as do bare `inline` and other inline
 spellings. The declaration-only GNU spellings
 `__attribute__((always_inline))` and `__attribute__((__always_inline__))` are

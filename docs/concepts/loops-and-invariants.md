@@ -68,6 +68,26 @@ without importing those pointer comparisons. Resource-consuming or mutating
 structural calls across a loop back edge remain tracked in the hard-bucket
 `issues/recursion.md`.
 
+Termination is also a claim about everything the loop body calls: every
+reachable loop, recursive cycle, and callee needs a checked ranking proof. A
+callee with a contract answers with a verified rule of its own. A
+header-provided `static inline` helper has no contract boundary — its body
+executes at the call site — so it is read as a node of the caller's own call
+graph instead. A helper whose body is straight-line, with no loop, no
+recursion, and no call to anything not itself terminating, terminates by
+construction, so a ranked loop may call one:
+`mdtests/c_decreases_loop_inline_helper.md`, and the rbtree ascent of
+`mdtests/rb_ascending_walk_to_root.md`, which climbs through the unchanged
+Linux `rb_parent` under `decreases c;`. A helper carrying a loop still needs
+that loop ranked and certified, and a recursive helper is a cycle needing a
+checked rule; both are refused otherwise
+(`mdtests/c_decreases_rejects_inline_helper_loop.md` and
+`mdtests/c_decreases_rejects_recursive_inline_helper.md`). A helper's own
+ranked loop is planned under the translation-unit-qualified name its body
+executes under rather than the ordinary spelling its sidecar contract uses,
+which is what lets the plan reach the function the call site names
+(`mdtests/inline_helper_ranked_loop.md`).
+
 The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a
 composite resource transferred through every iteration.
