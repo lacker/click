@@ -62,7 +62,6 @@ Soundness and kernel shape:
 - [Retain contextual premises in condition-transport theorems](condition-transport-theorem-premises.md)
 - [Preserve object provenance across pointer-parameter boundaries](external-pointer-object-provenance.md)
 - [Preserve ordinary operand reads around expression calls](c-expression-call-evaluation-order.md)
-- [Make `arithmetic` smart and expand it to `arithmetic_certificate`](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 Program import and execution:

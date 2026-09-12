@@ -229,7 +229,7 @@ Recursive-call `decreases` at a call site: the recursive-edge check is a
 syntactic walk in `termination.rs`, not search, and emitting it as a call
 obligation needs the caller's termination plan at the call site, which the
 whole-program termination pass does not provide. The `arithmetic` smart
-tactic is [arithmetic.md](arithmetic.md).
+tactic is documented in the [arithmetic certificate reference](../docs/reference/tactics/index.md).
 
 ## Implementation design and delegation plan
 
