@@ -487,6 +487,10 @@ id = "language.word.signed_int32"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.special"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.premise"
 path = "reference/language/grammar.md#word-index"
 

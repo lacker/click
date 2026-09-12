@@ -79,6 +79,15 @@ Proof-level `if` splits reasoning; it does not execute a C `if`. Frontier-local
 A mark remembers a state the proof has already reached; it does not move the
 frontier and is not an `execute_until` target.
 
+An execution proof may name the C body's own locals, not only the function's
+parameters. A local of struct-pointer type is a memory base there, so
+`have p->value == root->value` addresses `struct cell`'s layout exactly as a
+parameter would (`mdtests/struct_pointer_local_has_a_layout.md`); a parameter
+of the same spelling wins, because a contract is written against the
+signature. A local the execution has not assigned yet has no value at the
+frontier, and naming it is refused by naming the local
+(`mdtests/have_names_a_local_before_its_assignment.md`).
+
 ## Splitting a model by constructor
 
 `match value { Type::Variant(fields) => { ... } ... }` splits an execution proof

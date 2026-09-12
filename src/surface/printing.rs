@@ -601,6 +601,10 @@ fn write_arithmetic_certificate(
         write_signed_int32_certificate(output, certificate, indent);
         return;
     }
+    if let ArithmeticCertificateFamily::Special(certificate) = &certificate.family {
+        write_special_arithmetic_certificate(output, certificate, indent);
+        return;
+    }
     let ArithmeticCertificateFamily::Integer(certificate) = &certificate.family else {
         unreachable!("signed_int32 certificates are printed above")
     };
@@ -655,6 +659,73 @@ fn write_arithmetic_certificate(
             IntegerCertificateNode::Trivial { result } => {
                 format!("trivial => {};", source_click_proposition(result))
             }
+        };
+        line(output, &body, &text);
+    }
+    line(
+        output,
+        &body,
+        &format!("conclusion {};", certificate.conclusion),
+    );
+    line(output, &prefix, "}");
+}
+
+fn write_special_arithmetic_certificate(
+    output: &mut String,
+    certificate: &SpecialArithmeticCertificate,
+    indent: usize,
+) {
+    let prefix = "    ".repeat(indent);
+    line(output, &prefix, "arithmetic_certificate special {");
+    let body = "    ".repeat(indent + 1);
+    for (index, premise) in certificate.premises.iter().enumerate() {
+        line(
+            output,
+            &body,
+            &format!(
+                "premise {index}: {} => {};",
+                source_click_proposition(premise),
+                source_click_proposition(premise)
+            ),
+        );
+    }
+    for node in &certificate.nodes {
+        let text = match node {
+            SpecialArithmeticNode::PointerTranslation {
+                relation,
+                bounds,
+                result,
+            } => format!(
+                "pointer_translation relation {relation} bounds [{}] => {};",
+                bounds
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                source_click_proposition(result)
+            ),
+            SpecialArithmeticNode::PointerAlignment { premise, result } => format!(
+                "pointer_alignment premise {} => {};",
+                premise.map_or_else(|| "intrinsic".to_owned(), |i| i.to_string()),
+                source_click_proposition(result)
+            ),
+            SpecialArithmeticNode::PointerWordEquality {
+                relation,
+                alignments,
+                result,
+            } => format!(
+                "pointer_word_equality relation {relation} alignments [{}] => {};",
+                alignments
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                source_click_proposition(result)
+            ),
+            SpecialArithmeticNode::FloatReflexive { finite, result } => format!(
+                "float_reflexive finite {finite} => {};",
+                source_click_proposition(result)
+            ),
         };
         line(output, &body, &text);
     }

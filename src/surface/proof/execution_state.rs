@@ -492,7 +492,7 @@ impl ProofCertificateBuilder {
         }
         match ProofCertificate::from_proof_tactics(std::slice::from_ref(&tactic)) {
             Ok(proof) => {
-                let [step] = proof.steps.as_slice() else {
+                let [step] = proof.steps() else {
                     unreachable!("one surface tactic must produce one proof step")
                 };
                 self.push_step(step.clone());
@@ -559,24 +559,24 @@ pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: Pr
         return;
     }
     if let Some(ProofStep::Match { scrutinee, arms }) = steps.last_mut() {
-        // The terminal join retains a binary path selector for deferred
-        // operations. Serialize those operations inside the original lexical
-        // constructor arms, not after the match where field names escape.
-        if let ProofStep::If {
-            condition,
-            then_proof,
-            else_proof,
-        } = &step
-            && is_match_arm_selector(condition, scrutinee, arms)
-        {
-            for (arm, suffix) in arms.iter_mut().zip([then_proof, else_proof]) {
-                for next in suffix.steps() {
-                    append_surface_step_to_leaves(&mut arm.proof.steps, next.clone());
+        // The terminal join retains a path selector for deferred operations.
+        // Serialize those operations inside the original lexical constructor
+        // arms, not after the match where field names escape.
+        let selected = (0..arms.len())
+            .map(|index| match_arm_suffix(&step, scrutinee, arms, index))
+            .collect::<Option<Vec<_>>>();
+        match selected {
+            Some(per_arm) => {
+                for (arm, suffix) in arms.iter_mut().zip(per_arm) {
+                    for next in suffix {
+                        append_surface_step_to_leaves(arm.proof.steps_mut(), next);
+                    }
                 }
             }
-        } else {
-            for arm in arms {
-                append_surface_step_to_leaves(&mut arm.proof.steps, step.clone());
+            None => {
+                for arm in arms {
+                    append_surface_step_to_leaves(arm.proof.steps_mut(), step.clone());
+                }
             }
         }
         return;
@@ -587,18 +587,69 @@ pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: Pr
         ..
     }) = steps.last_mut()
     {
-        append_surface_step_to_leaves(&mut then_proof.steps, step.clone());
-        append_surface_step_to_leaves(&mut else_proof.steps, step);
+        append_surface_step_to_leaves(then_proof.steps_mut(), step.clone());
+        append_surface_step_to_leaves(else_proof.steps_mut(), step);
     } else {
         steps.push(step);
     }
 }
 
-fn is_match_arm_selector(
+/// Resolves a deferred step against one constructor arm of an enclosing
+/// `match`.
+///
+/// A match of any width is joined by a chain of two-way group splits, so a
+/// deferred operation arrives as a nested `if` tree whose conditions select
+/// constructor subsets. Following the chain down to `index` gives that arm
+/// exactly the operations its own path ran. `None` means the step is an
+/// ordinary surface `if` that belongs in every arm; cloning the whole tree
+/// into every arm instead would re-emit the complete N-leaf join tree N times,
+/// making the certificate quadratic in the constructor count.
+fn match_arm_suffix(
+    step: &ProofStep,
+    scrutinee: &ContractExpression,
+    arms: &[CertificateInductionArm],
+    index: usize,
+) -> Option<Vec<ProofStep>> {
+    let ProofStep::If {
+        condition,
+        then_proof,
+        else_proof,
+    } = step
+    else {
+        return None;
+    };
+    let selection = match_arm_selection(condition, scrutinee, arms)?;
+    let side = if *selection.get(index)? {
+        then_proof
+    } else {
+        else_proof
+    };
+    let mut suffix = Vec::with_capacity(side.steps().len());
+    for next in side.steps() {
+        match match_arm_suffix(next, scrutinee, arms, index) {
+            Some(nested) => suffix.extend(nested),
+            None => suffix.push(next.clone()),
+        }
+    }
+    Some(suffix)
+}
+
+/// Reads a group-split condition as the constructor subset it selects.
+///
+/// The condition a match group split writes is a match over the same
+/// scrutinee, arm for arm, whose body is `1` on the selected constructors and
+/// `0` on the rest, compared against `1`. `Some(selection)` holds one flag per
+/// constructor arm, in arm order; `None` means the condition is an ordinary
+/// surface `if` that belongs in every arm.
+///
+/// A group split always separates the constructors into two non-empty sides,
+/// so a condition that selects all of them or none of them is not one, and
+/// keeping both sides for it preserves the earlier two-constructor rule.
+fn match_arm_selection(
     condition: &ClickProposition,
     scrutinee: &ContractExpression,
     arms: &[CertificateInductionArm],
-) -> bool {
+) -> Option<Vec<bool>> {
     let ClickProposition::Comparison {
         left:
             ContractExpression::AlgebraicMatch {
@@ -612,13 +663,30 @@ fn is_match_arm_selector(
             )))),
     } = condition
     else {
-        return false;
+        return None;
     };
-    arms.len() == 2 && selector_arms.len() == 2 && selected.as_ref() == scrutinee
-        && arms.iter().zip(selector_arms).enumerate().all(|(index, (arm, selector))| {
-            arm.type_name == selector.type_name && arm.variant == selector.variant && arm.bindings == selector.bindings
-                && matches!(&selector.body, ContractExpression::CFragment(CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value)))) if *value == u32::from(index == 0))
+    if arms.len() != selector_arms.len() || selected.as_ref() != scrutinee {
+        return None;
+    }
+    let selection = arms
+        .iter()
+        .zip(selector_arms)
+        .map(|(arm, selector)| {
+            let ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(value),
+            ))) = &selector.body
+            else {
+                return None;
+            };
+            (arm.type_name == selector.type_name
+                && arm.variant == selector.variant
+                && arm.bindings == selector.bindings
+                && *value <= 1)
+                .then_some(*value == 1)
         })
+        .collect::<Option<Vec<_>>>()?;
+    (selection.iter().any(|selected| *selected) && selection.iter().any(|selected| !selected))
+        .then_some(selection)
 }
 
 pub(super) fn append_surface_tactics_by_leaf(
@@ -629,7 +697,7 @@ pub(super) fn append_surface_tactics_by_leaf(
         .iter()
         .map(|tactics| {
             ProofCertificate::from_proof_tactics(tactics)
-                .map(|proof| proof.steps)
+                .map(ProofCertificate::into_steps)
                 .map_err(|error| format!("path contained a non-simple tactic: {error:?}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -655,7 +723,7 @@ pub(super) fn append_surface_tactics_by_leaf(
         }
         if let Some(ProofStep::Match { arms, .. }) = steps.last_mut() {
             for arm in arms {
-                append(&mut arm.proof.steps, path_steps, next_path);
+                append(arm.proof.steps_mut(), path_steps, next_path);
             }
             return;
         }
@@ -665,8 +733,8 @@ pub(super) fn append_surface_tactics_by_leaf(
             ..
         }) = steps.last_mut()
         {
-            append(&mut then_proof.steps, path_steps, next_path);
-            append(&mut else_proof.steps, path_steps, next_path);
+            append(then_proof.steps_mut(), path_steps, next_path);
+            append(else_proof.steps_mut(), path_steps, next_path);
         } else if let Some(suffix) = path_steps.get(*next_path) {
             steps.extend(suffix.iter().cloned());
             *next_path += 1;
@@ -706,7 +774,7 @@ pub(super) fn append_surface_tactics_flat(
     }
     let proof = ProofCertificate::from_proof_tactics(common)
         .map_err(|error| format!("path contained a non-simple tactic: {error:?}"))?;
-    steps.extend(proof.steps);
+    steps.extend(proof.into_steps());
     Ok(())
 }
 

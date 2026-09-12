@@ -1,9 +1,7 @@
-# A tag equality closes by the simple `arithmetic using` step
+# A tag equality closes by an explicit special arithmetic certificate
 
-The smart `simp` closure of a tagged-word equality expands to one explicit
-`arithmetic() using` step naming the facts it used: the word's recorded
-address form and the base alignment. Writing that step by hand checks the
-same rule directly, with no search.
+The typed special certificate names the word's recorded address form and the
+base alignment directly, with no search.
 
 ```c filename=tagged_pointer_explicit_arithmetic.c
 struct node {
@@ -26,9 +24,11 @@ unsigned long set_black(unsigned long word, struct node* next) {
 } by {
     execute();
     have result == address(next) + 3 by {
-        arithmetic() using {
-            word == address(next) + 1;
-            aligned(next, 8);
+        arithmetic_certificate special {
+            premise 0: word == address(next) + 1 => word == address(next) + 1;
+            premise 1: aligned(next, 8) => aligned(next, 8);
+            pointer_word_equality relation 0 alignments [1] => result == address(next) + 3;
+            conclusion 0;
         }
     }
     simp();

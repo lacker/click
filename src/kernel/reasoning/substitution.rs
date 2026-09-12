@@ -1896,97 +1896,221 @@ fn rewrite_integer_atomic_proposition_with_walker(
     Ok(result)
 }
 
-/// Recursive proposition traversal for checked Integer substitution.  The
-/// caller supplies one walker for the whole proposition.  In particular, the
+enum IntegerPropositionRewriteTask<'a> {
+    Visit {
+        proposition: &'a Proposition,
+        shadowed: bool,
+    },
+    FinishUnary,
+    FinishBinary(PropositionBinaryOperator),
+    FinishQuantifier {
+        exists: bool,
+        name: Option<String>,
+        sort: Sort,
+        new_var: Variable,
+        scope: IntegerPropositionScope,
+    },
+}
+
+enum PropositionBinaryOperator {
+    And,
+    Or,
+    Implies,
+}
+
+enum IntegerPropositionScope {
+    Integer(crate::kernel::proof::term_rewrite::IntegerSubstitutionScope),
+    C(crate::kernel::proof::term_rewrite::CSubstitutionScope),
+}
+
+/// Iterative proposition traversal for checked Integer substitution.  The
+/// caller supplies one walker for the whole proposition. In particular, the
 /// replacement's carrier summary, DAG cache, fresh allocator, and work state
-/// are shared across sibling atomic propositions.
+/// are shared across sibling atomic propositions. An explicit task stack is
+/// used here because nested quantifiers can make the recursive equivalent
+/// exhaust the Rust test thread's stack even at modest source depth.
 fn substitute_integer_pure_proposition_with_walker(
     proposition: &Proposition,
     from: Variable,
     shadowed: bool,
     walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
-    integer_work(1)?;
-    match proposition {
-        Proposition::Equal(Term::Integer(left), Term::Integer(right)) => Ok(Proposition::Equal(
-            Term::Integer(substitute_integer_pure_term_with_walker(left, walker)?),
-            Term::Integer(substitute_integer_pure_term_with_walker(right, walker)?),
-        )),
-        Proposition::Equal(left, right)
-            if integer_atomic_term_supported(left) && integer_atomic_term_supported(right) =>
-        {
-            rewrite_integer_atomic_proposition_with_walker(proposition, walker)
+    let mut tasks = vec![IntegerPropositionRewriteTask::Visit {
+        proposition,
+        shadowed,
+    }];
+    let mut rewritten = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            IntegerPropositionRewriteTask::Visit {
+                proposition,
+                shadowed,
+            } => {
+                integer_work(1)?;
+                match proposition {
+                    Proposition::Equal(Term::Integer(left), Term::Integer(right)) => {
+                        rewritten.push(Proposition::Equal(
+                            Term::Integer(substitute_integer_pure_term_with_walker(left, walker)?),
+                            Term::Integer(substitute_integer_pure_term_with_walker(right, walker)?),
+                        ));
+                    }
+                    Proposition::Equal(left, right)
+                        if integer_atomic_term_supported(left)
+                            && integer_atomic_term_supported(right) =>
+                    {
+                        rewritten.push(rewrite_integer_atomic_proposition_with_walker(
+                            proposition,
+                            walker,
+                        )?);
+                    }
+                    Proposition::ConditionIs(condition, value) => {
+                        rewritten.push(Proposition::ConditionIs(
+                            substitute_integer_pure_condition_with_walker(condition, walker)?,
+                            *value,
+                        ));
+                    }
+                    Proposition::CMemoryLoadable { .. } => {
+                        rewritten.push(rewrite_integer_memory_loadable_with_walker(
+                            proposition,
+                            walker,
+                        )?);
+                    }
+                    Proposition::And(left, right) => {
+                        tasks.push(IntegerPropositionRewriteTask::FinishBinary(
+                            PropositionBinaryOperator::And,
+                        ));
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: right,
+                            shadowed,
+                        });
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: left,
+                            shadowed,
+                        });
+                    }
+                    Proposition::Or(left, right) => {
+                        tasks.push(IntegerPropositionRewriteTask::FinishBinary(
+                            PropositionBinaryOperator::Or,
+                        ));
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: right,
+                            shadowed,
+                        });
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: left,
+                            shadowed,
+                        });
+                    }
+                    Proposition::Implies(left, right) => {
+                        tasks.push(IntegerPropositionRewriteTask::FinishBinary(
+                            PropositionBinaryOperator::Implies,
+                        ));
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: right,
+                            shadowed,
+                        });
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: left,
+                            shadowed,
+                        });
+                    }
+                    Proposition::Not(body) => {
+                        tasks.push(IntegerPropositionRewriteTask::FinishUnary);
+                        tasks.push(IntegerPropositionRewriteTask::Visit {
+                            proposition: body,
+                            shadowed,
+                        });
+                    }
+                    Proposition::ForAll { var, sort, body } => {
+                        queue_integer_quantifier_rewrite(
+                            false, None, *var, sort, body, from, shadowed, walker, &mut tasks,
+                        )?;
+                    }
+                    Proposition::Exists {
+                        name,
+                        var,
+                        sort,
+                        body,
+                    } => {
+                        queue_integer_quantifier_rewrite(
+                            true,
+                            Some(name),
+                            *var,
+                            sort,
+                            body,
+                            from,
+                            shadowed,
+                            walker,
+                            &mut tasks,
+                        )?;
+                    }
+                    _ => return Err(IntegerPureSubstitutionError::UnsupportedCarrier),
+                }
+            }
+            IntegerPropositionRewriteTask::FinishUnary => {
+                let body = rewritten.pop().expect("unary rewrite result");
+                rewritten.push(Proposition::Not(Box::new(body)));
+            }
+            IntegerPropositionRewriteTask::FinishBinary(operator) => {
+                let right = rewritten.pop().expect("binary right rewrite result");
+                let left = rewritten.pop().expect("binary left rewrite result");
+                let proposition = match operator {
+                    PropositionBinaryOperator::And => Proposition::And,
+                    PropositionBinaryOperator::Or => Proposition::Or,
+                    PropositionBinaryOperator::Implies => Proposition::Implies,
+                };
+                rewritten.push(proposition(Box::new(left), Box::new(right)));
+            }
+            IntegerPropositionRewriteTask::FinishQuantifier {
+                exists,
+                name,
+                sort,
+                new_var,
+                scope,
+            } => {
+                match scope {
+                    IntegerPropositionScope::Integer(scope) => {
+                        walker.pop_integer_substitution_scope(scope);
+                    }
+                    IntegerPropositionScope::C(scope) => {
+                        walker.pop_c_substitution_scope(scope);
+                    }
+                }
+                let body = rewritten.pop().expect("quantifier rewrite result");
+                if exists {
+                    rewritten.push(Proposition::Exists {
+                        name: name.unwrap_or_default(),
+                        var: new_var,
+                        sort,
+                        body: Box::new(body),
+                    });
+                } else {
+                    rewritten.push(Proposition::ForAll {
+                        var: new_var,
+                        sort,
+                        body: Box::new(body),
+                    });
+                }
+            }
         }
-        Proposition::ConditionIs(condition, value) => Ok(Proposition::ConditionIs(
-            substitute_integer_pure_condition_with_walker(condition, walker)?,
-            *value,
-        )),
-        Proposition::CMemoryLoadable { .. } => {
-            rewrite_integer_memory_loadable_with_walker(proposition, walker)
-        }
-        Proposition::And(left, right) => Ok(Proposition::And(
-            Box::new(substitute_integer_pure_proposition_with_walker(
-                left, from, shadowed, walker,
-            )?),
-            Box::new(substitute_integer_pure_proposition_with_walker(
-                right, from, shadowed, walker,
-            )?),
-        )),
-        Proposition::Or(left, right) => Ok(Proposition::Or(
-            Box::new(substitute_integer_pure_proposition_with_walker(
-                left, from, shadowed, walker,
-            )?),
-            Box::new(substitute_integer_pure_proposition_with_walker(
-                right, from, shadowed, walker,
-            )?),
-        )),
-        Proposition::Not(body) => Ok(Proposition::Not(Box::new(
-            substitute_integer_pure_proposition_with_walker(body, from, shadowed, walker)?,
-        ))),
-        Proposition::Implies(left, right) => Ok(Proposition::Implies(
-            Box::new(substitute_integer_pure_proposition_with_walker(
-                left, from, shadowed, walker,
-            )?),
-            Box::new(substitute_integer_pure_proposition_with_walker(
-                right, from, shadowed, walker,
-            )?),
-        )),
-        Proposition::ForAll { var, sort, body } => substitute_integer_quantifier_with_walker(
-            false, None, *var, sort, body, from, shadowed, walker,
-        ),
-        Proposition::Exists {
-            name,
-            var,
-            sort,
-            body,
-        } => substitute_integer_quantifier_with_walker(
-            true,
-            Some(name),
-            *var,
-            sort,
-            body,
-            from,
-            shadowed,
-            walker,
-        ),
-        _ => Err(IntegerPureSubstitutionError::UnsupportedCarrier),
     }
+
+    Ok(rewritten.pop().expect("proposition rewrite result"))
 }
 
-// Keep the proposition's carrier and lexical state explicit at this boundary;
-// hiding them in a mutable context would make it easier to apply a scope to
-// the replacement rather than to the source body.
 #[allow(clippy::too_many_arguments)]
-fn substitute_integer_quantifier_with_walker(
+fn queue_integer_quantifier_rewrite<'a>(
     exists: bool,
     name: Option<&String>,
     var: Variable,
     sort: &Sort,
-    body: &Proposition,
+    body: &'a Proposition,
     from: Variable,
     shadowed: bool,
     walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
-) -> Result<Proposition, IntegerPureSubstitutionError> {
+    tasks: &mut Vec<IntegerPropositionRewriteTask<'a>>,
+) -> Result<(), IntegerPureSubstitutionError> {
     let is_integer = *sort == Sort::Integer;
     let is_c = matches!(sort, Sort::CInt32 | Sort::CInt64 | Sort::CPointer(_));
     if !is_integer && !is_c {
@@ -2017,37 +2141,33 @@ fn substitute_integer_quantifier_with_walker(
         return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
     }
 
-    let transformed = if is_integer {
-        let scope = walker.push_integer_substitution_scope(var, new_var, shadowed || var == from);
-        let transformed = substitute_integer_pure_proposition_with_walker(
-            body,
-            from,
+    let (scope, child_shadowed) = if is_integer {
+        (
+            IntegerPropositionScope::Integer(walker.push_integer_substitution_scope(
+                var,
+                new_var,
+                shadowed || var == from,
+            )),
             shadowed || var == from,
-            walker,
-        );
-        walker.pop_integer_substitution_scope(scope);
-        transformed
+        )
     } else {
-        let scope = walker.push_c_substitution_scope(var, new_var);
-        let transformed =
-            substitute_integer_pure_proposition_with_walker(body, from, shadowed, walker);
-        walker.pop_c_substitution_scope(scope);
-        transformed
-    }?;
-    if exists {
-        Ok(Proposition::Exists {
-            name: name.cloned().unwrap_or_default(),
-            var: new_var,
-            sort: sort.clone(),
-            body: Box::new(transformed),
-        })
-    } else {
-        Ok(Proposition::ForAll {
-            var: new_var,
-            sort: sort.clone(),
-            body: Box::new(transformed),
-        })
-    }
+        (
+            IntegerPropositionScope::C(walker.push_c_substitution_scope(var, new_var)),
+            shadowed,
+        )
+    };
+    tasks.push(IntegerPropositionRewriteTask::FinishQuantifier {
+        exists,
+        name: name.cloned(),
+        sort: sort.clone(),
+        new_var,
+        scope,
+    });
+    tasks.push(IntegerPropositionRewriteTask::Visit {
+        proposition: body,
+        shadowed: child_shadowed,
+    });
+    Ok(())
 }
 
 fn substitute_integer_pure_condition_with_walker(

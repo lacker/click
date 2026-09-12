@@ -43,6 +43,42 @@ pub(in crate::surface::proof) fn loop_entry_checked_goal_with_stripped(
     (goal, stripped)
 }
 
+/// The first loop binder of `clause` whose name no enclosing contract binder
+/// declares.
+///
+/// D5's landed rule is that a loop binder reuses the enclosing binder's name:
+/// the loop takes over that instance, and a fresh name consumes it for the
+/// rest of the function. A fresh name is therefore not in scope before the
+/// loop, so an entry invariant that reads it has nothing to read and the
+/// lowering fails with no name in it. This recovers the name for that
+/// refusal; the loop-head checks own every other fresh-name outcome, such as
+/// the ambiguity refusal for two matching instances.
+fn fresh_loop_binder_name(
+    function_block: &FunctionBlock,
+    clause: &StructuralClause,
+) -> Option<String> {
+    let mut enclosing = BTreeSet::new();
+    for requirement in function_block.requires() {
+        if let Requirement::Resource(ResourceClause::Named { binding, .. }) = requirement.inner() {
+            enclosing.insert(binding.name.clone());
+        }
+    }
+    for ensure in function_block.ensures() {
+        if let Ensure::Resource(ResourceClause::Named { binding, .. }) = ensure.ensure() {
+            enclosing.insert(binding.name.clone());
+        }
+    }
+    clause
+        .resources()
+        .iter()
+        .find_map(|resource| match resource {
+            ResourceClause::Named { binding, .. } if !enclosing.contains(&binding.name) => {
+                Some(binding.name.clone())
+            }
+            _ => None,
+        })
+}
+
 /// Whether the facts an initialization proof established discharge one entry
 /// obligation.
 ///
@@ -177,7 +213,16 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         invariant_checks,
         &assumptions_from_propositions(&context.pure_facts),
     )
-    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    .map_err(|message| {
+        ClickError::new(match fresh_loop_binder_name(environment.function_block, clause) {
+            Some(name) => format!(
+                "`{claim_label}`: loop binder `{name}` is not an enclosing contract binder, so an \
+                 invariant that reads it has nothing to read at loop entry; reuse the enclosing \
+                 binder's name, whose instance the loop takes over"
+            ),
+            None => format!("`{claim_label}`: {message}"),
+        })
+    })?;
     // Expansion lowers a shared initialize proof to optional predicate
     // unfolds followed by one explicit `have` per invariant.  Recognize that
     // surface-certificate shape on the next verification pass and check it

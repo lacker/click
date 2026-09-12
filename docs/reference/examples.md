@@ -554,6 +554,13 @@ sequence:
   form of that bridge, `mdtests/model_identity_pointer_payload_rejects_other_cell.md`
   its negative, and `mdtests/match_bindings_in_branch_arm.md` pins that a
   match arm's payload bindings stay in scope inside a nested `branch` arm.
+  The unchanged iterative walks `tree_leftmost` and `tree_rightmost` are
+  verified against a context resource: `Context` and `ctx_at(child)` hold
+  everything but the focused subtree, `plug` rebuilds the whole model from a
+  context and that subtree, and the loop carries both binders with
+  `decreases t;`. Their negatives are
+  `mdtests/loop_decreases_rejects_unrelated_node.md` and
+  `mdtests/loop_context_frame_refold_rejected.md`.
 - `examples/rbtree-model/`: the pure red-black library, with no C and no
   `verifying` line. `RbTree` carries each node's `struct rb_node*` identity,
   color, and both submodels; `rb_inorder`, `rb_member`, `black_height`,

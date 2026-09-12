@@ -1225,6 +1225,78 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(unfolded));
         }
+        // A Special fact such as `aligned(p + i, 8)` is not generally a
+        // simp-derivation: the kernel's pointer rule consumes a matching
+        // alignment/relation fact directly. Use the selected pairs when
+        // `simp using` supplied them; otherwise recover only typed Special
+        // candidates from the recorded Surface map for generic `simp()`.
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(goal) = self.goal()
+        {
+            let special_pairs = if !anchored_pairs.is_empty() {
+                anchored_pairs.clone()
+            } else {
+                let (surface_facts, premise_anchor) = match self.context.as_ref() {
+                    ProofContext::Pure(context) => {
+                        (&context.theorem_context.surface_requirements, None)
+                    }
+                    ProofContext::FixedState(context) => (
+                        context.surface_propositions,
+                        context.premise_anchor.as_ref(),
+                    ),
+                    ProofContext::Execution(_) => {
+                        if let Some(data) = self.focused_outcome_data() {
+                            (&data.surface_propositions, data.premise_anchor.as_ref())
+                        } else {
+                            let Some(execution) = self.execution() else {
+                                return Ok(None);
+                            };
+                            (&execution.presentation.surface_propositions, None)
+                        }
+                    }
+                };
+                self.facts()
+                    .special_candidates_mentioning(goal)
+                    .into_iter()
+                    .filter(|premise| {
+                        matches!(
+                            premise,
+                            Proposition::ConditionIs(
+                                ConditionTerm::Bitvector64Equal(..)
+                                    | ConditionTerm::PointerEqual(..)
+                                    | ConditionTerm::PointerOffsetEqual(..)
+                                    | ConditionTerm::Float32(
+                                        CFloatCondition::Classification { .. }
+                                    )
+                                    | ConditionTerm::Float64(
+                                        CFloatCondition::Classification { .. }
+                                    ),
+                                true
+                            )
+                        )
+                    })
+                    .filter_map(|premise| {
+                        self.available_surface_fact(surface_facts, premise_anchor, &premise)
+                            .map(|surface| (premise.clone(), surface))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let kernels = special_pairs
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            let surfaces = special_pairs
+                .iter()
+                .map(|(_, surface)| surface.clone())
+                .collect::<Vec<_>>();
+            if let Some(plan) = plan_special_arithmetic_certificate(goal, &kernels)
+                && let Ok(proof) = self.apply_step(ProofStep::ArithmeticCertificate(
+                    special_plan_to_surface_certificate(&plan, &surfaces, surface_goal),
+                ))
+            {
+                return Ok(Some(proof));
+            }
+        }
         // Signed arithmetic is the final fallback. All established
         // equality, transport, quantifier, structural, and function-unfold
         // routes must get first choice so their selected proof steps remain
@@ -2505,7 +2577,30 @@ impl<'a> Proof<'a> {
     ) -> Option<ClickProposition> {
         let _qualified_sources =
             super::surface_synthesis::QualifiedSynthesisScope::enter(surface_facts);
+        // A refold moves a constructor equation: a proof `match` arm's case
+        // fact states the scrutinee's constructor at unchanged function entry,
+        // and once the arm has refolded its instance, `c.model == C(..)` reads
+        // the refolded field. That is the one shape whose recorded pair can
+        // still answer a lookup while the spelling itself has moved to another
+        // fact, so it is the one shape re-lowered below. Testing the kernel's
+        // shape once keeps every other premise on the cheap recorded-pair
+        // route: re-lowering every candidate costs a smart `have` about half
+        // its real-time budget again.
+        let constructor_equation = matches!(
+            kernel,
+            Proposition::Equal(
+                Term::Algebraic(_),
+                Term::Algebraic(crate::kernel::AlgebraicTerm {
+                    node: crate::kernel::AlgebraicTermNode::Constructor { .. },
+                    ..
+                })
+            )
+        );
         let matches_kernel = |candidate: &ClickProposition| {
+            let lower = |candidate: &ClickProposition| {
+                self.lower_surface_proposition_direct(candidate, "typed simp premise form")
+                    .ok()
+            };
             if self.focused_outcome_data().is_some()
                 && surface_facts
                     .available_kernel_matching(candidate, |fact| self.facts().contains(fact))
@@ -2513,11 +2608,19 @@ impl<'a> Proof<'a> {
                         lowered == kernel || condition_polarity_equivalent(lowered, kernel)
                     })
             {
-                return Some(());
+                let Some(lowered) = constructor_equation.then(|| lower(candidate)).flatten() else {
+                    // Either the pair is authoritative for this shape, or the
+                    // spelling has no lowering here at all and the pair is all
+                    // there is to go on.
+                    return Some(());
+                };
+                // The spelling lowers to some other fact, so it has stopped
+                // denoting this one: citing it would hand the rechecked proof
+                // the fact it now names instead.
+                return (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
+                    .then_some(());
             }
-            let lowered = self
-                .lower_surface_proposition_direct(candidate, "typed simp premise form")
-                .ok()?;
+            let lowered = lower(candidate)?;
             (lowered == *kernel
                 || condition_polarity_equivalent(&lowered, kernel)
                 || quantified_equivalent_available_fact(kernel, std::slice::from_ref(&lowered))
@@ -2657,6 +2760,31 @@ impl<'a> Proof<'a> {
             .cloned()
         {
             return Some(surface);
+        }
+        // A proof `match` arm's case fact states the scrutinee's constructor at
+        // unchanged function entry, and the spelling recorded for it is the
+        // written, unanchored `c.model == C(..)`. Once the arm refolds its
+        // instance, that spelling denotes the fold's own equation, so the
+        // direct check above rejects it. The entry-anchored
+        // `old(c.model) == C(..)` still lowers to this exact fact. Offer it
+        // exactly where the recorded pair alone used to be taken as proof that
+        // the written form named this premise -- that acceptance is what let a
+        // certificate cite a spelling that is rechecked as a different fact --
+        // and nowhere else, so a lookup that found no spelling at all still
+        // finds none.
+        if constructor_equation
+            && self.focused_outcome_data().is_some()
+            && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
+                surface_facts
+                    .available_kernel_matching(surface, |fact| self.facts().contains(fact))
+                    .is_some_and(|recorded| {
+                        recorded == kernel || condition_polarity_equivalent(recorded, kernel)
+                    })
+                    .then(|| entry_anchored_constructor_equality(self, surface, kernel))
+                    .flatten()
+            })
+        {
+            return Some(anchored);
         }
         // Quantified execution facts may be retained in the canonical memory
         // form used by the kernel while their recorded Surface form lowers to
@@ -2892,22 +3020,12 @@ impl<'a> Proof<'a> {
                 else {
                     continue;
                 };
-                // A recorded spelling can stop denoting the fact it was
-                // recorded for. A proof `match` case fact states the
-                // scrutinee's constructor at unchanged function entry, and
-                // once the arm has refolded its instance, `c.model == C(..)`
-                // reads the refolded field: the pair still answers a map
-                // lookup, so the rewrite is admitted here and then rechecked
-                // against the fold's own equation. When the spelling no
-                // longer lowers to this fact on its own, try the
-                // entry-anchored spelling that does, before it.
-                let anchored = entry_anchored_constructor_equality(&proof, &surface, &equality);
+                // `available_surface_fact` has already resolved the spelling
+                // that still lowers to this fact, anchoring a stale constructor
+                // equality at function entry when the written form stopped
+                // denoting it, so only the orientation is open here.
                 let reverse = reverse_surface_equality(&surface);
-                for oriented in anchored
-                    .into_iter()
-                    .chain(std::iter::once(surface))
-                    .chain(reverse)
-                {
+                for oriented in std::iter::once(surface).chain(reverse) {
                     let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) else {
                         continue;
                     };
@@ -4088,6 +4206,23 @@ impl<'a> Proof<'a> {
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
         if let Some(surface_goal) = proof.surface_goal()
+            && let Some(plan) = plan_special_arithmetic_certificate(goal, &restricted)
+        {
+            let certificate = special_plan_to_surface_certificate(
+                &plan,
+                &premise_pairs
+                    .iter()
+                    .map(|(_, surface)| surface.clone())
+                    .collect::<Vec<_>>(),
+                surface_goal,
+            );
+            if let Ok(closed) = proof.apply_step(ProofStep::ArithmeticCertificate(certificate))
+                && closed.is_complete()
+            {
+                return Some(closed);
+            }
+        }
+        if let Some(surface_goal) = proof.surface_goal()
             // The kernel lowering has already established the exact carrier
             // and checked terms for this goal.  Use that fact as the routing
             // predicate so fixed-state and execution proofs receive the same
@@ -5011,7 +5146,9 @@ impl<'a> Proof<'a> {
 /// The entry-anchored spelling of a constructor equality whose written form no
 /// longer lowers to `equality` at this frontier. `None` when the written form
 /// still denotes the fact, when the equality is not a constructor equation, or
-/// when anchoring does not recover the same fact.
+/// when anchoring does not recover the same fact. Anchoring is a last resort in
+/// [`Proof::available_surface_fact`]: it renames one premise the source already
+/// stated, never a fact no spelling reached.
 fn entry_anchored_constructor_equality(
     proof: &Proof<'_>,
     surface: &ClickProposition,

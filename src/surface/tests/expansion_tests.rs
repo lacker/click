@@ -13848,6 +13848,11 @@ fn match_arm_closer_anchors_the_case_fact_at_entry_and_reverifies() {
         expanded.contains("rewrite(old(c.model) == Bi::Other(value));"),
         "the generated closer should cite the entry-anchored case fact: {expanded}"
     );
+    assert!(
+        !expanded.contains("rewrite(c.model == Bi::Other(value));"),
+        "the written spelling now denotes the fold's own equation, so a \
+         certificate must not cite it for the case fact: {expanded}"
+    );
     verify_c0_sources(&expanded, &sources)
         .expect("the expanded match-arm closer should independently reverify");
 }
@@ -13971,4 +13976,87 @@ fn expansion_refuses_a_witness_it_cannot_spell_instead_of_emitting_unparseable_t
         error.message(),
         "the expansion needs a name for the witness `next` of `packed`, which has no surface spelling"
     );
+}
+
+/// `examples/marked-linked-list`'s `list_count_live` reduced: a recursive call
+/// whose result lands in a local, then a C `if` whose condition loads a
+/// `uint64` cell of the node the call did not touch.
+const RECURSIVE_THEN_WIDE_GUARD_C: &str = r#"struct cell {
+    int32 value;
+    unsigned long word;
+};
+
+uint32 count_live(struct cell *node) {
+    if (node == 0) {
+        return 0;
+    }
+    uint32 rest = count_live((struct cell *)(node->word & ~1));
+    if ((node->word & 1) != 0) {
+        return rest;
+    }
+    return rest + 1;
+}
+"#;
+
+const RECURSIVE_THEN_WIDE_GUARD_CLICK: &str = r#"resource tagged(node: struct cell*) {
+    if node != 0 {
+        owns object(node);
+        fact aligned(node, 8);
+        let next: struct cell* where aligned(next, 8) and node->word == address(next) + (node->word & 1);
+        contains tagged(next);
+    }
+}
+
+verifying "count_live.c";
+
+uint32 count_live(struct cell* node) {
+    decreases tagged(node);
+    owns tagged(node);
+} by {
+    if node == 0 {
+        execute();
+        simp();
+    } else {
+        unfold(tagged(node));
+        execute();
+        fold(tagged(node));
+        simp();
+    }
+}
+"#;
+
+#[test]
+fn undecided_wide_guard_after_a_recursive_call_expands_and_reverifies() {
+    // The `execute()` in the `else` arm renders the C `if` it cannot decide as
+    // a proof `if` on the guard anchored at the statement's entry, and the
+    // recheck applies each arm's `step()` under `RequireProven`. The arm
+    // assumes the surface lowering of that guard while the C guard evaluates
+    // against the snapshot its own load resolved, so the two agree only if the
+    // load has a name: an unnamed `load_uint64` reads the whole current
+    // snapshot, which after the recursive call differs from the one the guard
+    // resolved by the `local:rest` cell the load cannot alias, and neither arm
+    // is excluded ("got 2 feasible condition paths"). Every integer scalar one
+    // to eight bytes wide is named where it is loaded, so the polarity the arm
+    // assumes decides the transition.
+    let sources = [("count_live.c", RECURSIVE_THEN_WIDE_GUARD_C)];
+    verify_c0_sources(RECURSIVE_THEN_WIDE_GUARD_CLICK, &sources)
+        .expect("the recursive count proof should verify");
+
+    let arm_execute = RECURSIVE_THEN_WIDE_GUARD_CLICK
+        .rfind("execute();")
+        .expect("proof should contain the `else` arm's execute");
+    let position = expansion::position_at_offset(RECURSIVE_THEN_WIDE_GUARD_CLICK, arm_execute);
+    let expanded = expand_c0_tactic_source_at(
+        RECURSIVE_THEN_WIDE_GUARD_CLICK,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("the `else` arm's execute should expand");
+    assert!(
+        expanded.contains("if at(statement(5).entry, (load_uint64(byte_offset(node, 8)) & 1))"),
+        "the undecided C guard should expand to an anchored proof `if`: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded undecided-guard arm should independently reverify");
 }

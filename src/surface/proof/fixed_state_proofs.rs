@@ -28,5 +28,6 @@ pub(in crate::surface) use have_proofs::{
     lower_fixed_state_proposition_through_kernel,
     lower_fixed_state_proposition_through_kernel_recording_introductions,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls,
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths,
 };
 pub(super) use theorem_application::*;

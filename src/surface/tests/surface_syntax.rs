@@ -1024,6 +1024,81 @@ fn signed_int32_certificate_rejects_duplicate_premises_and_forward_nodes() {
 }
 
 #[test]
+fn special_arithmetic_certificate_round_trips_and_rejects_bad_premises() {
+    let source = r#"
+        theorem special_certificate_forms(p: int32) {
+            ensures aligned(p, 8) by {
+                arithmetic_certificate special {
+                    premise 0: aligned(p, 8) => aligned(p, 8);
+                    pointer_alignment premise 0 => aligned(p, 8);
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("special certificate should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    assert!(matches!(
+        &tactics[0],
+        ProofTactic::ArithmeticCertificate(ArithmeticCertificate {
+            family: ArithmeticCertificateFamily::Special(_)
+        })
+    ));
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(
+        printed.contains("arithmetic_certificate special {"),
+        "{printed}"
+    );
+    assert_eq!(
+        parse(&format!(
+            "theorem special_certificate_forms(p: int32) {{ ensures aligned(p, 8) by {{ {printed} }} }}"
+        ))
+        .expect("printed special certificate should reparse")
+        .theorem_definitions()[0]
+            .ensures()[0]
+            .proof(),
+        file.theorem_definitions()[0].ensures()[0].proof()
+    );
+
+    let duplicate = source.replace(
+        "premise 0: aligned(p, 8) => aligned(p, 8);",
+        "premise 0: aligned(p, 8) => aligned(p, 8); premise 0: aligned(p, 8) => aligned(p, 8);",
+    );
+    assert!(parse(&duplicate).is_err());
+    let gap = source.replace("premise 0:", "premise 2:");
+    assert!(parse(&gap).is_err());
+    let mismatch = source.replace("=> aligned(p, 8);", "=> aligned(p, 16);");
+    assert!(parse(&mismatch).is_err());
+}
+
+#[test]
+fn float_reflexive_smart_expansion_has_one_finite_premise_and_rechecks() {
+    let source = r#"
+        theorem finite_float_reflexive(value: float) {
+            requires isfinite(value);
+            ensures value == value by { simp(); }
+        }
+    "#;
+    let verified = verify_click_theorems(source).expect("finite float reflexivity should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("float reflexivity should expand");
+    assert!(
+        expanded.contains("arithmetic_certificate special"),
+        "{expanded}"
+    );
+    assert_eq!(expanded.matches("premise ").count(), 1, "{expanded}");
+    let rechecked = source.replace("by { simp(); }", &expanded);
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_click_theorems(&rechecked)
+    });
+    result.expect("expanded float reflexivity should recheck");
+    assert_eq!(planning, 0, "explicit special recheck must not plan");
+}
+
+#[test]
 fn signed_arithmetic_smart_planner_expands_to_structural_certificate() {
     let source = r#"
         theorem signed_smart_double(n: int32) {

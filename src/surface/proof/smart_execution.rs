@@ -497,6 +497,7 @@ impl<'a> Proof<'a> {
             result,
             recorded_snapshots,
             integer_values: &integer_values,
+            pointer_element_widths: parameter_pointer_element_widths(parameters),
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let mut lowering_assumptions = self.facts().assumptions().clone();
@@ -661,6 +662,7 @@ impl<'a> Proof<'a> {
             result: None,
             recorded_snapshots: &recorded_snapshots,
             integer_values: &context.theorem_context.integer_values,
+            pointer_element_widths: BTreeMap::new(),
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let requirements = lower_theorem_application_requirements_with_assumptions(

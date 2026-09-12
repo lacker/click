@@ -268,6 +268,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
     definition: &ResourceDefinition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<Option<SpecProposition>, ClickError> {
     let Some(condition) = definition
         .composite_body()
@@ -297,6 +298,10 @@ pub(in crate::surface) fn lower_composite_resource_condition(
                 ))
             })
             .collect(),
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths_with_layouts(
+            definition.parameters(),
+            struct_layouts,
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -329,6 +334,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
     definition: &ResourceDefinition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<Vec<SpecProposition>, ClickError> {
     lower_composite_resource_facts_with_bindings(
         definition,
@@ -336,6 +342,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         click_function_environment,
         &[],
         &BTreeMap::new(),
+        struct_layouts,
     )
 }
 
@@ -345,6 +352,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
     click_function_environment: &ClickFunctionEnvironment,
     bindings: &[(String, ClickType)],
     integer_binding_variables: &BTreeMap<String, crate::kernel::Variable>,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<Vec<SpecProposition>, ClickError> {
     let body = definition
         .composite_body()
@@ -370,6 +378,10 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
                 ))
             })
             .collect(),
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths_with_layouts(
+            definition.parameters(),
+            struct_layouts,
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -524,6 +536,9 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
                 ))
             })
             .collect(),
+        parameter_pointer_element_widths: parameter_pointer_element_widths(
+            parsed_function.parameters(),
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -701,6 +716,9 @@ pub(in crate::surface) fn lower_branch_interface_fact(
                 ))
             })
             .collect(),
+        parameter_pointer_element_widths: parameter_pointer_element_widths(
+            parsed_function.parameters(),
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -734,6 +752,7 @@ fn fixed_state_elaboration<'a>(
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     _opaque_click_functions: BTreeSet<String>,
+    parameter_pointer_element_widths: BTreeMap<String, u32>,
 ) -> (AnnotationLowerer<'a>, SpecElaborationContext) {
     let lowerer = AnnotationLowerer {
         structural_clauses: &[],
@@ -743,6 +762,7 @@ fn fixed_state_elaboration<'a>(
         result_type: result.map(CValue::c_type).unwrap_or(CType::Int32),
         entry_values,
         parameter_array_element_types: array_element_types,
+        parameter_pointer_element_widths,
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -793,6 +813,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<SpecProposition, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
@@ -805,6 +826,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     );
     let mut context = context;
     context.algebraic_values = algebraic_values.into_iter().collect();
@@ -844,6 +866,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<SpecAlgebraicExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
@@ -856,6 +879,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     );
     lowerer.lower_contract_algebraic_to_spec(expression, &context)
 }
@@ -890,6 +914,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression(
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        BTreeMap::new(),
     )
 }
 
@@ -912,6 +937,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<crate::kernel::SpecIntegerExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
@@ -924,6 +950,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     );
     let mut context = context;
     let referenced_names =
@@ -981,6 +1008,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<SpecExpression, String> {
     let (mut lowerer, context) = fixed_state_elaboration(
         array_element_types,
@@ -993,6 +1021,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     );
     lowerer.lower_contract_expression_to_spec(expression, &context)
 }
@@ -1027,6 +1056,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
                 ))
             })
             .collect(),
+        parameter_pointer_element_widths: parameter_pointer_element_widths(parameters),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -1074,6 +1104,9 @@ pub(in crate::surface) fn function_contract_summary(
                 ))
             })
             .collect(),
+        parameter_pointer_element_widths: parameter_pointer_element_widths(
+            parsed_function.parameters(),
+        ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
         algebraic_types: BTreeMap::new(),
@@ -1536,6 +1569,10 @@ struct AnnotationLowerer<'a> {
     result_type: CType,
     entry_values: BTreeMap<String, CValue>,
     parameter_array_element_types: BTreeMap<String, CType>,
+    /// Source-side pointee widths which are not representable in the kernel's
+    /// nominal `CType` (notably pointers to structs, which use the compatible
+    /// `int32*` carrier).  Pointer arithmetic must retain this physical width.
+    parameter_pointer_element_widths: BTreeMap<String, u32>,
     quantified_values: BTreeMap<String, CValue>,
     algebraic_variables: BTreeMap<String, SpecAlgebraicExpression>,
     algebraic_types: BTreeMap<(String, Vec<AlgebraicValueType>), AlgebraicType>,
@@ -1549,6 +1586,50 @@ struct AnnotationLowerer<'a> {
     /// The proof's fact context, under which a count at a recorded state
     /// selects its populations.
     count_assumptions: Option<&'a PureFactContext>,
+}
+
+pub(in crate::surface) fn parameter_pointer_element_widths(
+    parameters: &[syntax::C0Parameter],
+) -> BTreeMap<String, u32> {
+    parameters
+        .iter()
+        .filter_map(|parameter| {
+            parameter
+                .array_element_width()
+                .or_else(|| {
+                    parameter
+                        .pointee_struct_layout()
+                        .map(|layout| layout.size_bytes())
+                })
+                .or_else(|| parameter.struct_layout().map(|layout| layout.size_bytes()))
+                .map(|width| (parameter.name().to_string(), width))
+        })
+        .collect()
+}
+
+/// Widths which remain knowable for Click-defined resource parameters. Such
+/// parameters retain array element types, while a struct-pointer parameter's
+/// layout is unavailable outside the C translation unit.
+pub(in crate::surface) fn click_parameter_pointer_element_widths_with_layouts(
+    parameters: &[FunctionParameter],
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) -> BTreeMap<String, u32> {
+    parameters
+        .iter()
+        .filter_map(|parameter| {
+            parameter
+                .struct_name()
+                .and_then(|name| struct_layouts.get(name))
+                .map(|layout| (parameter.name().to_string(), layout.size_bytes()))
+                .or_else(|| {
+                    parameter
+                        .click_type()
+                        .c_type()
+                        .and_then(click_array_element_type)
+                        .map(|element| (parameter.name().to_string(), element.byte_width()))
+                })
+        })
+        .collect()
 }
 
 /// Lower explicit arithmetic evidence without constructing or cloning a C
@@ -2595,29 +2676,39 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    /// The value a fixed snapshot gives one resource field.
+    ///
+    /// Only an explicit `at(...)` snapshot fixes one. That snapshot names a
+    /// state, so a field the instance does not hold there is an error: no
+    /// other reading exists.
+    ///
+    /// `old(...)` is not a named state but the function entry, and a binder's
+    /// entry field always has a symbolic reading of its own -- the kernel's
+    /// entry projection, which the caller emits when this answers `None`.
+    /// Reading it out of whatever state this lowering was handed instead made
+    /// `old(name.field)` in a loop invariant mean the generation that state
+    /// held, so a proof that unfolded and refolded the binder before the loop
+    /// changed what `old(...)` meant, and the frontier and contract
+    /// certification lowered the same invariant two ways.
     fn fixed_resource_field(
         &self,
         access: &ResourceFieldAccess,
         environment: &SpecElaborationContext,
     ) -> Result<Option<AlgebraicValue>, String> {
-        let snapshot = environment.snapshot_state.as_ref().or_else(|| {
-            (environment.at_function_entry && !environment.function_contract)
-                .then_some(self.entry_state)
-        });
-        snapshot
-            .map(|state| {
-                state
-                    .resource_instance_at_path(access.identity, &access.children)
-                    .and_then(|instance| instance.fields().get(access.field_index))
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "resource instance `{}` is not owned at this snapshot",
-                            access.owner
-                        )
-                    })
-            })
-            .transpose()
+        if let Some(state) = environment.snapshot_state.as_ref() {
+            return state
+                .resource_instance_at_path(access.identity, &access.children)
+                .and_then(|instance| instance.fields().get(access.field_index))
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| {
+                    format!(
+                        "resource instance `{}` is not owned at this snapshot",
+                        access.owner
+                    )
+                });
+        }
+        Ok(None)
     }
 
     fn contract_expression_is_integer(
@@ -3752,14 +3843,19 @@ impl AnnotationLowerer<'_> {
                     return Err("expected an algebraic resource field".into());
                 };
                 let algebraic_type = self.cached_algebraic_kernel_type(ty)?;
-                let node = if let Some(value) = self.fixed_resource_field(access, environment)? {
-                    let AlgebraicValue::Algebraic(AlgebraicTerm {
+                let fixed = match self.fixed_resource_field(access, environment)? {
+                    Some(AlgebraicValue::Algebraic(AlgebraicTerm {
                         node: AlgebraicTermNode::Variable(variable),
                         ..
-                    }) = value
-                    else {
+                    })) => Some(variable),
+                    // A named snapshot has only the value it holds; the
+                    // function entry also has its symbolic projection.
+                    Some(_) if environment.snapshot_state.is_some() => {
                         return Err("only entry-bound symbolic resource fields support fixed snapshots in this slice".into());
-                    };
+                    }
+                    Some(_) | None => None,
+                };
+                let node = if let Some(variable) = fixed {
                     SpecAlgebraicExpressionNode::Variable(variable)
                 } else {
                     SpecAlgebraicExpressionNode::ResourceField(
@@ -4560,20 +4656,22 @@ impl AnnotationLowerer<'_> {
             }
             // Arithmetic on a pointer offsets it by whole elements, as C does.
             CExpression::Add(left, right) => {
-                if let Some(element_type) = self.c_expression_array_element_type(left, environment)
+                if let Some(element_width) =
+                    self.c_expression_array_element_width(left, environment)
                 {
                     return Ok(SpecExpression::PointerOffset {
                         pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
                         elements: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
-                        byte_width: element_type.byte_width(),
+                        byte_width: element_width,
                     });
                 }
-                if let Some(element_type) = self.c_expression_array_element_type(right, environment)
+                if let Some(element_width) =
+                    self.c_expression_array_element_width(right, environment)
                 {
                     return Ok(SpecExpression::PointerOffset {
                         pointer: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
                         elements: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
-                        byte_width: element_type.byte_width(),
+                        byte_width: element_width,
                     });
                 }
                 Ok(SpecExpression::Add(
@@ -4582,7 +4680,8 @@ impl AnnotationLowerer<'_> {
                 ))
             }
             CExpression::Subtract(left, right) => {
-                if let Some(element_type) = self.c_expression_array_element_type(left, environment)
+                if let Some(element_width) =
+                    self.c_expression_array_element_width(left, environment)
                     && self
                         .c_expression_array_element_type(right, environment)
                         .is_none()
@@ -4593,7 +4692,7 @@ impl AnnotationLowerer<'_> {
                             Box::new(SpecExpression::Value(int32(0))),
                             Box::new(self.lower_c_fragment_to_spec(right, environment)?),
                         )),
-                        byte_width: element_type.byte_width(),
+                        byte_width: element_width,
                     });
                 }
                 Ok(SpecExpression::Subtract(
@@ -4641,6 +4740,24 @@ impl AnnotationLowerer<'_> {
                 target_type,
                 ..
             } if *target_type == CType::UInt32 || target_type.is_pointer() => {
+                Ok(SpecExpression::Cast(
+                    Box::new(self.lower_c_fragment_to_spec(expression, environment)?),
+                    *target_type,
+                ))
+            }
+            // A pointer-to-integer cast still has to lower pointer arithmetic
+            // in its operand.  Keeping the whole cast as a raw C expression
+            // would make the kernel infer the nominal carrier width for a
+            // struct pointer (four bytes), losing the source layout width.
+            CExpression::Cast {
+                expression,
+                target_type,
+                ..
+            } if *target_type == CType::UInt64
+                && self
+                    .c_expression_array_element_width(expression, environment)
+                    .is_some() =>
+            {
                 Ok(SpecExpression::Cast(
                     Box::new(self.lower_c_fragment_to_spec(expression, environment)?),
                     *target_type,
@@ -5010,6 +5127,68 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    /// The physical width used by C pointer arithmetic.  A pointer to a
+    /// struct has the nominal compatible `int32*` kernel carrier, so its
+    /// pointee layout must be consulted before falling back to `CType`.
+    fn c_expression_array_element_width(
+        &self,
+        expression: &CExpression,
+        environment: &SpecElaborationContext,
+    ) -> Option<u32> {
+        match expression {
+            CExpression::Value(CValue::Pointer(pointer)) => {
+                pointer.c_type().pointee_type().map(CType::byte_width)
+            }
+            CExpression::Cast { target_type, .. } => {
+                target_type.pointee_type().map(CType::byte_width)
+            }
+            CExpression::Variable(name) => environment
+                .array_refs
+                .get(name)
+                .map(|array_ref| array_ref.element_type.byte_width())
+                .or_else(|| self.parameter_pointer_element_widths.get(name).copied())
+                .or_else(|| {
+                    self.parameter_array_element_types
+                        .get(name)
+                        .map(|ty| ty.byte_width())
+                })
+                .or_else(|| {
+                    (name == "result")
+                        .then(|| self.result_type.pointee_type())
+                        .flatten()
+                        .map(CType::byte_width)
+                })
+                .or_else(|| {
+                    self.entry_state
+                        .global_array_element_type(name)
+                        .map(CType::byte_width)
+                })
+                .or_else(|| {
+                    environment.values.get(name).and_then(|value| match value {
+                        SpecExpression::Value(CValue::Pointer(pointer)) => {
+                            pointer.c_type().pointee_type().map(CType::byte_width)
+                        }
+                        _ => None,
+                    })
+                }),
+            CExpression::TypedLoad { value_type, .. } => match value_type {
+                CType::Int32Array(_) => Some(4),
+                CType::UInt8Array(_) => Some(1),
+                value_type => value_type.pointee_type().map(CType::byte_width),
+            },
+            CExpression::PointerOffsetBytes { pointer, .. } => {
+                self.c_expression_array_element_width(pointer, environment)
+            }
+            CExpression::Add(left, right) => self
+                .c_expression_array_element_width(left, environment)
+                .or_else(|| self.c_expression_array_element_width(right, environment)),
+            CExpression::Subtract(left, _) => {
+                self.c_expression_array_element_width(left, environment)
+            }
+            _ => None,
+        }
+    }
+
     fn loop_frame_checks(&self, loop_index: usize) -> Result<Vec<CLoopEffectCheck>, ClickError> {
         let mut checks: Vec<CLoopEffectCheck> = Vec::new();
         // A loop body can only write memory the function owns, so a loop with
@@ -5287,6 +5466,7 @@ mod integer_source_quantifier_tests {
             &PredicateEnvironment::new(&[]),
             &ClickFunctionEnvironment::new(&[]),
             BTreeSet::new(),
+            BTreeMap::new(),
         )
         .unwrap();
         let SpecProposition::ForAllInteger { variable, body, .. } = lowered else {

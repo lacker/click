@@ -459,6 +459,324 @@ fn external_byte_range_requirement(binder: Variable, length: &Bitvector32Term) -
     }
 }
 
+fn external_symbolic_element_context(
+    memory: CMemory,
+) -> (Vec<syntax::C0Parameter>, Vec<CExpression>, CState) {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+            byte_width: 1,
+        },
+    };
+    let pointer = CValue::typed_pointer(pointer, CType::UInt8Pointer);
+    let index = CValue::Int32(Bitvector32Term::Variable(Variable(100_001)));
+    let parameters = vec![
+        syntax::C0Parameter::new(C0Type::UInt8Pointer, "bytes".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32, "index".to_string(), None),
+    ];
+    let arguments = vec![
+        CExpression::Value(pointer.clone()),
+        CExpression::Value(index.clone()),
+    ];
+    let state = CState::new()
+        .with_memory(memory)
+        .with_local("bytes", pointer)
+        .with_local("index", index);
+    (parameters, arguments, state)
+}
+
+fn external_symbolic_element_requirement(memory: CMemory, index: Variable) -> Proposition {
+    external_symbolic_element_requirement_term(memory, Bitvector32Term::Variable(index))
+}
+
+fn external_symbolic_element_requirement_term(
+    memory: CMemory,
+    index: Bitvector32Term,
+) -> Proposition {
+    Proposition::CMemoryLoadable {
+        memory,
+        base: Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                    byte_width: 1,
+                }),
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(index.clone()),
+                    byte_width: 1,
+                }),
+            ),
+        },
+        bytes: Bitvector32Term::Subtract(
+            Box::new(Bitvector32Term::Add(
+                Box::new(index.clone()),
+                Box::new(Bitvector32Term::Constant(1)),
+            )),
+            Box::new(index),
+        ),
+    }
+}
+
+#[test]
+fn strlen_symbolic_element_range_round_trips_exactly() {
+    let memory = CMemory::new().with_block("strlen:bytes", 16);
+    let (parameters, arguments, state) = external_symbolic_element_context(memory.clone());
+    let requirement = external_symbolic_element_requirement(memory, Variable(100_001));
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("strlen's reduced one-element range must be spellable")
+    };
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the requirement must remain one loadability: {synthesized:?}");
+    };
+    assert_eq!(segment.base, CExpression::Variable("bytes".into()));
+    assert_eq!(segment.start, CExpression::Variable("index".into()));
+    assert_eq!(
+        segment.end,
+        CExpression::Add(
+            Box::new(CExpression::Variable("index".into())),
+            Box::new(CExpression::Value(int32(1))),
+        )
+    );
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the synthesized range must lower through the have path");
+    assert_eq!(lowered, requirement);
+}
+
+#[test]
+fn strlen_symbolic_element_range_rejects_wrong_identity() {
+    let memory = CMemory::new().with_block("strlen:bytes", 16);
+    let (parameters, arguments, state) = external_symbolic_element_context(memory.clone());
+
+    let wrong_base = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(Variable(100_002))),
+                    byte_width: 1,
+                }),
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(Variable(100_001))),
+                    byte_width: 1,
+                }),
+            ),
+        },
+        bytes: Bitvector32Term::Subtract(
+            Box::new(Bitvector32Term::Add(
+                Box::new(Bitvector32Term::Variable(Variable(100_001))),
+                Box::new(Bitvector32Term::Constant(1)),
+            )),
+            Box::new(Bitvector32Term::Variable(Variable(100_001))),
+        ),
+    };
+    assert!(synthesize_surface_proposition(&wrong_base, &parameters, &arguments, &state).is_none());
+
+    let wrong_index = external_symbolic_element_requirement(memory.clone(), Variable(100_002));
+    assert!(
+        synthesize_surface_proposition(&wrong_index, &parameters, &arguments, &state).is_none(),
+        "an index with no source binding must not be inferred from the ambient state"
+    );
+
+    let wrong_width = {
+        let mut requirement =
+            external_symbolic_element_requirement(memory.clone(), Variable(100_001));
+        let Proposition::CMemoryLoadable { base, .. } = &mut requirement else {
+            unreachable!();
+        };
+        base.offset = PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                byte_width: 2,
+            }),
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(100_001))),
+                byte_width: 2,
+            }),
+        );
+        requirement
+    };
+    assert!(
+        synthesize_surface_proposition(&wrong_width, &parameters, &arguments, &state).is_none(),
+        "the element width must be the declared one-byte parameter width"
+    );
+
+    let ambient_only = external_symbolic_element_requirement(memory, Variable(100_001));
+    assert!(
+        synthesize_surface_proposition(&ambient_only, &[], &[], &state).is_none(),
+        "a local pointer must not substitute for the producer's external parameter"
+    );
+}
+
+#[test]
+fn strlen_constant_element_range_falls_back_to_general_synthesis() {
+    let memory = CMemory::new().with_block("strlen:constant-bytes", 16);
+    let (parameters, arguments, state) = external_symbolic_element_context(memory.clone());
+    let requirement =
+        external_symbolic_element_requirement_term(memory, Bitvector32Term::Constant(3));
+    let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+        .expect("a constant reduced element must retain the historical range fallback");
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the requirement must remain one loadability: {synthesized:?}");
+    };
+    assert_eq!(segment.base, CExpression::Variable("bytes".into()));
+    assert_eq!(segment.start, CExpression::Value(int32(3)));
+    assert_eq!(segment.end, CExpression::Value(int32(4)));
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the historical fallback must still lower the constant range");
+    let Proposition::CMemoryLoadable { base, bytes, .. } = lowered else {
+        panic!("the lowered fallback must remain one loadability");
+    };
+    assert_eq!(bytes, Bitvector32Term::Constant(1));
+    assert_eq!(
+        base.offset,
+        PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+                byte_width: 1,
+            }),
+            Box::new(PointerOffsetTerm::Constant(3)),
+        )
+    );
+}
+
+#[test]
+fn strlen_zero_based_element_range_round_trips_exactly() {
+    let memory = CMemory::new().with_block("strlen:zero-based-bytes", 16);
+    let (parameters, mut arguments, state) = external_symbolic_element_context(memory.clone());
+    let pointer = CValue::typed_pointer(
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    );
+    arguments[0] = CExpression::Value(pointer.clone());
+    let state = state.with_local("bytes", pointer);
+    let mut requirement = external_symbolic_element_requirement(memory, Variable(100_001));
+    let Proposition::CMemoryLoadable { base, .. } = &mut requirement else {
+        unreachable!();
+    };
+    base.offset = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(100_001))),
+        byte_width: 1,
+    };
+    let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+        .expect("the canonical zero-based strlen element must be spellable");
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the requirement must remain one loadability: {synthesized:?}");
+    };
+    assert_eq!(segment.base, CExpression::Variable("bytes".into()));
+    assert_eq!(segment.start, CExpression::Variable("index".into()));
+    assert_eq!(
+        segment.end,
+        CExpression::Add(
+            Box::new(CExpression::Variable("index".into())),
+            Box::new(CExpression::Value(int32(1))),
+        )
+    );
+    assert_eq!(
+        relower_written_proposition(&synthesized, &state),
+        Ok(requirement)
+    );
+}
+
+#[test]
+fn non_external_named_range_still_uses_general_synthesis() {
+    let memory = CMemory::new().with_block("local:elements", 8);
+    let pointer = CValue::typed_pointer(
+        Pointer {
+            block: PointerBlock::Concrete("local:elements".into()),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    );
+    let start = CValue::Int32(Bitvector32Term::Variable(Variable(100_001)));
+    let state = CState::new()
+        .with_memory(memory.clone())
+        .with_local("elements", pointer)
+        .with_local("start", start);
+    let requirement = Proposition::CMemoryLoadable {
+        memory,
+        base: Pointer {
+            block: PointerBlock::Concrete("local:elements".into()),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(100_001))),
+                byte_width: 1,
+            },
+        },
+        bytes: Bitvector32Term::Subtract(
+            Box::new(Bitvector32Term::Add(
+                Box::new(Bitvector32Term::Variable(Variable(100_001))),
+                Box::new(Bitvector32Term::Constant(1)),
+            )),
+            Box::new(Bitvector32Term::Variable(Variable(100_001))),
+        ),
+    };
+    let synthesized = synthesize_surface_proposition(&requirement, &[], &[], &state)
+        .expect("the general named-range path must remain available for local pointers");
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the requirement should remain one loadability: {synthesized:?}");
+    };
+    assert_eq!(segment.base, CExpression::Variable("elements".into()));
+    assert_eq!(segment.start, CExpression::Variable("start".into()));
+    assert_eq!(
+        segment.end,
+        CExpression::Add(
+            Box::new(CExpression::Variable("start".into())),
+            Box::new(CExpression::Value(int32(1))),
+        )
+    );
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the local named range must lower through the existing path");
+    assert_eq!(lowered, requirement);
+}
+
+#[test]
+fn strlen_quantified_element_range_requirement_round_trips() {
+    let memory = CMemory::new().with_block("strlen:quantified-bytes", 16);
+    let (parameters, arguments, state) = external_symbolic_element_context(memory.clone());
+    let binder = Variable(100_002);
+    let requirement = Proposition::ForAll {
+        var: binder,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(Bitvector32Term::Variable(binder)),
+                        Box::new(Bitvector32Term::Constant(0)),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(
+                        Box::new(Bitvector32Term::Variable(binder)),
+                        Box::new(Bitvector32Term::Variable(Variable(100_001))),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(external_symbolic_element_requirement(memory, binder)),
+        )),
+    };
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("strlen's quantified one-element range must be spellable")
+    };
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the quantified range must lower through the have path");
+    assert!(
+        crate::kernel::proof::propositions_are_alpha_equal(&lowered, &requirement),
+        "quantified strlen spelling changed its proposition:\n  lowered: {lowered:?}\n  requirement: {requirement:?}"
+    );
+}
+
 fn external_element_range_context(
     parameter_type: syntax::C0Type,
     pointer_type: CType,

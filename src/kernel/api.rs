@@ -363,6 +363,19 @@ fn c_loop_preservation_contexts_with_mode(
                 .into_iter()
                 .map(|fact| fact.proposition().clone())
                 .collect::<Vec<_>>();
+            // D7 applied to refutation at the loop head. The invariants and
+            // the loop condition together may refute an arm of a binder's
+            // model, and the body needs that conclusion as a premise: an
+            // ascending loop learns `ctx.model != Context::Top` from
+            // `parent != 0` against the `Top` arm's `fact parent == 0`, which
+            // is what lets its proof `match` close that arm by contradiction
+            // instead of unfolding a frame it does not hold.
+            pure_facts.extend(crate::kernel::refuted_instance_arm_model_facts(
+                top_state.resources(),
+                definitions,
+                &top_state,
+                &context_assumptions,
+            ));
             pure_facts.sort();
             pure_facts.dedup();
             contexts.push(CLoopPreservationContext {

@@ -96,6 +96,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_integer_valu
         predicate_environment,
         click_function_environment,
         &BTreeSet::new(),
+        parameter_pointer_element_widths(parameters),
     )
 }
 
@@ -132,6 +133,7 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions_
         predicate_environment,
         click_function_environment,
         &std::collections::BTreeSet::new(),
+        parameter_pointer_element_widths(parameters),
     )
 }
 
@@ -195,6 +197,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_alge
         predicate_environment,
         click_function_environment,
         &std::collections::BTreeSet::new(),
+        BTreeMap::new(),
     )
 }
 
@@ -213,6 +216,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<Proposition, String> {
     lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
@@ -229,6 +233,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     )
     .map(|(proposition, _)| proposition)
 }
@@ -253,6 +258,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let mut click_function_calls = BTreeSet::new();
     crate::surface::validation::collect_click_function_calls_in_proposition(
@@ -277,6 +283,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
         predicate_environment,
         click_function_environment,
         opaque_click_functions.clone(),
+        pointer_element_widths,
     )?;
     let (lowered, _, obligations, introductions) =
         crate::kernel::c_lower_spec_proposition_with_checked_obligations(
@@ -311,6 +318,37 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<Proposition, String> {
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
+        proposition,
+        assumptions,
+        values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+        BTreeMap::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
+) -> Result<Proposition, String> {
     lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
         proposition,
         assumptions,
@@ -325,6 +363,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     )
 }
 
@@ -342,9 +381,11 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<Proposition, String> {
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+    lower_fixed_state_proposition_through_kernel_recording_introductions(
         proposition,
+        assumptions,
         assumptions,
         values,
         array_refs,
@@ -357,7 +398,9 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_opaq
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        pointer_element_widths,
     )
+    .map(|(proposition, _)| proposition)
 }
 
 /// The one evaluation of a proof-side expression: elaborated into the
@@ -396,6 +439,7 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
         predicate_environment,
         click_function_environment,
         opaque_click_functions.clone(),
+        BTreeMap::new(),
     )?;
     let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
         &states.lowering_state,
@@ -445,6 +489,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_integer_expression(
             predicate_environment,
             click_function_environment,
             BTreeSet::new(),
+            BTreeMap::new(),
         )?;
     crate::kernel::capture_spec_integer_value(
         &states.lowering_state,
@@ -483,6 +528,7 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
         predicate_environment,
         click_function_environment,
         BTreeSet::new(),
+        BTreeMap::new(),
     )
 }
 
@@ -511,6 +557,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
         predicates,
         functions,
         BTreeSet::new(),
+        BTreeMap::new(),
     )?;
     crate::kernel::capture_spec_algebraic_value(
         &states.lowering_state,
@@ -550,6 +597,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 predicates,
                 functions,
                 BTreeSet::new(),
+                BTreeMap::new(),
             )?;
             let (value, obligations) =
                 crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
@@ -604,6 +652,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 predicates,
                 functions,
                 BTreeSet::new(),
+                BTreeMap::new(),
             )?;
             crate::kernel::capture_spec_algebraic_value(
                 &states.lowering_state,
@@ -690,6 +739,7 @@ fn evaluate_c_fragment_with_binding_policy(
         &PredicateEnvironment::new(&[]),
         &ClickFunctionEnvironment::new(&[]),
         std::collections::BTreeSet::new(),
+        BTreeMap::new(),
     )?;
     let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
         &states.lowering_state,

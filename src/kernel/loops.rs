@@ -1612,12 +1612,31 @@ fn execute_c_while_exit_paths(
                 false,
                 budget,
             )?;
-            for (facts, mut obligations) in condition_contexts {
+            for (mut facts, mut obligations) in condition_contexts {
                 append_required_proof_obligations(
                     &mut obligations,
                     assumptions,
                     &loop_check_obligations,
                 );
+                // D7 applied to refutation at the loop exit, the same way the
+                // head and the back edge apply it. The invariants and the
+                // failed loop condition are the exit's premises, and a
+                // premise that contradicts a field-free arm's own fact says
+                // the binder's model is not that constructor: an ascending
+                // walk learns `ctx.model != Context::Left(..)` from the
+                // failed guard `parent != 0` against that arm's
+                // `fact parent != 0`, which is what lets the proof after the
+                // loop close those arms by contradiction instead of
+                // unfolding a frame whose cells the arm does not describe.
+                let exit_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
+                for fact in crate::kernel::refuted_instance_arm_model_facts(
+                    top_state.resources(),
+                    &composite_resource_definitions,
+                    &top_state,
+                    &exit_assumptions,
+                ) {
+                    facts.push(ExecutionPureFact::new(fact));
+                }
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::Normal(top_state.clone()),
                     facts,

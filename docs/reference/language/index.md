@@ -1429,6 +1429,35 @@ only. Prefer `owns X by proof;` over the exactly equivalent pair
 `consumes X;` and `produces X by proof;`; keep the separate verbs for one-way
 transfers and resource transformations.
 
+A return-side clause is the caller's view, so its arguments are read that way.
+`result` is the returned value, and a parameter means the value the caller
+passed, not one the body assigned to that parameter: a returned borrow is
+evaluated at entry for exactly this reason, so `owns t: tree_at(root);` names
+the caller's tree however the body used `root`. A proof tactic reads its own
+resource arguments at the cursor it stands on, so a body that reassigns such a
+parameter has to refold the borrowed instance before that assignment; the
+entry position has no spelling inside a `fold`.
+
+A function whose result sits somewhere the caller cannot name that way says so
+directly. A resource argument may be the C null pointer constant `0` at a
+pointer-typed resource parameter, which is how a walk that ends at the root of
+a parent-linked structure produces `ctx_at(result, 0)`: the position it
+reached has no parent, and the parameter it started from is a different node.
+
+<!-- verified-example: mdtests/loop_ascending_walk_to_root.md -->
+```click
+consumes c: pctx_at(node, parent);
+consumes t: ptree_at(node, parent);
+produces ctx: pctx_at(result, 0);
+produces sub: ptree_at(result, 0);
+```
+
+A produced instance is the one the body folded under that name, so a walk
+hands its final instances over by refolding them under the produced names at
+the arguments the exit reached. Naming a position the proof does not hold
+fails by naming the missing resource
+(`mdtests/loop_ascending_produces_wrong_arguments.md`).
+
 An owned memory resource implies its viewed core: ownership permits both loads
 and stores, while a view permits loads and is copyable across calls. A callee
 using `views` borrows the caller's viewed or owned element for that call. It

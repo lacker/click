@@ -44,7 +44,11 @@ pub(crate) struct ProofFacts {
     /// comparison cost; a goal-local rewrite search walks only atoms named by
     /// the goal and their buckets.
     bitvector_equalities_by_atom:
-        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
+        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
+    /// True finite-float classifications retain their shared fact identity so
+    /// a reflexive comparison does not publish the same premise twice.
+    finite_classifications_by_key:
+        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
     /// Exact algebraic equalities keyed by their root terms.  Goal-local
     /// constructor disequality rewrites need the variable-to-constructor
     /// premise without scanning unrelated proposition facts.
@@ -249,6 +253,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut by_integer_condition_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
+        let mut finite_classifications_by_key = PersistentMap::default();
         let mut algebraic_equalities_by_term = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
         let mut implications_by_consequent = PersistentMap::default();
@@ -273,27 +278,35 @@ impl ProofFacts {
                 let mut conjuncts = Vec::new();
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
-                    by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                    let conjunct = Arc::new(conjunct);
+                    by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, conjunct.as_ref());
                     by_integer_condition_alpha =
-                        index_integer_condition_fact(by_integer_condition_alpha, &conjunct);
+                        index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                     bitvector_equalities_by_atom =
                         index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
-                    algebraic_equalities_by_term =
-                        index_algebraic_equality_fact(algebraic_equalities_by_term, &conjunct);
-                    exact = exact.with_value(conjunct);
+                    finite_classifications_by_key =
+                        index_finite_classification_fact(finite_classifications_by_key, &conjunct);
+                    algebraic_equalities_by_term = index_algebraic_equality_fact(
+                        algebraic_equalities_by_term,
+                        conjunct.as_ref(),
+                    );
+                    exact = exact.with_value(conjunct.as_ref().clone());
                 }
             }
-            by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
+            let fact = Arc::new(fact.clone());
+            by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
             by_integer_condition_alpha =
-                index_integer_condition_fact(by_integer_condition_alpha, fact);
+                index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
             bitvector_equalities_by_atom =
-                index_bitvector_equality_fact(bitvector_equalities_by_atom, fact);
+                index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
+            finite_classifications_by_key =
+                index_finite_classification_fact(finite_classifications_by_key, &fact);
             algebraic_equalities_by_term =
-                index_algebraic_equality_fact(algebraic_equalities_by_term, fact);
-            exact = exact.with_value(fact.clone());
-            assumptions = assumptions.assume_proposition(fact.clone());
+                index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
+            exact = exact.with_value(fact.as_ref().clone());
+            assumptions = assumptions.assume_proposition(fact.as_ref().clone());
             implicit_transport_assumptions =
-                index_implicit_transport_context(implicit_transport_assumptions, fact);
+                index_implicit_transport_context(implicit_transport_assumptions, fact.as_ref());
         }
         Self {
             ordered,
@@ -305,6 +318,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
@@ -366,6 +380,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         let mut by_integer_condition_alpha = self.by_integer_condition_alpha.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
+        let mut finite_classifications_by_key = self.finite_classifications_by_key.clone();
         let mut algebraic_equalities_by_term = self.algebraic_equalities_by_term.clone();
         let by_quantified_equivalence =
             index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
@@ -376,50 +391,62 @@ impl ProofFacts {
             let mut conjuncts = Vec::new();
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
-                by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                let conjunct = Arc::new(conjunct);
+                by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, conjunct.as_ref());
                 by_integer_condition_alpha =
-                    index_integer_condition_fact(by_integer_condition_alpha, &conjunct);
+                    index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                 bitvector_equalities_by_atom =
                     index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
+                finite_classifications_by_key =
+                    index_finite_classification_fact(finite_classifications_by_key, &conjunct);
                 algebraic_equalities_by_term =
-                    index_algebraic_equality_fact(algebraic_equalities_by_term, &conjunct);
-                exact = exact.with_value(conjunct);
+                    index_algebraic_equality_fact(algebraic_equalities_by_term, conjunct.as_ref());
+                exact = exact.with_value(conjunct.as_ref().clone());
             }
         }
-        by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
+        let fact = Arc::new(fact);
+        by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
         by_integer_condition_alpha =
-            index_integer_condition_fact(by_integer_condition_alpha, &fact);
+            index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
         bitvector_equalities_by_atom =
             index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
+        finite_classifications_by_key =
+            index_finite_classification_fact(finite_classifications_by_key, &fact);
         algebraic_equalities_by_term =
-            index_algebraic_equality_fact(algebraic_equalities_by_term, &fact);
-        exact = exact.with_value(fact.clone());
+            index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
+        exact = exact.with_value(fact.as_ref().clone());
         let mut ordered = self.ordered.clone();
-        ordered.push(fact.clone());
-        let implicit_transport_assumptions =
-            index_implicit_transport_context(self.implicit_transport_assumptions.clone(), &fact);
+        ordered.push(fact.as_ref().clone());
+        let implicit_transport_assumptions = index_implicit_transport_context(
+            self.implicit_transport_assumptions.clone(),
+            fact.as_ref(),
+        );
         let mut reserved_variables = self.reserved_variables.clone();
-        for variable in crate::kernel::proposition_variables(&fact) {
+        for variable in crate::kernel::proposition_variables(fact.as_ref()) {
             reserved_variables = reserved_variables.with_value(variable);
         }
         Self {
             ordered,
             reserved_variables,
             prioritized: self.prioritized.clone(),
-            top_level_exact: self.top_level_exact.with_value(fact.clone()),
+            top_level_exact: self.top_level_exact.with_value(fact.as_ref().clone()),
             exact,
             proper_conjuncts,
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             rewritten_load_evidence: self.rewritten_load_evidence.clone(),
             implications_by_consequent,
-            assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
+            assumptions: self
+                .assumptions
+                .clone()
+                .assume_proposition(fact.as_ref().clone()),
             implicit_transport_assumptions,
-            by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
+            by_predicate: index_predicate_fact(self.by_predicate.clone(), fact.as_ref()),
         }
     }
 
@@ -891,6 +918,74 @@ impl ProofFacts {
             .collect()
     }
 
+    /// Returns the indexed pointer/bitvector relations which share atoms with
+    /// a special-arithmetic goal.  This is deliberately narrower than
+    /// `to_vec`: unrelated ambient facts are never materialized for smart
+    /// certificate planning.
+    pub(crate) fn special_candidates_mentioning(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Proposition> {
+        // A fact can be indexed under both operands of a relation, and the
+        // finite classification lookup below can return the same fact again.
+        // Keep deduplication logarithmic and deterministic instead of using
+        // Vec::contains, whose repeated structural comparisons are quadratic
+        // in a matching bucket.
+        let mut candidates = Vec::new();
+        let mut candidate_ids = BTreeSet::new();
+        for candidate in self.indexed_load_equalities_mentioning(proposition) {
+            let id = Arc::as_ptr(&candidate) as usize;
+            if candidate_ids.insert(id) {
+                candidates.push(candidate);
+            }
+        }
+        if let Proposition::ConditionIs(condition, _) = proposition {
+            let finite: Vec<_> = match condition {
+                ConditionTerm::Float32(CFloatCondition::Comparison { left, right, .. }) => {
+                    vec![(32, left), (32, right)]
+                }
+                ConditionTerm::Float64(CFloatCondition::Comparison { left, right, .. }) => {
+                    vec![(64, left), (64, right)]
+                }
+                _ => Vec::new(),
+            };
+            for (width, value) in finite {
+                let classification = match width {
+                    32 => Proposition::ConditionIs(
+                        ConditionTerm::Float32(CFloatCondition::Classification {
+                            classification: CFloatClassification::Finite,
+                            value: value.clone(),
+                        }),
+                        true,
+                    ),
+                    64 => Proposition::ConditionIs(
+                        ConditionTerm::Float64(CFloatCondition::Classification {
+                            classification: CFloatClassification::Finite,
+                            value: value.clone(),
+                        }),
+                        true,
+                    ),
+                    _ => continue,
+                };
+                if let Some(candidate) =
+                    self.matching_indexed_finite_classification(&classification)
+                {
+                    // Classification facts are not stored in the bitvector
+                    // relation index; the dedicated index preserves their
+                    // identity across both operands.
+                    let id = Arc::as_ptr(&candidate) as usize;
+                    if candidate_ids.insert(id) {
+                        candidates.push(candidate);
+                    }
+                }
+            }
+        }
+        candidates
+            .into_iter()
+            .map(|candidate| candidate.as_ref().clone())
+            .collect()
+    }
+
     /// Returns exact algebraic equalities attached to terms occurring in
     /// this proposition.  The persistent term index keeps constructor
     /// disequality rewrites goal-local; callers never inspect unrelated
@@ -914,6 +1009,19 @@ impl ProofFacts {
     /// pointer-offset equalities between scaled offsets, for the pointer side
     /// of the load-variable chain bridge.
     fn load_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
+        self.indexed_load_equalities_mentioning(proposition)
+            .into_iter()
+            .map(|fact| fact.as_ref().clone())
+            .collect()
+    }
+
+    /// The same query retaining the compact identity of each indexed fact.
+    /// One fact may occur in both operand buckets; pointer identity removes
+    /// that duplicate without recursively comparing proposition payloads.
+    fn indexed_load_equalities_mentioning(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Arc<Proposition>> {
         let mut atoms = BTreeSet::new();
         collect_proposition_bitvector_atoms(proposition, &mut atoms);
         let mut equalities = Vec::new();
@@ -925,6 +1033,21 @@ impl ProofFacts {
             }
         }
         equalities
+    }
+
+    fn matching_indexed_finite_classification(
+        &self,
+        required: &Proposition,
+    ) -> Option<Arc<Proposition>> {
+        let key = snapshot_blind_proposition_key(required);
+        self.finite_classifications_by_key
+            .get(&key)
+            .and_then(|bucket| {
+                bucket
+                    .iter()
+                    .find(|candidate| self.exact.contains(candidate.as_ref()))
+                    .cloned()
+            })
     }
 
     /// The facts this context introduced after `ancestor`, oldest first.
@@ -1091,10 +1214,10 @@ fn index_integer_condition_fact(
 }
 
 fn index_bitvector_equality_fact(
-    mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
-    fact: &Proposition,
-) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>> {
-    let (left, right) = match fact {
+    mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
+    fact: &Arc<Proposition>,
+) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>> {
+    let (left, right) = match fact.as_ref() {
         Proposition::ConditionIs(
             ConditionTerm::Bitvector32Equal(left, right)
             | ConditionTerm::Bitvector64Equal(left, right),
@@ -1112,6 +1235,15 @@ fn index_bitvector_equality_fact(
                 _ => return index,
             }
         }
+        Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
+            match (&left.offset, &right.offset) {
+                (
+                    PointerOffsetTerm::Int32Scaled { value: left, .. },
+                    PointerOffsetTerm::Int32Scaled { value: right, .. },
+                ) => (left.as_ref(), right.as_ref()),
+                _ => return index,
+            }
+        }
         _ => return index,
     };
     for term in [left, right] {
@@ -1119,6 +1251,31 @@ fn index_bitvector_equality_fact(
             continue;
         };
         let mut bucket = index.get(&key).cloned().unwrap_or_default();
+        if !bucket.iter().any(|candidate| Arc::ptr_eq(candidate, fact)) {
+            bucket.push(fact.clone());
+            index = index.with_inserted(key, bucket);
+        }
+    }
+    index
+}
+
+fn index_finite_classification_fact(
+    mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
+    fact: &Arc<Proposition>,
+) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>> {
+    if !matches!(
+        fact.as_ref(),
+        Proposition::ConditionIs(
+            ConditionTerm::Float32(CFloatCondition::Classification { .. })
+                | ConditionTerm::Float64(CFloatCondition::Classification { .. }),
+            true,
+        )
+    ) {
+        return index;
+    }
+    let key = snapshot_blind_proposition_key(fact.as_ref());
+    let mut bucket = index.get(&key).cloned().unwrap_or_default();
+    if !bucket.iter().any(|candidate| Arc::ptr_eq(candidate, fact)) {
         bucket.push(fact.clone());
         index = index.with_inserted(key, bucket);
     }

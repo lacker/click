@@ -41,22 +41,13 @@ impl<'a> Proof<'a> {
             let ResourceClause::Named { resource, .. } = resource else {
                 unreachable!()
             };
-            let lowered = if let Some(goal) = outcome {
-                lower_resource_clause_at_state_with_result(
-                    resource,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    before,
-                    &goal.data.core.result,
-                )?
-            } else {
-                lower_resource_clause_at_state(
-                    resource,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    before,
-                )?
-            };
+            let lowered = lower_resource_clause_at_current_locals(
+                resource,
+                context.parsed_function.parameters(),
+                context.arguments,
+                before,
+                outcome.map(|goal| &*goal.data.core.result),
+            )?;
             let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
                 return Err(self.step_error("fold construction requires an owned resource"));
             };
@@ -251,6 +242,7 @@ impl<'a> Proof<'a> {
                     &RecordedSnapshots::new(),
                     context.predicate_environment,
                     context.click_function_environment,
+                    BTreeMap::new(),
                 )
             }
             ProofContext::FixedState(context) => {
@@ -271,6 +263,7 @@ impl<'a> Proof<'a> {
                     context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
+                    crate::surface::lowering::parameter_pointer_element_widths(context.parameters),
                 )
             }
             ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
@@ -294,6 +287,7 @@ impl<'a> Proof<'a> {
                     view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
+                    crate::surface::lowering::parameter_pointer_element_widths(view.parameters),
                 )
             }
             ProofContext::Execution(context) => {
@@ -323,6 +317,9 @@ impl<'a> Proof<'a> {
                     &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
+                    crate::surface::lowering::parameter_pointer_element_widths(
+                        context.parsed_function.parameters(),
+                    ),
                 )
             }
         }
@@ -345,6 +342,7 @@ impl<'a> Proof<'a> {
         recorded_snapshots: &RecordedSnapshots,
         predicate_environment: &PredicateEnvironment,
         click_function_environment: &ClickFunctionEnvironment,
+        parameter_pointer_element_widths: BTreeMap<String, u32>,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let definition = click_function_environment
             .get(&application.name)
@@ -413,6 +411,7 @@ impl<'a> Proof<'a> {
                 predicate_environment,
                 click_function_environment,
                 &BTreeSet::from([application.name.clone()]),
+                parameter_pointer_element_widths.clone(),
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -512,6 +511,7 @@ impl<'a> Proof<'a> {
                         predicate_environment,
                         click_function_environment,
                         &opaque_calls,
+                        parameter_pointer_element_widths,
                     )
                     .map_err(|message| {
                         self.step_error(format!(

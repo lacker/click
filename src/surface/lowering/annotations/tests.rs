@@ -1,6 +1,58 @@
 use super::*;
 
 #[test]
+fn struct_pointer_arithmetic_through_uint64_cast_uses_layout_width() {
+    let function = crate::languages::c::syntax::parse_function(
+        r#"
+            struct pair {
+                int32 a;
+                int64 b;
+            };
+            int32 f(struct pair* p, int32 i) { return 0; }
+        "#,
+    )
+    .expect("struct pointer function should parse");
+    let state = CState::new();
+    let assumptions = PureFactContext::new();
+    let snapshots = RecordedSnapshots::new();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let (lowerer, context) = fixed_state_elaboration(
+        BTreeMap::new(),
+        &state,
+        BTreeMap::new(),
+        BTreeMap::new(),
+        None,
+        &snapshots,
+        &assumptions,
+        &predicates,
+        &functions,
+        BTreeSet::new(),
+        parameter_pointer_element_widths(function.parameters()),
+    );
+    let pointer_add = CExpression::Add(
+        Box::new(CExpression::Variable("p".into())),
+        Box::new(CExpression::Variable("i".into())),
+    );
+    let cast = CExpression::Cast {
+        expression: Box::new(pointer_add),
+        target_type: CType::UInt64,
+        pointee_volatile: false,
+        pointee_constant: false,
+    };
+    let lowered = lowerer
+        .lower_c_fragment_to_spec(&cast, &context)
+        .expect("pointer arithmetic should lower");
+    let SpecExpression::Cast(pointer, CType::UInt64) = lowered else {
+        panic!("expected a preserved uint64 cast around pointer arithmetic");
+    };
+    let SpecExpression::PointerOffset { byte_width, .. } = pointer.as_ref() else {
+        panic!("expected pointer arithmetic to lower as a pointer offset");
+    };
+    assert_eq!(*byte_width, 16);
+}
+
+#[test]
 fn integer_binder_contexts_share_unrelated_machine_bindings() {
     use crate::kernel::{IntegerTerm, SpecIntegerExpression};
     let mut all_costs = Vec::new();
@@ -142,6 +194,7 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
                     &predicates,
                     &functions,
                     BTreeSet::new(),
+                    BTreeMap::new(),
                 );
                 PROPOSITION_VISITS.with(|visits| visits.set(0));
                 let lowered = lowerer

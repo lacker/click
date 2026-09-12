@@ -215,6 +215,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "implies",
     "arithmetic_certificate",
     "signed_int32",
+    "special",
     "in",
     "induct",
     "initialize",
@@ -2939,9 +2940,22 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
 /// internal-only implementation operations. Smart tactics should ultimately
 /// return this type directly; printing it is then a structural conversion
 /// back to ordinary `.click` syntax.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The step list is shared, not copied. A certificate is cloned once per
+/// certified path and once per claim on that path, and a structured step owns
+/// its child certificates, so a deep copy would make cloning and comparing a
+/// finished proof quadratic in the joined path structure. Sharing also gives
+/// equality a pointer fast path: the identical certificate every claim of one
+/// function carries is recognized in constant time instead of being walked.
+#[derive(Clone, Debug, Eq)]
 pub struct ProofCertificate {
-    steps: Vec<ProofStep>,
+    steps: std::sync::Arc<Vec<ProofStep>>,
+}
+
+impl PartialEq for ProofCertificate {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.steps, &other.steps) || self.steps == other.steps
+    }
 }
 
 /// One explicit, surface-expressible step in a [`ProofCertificate`].
@@ -3085,15 +3099,38 @@ impl ProofCertificate {
     pub fn from_proof_tactics(tactics: &[ProofTactic]) -> Result<Self, CertificateError> {
         validate_certificate_tactics(tactics, &mut Vec::new())?;
         Ok(Self {
-            steps: tactics
-                .iter()
-                .map(ProofStep::from_validated_tactic)
-                .collect(),
+            steps: std::sync::Arc::new(
+                tactics
+                    .iter()
+                    .map(ProofStep::from_validated_tactic)
+                    .collect(),
+            ),
         })
     }
 
     pub fn steps(&self) -> &[ProofStep] {
         &self.steps
+    }
+
+    /// The steps by value, reusing the shared allocation when this is the last
+    /// handle to it.
+    pub(crate) fn into_steps(self) -> Vec<ProofStep> {
+        std::sync::Arc::try_unwrap(self.steps).unwrap_or_else(|shared| (*shared).clone())
+    }
+
+    /// Copy-on-write access for the surface stitcher, which grows a
+    /// certificate's leaves in place while it is still uniquely owned.
+    pub(crate) fn steps_mut(&mut self) -> &mut Vec<ProofStep> {
+        std::sync::Arc::make_mut(&mut self.steps)
+    }
+
+    /// Whether the two certificates are the same retained object rather than
+    /// two equal copies of it. Every claim certified on one function proof
+    /// carries the same certificate, so this is what keeps comparing and
+    /// cloning them independent of the certificate's size.
+    #[cfg(test)]
+    pub(crate) fn shares_steps_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.steps, &other.steps)
     }
 
     /// Serializes checked proof provenance as a certificate.
@@ -3113,14 +3150,18 @@ impl ProofCertificate {
                 error.path(),
             ))
         })?;
-        Ok(Self { steps })
+        Ok(Self {
+            steps: std::sync::Arc::new(steps),
+        })
     }
 
     /// Steps that were already admitted by a certificate constructor. Nested
     /// certificates are validated where they are built, so re-walking them at
     /// every enclosing construction would be quadratic in the certificate.
     fn from_validated_steps(steps: Vec<ProofStep>) -> Self {
-        Self { steps }
+        Self {
+            steps: std::sync::Arc::new(steps),
+        }
     }
 
     pub fn to_proof_tactics(&self) -> Vec<ProofTactic> {
@@ -3132,10 +3173,12 @@ impl ProofCertificate {
             unreachable!("validated simple proof must be an explicit script")
         };
         Self {
-            steps: tactics
-                .iter()
-                .map(ProofStep::from_validated_tactic)
-                .collect(),
+            steps: std::sync::Arc::new(
+                tactics
+                    .iter()
+                    .map(ProofStep::from_validated_tactic)
+                    .collect(),
+            ),
         }
     }
 
@@ -3213,13 +3256,12 @@ impl ProofStep {
                         type_name: arm.type_name.clone(),
                         variant: arm.variant.clone(),
                         bindings: arm.bindings.clone(),
-                        proof: Box::new(ProofCertificate {
-                            steps: arm
-                                .tactics
+                        proof: Box::new(ProofCertificate::from_validated_steps(
+                            arm.tactics
                                 .iter()
                                 .map(Self::from_validated_tactic)
                                 .collect(),
-                        }),
+                        )),
                     })
                     .collect(),
             },
@@ -3287,64 +3329,64 @@ impl ProofStep {
             },
             ProofTactic::Open(proof_open) => Self::Open {
                 resource: proof_open.resource.clone(),
-                proof: Box::new(ProofCertificate {
-                    steps: proof_open
+                proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_open
                         .tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::If(proof_if) => Self::If {
                 condition: proof_if.condition.clone(),
-                then_proof: Box::new(ProofCertificate {
-                    steps: proof_if
+                then_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_if
                         .then_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
-                else_proof: Box::new(ProofCertificate {
-                    steps: proof_if
+                )),
+                else_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_if
                         .else_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::Cases(proof_cases) => Self::Cases {
                 disjunction: proof_cases.disjunction.clone(),
-                left_proof: Box::new(ProofCertificate {
-                    steps: proof_cases
+                left_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_cases
                         .left_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
-                right_proof: Box::new(ProofCertificate {
-                    steps: proof_cases
+                )),
+                right_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_cases
                         .right_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::Branch(proof_branch) => Self::Branch {
                 ensuring: proof_branch.ensuring.clone(),
-                then_proof: Box::new(ProofCertificate {
-                    steps: proof_branch
+                then_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_branch
                         .then_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
-                else_proof: Box::new(ProofCertificate {
-                    steps: proof_branch
+                )),
+                else_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_branch
                         .else_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::Loop(clause) => Self::Loop(CertificateStructuralClause {
                 region: clause.region,
@@ -4001,6 +4043,7 @@ pub struct ArithmeticCertificate {
 pub enum ArithmeticCertificateFamily {
     Integer(IntegerCertificate),
     SignedInt32(SignedInt32Certificate),
+    Special(SpecialArithmeticCertificate),
 }
 
 /// The checked signed-int32 arithmetic rule family. Surface nodes retain
@@ -4144,6 +4187,45 @@ impl ArithmeticCertificate {
             family: ArithmeticCertificateFamily::Integer(certificate),
         }
     }
+
+    pub fn special(certificate: SpecialArithmeticCertificate) -> Self {
+        Self {
+            family: ArithmeticCertificateFamily::Special(certificate),
+        }
+    }
+}
+
+/// Checked pointer and finite-float arithmetic rules. The premise vector is
+/// the exact source premise slice consumed by the certificate; node indices
+/// refer only to that vector and the flat node list as documented by the
+/// parser/printer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpecialArithmeticCertificate {
+    pub premises: Vec<ClickProposition>,
+    pub nodes: Vec<SpecialArithmeticNode>,
+    pub conclusion: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SpecialArithmeticNode {
+    PointerTranslation {
+        relation: usize,
+        bounds: Vec<usize>,
+        result: ClickProposition,
+    },
+    PointerAlignment {
+        premise: Option<usize>,
+        result: ClickProposition,
+    },
+    PointerWordEquality {
+        relation: usize,
+        alignments: Vec<usize>,
+        result: ClickProposition,
+    },
+    FloatReflexive {
+        finite: usize,
+        result: ClickProposition,
+    },
 }
 
 /// The mathematical Integer rule family. Every node carries its source
@@ -4350,20 +4432,36 @@ impl ClickFunctionEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ResourceEnvironment {
     definitions: BTreeMap<String, ResourceDefinition>,
+    /// C layouts are file-local, but resource bodies are shared by every
+    /// function in that file. Retain them so struct-pointer arithmetic in a
+    /// composite body keeps its physical element width.
+    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
 }
 
 impl ResourceEnvironment {
     fn new(definitions: &[ResourceDefinition]) -> Self {
+        Self::with_struct_layouts(definitions, &BTreeMap::new())
+    }
+
+    fn with_struct_layouts(
+        definitions: &[ResourceDefinition],
+        struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    ) -> Self {
         Self {
             definitions: definitions
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
+            struct_layouts: struct_layouts.clone(),
         }
     }
 
     fn get(&self, name: &str) -> Option<&ResourceDefinition> {
         self.definitions.get(name)
+    }
+
+    fn struct_layouts(&self) -> &BTreeMap<String, syntax::C0StructLayout> {
+        &self.struct_layouts
     }
 }
 

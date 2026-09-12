@@ -127,6 +127,72 @@ int32 bad(int32 x) {
 }
 
 #[test]
+fn location_verification_ignores_an_unselected_function_ranked_loop() {
+    // A location-scoped run verifies one proof unit, so it builds a verified
+    // loop rule only for the loops it checks. Planning termination for every
+    // function in the file made C termination certification demand a rule for
+    // a loop this run never visited, which failed `click audit` at every site
+    // of any file whose other functions rank a loop while `click verify`
+    // passed the same sidecar.
+    let c_source = r#"
+int32 identity(int32 x) {
+    return x;
+}
+
+int32 count_to(int32 n) {
+    int32 i;
+    i = 0;
+    while (i < n) {
+        i = i + 1;
+    }
+    return i;
+}
+"#;
+    let click_source = r#"
+verifying "ranked.c";
+
+int32 identity(int32 x) {
+    ensures result == x;
+} by {
+    execute();
+    simp();
+}
+
+int32 count_to(int32 n) {
+    requires n >= 0;
+    ensures result == n;
+} by {
+    step();
+    step();
+    loop {
+        decreases n - i;
+        invariant i >= 0;
+        invariant i <= n;
+
+        initialize by simp;
+        preserve by {
+            step();
+            close_invariants();
+        }
+    }
+    step();
+    simp();
+}
+"#;
+    let sources = [("ranked.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("the whole file should verify");
+    let selected = click_source.find("ensures result == x;").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let verified = verify_c0_sources_at(click_source, &sources, position.line, position.column)
+        .expect("a scoped run must not demand a loop rule it was never going to build");
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.function_block.signature().name() == "identity")
+    );
+}
+
+#[test]
 fn location_verification_checks_called_function_dependencies() {
     let callee_c = r#"
 int32 callee(int32 x) {

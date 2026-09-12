@@ -70,11 +70,11 @@ fn synthesize_post_execution_paths(
         .map(|((tactics, closers), choices)| {
             let mut steps = ProofCertificate::from_proof_tactics(tactics)
                 .map_err(|error| format!("post-execution path is not simple: {error:?}"))?
-                .steps;
+                .into_steps();
             steps.extend(
                 ProofCertificate::from_proof_tactics(closers)
                     .map_err(|error| format!("post-execution closer is not simple: {error:?}"))?
-                    .steps,
+                    .into_steps(),
             );
             Ok(ProofCertificateBuilder {
                 steps,
@@ -1217,6 +1217,15 @@ pub(super) fn finish_ordered_proof<'a>(
         retained.steps = surface_steps_from_checked_proof(&proof)?;
         retained
     };
+    // Every certified path and every claim on it carries the same retained
+    // certificate, so it is admitted once and shared. Rebuilding it per
+    // (path, claim) made a finished proof cost the certificate's size times
+    // the number of paths times the number of claims.
+    let retained_certificate = retained_surface
+        .blocker
+        .is_none()
+        .then(|| ProofCertificate::from_steps(retained_surface.steps.clone()))
+        .transpose()?;
     let pre_state = frontier.execution_start_state(state);
     let frontier_function_block = (!proof_execution
         .presentation
@@ -4296,13 +4305,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             claim: claim.verified_claim(),
                             proof_kind: ProofKind::TacticScript,
                             proof_tactics: Some(certificate_tactics.to_vec()),
-                            expanded_proof: retained_surface
-                                .blocker
-                                .is_none()
-                                .then(|| {
-                                    ProofCertificate::from_steps(retained_surface.steps.clone())
-                                })
-                                .transpose()?,
+                            expanded_proof: retained_certificate.clone(),
                             expansion_blocker: retained_surface.blocker.clone(),
                             specification: specification.clone(),
                             theorem: theorem.clone(),
@@ -4429,12 +4432,17 @@ pub(super) fn finish_ordered_proof<'a>(
                     expanded.block(message);
                 }
             }
+            // One admitted certificate, shared by every theorem this context
+            // produced. Admitting it per theorem charged each of them the
+            // whole certificate again, and left equal certificates as
+            // separate objects for every later comparison to walk.
+            let expanded_certificate = expanded
+                .blocker
+                .is_none()
+                .then(|| ProofCertificate::from_steps(expanded.steps.clone()))
+                .transpose()?;
             for theorem in &mut verified {
-                theorem.expanded_proof = expanded
-                    .blocker
-                    .is_none()
-                    .then(|| ProofCertificate::from_steps(expanded.steps.clone()))
-                    .transpose()?;
+                theorem.expanded_proof = expanded_certificate.clone();
                 theorem.expansion_blocker = expanded.blocker.clone();
             }
             // Surface synthesis follows proof contexts, not the number of
@@ -4469,13 +4477,16 @@ pub(super) fn finish_ordered_proof<'a>(
                     expanded.block(message);
                 }
                 let verified_claim = claim.verified_claim();
+                // One admitted certificate per claim, shared by every path
+                // that certified it, for the reason above.
+                let expanded_certificate = expanded
+                    .blocker
+                    .is_none()
+                    .then(|| ProofCertificate::from_steps(expanded.steps.clone()))
+                    .transpose()?;
                 for theorem in &mut verified {
                     if theorem.claim == verified_claim {
-                        theorem.expanded_proof = expanded
-                            .blocker
-                            .is_none()
-                            .then(|| ProofCertificate::from_steps(expanded.steps.clone()))
-                            .transpose()?;
+                        theorem.expanded_proof = expanded_certificate.clone();
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }

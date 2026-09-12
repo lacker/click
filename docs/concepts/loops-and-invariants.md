@@ -282,6 +282,11 @@ the negated guard available; above, `i == n` turns the invariant into the
 postcondition. A loop binder may reuse an enclosing binder's name, as `c` does
 here; that is a rebinding of the same instance rather than a second one.
 
+Reuse the enclosing name. A fresh name takes the instance over for the rest of
+the function, so it names nothing before the loop, and an invariant that reads
+it at loop entry has nothing to read. That is refused by name rather than as a
+failed lowering (`mdtests/loop_binder_rejects_fresh_name_in_invariant.md`).
+
 ### Structural loop measures
 
 A loop that walks a recursive structure has no numeric counter to rank, and
@@ -349,6 +354,62 @@ that omits a constructor is refused exactly as at function entry
 `mdtests/loop_body_proof_match_two_live_arms.md` is the shape where both
 constructors survive: the region splits, each arm certifies its own path, and
 the preservation certificate is reassembled as the `match` that produced them.
+
+The invariants and the loop condition are the head's premises, so they also
+refute arms. A premise that contradicts an arm's own binding-free fact says
+the binder's model is not that constructor, and the body gets that as an
+ordinary premise: `invariant node != 0` against a list resource's `Nil` arm
+`fact p == 0` publishes `l.model != CellList::Nil`, which is what lets the
+`Nil` arm close by `contradiction` on the model instead of unfolding a cell
+the arm does not own (`mdtests/loop_head_refuted_arm_closes_the_match.md`).
+The back edge publishes the same way, so a descent that unfolds a child under
+a guard hands the next iteration the model fact that guard established. The
+rule itself is in [resources](resources.md).
+
+### Ascending walks
+
+A descending walk pushes context frames; an ascending one pops them. The loop
+holds the same pair a Linux rbtree fixup loop holds — the focused subtree and
+the frames above it — and each iteration consumes one frame:
+
+<!-- verified-example: mdtests/loop_ascending_walk_to_root.md -->
+```click
+loop {
+    owns c: pctx_at(node, parent);
+    owns t: ptree_at(node, parent);
+    decreases c;
+    invariant t.model != HeapTree::Empty;
+    invariant plug(c.model, t.model) == plug(old(c.model), old(t.model));
+}
+```
+
+The body unfolds the frame, takes the C steps that move the cursor up, and
+folds the node the frame owned into a larger focused subtree built from the
+old focus and the frame's sibling. The measure is the context, because the
+focused subtree grows while the context strictly loses a frame.
+
+Both ends of such a walk come from arm refutation. At the head the guard
+`parent != 0` refutes the `Top` frame's `fact parent == 0`, so the body's
+proof `match` closes `Top` by contradiction. At the exit the same rule runs
+with the failed guard: `parent == 0` refutes the `Left` and `Right` arms'
+`fact parent != 0`, so the proof after the loop has `c.model == Context::Top`
+and can `unfold` the frame without a `match` of its own. A loop exit publishes
+refuted arms exactly as the head and the back edge do.
+
+The walk then hands its final instances to the contract's produced binders by
+refolding them under those names, at the arguments the exit reached. Those
+arguments are the caller's view: `result` is the returned pointer, and the
+root's parent is the null pointer constant rather than the parameter the body
+reassigned. The contract side of that boundary is in
+[the language reference](../reference/language/index.md).
+
+`old(name.field)` in an invariant is the function-entry instance of the
+function-level binder of that name, whatever the body did to that instance
+before the loop. A proof that unfolds and refolds the binder before the loop
+does not change what `old(...)` means
+(`mdtests/loop_invariant_old_model_after_refold.md`); an explicit `at(...)`
+snapshot still names a state, and an instance it does not hold is an error
+there.
 
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or
