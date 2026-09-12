@@ -23,10 +23,24 @@ impl ExecutionMatchPlan {
     ) -> Option<&ProofCertificate> {
         self.excluded[index].as_ref()
     }
-    pub(in crate::surface::proof) fn condition(
-        &self,
-        left: std::ops::Range<usize>,
-    ) -> ClickProposition {
+    /// The arms this match still has to execute: every constructor whose arm
+    /// was not closed by a checked `contradiction`.
+    pub(in crate::surface::proof) fn live_cases(&self) -> Vec<usize> {
+        (0..self.excluded.len())
+            .filter(|&index| self.excluded[index].is_none())
+            .collect()
+    }
+
+    /// True when exactly one constructor survives, so its arm runs directly on
+    /// the parent frontier and never passes through a terminal join.
+    pub(in crate::surface::proof) fn has_sole_live_case(&self) -> bool {
+        self.excluded.iter().filter(|case| case.is_none()).count() == 1
+    }
+
+    /// The surface condition that names one side of a live-arm split: a match
+    /// over the same scrutinee that yields `1` exactly on `left`. Excluded
+    /// constructors are already impossible, so they take the `0` side.
+    pub(in crate::surface::proof) fn condition(&self, left: &[usize]) -> ClickProposition {
         ClickProposition::Comparison {
             left: ContractExpression::AlgebraicMatch {
                 scrutinee: Box::new(self.source.scrutinee.clone()),
@@ -152,9 +166,6 @@ impl<'a> Proof<'a> {
             self.step_error(format!("could not lower match scrutinee: {message}"))
         })?;
         let variants = &value.algebraic_type.variants;
-        if variants.len() > 2 {
-            return Err(self.step_error("proof `match` currently supports one or two constructors; wider execution joins are not implemented"));
-        }
         if source.arms.len() != variants.len() {
             return Err(self.step_error("proof `match` must cover every constructor exactly once"));
         }
@@ -370,11 +381,12 @@ impl<'a> Proof<'a> {
         locals.next_choice_variable = locals
             .next_choice_variable
             .max(self.state.locals().next_choice_variable);
-        let proof = if plan.excluded.iter().any(Option::is_some) {
-            // Unlike a two-live-arm join, this path never passed through
-            // merge_terminal_execution_join. Restore the same outer routing
-            // scope here: case evidence is retained in the trace, not added
-            // to the whole function's contract requirements.
+        let proof = if plan.has_sole_live_case() {
+            // A sole live arm runs on the parent frontier, so unlike any
+            // joined arm it never passed through merge_terminal_execution_join.
+            // Restore the same outer routing scope here: case evidence is
+            // retained in the trace, not added to the whole function's
+            // contract requirements.
             proof
                 .edit_execution_presentation(|presentation| {
                     presentation.case_assumptions = plan.entry_cases.clone();

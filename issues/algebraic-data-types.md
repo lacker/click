@@ -26,12 +26,14 @@ in-order node list. Unfold consumes the parent; no named open handle remains.
 
 ## Remaining generalizations and intended regressions
 
-- **Proof-match generality.** Extend beyond one or two constructors at unchanged
-  function entry: wider families, shared continuations, matches after C or
-  resource transitions, additional payload sorts, proof prefixes before
-  contradiction, and all-impossible matches. Use small cells and three-variant
-  enums; reject missing arms, escaping witnesses, sibling-path evidence, and
-  contradictions without premises. Preserve symbolic pure-match semantics.
+- **Proof-match generality.** Constructor families of any width are joined at
+  unchanged function entry (`mdtests/proof_match_three_constructors.md`,
+  `mdtests/proof_match_four_constructors.md`). Still to extend: shared
+  continuations, matches after C or resource transitions, additional payload
+  sorts, proof prefixes before contradiction, and all-impossible matches. Use
+  small cells and three-variant enums; reject missing arms, escaping
+  witnesses, sibling-path evidence, and contradictions without premises.
+  Preserve symbolic pure-match semantics.
 - **Richer resource bodies.** Support mixed or mutually recursive resource
   families, nested guards/matches, general resource if/else, arbitrary
   scrutinees, and child-field equations beyond immediate constructor bindings.
