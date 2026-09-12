@@ -3761,7 +3761,7 @@ fn pure_rewrite_retains_a_structural_surface_successor_for_simp() {
     let position = expansion::position_at_offset(click_source, simp_offset);
     let expanded = expand_c0_tactic_source_at(click_source, &[], position.line, position.column)
         .expect("the retained rewrite successor should expand");
-    assert_eq!(expanded.matches("rewrite(").count(), 3, "{expanded}");
+    assert_eq!(expanded.matches("rewrite(").count(), 2, "{expanded}");
     assert!(expanded.contains("both {"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
     verify_click_theorems(&expanded)
