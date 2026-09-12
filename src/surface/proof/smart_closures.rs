@@ -4078,6 +4078,23 @@ impl<'a> Proof<'a> {
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
         if let Some(surface_goal) = proof.surface_goal()
+            && let Some(plan) = plan_special_arithmetic_certificate(goal, &restricted)
+        {
+            let certificate = special_plan_to_surface_certificate(
+                &plan,
+                &premise_pairs
+                    .iter()
+                    .map(|(_, surface)| surface.clone())
+                    .collect::<Vec<_>>(),
+                surface_goal,
+            );
+            if let Ok(closed) = proof.apply_step(ProofStep::ArithmeticCertificate(certificate))
+                && closed.is_complete()
+            {
+                return Some(closed);
+            }
+        }
+        if let Some(surface_goal) = proof.surface_goal()
             // The kernel lowering has already established the exact carrier
             // and checked terms for this goal.  Use that fact as the routing
             // predicate so fixed-state and execution proofs receive the same

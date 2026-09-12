@@ -476,6 +476,37 @@ fn pointer_loop_increment_emits_checked_equality_proof() {
 }
 
 #[test]
+#[ignore = "pending kernel scaled-alignment lowering for this source shape"]
+fn symbolic_alignment_expands_to_special_certificate_and_rechecks_without_planning() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/aligned_symbolic_displacement.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.unwrap().replace(
+        "    simp();\n}",
+        "    have aligned(p + i, 8) by { simp(); }\n    simp();\n}",
+    );
+    verify_c0_sources(&click, &sources).unwrap();
+    let expanded =
+        expand_c0_claim_source(&click, &sources, "element_is_aligned", CProofClaim::Grouped)
+            .unwrap();
+    assert!(
+        expanded.contains("arithmetic_certificate special"),
+        "{expanded}"
+    );
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_c0_sources(&expanded, &sources)
+    });
+    result.unwrap();
+    assert_eq!(planning, 0, "explicit Special recheck must not plan");
+}
+
+#[test]
 fn completed_recursive_loop_bodies_skip_legacy_preplanning_and_recheck() {
     for (filename, function) in [
         ("c_decreases_recursive_in_loop.md", "recursive_loop"),
