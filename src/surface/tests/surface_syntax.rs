@@ -999,6 +999,86 @@ fn signed_arithmetic_smart_planner_expands_to_structural_certificate() {
 }
 
 #[test]
+fn signed_arithmetic_smart_planner_preserves_explicit_definedness() {
+    let source = r#"
+        theorem defined_addition(a: int32, b: int32) {
+            requires 0 <= a;
+            requires 0 <= b;
+            requires defined(a + b);
+            ensures 0 <= a + b by {
+                arithmetic() using {
+                    0 <= a;
+                    0 <= b;
+                    defined(a + b);
+                }
+            }
+        }
+    "#;
+    let verified = verify_click_theorems(source)
+        .expect("explicit definedness should support signed arithmetic");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("definedness proof should expand");
+    assert!(
+        expanded.contains("arithmetic_certificate signed_int32"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("defined"), "{expanded}");
+    let rechecked = source.replace(
+        "by {\n                arithmetic() using {\n                    0 <= a;\n                    0 <= b;\n                    defined(a + b);\n                }\n            }",
+        &expanded,
+    );
+    verify_click_theorems(&rechecked).expect("expanded definedness proof should recheck");
+    let missing_definedness = source.replace("                    defined(a + b);\n", "");
+    verify_click_theorems(&missing_definedness)
+        .expect_err("omitting explicit definedness must fail");
+    let mismatched_definedness = source.replace(
+        "                    defined(a + b);",
+        "                    defined(a + a);",
+    );
+    verify_click_theorems(&mismatched_definedness).expect_err("mismatched definedness must fail");
+}
+
+#[test]
+fn signed_arithmetic_smart_planner_handles_deep_supported_terms_iteratively() {
+    let depth = 40;
+    let mut bindings = String::from("let a0: int32 = n;\n");
+    for index in 1..=depth {
+        bindings.push_str(&format!("let a{index}: int32 = a{} + 1;\n", index - 1));
+    }
+    let source = format!(
+        "theorem deep_signed_add(n: int32) {{\n\
+            requires 0 <= n;\n\
+            requires n <= 100;\n\
+            {bindings}\
+            ensures 0 <= a{depth} by {{ arithmetic() using {{ 0 <= n; n <= 100; }} }}\n\
+        }}"
+    );
+    let verified = verify_click_theorems(&source).expect("deep supported arithmetic should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("deep arithmetic should expand");
+    assert!(
+        expanded.contains("arithmetic_certificate signed_int32"),
+        "{expanded}"
+    );
+    let rechecked = source.replace(
+        &format!("by {{ arithmetic() using {{ 0 <= n; n <= 100; }} }}"),
+        &expanded,
+    );
+    verify_click_theorems(&rechecked).expect("deep expanded certificate should recheck");
+
+    let overflowing = "theorem overflowing_intermediate(n: int32) {
+        requires n == 1;
+        ensures 0 <= (n + 2147483647) - 2147483647 by {
+            arithmetic() using { n == 1; }
+        }
+    }";
+    verify_click_theorems(overflowing)
+        .expect_err("an overflowing intermediate must not be justified by its final value");
+}
+
+#[test]
 fn verifies_pure_theorem_definition() {
     let source = r#"
             theorem preserves_nonnegative(x: int32) {

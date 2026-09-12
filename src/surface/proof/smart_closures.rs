@@ -16,130 +16,220 @@ use crate::kernel::{CFloatClassification, CFloatCondition};
 use crate::surface::checking::plan_signed_arithmetic_certificate;
 use crate::surface::planning::proposition_search::PropositionSearch;
 use num_bigint::BigInt;
-use num_traits::{Signed, Zero};
+use num_traits::{Signed, ToPrimitive, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
-fn collect_signed_surface_terms(
-    expression: &ContractExpression,
-    terms: &mut Vec<ContractExpression>,
+fn collect_signed_surface_terms<'a>(
+    expression: &'a ContractExpression,
+    terms: &mut Vec<&'a ContractExpression>,
 ) {
-    terms.push(expression.clone());
-    match expression {
-        ContractExpression::Negate(inner)
-        | ContractExpression::Old(inner)
-        | ContractExpression::At {
-            expression: inner, ..
-        }
-        | ContractExpression::BitwiseNot(inner) => collect_signed_surface_terms(inner, terms),
-        ContractExpression::Add(left, right)
-        | ContractExpression::Subtract(left, right)
-        | ContractExpression::Multiply(left, right)
-        | ContractExpression::Divide(left, right)
-        | ContractExpression::Remainder(left, right)
-        | ContractExpression::ShiftLeft(left, right)
-        | ContractExpression::ShiftRight(left, right)
-        | ContractExpression::BitwiseAnd(left, right)
-        | ContractExpression::BitwiseOr(left, right)
-        | ContractExpression::BitwiseXor(left, right)
-        | ContractExpression::SequenceConcat(left, right)
-        | ContractExpression::Index(left, right) => {
-            collect_signed_surface_terms(left, terms);
-            collect_signed_surface_terms(right, terms);
-        }
-        ContractExpression::AlgebraicConstructor { arguments, .. }
-        | ContractExpression::Call { arguments, .. }
-        | ContractExpression::SequenceLiteral(arguments) => {
-            for argument in arguments {
-                collect_signed_surface_terms(argument, terms);
+    let mut pending = vec![expression];
+    while let Some(expression) = pending.pop() {
+        terms.push(expression);
+        match expression {
+            ContractExpression::Negate(inner)
+            | ContractExpression::Old(inner)
+            | ContractExpression::At {
+                expression: inner, ..
             }
-        }
-        ContractExpression::Field { base, .. } => collect_signed_surface_terms(base, terms),
-        ContractExpression::ArrayIndex { base, .. } => collect_signed_surface_terms(base, terms),
-        ContractExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_signed_surface_proposition_terms(condition, terms);
-            collect_signed_surface_terms(then_branch, terms);
-            collect_signed_surface_terms(else_branch, terms);
-        }
-        ContractExpression::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            collect_signed_surface_terms(start, terms);
-            collect_signed_surface_terms(end, terms);
-            collect_signed_surface_terms(initial, terms);
-            collect_signed_surface_terms(body, terms);
-        }
-        ContractExpression::Let { value, body, .. } => {
-            collect_signed_surface_terms(value, terms);
-            collect_signed_surface_terms(body, terms);
-        }
-        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_signed_surface_terms(scrutinee, terms);
-            for arm in arms {
-                collect_signed_surface_terms(&arm.body, terms);
+            | ContractExpression::BitwiseNot(inner) => pending.push(inner),
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right)
+            | ContractExpression::Divide(left, right)
+            | ContractExpression::Remainder(left, right)
+            | ContractExpression::ShiftLeft(left, right)
+            | ContractExpression::ShiftRight(left, right)
+            | ContractExpression::BitwiseAnd(left, right)
+            | ContractExpression::BitwiseOr(left, right)
+            | ContractExpression::BitwiseXor(left, right)
+            | ContractExpression::SequenceConcat(left, right)
+            | ContractExpression::Index(left, right) => {
+                pending.push(right);
+                pending.push(left);
             }
+            ContractExpression::AlgebraicConstructor { arguments, .. }
+            | ContractExpression::Call { arguments, .. }
+            | ContractExpression::SequenceLiteral(arguments) => {
+                for argument in arguments {
+                    pending.push(argument);
+                }
+            }
+            ContractExpression::Field { base, .. }
+            | ContractExpression::ArrayIndex { base, .. } => pending.push(base),
+            ContractExpression::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                pending.push(then_branch);
+                pending.push(else_branch);
+                collect_signed_surface_proposition_terms(condition, terms);
+            }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                pending.push(body);
+                pending.push(initial);
+                pending.push(end);
+                pending.push(start);
+            }
+            ContractExpression::Let { value, body, .. } => {
+                pending.push(body);
+                pending.push(value);
+            }
+            ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+                pending.push(scrutinee);
+                for arm in arms {
+                    pending.push(&arm.body);
+                }
+            }
+            ContractExpression::QualifiedC { .. }
+            | ContractExpression::ResourceField(_)
+            | ContractExpression::AlgebraicVariable { .. }
+            | ContractExpression::Binding(_)
+            | ContractExpression::CFragment(_)
+            | ContractExpression::CBinding(_)
+            | ContractExpression::ResourceCount(_)
+            | ContractExpression::ResourceWildcard
+            | ContractExpression::IntegerLiteral(_) => {}
         }
-        ContractExpression::QualifiedC { .. }
-        | ContractExpression::ResourceField(_)
-        | ContractExpression::AlgebraicVariable { .. }
-        | ContractExpression::Binding(_)
-        | ContractExpression::CFragment(_)
-        | ContractExpression::CBinding(_)
-        | ContractExpression::ResourceCount(_)
-        | ContractExpression::ResourceWildcard
-        | ContractExpression::IntegerLiteral(_) => {}
     }
 }
 
-fn collect_signed_surface_proposition_terms(
-    proposition: &ClickProposition,
-    terms: &mut Vec<ContractExpression>,
+fn collect_signed_surface_proposition_terms<'a>(
+    proposition: &'a ClickProposition,
+    terms: &mut Vec<&'a ContractExpression>,
 ) {
-    match proposition {
-        ClickProposition::Comparison { left, right, .. } => {
-            collect_signed_surface_terms(left, terms);
-            collect_signed_surface_terms(right, terms);
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::Comparison { left, right, .. } => {
+                collect_signed_surface_terms(left, terms);
+                collect_signed_surface_terms(right, terms);
+            }
+            ClickProposition::Defined { expression }
+            | ClickProposition::FloatClassification { expression, .. } => {
+                collect_signed_surface_terms(expression, terms)
+            }
+            ClickProposition::At { proposition, .. }
+            | ClickProposition::Not(proposition)
+            | ClickProposition::ForAll {
+                body: proposition, ..
+            }
+            | ClickProposition::Exists {
+                body: proposition, ..
+            } => pending.push(proposition),
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            ClickProposition::RangeAll {
+                start, end, body, ..
+            }
+            | ClickProposition::RangeAny {
+                start, end, body, ..
+            } => {
+                collect_signed_surface_terms(start, terms);
+                collect_signed_surface_terms(end, terms);
+                pending.push(body);
+            }
+            ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. }
+            | ClickProposition::PredicateCall { .. } => {}
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::FloatClassification { expression, .. } => {
-            collect_signed_surface_terms(expression, terms)
-        }
-        ClickProposition::At { proposition, .. }
-        | ClickProposition::Not(proposition)
-        | ClickProposition::ForAll {
-            body: proposition, ..
-        }
-        | ClickProposition::Exists {
-            body: proposition, ..
-        } => collect_signed_surface_proposition_terms(proposition, terms),
-        ClickProposition::And(left, right)
-        | ClickProposition::Or(left, right)
-        | ClickProposition::Implies(left, right) => {
-            collect_signed_surface_proposition_terms(left, terms);
-            collect_signed_surface_proposition_terms(right, terms);
-        }
-        ClickProposition::RangeAll {
-            start, end, body, ..
-        }
-        | ClickProposition::RangeAny {
-            start, end, body, ..
-        } => {
-            collect_signed_surface_terms(start, terms);
-            collect_signed_surface_terms(end, terms);
-            collect_signed_surface_proposition_terms(body, terms);
-        }
-        ClickProposition::Separate { .. }
-        | ClickProposition::Contains { .. }
-        | ClickProposition::Loadable { .. }
-        | ClickProposition::PredicateCall { .. } => {}
     }
+}
+
+/// Compare the bounded arithmetic term fragment iteratively.  Certificate
+/// expansion must recover the original source spelling for operation nodes;
+/// leaf-atom comparison alone would silently decline deep but valid plans.
+fn signed_surface_terms_equal(
+    left: &crate::kernel::Bitvector32Term,
+    right: &crate::kernel::Bitvector32Term,
+) -> bool {
+    let mut pending = vec![(left, right)];
+    let mut visited = 0usize;
+    while let Some((left, right)) = pending.pop() {
+        visited += 1;
+        if visited > 4096 {
+            return false;
+        }
+        match (left, right) {
+            (
+                crate::kernel::Bitvector32Term::Constant(left),
+                crate::kernel::Bitvector32Term::Constant(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::Int64Constant(left),
+                crate::kernel::Bitvector32Term::Int64Constant(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::UInt64Constant(left),
+                crate::kernel::Bitvector32Term::UInt64Constant(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::Variable(left),
+                crate::kernel::Bitvector32Term::Variable(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::Add(left, right),
+                crate::kernel::Bitvector32Term::Add(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Subtract(left, right),
+                crate::kernel::Bitvector32Term::Subtract(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Multiply(left, right),
+                crate::kernel::Bitvector32Term::Multiply(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Divide(left, right),
+                crate::kernel::Bitvector32Term::Divide(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Remainder(left, right),
+                crate::kernel::Bitvector32Term::Remainder(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::ShiftLeft(left, right),
+                crate::kernel::Bitvector32Term::ShiftLeft(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::ArithmeticShiftRight(left, right),
+                crate::kernel::Bitvector32Term::ArithmeticShiftRight(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::LogicalShiftRight(left, right),
+                crate::kernel::Bitvector32Term::LogicalShiftRight(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::BitwiseAnd(left, right),
+                crate::kernel::Bitvector32Term::BitwiseAnd(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::BitwiseOr(left, right),
+                crate::kernel::Bitvector32Term::BitwiseOr(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::BitwiseXor(left, right),
+                crate::kernel::Bitvector32Term::BitwiseXor(other_left, other_right),
+            ) => {
+                pending.push((left, other_left));
+                pending.push((right, other_right));
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn integer_plan_to_surface_certificate(
@@ -527,11 +617,17 @@ impl<'a> Proof<'a> {
     fn signed_surface_term(
         &self,
         term: &crate::kernel::Bitvector32Term,
-        candidates: &[ContractExpression],
+        candidates: &[&ContractExpression],
     ) -> Option<ContractExpression> {
         for candidate in candidates {
+            if let crate::kernel::Bitvector32Term::Constant(value) = term
+                && let ContractExpression::IntegerLiteral(literal) = *candidate
+                && literal.parse::<u32>().ok() == Some(*value)
+            {
+                return Some((*candidate).clone());
+            }
             let probe = ClickProposition::Comparison {
-                left: candidate.clone(),
+                left: (*candidate).clone(),
                 operator: ComparisonOperator::Equal,
                 right: ContractExpression::IntegerLiteral("0".into()),
             };
@@ -547,15 +643,15 @@ impl<'a> Proof<'a> {
             else {
                 continue;
             };
-            if right.as_ref() == &crate::kernel::Bitvector32Term::Constant(0)
-                && left.as_ref() == term
+            if right.as_ref().as_const() == Some(0)
+                && signed_surface_terms_equal(left.as_ref(), term)
             {
-                return Some(candidate.clone());
+                return Some((*candidate).clone());
             }
-            if left.as_ref() == &crate::kernel::Bitvector32Term::Constant(0)
-                && right.as_ref() == term
+            if left.as_ref().as_const() == Some(0)
+                && signed_surface_terms_equal(right.as_ref(), term)
             {
-                return Some(candidate.clone());
+                return Some((*candidate).clone());
             }
         }
         None
@@ -580,14 +676,18 @@ impl<'a> Proof<'a> {
         let mut source_indices = BTreeMap::new();
         let mut generated = Vec::new();
         for original in used {
-            let surface = premise_pairs.get(original)?.1.clone();
-            let local = generated.len();
+            let local = source_indices.len();
             source_indices.insert(original, local);
-            generated.push(SignedArithmeticStep::Premise {
-                index: local,
-                proposition: surface.clone(),
-                result: surface,
-            });
+            if plan.nodes.iter().any(|node| {
+                matches!(node, SignedArithmeticNode::Premise { index, .. } if *index == original)
+            }) {
+                let surface = premise_pairs.get(original)?.1.clone();
+                generated.push(SignedArithmeticStep::Premise {
+                    index: local,
+                    proposition: surface.clone(),
+                    result: surface,
+                });
+            }
         }
         let mut mapped = Vec::with_capacity(plan.nodes.len());
         let operation_offset = generated.len();
@@ -600,12 +700,15 @@ impl<'a> Proof<'a> {
                 operation_count += 1;
             }
         }
-        let mut terms = Vec::new();
+        let mut terms: Vec<&ContractExpression> = Vec::new();
         collect_signed_surface_proposition_terms(surface_goal, &mut terms);
         for (_, surface) in premise_pairs {
             collect_signed_surface_proposition_terms(surface, &mut terms);
         }
-        let term = |term: &crate::kernel::Bitvector32Term| self.signed_surface_term(term, &terms);
+        let term = |term: &crate::kernel::Bitvector32Term| {
+            let result = self.signed_surface_term(term, &terms);
+            result
+        };
         let interval =
             |value: crate::kernel::proof::signed_arithmetic::SignedArithmeticInterval| {
                 SignedInt32Interval {
@@ -620,15 +723,28 @@ impl<'a> Proof<'a> {
             SignedArithmeticComparison::Disequal => SignedInt32Comparison::Disequal,
         };
         let mut surfaces: Vec<Option<ClickProposition>> = Vec::with_capacity(plan.nodes.len());
+        let typed_anchor = match surface_goal {
+            ClickProposition::Comparison { left, .. } => Some(left.clone()),
+            _ => None,
+        };
         let claim_surface = |claim: &SignedArithmeticClaim| {
+            let value = claim.constant.to_i32()?;
+            let anchor = typed_anchor.clone()?;
+            let zero = ContractExpression::Subtract(Box::new(anchor.clone()), Box::new(anchor));
+            let constant = ContractExpression::IntegerLiteral(value.unsigned_abs().to_string());
+            let left = if value < 0 {
+                ContractExpression::Subtract(Box::new(zero.clone()), Box::new(constant))
+            } else {
+                ContractExpression::Add(Box::new(zero.clone()), Box::new(constant))
+            };
             (claim.terms.is_empty()).then(|| ClickProposition::Comparison {
-                left: ContractExpression::IntegerLiteral(claim.constant.to_string()),
+                left,
                 operator: match claim.relation {
                     SignedArithmeticRelation::LessEqual => ComparisonOperator::LessEqual,
                     SignedArithmeticRelation::Equal => ComparisonOperator::Equal,
                     SignedArithmeticRelation::Disequal => ComparisonOperator::NotEqual,
                 },
-                right: ContractExpression::IntegerLiteral("0".into()),
+                right: zero,
             })
         };
         for node in &plan.nodes {
@@ -746,10 +862,16 @@ impl<'a> Proof<'a> {
                     index,
                     term: machine_term,
                     ..
-                } => SignedArithmeticStep::DefinedPremise {
-                    index: *source_indices.get(index)?,
-                    term: term(machine_term)?,
-                },
+                } => {
+                    let source = premise_pairs.get(*index)?.1.clone();
+                    let ClickProposition::Defined { .. } = source else {
+                        return None;
+                    };
+                    SignedArithmeticStep::DefinedPremise {
+                        index: *source_indices.get(index)?,
+                        term: term(machine_term)?,
+                    }
+                }
                 SignedArithmeticNode::IntervalAdd {
                     left,
                     right,

@@ -30,13 +30,63 @@ fn signed_atom_matches(
     left: &crate::kernel::Bitvector32Term,
     right: &crate::kernel::Bitvector32Term,
 ) -> bool {
-    match (
-        crate::kernel::proof::signed_arithmetic::SignedArithmeticAtom::from_term(left),
-        crate::kernel::proof::signed_arithmetic::SignedArithmeticAtom::from_term(right),
-    ) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
+    let mut pending = vec![(left, right)];
+    let mut visited = 0usize;
+    while let Some((left, right)) = pending.pop() {
+        visited += 1;
+        if visited > 4096 {
+            return false;
+        }
+        match (left, right) {
+            (
+                crate::kernel::Bitvector32Term::Constant(left),
+                crate::kernel::Bitvector32Term::Constant(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::Int64Constant(left),
+                crate::kernel::Bitvector32Term::Int64Constant(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::UInt64Constant(left),
+                crate::kernel::Bitvector32Term::UInt64Constant(right),
+            ) if left == right => {}
+            (
+                crate::kernel::Bitvector32Term::Variable(left),
+                crate::kernel::Bitvector32Term::Variable(right),
+            ) if left == right => {}
+            (left, right)
+                if let (Some(left), Some(right)) = (
+                    crate::kernel::proof::signed_arithmetic::SignedArithmeticAtom::from_term(left),
+                    crate::kernel::proof::signed_arithmetic::SignedArithmeticAtom::from_term(right),
+                ) =>
+            {
+                if left != right {
+                    return false;
+                }
+            }
+            (
+                crate::kernel::Bitvector32Term::Add(left, right),
+                crate::kernel::Bitvector32Term::Add(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Subtract(left, right),
+                crate::kernel::Bitvector32Term::Subtract(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Multiply(left, right),
+                crate::kernel::Bitvector32Term::Multiply(other_left, other_right),
+            )
+            | (
+                crate::kernel::Bitvector32Term::Remainder(left, right),
+                crate::kernel::Bitvector32Term::Remainder(other_left, other_right),
+            ) => {
+                pending.push((left, other_left));
+                pending.push((right, other_right));
+            }
+            _ => return false,
+        }
     }
+    true
 }
 
 fn signed_scaled_term_matches(
@@ -120,6 +170,61 @@ fn signed_scaled_surface_shape(
         };
     signed_scaled_term_matches(target_left, source_left, coefficient)
         && signed_scaled_term_matches(target_right, source_right, coefficient)
+}
+
+fn signed_add_surface_shape(
+    left: &crate::kernel::Proposition,
+    right: &crate::kernel::Proposition,
+    target: &crate::kernel::Proposition,
+) -> bool {
+    let (
+        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(left_left, left_right),
+        left_value,
+    ) = (match left {
+        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, value),
+        _ => return false,
+    })
+    else {
+        return false;
+    };
+    let (
+        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(right_left, right_right),
+        right_value,
+    ) = (match right {
+        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, value),
+        _ => return false,
+    })
+    else {
+        return false;
+    };
+    let (
+        crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+        target_value,
+    ) = (match target {
+        crate::kernel::Proposition::ConditionIs(condition, value) => (condition, value),
+        _ => return false,
+    })
+    else {
+        return false;
+    };
+    if !(*left_value && *right_value && *target_value) {
+        return false;
+    }
+    let matches_sum = |target: &crate::kernel::Bitvector32Term,
+                       first: &crate::kernel::Bitvector32Term,
+                       second: &crate::kernel::Bitvector32Term| {
+        if let crate::kernel::Bitvector32Term::Add(target_first, target_second) = target {
+            return signed_atom_matches(target_first, first)
+                && signed_atom_matches(target_second, second);
+        }
+        matches!(
+            (target.as_const(), first.as_const(), second.as_const()),
+            (Some(target), Some(first), Some(second)) if
+                (first as i64).wrapping_add(second as i64) == target as i64
+        )
+    };
+    matches_sum(target_left, left_left, right_left)
+        && matches_sum(target_right, left_right, right_right)
 }
 
 fn signed_interval(
@@ -436,15 +541,18 @@ impl<'a> Proof<'a> {
             && let Some(plan) =
                 crate::surface::checking::plan_signed_arithmetic_certificate(goal, &premises)
             && let Some(surface_goal) = self.surface_goal()
-            && let Some(certificate) = self.signed_plan_to_surface_certificate(
-                &plan,
-                &premises
-                    .iter()
-                    .cloned()
-                    .zip(surface_premises.iter().cloned())
-                    .collect::<Vec<_>>(),
-                surface_goal,
-            )
+            && let Some(certificate) = {
+                let candidate = self.signed_plan_to_surface_certificate(
+                    &plan,
+                    &premises
+                        .iter()
+                        .cloned()
+                        .zip(surface_premises.iter().cloned())
+                        .collect::<Vec<_>>(),
+                    surface_goal,
+                );
+                candidate
+            }
         {
             let handle = self.apply_signed_int32_certificate(&certificate)?;
             return Ok((
@@ -511,19 +619,12 @@ impl<'a> Proof<'a> {
         use crate::kernel::proof::signed_arithmetic::{
             SignedArithmeticAtom, SignedArithmeticCarrier,
             SignedArithmeticCertificate as KernelCertificate, SignedArithmeticNode, scale_claim,
-            signed_arithmetic_claim,
+            signed_arithmetic_claim, signed_arithmetic_source_matches,
         };
         let mut source_premises = std::collections::BTreeMap::new();
         let same_signed_claim =
-            |left: &crate::kernel::Proposition, right: &crate::kernel::Proposition| match (
-                signed_arithmetic_claim(left),
-                signed_arithmetic_claim(right),
-            ) {
-                (Some(left), Some(right)) => {
-                    crate::kernel::proof::signed_arithmetic::charge_claim_pair_work(&left, &right)
-                        && left == right
-                }
-                _ => false,
+            |left: &crate::kernel::Proposition, right: &crate::kernel::Proposition| {
+                signed_arithmetic_source_matches(left, right)
             };
         for node in &certificate.nodes {
             let (index, lowered) = match node {
@@ -572,6 +673,14 @@ impl<'a> Proof<'a> {
         let lower_term = |proof: &Self,
                           expression: &ContractExpression|
          -> Result<crate::kernel::Bitvector32Term, ClickError> {
+            if let ContractExpression::IntegerLiteral(literal) = expression
+                && let Ok(value) = literal.parse::<i64>()
+                && (i32::MIN as i64..=i32::MAX as i64).contains(&value)
+            {
+                return Ok(crate::kernel::Bitvector32Term::Constant(
+                    value as i32 as u32,
+                ));
+            }
             let zero = ContractExpression::IntegerLiteral("0".into());
             let surface = ClickProposition::Comparison {
                 left: expression.clone(),
@@ -691,14 +800,59 @@ impl<'a> Proof<'a> {
                     left,
                     right,
                     result,
-                } => SignedArithmeticNode::Add {
-                    left: *left,
-                    right: *right,
-                    result: claim(
-                        &lower_prop(self, result, "signed_int32 addition result")?,
-                        "signed_int32 addition result",
-                    )?,
-                },
+                } => {
+                    let left_result = signed_step_result_surface(
+                        certificate.nodes.get(*left).ok_or_else(|| {
+                            self.step_error("signed_int32 addition left is out of range")
+                        })?,
+                    )
+                    .ok_or_else(|| {
+                        self.step_error("signed_int32 addition left must produce an affine result")
+                    })?;
+                    let right_result = signed_step_result_surface(
+                        certificate.nodes.get(*right).ok_or_else(|| {
+                            self.step_error("signed_int32 addition right is out of range")
+                        })?,
+                    )
+                    .ok_or_else(|| {
+                        self.step_error("signed_int32 addition right must produce an affine result")
+                    })?;
+                    let left_claim = claim(
+                        &lower_prop(self, left_result, "signed_int32 addition left")?,
+                        "signed_int32 addition left",
+                    )?;
+                    let right_claim = claim(
+                        &lower_prop(self, right_result, "signed_int32 addition right")?,
+                        "signed_int32 addition right",
+                    )?;
+                    let expected = crate::kernel::proof::signed_arithmetic::add_claim(
+                        &left_claim,
+                        &right_claim,
+                    )
+                    .ok_or_else(|| {
+                        self.step_error("signed_int32 addition exceeds the verification budget")
+                    })?;
+                    let lowered_result = lower_prop(self, result, "signed_int32 addition result")?;
+                    let actual = claim(&lowered_result, "signed_int32 addition result")?;
+                    if !(crate::kernel::proof::signed_arithmetic::charge_claim_pair_work(
+                        &actual, &expected,
+                    ) && actual == expected)
+                        && !signed_add_surface_shape(
+                            &lower_prop(self, left_result, "signed_int32 addition left")?,
+                            &lower_prop(self, right_result, "signed_int32 addition right")?,
+                            &lowered_result,
+                        )
+                    {
+                        return Err(self.step_error(
+                            "signed_int32 addition result does not encode the child sum",
+                        ));
+                    }
+                    SignedArithmeticNode::Add {
+                        left: *left,
+                        right: *right,
+                        result: expected,
+                    }
+                }
                 SignedArithmeticStep::EqualityToLessEqual {
                     source,
                     reverse,

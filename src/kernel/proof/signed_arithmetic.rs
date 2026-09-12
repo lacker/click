@@ -1490,7 +1490,7 @@ pub(crate) fn scale_claim(
     })
 }
 
-fn add_claim(
+pub(crate) fn add_claim(
     left: &SignedArithmeticClaim,
     right: &SignedArithmeticClaim,
 ) -> Option<SignedArithmeticClaim> {
@@ -2165,6 +2165,48 @@ fn affine_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
 
 pub(crate) fn signed_arithmetic_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
     affine_claim(proposition)
+}
+
+/// Compare source propositions used by a signed certificate without falling
+/// back to recursive proposition equality.  Arithmetic premises compare by
+/// their normalized affine claim; exact overflow-definedness premises compare
+/// by their typed operation and flat atom operands.
+pub(crate) fn signed_arithmetic_source_matches(left: &Proposition, right: &Proposition) -> bool {
+    if let (Some(left), Some(right)) = (
+        signed_arithmetic_claim(left),
+        signed_arithmetic_claim(right),
+    ) {
+        return charge_claim_pair_work(&left, &right) && left == right;
+    }
+    match (
+        exact_definedness_parts(left),
+        exact_definedness_parts(right),
+    ) {
+        (
+            Some((left_operator, left_left, left_right)),
+            Some((right_operator, right_left, right_right)),
+        ) if left_operator == right_operator => {
+            signed_arithmetic_terms_equal(left_left, right_left)
+                && signed_arithmetic_terms_equal(left_right, right_right)
+        }
+        _ => false,
+    }
+}
+
+fn exact_definedness_parts(
+    proposition: &Proposition,
+) -> Option<(u8, &Bitvector32Term, &Bitvector32Term)> {
+    let Proposition::ConditionIs(condition, false) = proposition else {
+        return None;
+    };
+    match condition {
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => Some((0, left, right)),
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => Some((1, left, right)),
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => Some((2, left, right)),
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => Some((3, left, right)),
+        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => Some((4, left, right)),
+        _ => None,
+    }
 }
 
 fn affine_difference(
