@@ -180,6 +180,12 @@ explicit:
   the selected or automatically considered facts whose direct frame check
   succeeds. More general cross-snapshot reasoning is an explicit `transport`
   proof step, not a comparator side effect.
+- **Rewrite snapshots by identity.** Load terms carry snapshots and snapshots
+  hold load terms, so terms reach a snapshot *DAG*. Substituting a variable
+  visits each interned snapshot once for that substitution, and the fact set a
+  memory load reasons under stays the caller's object so the load's alias
+  queries keep an ambient memo identity. Both are pure-function memoizations
+  over stable interned ids, not new proof authority.
 - **Write-set fingerprints.** Call-havoc markers carry a representation-invariant
   fingerprint of their write set in the marker block size, so
   alpha-colliding claims whose same-named havocs wrote different shapes stay

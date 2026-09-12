@@ -211,6 +211,17 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
   the sanctioned display direction: rendering a variable as source syntax
   is the printer's job, distinct from the forbidden comparison-side
   expansion.
+- **Naming cells makes terms a DAG, so rewriting must follow identity.** A
+  load term carries a whole snapshot and a snapshot's cells hold further load
+  terms, so one named cell per unfolded child nests snapshots one level per
+  child. Rewriting a variable therefore visits each *interned* snapshot once,
+  not once per path that reaches it: snapshots are interned, so the rewrite of
+  one is a pure function of its arena id and the substituted pair, and
+  `substitute_bitvector_variable_in_shared_memory` keys this substitution's
+  answers on that id. The curve is pinned by
+  `variable_substitution_visits_each_snapshot_once_per_rewrite`, and
+  `click profile` charges the work to the named operation
+  `substitution: snapshot rewrite`.
 
 ## Canonical at creation
 

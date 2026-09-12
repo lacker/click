@@ -269,6 +269,9 @@ pub(crate) fn substitute_bitvector_variable_in_proposition(
     from: Variable,
     to: &Bitvector32Term,
 ) -> Proposition {
+    // Hold the snapshot memo open across the whole proposition, so two
+    // sibling load terms over one snapshot rewrite it once between them.
+    let _scope = SubstitutedMemoryScope::enter(from, to);
     match proposition {
         Proposition::Equal(left, right) => Proposition::Equal(
             substitute_bitvector_variable_in_term(left, from, to),
@@ -4437,15 +4440,18 @@ fn substitute_through_load_variable(
         block: pointer.block.clone(),
         offset: substitute_bitvector_variable_in_pointer_offset(&pointer.offset, from, to),
     };
-    let substituted_memory = substitute_bitvector_variable_in_memory(&memory, from, to);
-    if substituted_pointer == pointer && substituted_memory == *memory {
+    // Deciding that this load variable is untouched means rewriting the
+    // snapshot it was minted against, whose own cells hold further load
+    // variables. Going through the interned-snapshot memo makes the common
+    // "nothing changed" answer a lookup instead of a fresh rebuild of the
+    // whole reachable snapshot DAG, and compares the result by arena identity
+    // rather than by deep structural equality.
+    let substituted_memory = substitute_bitvector_variable_in_shared_memory(&memory, from, to);
+    if substituted_pointer == pointer && substituted_memory == memory {
         return None;
     }
     Some(crate::kernel::eval::canonical_term(
-        &Bitvector32Term::MemoryLoad(
-            crate::kernel::intern_c_memory(substituted_memory),
-            Box::new(substituted_pointer),
-        ),
+        &Bitvector32Term::MemoryLoad(substituted_memory, Box::new(substituted_pointer)),
     ))
 }
 
@@ -4771,9 +4777,7 @@ pub(crate) fn substitute_bitvector_variable(
                 .collect(),
         },
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
-            crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(
-                memory, from, to,
-            )),
+            substitute_bitvector_variable_in_shared_memory(memory, from, to),
             Box::new(substitute_bitvector_variable_in_pointer(pointer, from, to)),
         ),
         Bitvector32Term::PointerAddress(pointer) => Bitvector32Term::PointerAddress(Box::new(
@@ -4827,11 +4831,131 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_pointer(
     }
 }
 
+/// One in-flight `(from, to)` substitution's already-rewritten snapshots.
+///
+/// A `MemoryLoad` term carries a whole snapshot, and a snapshot's cells can
+/// hold further `MemoryLoad` terms, so the terms a proof builds form a DAG of
+/// snapshots rather than a tree. Rewriting one variable used to walk that DAG
+/// as a tree, re-deriving and re-interning every shared snapshot once per path
+/// that reaches it: in `mdtests/rb_replace_node_with_children.md`, whose three
+/// nested `unfold`s name a cell at each level, 96 variable substitutions cost
+/// 965,776 snapshot rebuilds.
+///
+/// Snapshots are interned, so the rewrite of one is a pure function of its
+/// arena id and the `(from, to)` pair. Keyed by that id, each distinct
+/// snapshot is rebuilt exactly once per substitution and the walk becomes
+/// linear in the DAG's nodes. The frame holds the borrowed replacement term's
+/// address: the term is alive for as long as the frame, so an equal address is
+/// the same object with the same contents, the argument
+/// `PureFactContextIdScope` uses.
+struct SubstitutedMemoryFrame {
+    from: Variable,
+    to: usize,
+    substituted: std::collections::HashMap<(u32, u32), SharedCMemory>,
+}
+
+thread_local! {
+    static SUBSTITUTED_MEMORIES: std::cell::RefCell<Vec<SubstitutedMemoryFrame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Opens (or joins) the snapshot memo for one `(from, to)` substitution.
+struct SubstitutedMemoryScope {
+    pushed: bool,
+}
+
+impl SubstitutedMemoryScope {
+    fn enter(from: Variable, to: &Bitvector32Term) -> Self {
+        let address = to as *const Bitvector32Term as usize;
+        let joined = SUBSTITUTED_MEMORIES.with(|frames| {
+            frames
+                .borrow()
+                .last()
+                .is_some_and(|frame| frame.from == from && frame.to == address)
+        });
+        if joined {
+            return Self { pushed: false };
+        }
+        SUBSTITUTED_MEMORIES.with(|frames| {
+            frames.borrow_mut().push(SubstitutedMemoryFrame {
+                from,
+                to: address,
+                substituted: std::collections::HashMap::new(),
+            });
+        });
+        Self { pushed: true }
+    }
+}
+
+impl Drop for SubstitutedMemoryScope {
+    fn drop(&mut self) {
+        if self.pushed {
+            SUBSTITUTED_MEMORIES.with(|frames| {
+                frames.borrow_mut().pop();
+            });
+        }
+    }
+}
+
+/// Rewrites one variable inside an interned snapshot, reusing this
+/// substitution's earlier answer for the same snapshot.
+fn substitute_bitvector_variable_in_shared_memory(
+    memory: &SharedCMemory,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SharedCMemory {
+    let _scope = SubstitutedMemoryScope::enter(from, to);
+    let identity = memory.arena_id();
+    let substituted = SUBSTITUTED_MEMORIES.with(|frames| {
+        frames
+            .borrow()
+            .last()
+            .and_then(|frame| frame.substituted.get(&identity).cloned())
+    });
+    if let Some(substituted) = substituted {
+        return substituted;
+    }
+    let substituted = crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(
+        memory.memory(),
+        from,
+        to,
+    ));
+    SUBSTITUTED_MEMORIES.with(|frames| {
+        if let Some(frame) = frames.borrow_mut().last_mut() {
+            frame.substituted.insert(identity, substituted.clone());
+        }
+    });
+    substituted
+}
+
+/// Rewrites one variable throughout a memory snapshot.
+///
+/// This is the unit of work the snapshot DAG multiplies, so it is a named
+/// profiler operation charged its snapshot's size: a rewrite that revisits one
+/// shared snapshot once per reaching path shows up as `substitution: snapshot
+/// rewrite` growing far faster than the proof, which is what `click profile`
+/// could not point at before.
 pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
     memory: &CMemory,
     from: Variable,
     to: &Bitvector32Term,
 ) -> CMemory {
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "substitution",
+        "substitution: snapshot rewrite",
+        || substitute_bitvector_variable_in_memory_contents(memory, from, to),
+    )
+}
+
+fn substitute_bitvector_variable_in_memory_contents(
+    memory: &CMemory,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CMemory {
+    crate::instrumentation::record_deterministic_work(
+        memory.cells.len() + memory.union_cells.len() + memory.blocks.len(),
+    );
     let cells = std::sync::Arc::new(
         memory
             .cells

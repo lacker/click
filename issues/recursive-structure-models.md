@@ -509,6 +509,15 @@ enough to become the first regression of the package that fixes them.
     a cell reached neither by contract materialization nor by an unfold
     still loses its load identity across a write whose separation is only
     a resource fact.
+50. **Gap 46 reduced, not closed.** T7 found two repeated-work defects: a
+    memory load cloned the fact context before reasoning, which discarded
+    its memoization scope, and variable substitution walked the snapshot
+    DAG as a tree, exponential in the nesting A18's cell naming adds. Fixed
+    (14 s to 4 s; rebuild counts 7, 31, 511, 131071 to 3, 5, 9, 17), with
+    named profile operations that now point at both. The remaining 4 s is
+    genuine proving in the unfold's re-lowering of each arm clause's C
+    expressions, about twenty times the childless sibling; reducing that is
+    a resource-lowering redesign, not scheduled.
 
 ## Design decisions
 
@@ -804,6 +813,7 @@ appears to need one reports the need instead of adding it.
   `rb_parent_is` is a body fact of `rb_at`; unfold-named cells substitute
   the arm's constructor bindings, so `rb_replace_node` verifies in all
   three frames. A21 dispatched; T7 in progress; C3 after both.
+- 2026-09-12: T7 (b3cfc86a) is on master. A21 in progress; C3 after it.
 
 ## Work packages
 
