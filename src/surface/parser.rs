@@ -4705,9 +4705,309 @@ impl Parser {
 
     fn parse_arithmetic_certificate_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let previous = std::mem::replace(&mut self.integer_literal_context, true);
-        let parsed = self.parse_arithmetic_certificate_body();
+        let parsed = if self.peek_ident() == Some("signed_int32") {
+            self.position += 1;
+            self.parse_signed_int32_certificate_body()
+        } else {
+            self.parse_arithmetic_certificate_body()
+        };
         self.integer_literal_context = previous;
         parsed
+    }
+
+    fn parse_signed_int32_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {
+        self.expect(Token::LBrace)?;
+        let mut nodes = Vec::new();
+        let mut conclusion = None;
+        while self.peek() != Some(&Token::RBrace) {
+            let keyword = self.expect_ident("signed_int32 certificate node")?;
+            let node = match keyword.as_str() {
+                "premise" => {
+                    let index = self.expect_index("premise index")?;
+                    self.expect(Token::Colon)?;
+                    let proposition = self.parse_proposition()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::Premise {
+                        index,
+                        proposition,
+                        result,
+                    }
+                }
+                "scale" => {
+                    let source = self.expect_index("scale source")?;
+                    self.expect_ident_spelling("by")?;
+                    let coefficient = self.parse_contract_expression()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::Scale {
+                        source,
+                        coefficient,
+                        result,
+                    }
+                }
+                "add" => {
+                    let left = self.expect_index("left node")?;
+                    self.expect(Token::Comma)?;
+                    let right = self.expect_index("right node")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::Add {
+                        left,
+                        right,
+                        result,
+                    }
+                }
+                "eq_to_le" => {
+                    let source = self.expect_index("equality source")?;
+                    let reverse = if self.peek_ident() == Some("reverse") {
+                        self.position += 1;
+                        true
+                    } else {
+                        false
+                    };
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::EqualityToLessEqual {
+                        source,
+                        reverse,
+                        result,
+                    }
+                }
+                "eq_from_bounds" => {
+                    let lower = self.expect_index("lower bound")?;
+                    self.expect(Token::Comma)?;
+                    let upper = self.expect_index("upper bound")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::EqualityFromBounds {
+                        lower,
+                        upper,
+                        result,
+                    }
+                }
+                "trivial" => {
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::Trivial { result }
+                }
+                "interval_from_affine" => {
+                    let source = self.expect_index("affine source")?;
+                    let term = self.parse_contract_expression()?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalFromAffine {
+                        source,
+                        term,
+                        lower,
+                        upper,
+                    }
+                }
+                "interval_atom" => {
+                    let term = self.parse_contract_expression()?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalAtom { term, lower, upper }
+                }
+                "defined" => {
+                    let index = self.expect_index("defined premise index")?;
+                    let term = self.parse_contract_expression()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::DefinedPremise { index, term }
+                }
+                "interval_add" | "interval_add_bounded" => {
+                    let left = self.expect_index("left interval")?;
+                    self.expect(Token::Comma)?;
+                    let right = self.expect_index("right interval")?;
+                    let defined = if keyword == "interval_add" {
+                        self.expect_index("definedness node")?
+                    } else {
+                        usize::MAX
+                    };
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    let result = SignedInt32Interval { lower, upper };
+                    if keyword == "interval_add" {
+                        SignedArithmeticStep::IntervalAdd {
+                            left,
+                            right,
+                            defined,
+                            result,
+                        }
+                    } else {
+                        SignedArithmeticStep::IntervalAddBounded {
+                            left,
+                            right,
+                            result,
+                        }
+                    }
+                }
+                "interval_subtract" | "interval_multiply" => {
+                    let left = self.expect_index("left interval")?;
+                    self.expect(Token::Comma)?;
+                    let right = self.expect_index("right interval")?;
+                    let defined = self.expect_index("definedness node")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    let result = SignedInt32Interval { lower, upper };
+                    if keyword == "interval_subtract" {
+                        SignedArithmeticStep::IntervalSubtract {
+                            left,
+                            right,
+                            defined,
+                            result,
+                        }
+                    } else {
+                        SignedArithmeticStep::IntervalMultiply {
+                            left,
+                            right,
+                            defined,
+                            result,
+                        }
+                    }
+                }
+                "interval_remainder" => {
+                    let operand = self.expect_index("operand interval")?;
+                    let divisor = i32::try_from(self.expect_signed_i64("remainder divisor")?)
+                        .map_err(|_| self.error("remainder divisor must fit in int32"))?;
+                    let defined = self.expect_index("definedness node")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalRemainder {
+                        operand,
+                        divisor,
+                        defined,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
+                "interval_shift_left" => {
+                    let operand = self.expect_index("operand interval")?;
+                    let shift = i32::try_from(self.expect_signed_i64("shift amount")?)
+                        .map_err(|_| self.error("shift amount must fit in int32"))?;
+                    let defined = self.expect_index("definedness node")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalShiftLeft {
+                        operand,
+                        shift,
+                        defined,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
+                "interval_arithmetic_shift_right" => {
+                    let operand = self.expect_index("operand interval")?;
+                    let shift = i32::try_from(self.expect_signed_i64("shift amount")?)
+                        .map_err(|_| self.error("shift amount must fit in int32"))?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalArithmeticShiftRight {
+                        operand,
+                        shift,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
+                "interval_bitwise_and" => {
+                    let operand = self.expect_index("operand interval")?;
+                    let mask = self.expect_number("bitwise mask")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalBitwiseAnd {
+                        operand,
+                        mask,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
+                "interval_sign_bit_flip" => {
+                    let operand = self.expect_index("operand interval")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalSignBitFlip {
+                        operand,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
+                "interval_compare" => {
+                    let left = self.expect_index("left interval")?;
+                    self.expect(Token::Comma)?;
+                    let right = self.expect_index("right interval")?;
+                    let comparison = match self.expect_ident("comparison")?.as_str() {
+                        "lt" => SignedInt32Comparison::LessThan,
+                        "le" => SignedInt32Comparison::LessEqual,
+                        "eq" => SignedInt32Comparison::Equal,
+                        "ne" => SignedInt32Comparison::Disequal,
+                        other => {
+                            return Err(
+                                self.error(format!("unknown signed_int32 comparison `{other}`"))
+                            );
+                        }
+                    };
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalCompare {
+                        left,
+                        right,
+                        comparison,
+                        result,
+                    }
+                }
+                "affine_conclusion" => {
+                    let source = self.expect_index("affine source")?;
+                    let evidence = self.expect_index("interval evidence")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::AffineConclusion {
+                        source,
+                        evidence,
+                        result,
+                    }
+                }
+                "conclusion" => {
+                    if conclusion.is_some() {
+                        return Err(self.error(
+                            "signed_int32 certificate may contain only one `conclusion` line",
+                        ));
+                    }
+                    conclusion = Some(self.expect_index("conclusion node")?);
+                    self.expect(Token::Semicolon)?;
+                    continue;
+                }
+                _ => {
+                    return Err(
+                        self.error(format!("unknown signed_int32 certificate node `{keyword}`"))
+                    );
+                }
+            };
+            nodes.push(node);
+        }
+        self.expect(Token::RBrace)?;
+        let conclusion = conclusion
+            .ok_or_else(|| self.error("signed_int32 certificate must end with `conclusion N;`"))?;
+        if nodes.is_empty() {
+            return Err(self.error("signed_int32 certificate must contain a node"));
+        }
+        Ok(ProofTactic::ArithmeticCertificate(ArithmeticCertificate {
+            family: ArithmeticCertificateFamily::SignedInt32(SignedInt32Certificate {
+                nodes,
+                conclusion,
+            }),
+        }))
     }
 
     fn parse_arithmetic_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {
@@ -7094,6 +7394,46 @@ impl Parser {
                 Err(self.error_at(at, format!("expected {expected}, got {}", token.describe())))
             }
             None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
+        }
+    }
+
+    fn expect_signed_i64(&mut self, expected: &str) -> Result<i64, ClickError> {
+        let negative = if self.peek() == Some(&Token::Minus) {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
+        let at = self.error_context();
+        let value = match self.next() {
+            Some(Token::Number(value)) => i64::from(value),
+            Some(Token::UnsuffixedInt64(value) | Token::Int64Number(value)) => value,
+            Some(Token::UnsuffixedUInt64(value) | Token::UInt64Number(value)) => {
+                i64::try_from(value).map_err(|_| {
+                    self.error_at(at.clone(), format!("expected {expected} to fit in int64"))
+                })?
+            }
+            Some(Token::BigNumber(value)) => value.parse::<i64>().map_err(|_| {
+                self.error_at(at.clone(), format!("expected {expected} to fit in int64"))
+            })?,
+            Some(token) => {
+                return Err(self.error_at(
+                    at.clone(),
+                    format!("expected {expected}, got {}", token.describe()),
+                ));
+            }
+            None => {
+                return Err(
+                    self.error_at(at.clone(), format!("expected {expected}, got end of input"))
+                );
+            }
+        };
+        if negative {
+            value.checked_neg().ok_or_else(|| {
+                self.error_at(at.clone(), format!("expected {expected} to fit in int64"))
+            })
+        } else {
+            Ok(value)
         }
     }
 

@@ -108,6 +108,11 @@ path = "mdtests/arithmetic_certificate_surface.md"
 needle = "arithmetic_certificate {"
 
 [[form]]
+id = "arithmetic-certificate-signed-int32"
+path = "mdtests/signed_int32_arithmetic_certificate_surface.md"
+needle = "arithmetic_certificate signed_int32 {"
+
+[[form]]
 id = "apply-theorem"
 path = "mdtests/pure_theorem_apply.md"
 needle = "apply(nonnegative_body(y));"

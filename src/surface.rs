@@ -3978,6 +3978,137 @@ pub struct ArithmeticCertificate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ArithmeticCertificateFamily {
     Integer(IntegerCertificate),
+    SignedInt32(SignedInt32Certificate),
+}
+
+/// The checked signed-int32 arithmetic rule family. Surface nodes retain
+/// source expressions so explicit certificates round-trip without erasing
+/// provenance before the kernel performs its independent validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignedInt32Certificate {
+    pub nodes: Vec<SignedArithmeticStep>,
+    pub conclusion: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SignedInt32Comparison {
+    LessThan,
+    LessEqual,
+    Equal,
+    Disequal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignedInt32Interval {
+    pub lower: i64,
+    pub upper: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SignedArithmeticStep {
+    Premise {
+        index: usize,
+        proposition: ClickProposition,
+        result: ClickProposition,
+    },
+    Scale {
+        source: usize,
+        coefficient: ContractExpression,
+        result: ClickProposition,
+    },
+    Add {
+        left: usize,
+        right: usize,
+        result: ClickProposition,
+    },
+    EqualityToLessEqual {
+        source: usize,
+        reverse: bool,
+        result: ClickProposition,
+    },
+    EqualityFromBounds {
+        lower: usize,
+        upper: usize,
+        result: ClickProposition,
+    },
+    Trivial {
+        result: ClickProposition,
+    },
+    IntervalFromAffine {
+        source: usize,
+        term: ContractExpression,
+        lower: i64,
+        upper: i64,
+    },
+    IntervalAtom {
+        term: ContractExpression,
+        lower: i64,
+        upper: i64,
+    },
+    DefinedPremise {
+        index: usize,
+        term: ContractExpression,
+    },
+    IntervalAdd {
+        left: usize,
+        right: usize,
+        defined: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalAddBounded {
+        left: usize,
+        right: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalSubtract {
+        left: usize,
+        right: usize,
+        defined: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalMultiply {
+        left: usize,
+        right: usize,
+        defined: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalRemainder {
+        operand: usize,
+        divisor: i32,
+        defined: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalShiftLeft {
+        operand: usize,
+        shift: i32,
+        defined: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalArithmeticShiftRight {
+        operand: usize,
+        shift: i32,
+        result: SignedInt32Interval,
+    },
+    IntervalBitwiseAnd {
+        operand: usize,
+        mask: u32,
+        result: SignedInt32Interval,
+    },
+    IntervalSignBitFlip {
+        operand: usize,
+        result: SignedInt32Interval,
+    },
+    IntervalCompare {
+        left: usize,
+        right: usize,
+        comparison: SignedInt32Comparison,
+        result: ClickProposition,
+    },
+    AffineConclusion {
+        source: usize,
+        evidence: usize,
+        result: ClickProposition,
+    },
 }
 
 impl ArithmeticCertificate {

@@ -838,6 +838,102 @@ fn arithmetic_certificate_is_canonical_with_integer_alias_compatibility() {
 }
 
 #[test]
+fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
+    let source = r#"
+        theorem signed_certificate_forms(n: int32) {
+            ensures n == n by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: n == n => n == n;
+                    scale 0 by 1 => n == n;
+                    add 1, 2 => n == n;
+                    eq_to_le 3 => n <= n;
+                    eq_to_le 3 reverse => n <= n;
+                    eq_from_bounds 4, 5 => n == n;
+                    trivial => n == n;
+                    interval_from_affine 0 (n) 0 2147483647;
+                    interval_atom (n) 0 2147483647;
+                    defined 9 (n + 1);
+                    interval_add 8, 9 10 -2147483648 2147483647;
+                    interval_add_bounded 8, 9 -2147483648 2147483647;
+                    interval_subtract 8, 9 10 -2147483648 2147483647;
+                    interval_multiply 8, 9 10 -2147483648 2147483647;
+                    interval_remainder 8 3 10 -2 2;
+                    interval_shift_left 8 1 10 -2147483648 2147483647;
+                    interval_arithmetic_shift_right 8 1 -2147483648 2147483647;
+                    interval_bitwise_and 8 255 0 255;
+                    interval_sign_bit_flip 8 -2147483648 2147483647;
+                    interval_compare 8, 9 le => n <= n;
+                    affine_conclusion 3 8 => n == n;
+                    conclusion 20;
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("signed_int32 certificate should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    let ProofTactic::ArithmeticCertificate(certificate) = &tactics[0] else {
+        panic!("expected an arithmetic certificate");
+    };
+    let ArithmeticCertificateFamily::SignedInt32(certificate) = &certificate.family else {
+        panic!("expected the signed_int32 family");
+    };
+    assert_eq!(certificate.nodes.len(), 21);
+    assert!(
+        certificate
+            .nodes
+            .iter()
+            .any(|node| matches!(node, SignedArithmeticStep::IntervalAddBounded { .. }))
+    );
+    assert!(
+        certificate
+            .nodes
+            .iter()
+            .any(|node| matches!(node, SignedArithmeticStep::AffineConclusion { .. }))
+    );
+
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(
+        printed.contains("arithmetic_certificate signed_int32 {"),
+        "{printed}"
+    );
+    assert!(printed.contains("interval_add_bounded"), "{printed}");
+    assert!(printed.contains("affine_conclusion"), "{printed}");
+    let reparsed = parse(&format!(
+        "theorem signed_certificate_forms(n: int32) {{ ensures n == n by {{ {printed} }} }}"
+    ))
+    .expect("printed signed_int32 certificate should reparse");
+    assert_eq!(
+        reparsed.theorem_definitions()[0].ensures()[0].proof(),
+        file.theorem_definitions()[0].ensures()[0].proof()
+    );
+}
+
+#[test]
+fn signed_int32_arithmetic_certificate_applies_and_rejects_tampering() {
+    let source = r#"
+        theorem signed_certificate_direct(x: int32) {
+            requires x <= 1;
+            ensures x <= 1 by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: x <= 1 => x <= 1;
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    verify_click_theorems(source).expect("a checked signed_int32 certificate should apply");
+
+    let tampered = source.replace("premise 0: x <= 1 => x <= 1", "premise 0: x <= 1 => x <= 2");
+    let error = verify_click_theorems(&tampered).expect_err("tampered result must be rejected");
+    assert!(
+        error.message().contains("signed_int32") || error.message().contains("certificate"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn verifies_pure_theorem_definition() {
     let source = r#"
             theorem preserves_nonnegative(x: int32) {

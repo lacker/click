@@ -2160,6 +2160,10 @@ fn affine_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
     })
 }
 
+pub(crate) fn signed_arithmetic_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
+    affine_claim(proposition)
+}
+
 fn affine_difference(
     left: &Bitvector32Term,
     right: &Bitvector32Term,

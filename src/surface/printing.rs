@@ -597,7 +597,13 @@ fn write_arithmetic_certificate(
     certificate: &ArithmeticCertificate,
     indent: usize,
 ) {
-    let ArithmeticCertificateFamily::Integer(certificate) = &certificate.family;
+    if let ArithmeticCertificateFamily::SignedInt32(certificate) = &certificate.family {
+        write_signed_int32_certificate(output, certificate, indent);
+        return;
+    }
+    let ArithmeticCertificateFamily::Integer(certificate) = &certificate.family else {
+        unreachable!("signed_int32 certificates are printed above")
+    };
     let prefix = "    ".repeat(indent);
     line(output, &prefix, "arithmetic_certificate {");
     let body = "    ".repeat(indent + 1);
@@ -658,6 +664,189 @@ fn write_arithmetic_certificate(
         &format!("conclusion {};", certificate.conclusion),
     );
     line(output, &prefix, "}");
+}
+
+fn write_signed_int32_certificate(
+    output: &mut String,
+    certificate: &SignedInt32Certificate,
+    indent: usize,
+) {
+    let prefix = "    ".repeat(indent);
+    line(output, &prefix, "arithmetic_certificate signed_int32 {");
+    let body = "    ".repeat(indent + 1);
+    for node in &certificate.nodes {
+        let text = match node {
+            SignedArithmeticStep::Premise {
+                index,
+                proposition,
+                result,
+            } => format!(
+                "premise {index}: {} => {};",
+                source_click_proposition(proposition),
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::Scale {
+                source,
+                coefficient,
+                result,
+            } => format!(
+                "scale {source} by {} => {};",
+                describe_contract_expression(coefficient),
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::Add {
+                left,
+                right,
+                result,
+            } => format!(
+                "add {left}, {right} => {};",
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::EqualityToLessEqual {
+                source,
+                reverse,
+                result,
+            } => format!(
+                "eq_to_le {source}{} => {};",
+                if *reverse { " reverse" } else { "" },
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::EqualityFromBounds {
+                lower,
+                upper,
+                result,
+            } => format!(
+                "eq_from_bounds {lower}, {upper} => {};",
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::Trivial { result } => {
+                format!("trivial => {};", source_click_proposition(result))
+            }
+            SignedArithmeticStep::IntervalFromAffine {
+                source,
+                term,
+                lower,
+                upper,
+            } => format!(
+                "interval_from_affine {source} {} {lower} {upper};",
+                describe_contract_expression(term)
+            ),
+            SignedArithmeticStep::IntervalAtom { term, lower, upper } => format!(
+                "interval_atom {} {lower} {upper};",
+                describe_contract_expression(term)
+            ),
+            SignedArithmeticStep::DefinedPremise { index, term } => {
+                format!("defined {index} {};", describe_contract_expression(term))
+            }
+            SignedArithmeticStep::IntervalAdd {
+                left,
+                right,
+                defined,
+                result,
+            } => format!(
+                "interval_add {left}, {right} {defined} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalAddBounded {
+                left,
+                right,
+                result,
+            } => format!(
+                "interval_add_bounded {left}, {right} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalSubtract {
+                left,
+                right,
+                defined,
+                result,
+            } => format!(
+                "interval_subtract {left}, {right} {defined} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalMultiply {
+                left,
+                right,
+                defined,
+                result,
+            } => format!(
+                "interval_multiply {left}, {right} {defined} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalRemainder {
+                operand,
+                divisor,
+                defined,
+                result,
+            } => format!(
+                "interval_remainder {operand} {divisor} {defined} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalShiftLeft {
+                operand,
+                shift,
+                defined,
+                result,
+            } => format!(
+                "interval_shift_left {operand} {shift} {defined} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalArithmeticShiftRight {
+                operand,
+                shift,
+                result,
+            } => format!(
+                "interval_arithmetic_shift_right {operand} {shift} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalBitwiseAnd {
+                operand,
+                mask,
+                result,
+            } => format!(
+                "interval_bitwise_and {operand} {mask} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalSignBitFlip { operand, result } => format!(
+                "interval_sign_bit_flip {operand} {} {};",
+                result.lower, result.upper
+            ),
+            SignedArithmeticStep::IntervalCompare {
+                left,
+                right,
+                comparison,
+                result,
+            } => format!(
+                "interval_compare {left}, {right} {} => {};",
+                signed_comparison_name(*comparison),
+                source_click_proposition(result)
+            ),
+            SignedArithmeticStep::AffineConclusion {
+                source,
+                evidence,
+                result,
+            } => format!(
+                "affine_conclusion {source} {evidence} => {};",
+                source_click_proposition(result)
+            ),
+        };
+        line(output, &body, &text);
+    }
+    line(
+        output,
+        &body,
+        &format!("conclusion {};", certificate.conclusion),
+    );
+    line(output, &prefix, "}");
+}
+
+fn signed_comparison_name(comparison: SignedInt32Comparison) -> &'static str {
+    match comparison {
+        SignedInt32Comparison::LessThan => "lt",
+        SignedInt32Comparison::LessEqual => "le",
+        SignedInt32Comparison::Equal => "eq",
+        SignedInt32Comparison::Disequal => "ne",
+    }
 }
 
 fn write_proof(output: &mut String, proof: &SourceProof, indent: usize) {

@@ -149,6 +149,8 @@ pub(crate) enum PropositionCloseError {
     Arithmetic(super::fact_reasoning::ArithmeticCheckError),
     IntegerArithmeticPremiseUnavailable(usize),
     IntegerArithmetic(super::integer_arithmetic::IntegerArithmeticCheckError),
+    SignedArithmeticPremiseUnavailable(usize),
+    SignedArithmetic(super::signed_arithmetic::SignedArithmeticCheckError),
     ExpectedIntroduction(Proposition),
     IntegerFresheningExhausted,
     IntegerChoiceSourceUnavailable,
@@ -760,6 +762,27 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         certificate
             .check(goal.proposition(), premises)
             .map_err(PropositionCloseError::IntegerArithmetic)?;
+        Ok(self.closed_focused())
+    }
+
+    pub(crate) fn apply_signed_arithmetic(
+        &self,
+        certificate: &super::signed_arithmetic::SignedArithmeticCertificate,
+        premises: &[Proposition],
+    ) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        for (index, premise) in premises.iter().enumerate() {
+            if !facts.exact_available_across_effects(premise, &[]) {
+                return Err(PropositionCloseError::SignedArithmeticPremiseUnavailable(
+                    index,
+                ));
+            }
+        }
+        certificate
+            .check(goal.proposition(), premises)
+            .map_err(PropositionCloseError::SignedArithmetic)?;
         Ok(self.closed_focused())
     }
 

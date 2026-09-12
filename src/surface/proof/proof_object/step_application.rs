@@ -3,6 +3,43 @@
 use super::*;
 use crate::kernel::LoweringIntroduction;
 
+fn signed_constant_expression(expression: &ContractExpression) -> Option<num_bigint::BigInt> {
+    match expression {
+        ContractExpression::IntegerLiteral(value) => value.parse().ok(),
+        ContractExpression::Negate(inner) => signed_constant_expression(inner).map(|value| -value),
+        _ => None,
+    }
+}
+
+fn signed_interval(
+    interval: SignedInt32Interval,
+) -> crate::kernel::proof::signed_arithmetic::SignedArithmeticInterval {
+    crate::kernel::proof::signed_arithmetic::SignedArithmeticInterval {
+        carrier: crate::kernel::proof::signed_arithmetic::SignedArithmeticCarrier::SignedInt32,
+        lower: interval.lower,
+        upper: interval.upper,
+    }
+}
+
+fn signed_comparison(
+    comparison: SignedInt32Comparison,
+) -> crate::kernel::proof::signed_arithmetic::SignedArithmeticComparison {
+    match comparison {
+        SignedInt32Comparison::LessThan => {
+            crate::kernel::proof::signed_arithmetic::SignedArithmeticComparison::LessThan
+        }
+        SignedInt32Comparison::LessEqual => {
+            crate::kernel::proof::signed_arithmetic::SignedArithmeticComparison::LessEqual
+        }
+        SignedInt32Comparison::Equal => {
+            crate::kernel::proof::signed_arithmetic::SignedArithmeticComparison::Equal
+        }
+        SignedInt32Comparison::Disequal => {
+            crate::kernel::proof::signed_arithmetic::SignedArithmeticComparison::Disequal
+        }
+    }
+}
+
 impl<'a> Proof<'a> {
     /// Checks one explicit proof step and atomically returns the checked
     /// successor with that exact step retained as provenance.
@@ -317,7 +354,351 @@ impl<'a> Proof<'a> {
             ArithmeticCertificateFamily::Integer(certificate) => {
                 self.apply_integer_certificate(certificate)
             }
+            ArithmeticCertificateFamily::SignedInt32(certificate) => {
+                self.apply_signed_int32_certificate(certificate)
+            }
         }
+    }
+
+    fn apply_signed_int32_certificate(
+        &self,
+        certificate: &SignedInt32Certificate,
+    ) -> Result<KernelProofHandle, ClickError> {
+        use crate::kernel::proof::signed_arithmetic::{
+            SignedArithmeticAtom, SignedArithmeticCarrier,
+            SignedArithmeticCertificate as KernelCertificate, SignedArithmeticNode,
+            signed_arithmetic_claim,
+        };
+        let mut source_premises = std::collections::BTreeMap::new();
+        for node in &certificate.nodes {
+            let (index, lowered) = match node {
+                SignedArithmeticStep::Premise {
+                    index, proposition, ..
+                } => (
+                    *index,
+                    self.lower_surface_proposition_direct(
+                        proposition,
+                        "signed_int32 certificate premise",
+                    )?,
+                ),
+                SignedArithmeticStep::DefinedPremise { index, term } => (
+                    *index,
+                    self.lower_surface_proposition_direct(
+                        &ClickProposition::Defined {
+                            expression: term.clone(),
+                        },
+                        "signed_int32 definedness premise",
+                    )?,
+                ),
+                _ => continue,
+            };
+            if let Some(previous) = source_premises.insert(index, lowered.clone())
+                && previous != lowered
+            {
+                return Err(self.step_error(format!(
+                    "signed_int32 premise {index} is declared twice with different propositions"
+                )));
+            }
+        }
+        let mut premises = Vec::with_capacity(source_premises.len());
+        for index in 0..source_premises.len() {
+            let Some(premise) = source_premises.remove(&index) else {
+                return Err(self.step_error(format!(
+                    "signed_int32 premise indices must be contiguous; missing {index}"
+                )));
+            };
+            premises.push(premise);
+        }
+        let lower_term = |proof: &Self,
+                          expression: &ContractExpression|
+         -> Result<crate::kernel::Bitvector32Term, ClickError> {
+            let zero = ContractExpression::IntegerLiteral("0".into());
+            let surface = ClickProposition::Comparison {
+                left: expression.clone(),
+                operator: ComparisonOperator::Equal,
+                right: zero,
+            };
+            let Proposition::ConditionIs(condition, true) = proof
+                .lower_surface_proposition_direct(&surface, "signed_int32 certificate term")?
+            else {
+                return Err(proof
+                    .step_error("signed_int32 certificate term did not lower to a proposition"));
+            };
+            let term = match condition {
+                crate::kernel::ConditionTerm::Bitvector32Equal(left, right)
+                    if matches!(right.as_ref(), crate::kernel::Bitvector32Term::Constant(0)) =>
+                {
+                    *left
+                }
+                crate::kernel::ConditionTerm::Bitvector32Equal(left, right)
+                    if matches!(left.as_ref(), crate::kernel::Bitvector32Term::Constant(0)) =>
+                {
+                    *right
+                }
+                _ => {
+                    return Err(proof
+                        .step_error("signed_int32 certificate term must be an int32 expression"));
+                }
+            };
+            if SignedArithmeticAtom::from_term(&term).is_none() {
+                return Err(proof.step_error(
+                    "signed_int32 certificate term is unsupported or exceeds the verification budget",
+                ));
+            }
+            Ok(term)
+        };
+        let lower_prop = |proof: &Self, proposition: &ClickProposition, description: &str| {
+            proof.lower_surface_proposition_direct(proposition, description)
+        };
+        let claim = |proposition: &Proposition, description: &str| {
+            signed_arithmetic_claim(proposition).ok_or_else(|| {
+                self.step_error(format!(
+                    "{description} must be a supported signed_int32 arithmetic proposition"
+                ))
+            })
+        };
+        let mut nodes = Vec::with_capacity(certificate.nodes.len());
+        for (node_index, node) in certificate.nodes.iter().enumerate() {
+            let lowered = match node {
+                SignedArithmeticStep::Premise {
+                    index,
+                    proposition,
+                    result,
+                } => {
+                    let supplied = premises.get(*index).ok_or_else(|| {
+                        self.step_error(format!("signed_int32 premise {index} is out of range"))
+                    })?;
+                    let declared = lower_prop(self, proposition, "signed_int32 premise")?;
+                    if supplied != &declared {
+                        return Err(self.step_error(format!(
+                            "signed_int32 premise {index} does not match its source proposition"
+                        )));
+                    }
+                    let declared_result = lower_prop(self, result, "signed_int32 premise result")?;
+                    SignedArithmeticNode::Premise {
+                        index: *index,
+                        result: claim(&declared_result, "signed_int32 premise result")?,
+                    }
+                }
+                SignedArithmeticStep::Scale {
+                    source,
+                    coefficient,
+                    result,
+                } => SignedArithmeticNode::Scale {
+                    source: *source,
+                    coefficient: signed_constant_expression(coefficient).ok_or_else(|| {
+                        self.step_error(
+                            "signed_int32 scale coefficient must be a constant int32 expression",
+                        )
+                    })?,
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 scale result")?,
+                        "signed_int32 scale result",
+                    )?,
+                },
+                SignedArithmeticStep::Add {
+                    left,
+                    right,
+                    result,
+                } => SignedArithmeticNode::Add {
+                    left: *left,
+                    right: *right,
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 addition result")?,
+                        "signed_int32 addition result",
+                    )?,
+                },
+                SignedArithmeticStep::EqualityToLessEqual {
+                    source,
+                    reverse,
+                    result,
+                } => SignedArithmeticNode::EqualityToLessEqual {
+                    source: *source,
+                    reverse: *reverse,
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 equality bound")?,
+                        "signed_int32 equality bound",
+                    )?,
+                },
+                SignedArithmeticStep::EqualityFromBounds {
+                    lower,
+                    upper,
+                    result,
+                } => SignedArithmeticNode::EqualityFromBounds {
+                    lower: *lower,
+                    upper: *upper,
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 equality")?,
+                        "signed_int32 equality",
+                    )?,
+                },
+                SignedArithmeticStep::Trivial { result } => SignedArithmeticNode::Trivial {
+                    result: claim(
+                        &lower_prop(self, result, "signed_int32 trivial result")?,
+                        "signed_int32 trivial result",
+                    )?,
+                },
+                SignedArithmeticStep::IntervalFromAffine {
+                    source,
+                    term,
+                    lower,
+                    upper,
+                } => SignedArithmeticNode::IntervalFromAffine {
+                    source: *source,
+                    term: lower_term(self, term)?,
+                    lower: *lower,
+                    upper: *upper,
+                },
+                SignedArithmeticStep::IntervalAtom { term, lower, upper } => {
+                    SignedArithmeticNode::IntervalAtom {
+                        carrier: SignedArithmeticCarrier::SignedInt32,
+                        term: lower_term(self, term)?,
+                        lower: *lower,
+                        upper: *upper,
+                    }
+                }
+                SignedArithmeticStep::DefinedPremise { index, term } => {
+                    SignedArithmeticNode::DefinedPremise {
+                        index: *index,
+                        carrier: SignedArithmeticCarrier::SignedInt32,
+                        term: lower_term(self, term)?,
+                    }
+                }
+                SignedArithmeticStep::IntervalAdd {
+                    left,
+                    right,
+                    defined,
+                    result,
+                } => SignedArithmeticNode::IntervalAdd {
+                    left: *left,
+                    right: *right,
+                    defined: *defined,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalAddBounded {
+                    left,
+                    right,
+                    result,
+                } => SignedArithmeticNode::IntervalAddBounded {
+                    left: *left,
+                    right: *right,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalSubtract {
+                    left,
+                    right,
+                    defined,
+                    result,
+                } => SignedArithmeticNode::IntervalSubtract {
+                    left: *left,
+                    right: *right,
+                    defined: *defined,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalMultiply {
+                    left,
+                    right,
+                    defined,
+                    result,
+                } => SignedArithmeticNode::IntervalMultiply {
+                    left: *left,
+                    right: *right,
+                    defined: *defined,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalRemainder {
+                    operand,
+                    divisor,
+                    defined,
+                    result,
+                } => SignedArithmeticNode::IntervalRemainder {
+                    operand: *operand,
+                    divisor: *divisor,
+                    defined: *defined,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalShiftLeft {
+                    operand,
+                    shift,
+                    defined,
+                    result,
+                } => SignedArithmeticNode::IntervalShiftLeft {
+                    operand: *operand,
+                    shift: *shift,
+                    defined: *defined,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalArithmeticShiftRight {
+                    operand,
+                    shift,
+                    result,
+                } => SignedArithmeticNode::IntervalArithmeticShiftRight {
+                    operand: *operand,
+                    shift: *shift,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalBitwiseAnd {
+                    operand,
+                    mask,
+                    result,
+                } => SignedArithmeticNode::IntervalBitwiseAnd {
+                    operand: *operand,
+                    mask: *mask,
+                    result: signed_interval(*result),
+                },
+                SignedArithmeticStep::IntervalSignBitFlip { operand, result } => {
+                    SignedArithmeticNode::IntervalSignBitFlip {
+                        operand: *operand,
+                        result: signed_interval(*result),
+                    }
+                }
+                SignedArithmeticStep::IntervalCompare {
+                    left,
+                    right,
+                    comparison,
+                    result,
+                } => SignedArithmeticNode::IntervalCompare {
+                    left: *left,
+                    right: *right,
+                    comparison: signed_comparison(*comparison),
+                    result: lower_prop(self, result, "signed_int32 comparison")?,
+                },
+                SignedArithmeticStep::AffineConclusion {
+                    source,
+                    evidence,
+                    result,
+                } => SignedArithmeticNode::AffineConclusion {
+                    source: *source,
+                    evidence: *evidence,
+                    result: lower_prop(self, result, "signed_int32 conclusion")?,
+                },
+            };
+            if nodes.len() != node_index {
+                return Err(
+                    self.step_error("signed_int32 certificate node indexing is not contiguous")
+                );
+            }
+            nodes.push(lowered);
+        }
+        let kernel_certificate = KernelCertificate {
+            nodes,
+            conclusion: certificate.conclusion,
+        };
+        self.state
+            .apply_signed_arithmetic(&kernel_certificate, &premises)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("signed_int32 certificate requires a proposition goal")
+                }
+                PropositionCloseError::SignedArithmeticPremiseUnavailable(index) => self
+                    .step_error(format!(
+                        "signed_int32 premise {index} is not exactly available"
+                    )),
+                PropositionCloseError::SignedArithmetic(error) => self.step_error(format!(
+                    "signed_int32 arithmetic certificate rejected: {error:?}"
+                )),
+                _ => self.step_error("signed_int32 certificate could not be applied"),
+            })
     }
 
     fn apply_integer_certificate(
