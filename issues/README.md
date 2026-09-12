@@ -68,6 +68,7 @@ C import and execution:
 Specification and proof:
 
 - [Unify memory and other resources across contracts and callbacks](memory-vs-resources.md)
+- [Give views stable borrowing semantics for concurrency and future Rust support](fix-views.md)
 - [Add abstract summaries for recursive memory structures](recursive-structure-models.md)
 - [Prove loop termination from recursive structure descent](structural-loop-termination.md)
 

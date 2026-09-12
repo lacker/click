@@ -8,6 +8,12 @@ evidence and reproduction commands.
 
 ## Assessment
 
+The follow-up P1 [views investigation](../issues/fix-views.md) recommends
+stable shared borrowing for ordinary C memory as well as future Rust support.
+It supersedes this note's original recommendation to preserve weak C views.
+The implementation observations and compiler probes below remain evidence
+about the current semantics, not a requirement to retain them.
+
 The analogy between Click `owns`/`views` and Rust `&mut`/`&` is useful and
 close at ordinary function-call boundaries. Keep the two access modes. A
 literal identification of the current memory resource laws with Rust
@@ -46,7 +52,7 @@ does not reject an owner/view overlap. Its `memory_resource_fact_permits_write`
 checks the address range, width, and owned authority. It does not distinguish
 two Rust borrow origins for accesses to the same address.
 
-These are intentional, useful C semantics. The existing
+These are the current sequential C semantics. The existing
 [`pointer_params_may_alias_without_separate` regression](../mdtests/pointer_params_may_alias_without_separate.md)
 rejects an unchanged-value claim after a potentially aliasing write. It
 passed when rerun during this investigation, meaning the false claim was
@@ -195,8 +201,9 @@ distinctions, not cross-target layout agreement or source-to-machine refinement.
 
 ## Changes worth making now
 
-1. Retain `owns` and `views`, and document that a current memory view grants
-   read access without preventing an overlapping owner from writing.
+1. Retain `owns` and `views`, but change ordinary memory views to stable
+   shared borrows under the P1 [fix-views plan](../issues/fix-views.md).
+   Until that lands, document the weaker current semantics accurately.
 2. Preserve the existing separation of access mode, transfer role, and
    snapshot in `CResourceSpec`. These are already separate fields; no broad
    refactor is needed to create that separation.
@@ -207,10 +214,14 @@ distinctions, not cross-target layout agreement or source-to-machine refinement.
    when changing memory-access interfaces. Implement them when the proposed
    borrow rules and their regressions are concrete.
 
-Do not redefine all C views as freezing borrows. That would reject valid C
-and the positive probe. Do not call a mutable reborrow a duplicable owner.
-No evidence from this investigation warrants replacing the resource algebra
-or delaying rbtree for a production second-language frontend.
+Valid C aliasing is not a reason to preserve weak view contracts. The
+follow-up [ownership-only probe](borrow-probes/alias-owned.click) verifies the
+same C and postcondition without a conflicting view, and the
+[field-split probe](borrow-probes/field-split.click) preserves a caller's field
+invariant using a view of the unchanged field. These support a contract
+migration, not a claim that the new borrow rules have been implemented.
+Do not call a mutable reborrow a duplicable owner. Production second-language
+frontends remain outside the rbtree launch requirements.
 
 ## Next investigation and decision gates
 
