@@ -614,6 +614,16 @@ enough to become the first regression of the package that fixes them.
     preservation path's own steps across sibling split arms); the examples
     audit is 500 of 555 with only the two known failures, and its default
     ten-minute limit no longer covers the corpus (297 of 555).
+60. **Smaller A25 findings, not scheduled.** Algebraic model values are
+    not renamed at the exit join (`substitute_bitvector_variable_in_proposition`
+    has no algebraic counterpart), so an exit whose binder model is the
+    head's symbolic model leaves an unspellable name in its disjunct and a
+    `cases` on "model unchanged or rotated" cannot be written; `simp`
+    cannot eliminate an exported exit disjunction (gap 40 at a new scale)
+    nor substitute an exported loop equation (`v == 0` to `v + 1 == 1`);
+    `click expand` of a `loop` whose `preserve` has `match`, `unfold`, and
+    a proof `if` with `initialize` omitted emits a script failing with
+    "resource match requires constructor evidence" (T5/T8 class).
 
 ## Design decisions
 
@@ -940,6 +950,12 @@ appears to need one reports the need instead of adding it.
   resumes after A25 and A26.
 - 2026-09-12: T8 (6426b3d4) is on master; soundness hole 3 (gap 59) handed
   to A25. A25 and A26 in progress.
+- 2026-09-12: A25 (ca49cf06) is on master: exits that reach different
+  states are joined through the loop binders with fresh names and per-exit
+  disjuncts, and soundness hole 3 is closed (a `do ... while` body end is
+  always an exit candidate; both reductions fail; `c_do_while.md` repaired).
+  The insert fixture is past the exit join and stops at its own
+  `initialize`. A26 in progress; C3 resumes after it.
 
 ## Work packages
 
