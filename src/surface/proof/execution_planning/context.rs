@@ -827,6 +827,11 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
     Exact,
     Explicit,
     Contextual,
+    /// Contextual checking with supported source-backed call prerequisites
+    /// exposed unless that exact proposition is already present. Ordinary
+    /// `step()` uses this boundary; smart execution may answer the refusal by
+    /// retaining a checked `have` and retrying the same simple step.
+    Retained,
     Planning,
 }
 

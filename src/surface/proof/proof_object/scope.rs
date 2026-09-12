@@ -525,6 +525,18 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    pub(in crate::surface::proof) fn try_direct_caller_requirement_closure(
+        &self,
+        selection: &CallerRequirementSelection,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_direct_caller_requirement_closure(selection)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     /// Runs the loop-bundle member planner inside the owned nested body, so a
     /// pivot arm proved under `have` retains the same checked descendant the
     /// bundle root would have retained for it.

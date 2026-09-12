@@ -82,13 +82,88 @@ int32 caller(int32 x, int32 y) {
         .expect("the retained have should precede the call step");
     let mut without_have = expanded.clone();
     without_have.replace_range(have_start..step_start, "");
-    let error = verify_c0_sources(&without_have, &c_sources)
+    let (without_have_result, planning_transitions) =
+        count_planning_statement_transitions(|| verify_c0_sources(&without_have, &c_sources));
+    let error = without_have_result
         .expect_err("deleting the retained have must reject the call precondition");
+    assert_eq!(
+        planning_transitions, 0,
+        "a bare simple step must return its structured call prerequisite without planning"
+    );
     assert!(
         error.unresolved_requirement().is_some(),
         "the deleted retained have should expose the structured call requirement: {}",
         error.message()
     );
+}
+
+#[test]
+fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
+    let c_source = r#"
+        int32 read_terminator(uint8 haystack[], int32 known_len) {
+            int32 length;
+            length = strlen(haystack);
+            return length;
+        }
+    "#;
+    let click_source = r#"
+        verifying "source_identity.c";
+
+        int32 read_terminator(uint8 haystack[], int32 known_len) {
+            requires nonnegative: 0 <= known_len;
+            requires successor: defined(known_len + 1);
+            requires unrelated: loadable(haystack[0..known_len + 1]);
+            requires input: cstr_readable(haystack);
+            views haystack[0..known_len + 1];
+            ensures result >= 0;
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let sources = [("source_identity.c", c_source)];
+
+    let ((verified, _events), planning_transitions) = count_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources))
+    });
+    let verified = verified.expect("the exact reordered caller requirement should verify");
+    assert_eq!(
+        planning_transitions, 0,
+        "the source-identity retry must not enter hidden statement planning"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the source-identity retry should retain an expansion");
+    assert!(
+        expanded.iter().all(|tactic| !matches!(
+            tactic,
+            ProofTactic::SmartExecute
+                | ProofTactic::SmartExecuteAllPaths
+                | ProofTactic::ExecuteUntil(_)
+                | ProofTactic::Simp
+        )),
+        "the top-level expansion must contain only retained simple tactics: {expanded:#?}"
+    );
+
+    let expanded_source = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "read_terminator",
+        CProofClaim::Grouped,
+    )
+    .expect("the source-identity retry should expand into source");
+    assert!(
+        expanded_source.contains("choose(__click_choice_3 from requirement 3)"),
+        "the expansion should select the exact nonzero caller source ordinal: {expanded_source}"
+    );
+    assert!(
+        expanded_source.contains("extract(at(function.entry, loadable(haystack[0.."),
+        "the expansion should consume a retained source projection: {expanded_source}"
+    );
+    assert!(!expanded_source.contains("execute();"));
+    assert!(!expanded_source.contains("simp();"));
+    verify_c0_sources(&expanded_source, &sources)
+        .expect("the ordinary expanded source-identity proof should independently reverify");
 }
 
 fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have: &str) {

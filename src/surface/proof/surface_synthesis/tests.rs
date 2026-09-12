@@ -407,6 +407,106 @@ fn external_byte_range_caller() -> (Vec<syntax::C0Parameter>, Vec<CExpression>, 
     (parameters, arguments, state)
 }
 
+#[test]
+fn exact_external_zero_based_byte_range_round_trips_symbolic_end() {
+    let (parameters, arguments, state) = external_byte_range_caller();
+    let requirement = Proposition::CMemoryLoadable {
+        memory: state.memory().clone(),
+        base: match &arguments[0] {
+            CExpression::Value(CValue::Pointer(pointer)) => pointer.pointer().clone(),
+            _ => unreachable!(),
+        },
+        bytes: Bitvector32Term::add(
+            Bitvector32Term::Variable(Variable(1)),
+            Bitvector32Term::Constant(1),
+        ),
+    };
+    let synthesized = synthesize_source_projection_proposition_with_bound_variable_names(
+        &requirement,
+        &parameters,
+        &arguments,
+        &state,
+        &BTreeMap::new(),
+    )
+    .expect("the exact external byte range must be spellable");
+    let ClickProposition::Loadable { segment } = &synthesized else {
+        panic!("the requirement must remain one loadability: {synthesized:?}");
+    };
+    assert_eq!(segment.base, CExpression::Variable("bytes".into()));
+    assert_eq!(segment.start, CExpression::Value(int32(0)));
+    assert_eq!(
+        segment.end,
+        CExpression::Add(
+            Box::new(CExpression::Variable("len".into())),
+            Box::new(CExpression::Value(int32(1))),
+        )
+    );
+    assert_eq!(
+        relower_written_proposition(&synthesized, &state),
+        Ok(requirement)
+    );
+}
+
+#[test]
+fn exact_external_zero_based_byte_range_resolves_direct_variable_argument() {
+    let (parameters, mut arguments, state) = external_byte_range_caller();
+    let base = match &arguments[0] {
+        CExpression::Value(CValue::Pointer(pointer)) => pointer.pointer().clone(),
+        _ => unreachable!(),
+    };
+    arguments[0] = CExpression::Variable("bytes".into());
+    let requirement = Proposition::CMemoryLoadable {
+        memory: state.memory().clone(),
+        base,
+        bytes: Bitvector32Term::add(
+            Bitvector32Term::Variable(Variable(1)),
+            Bitvector32Term::Constant(1),
+        ),
+    };
+    let synthesized = synthesize_source_projection_proposition_with_bound_variable_names(
+        &requirement,
+        &parameters,
+        &arguments,
+        &state,
+        &BTreeMap::new(),
+    )
+    .expect("the exact named local argument must resolve to its declared byte parameter");
+    let ClickProposition::Loadable { segment } = synthesized else {
+        panic!("the requirement must remain one loadability");
+    };
+    assert_eq!(segment.base, CExpression::Variable("bytes".into()));
+}
+
+#[test]
+fn exact_external_zero_based_byte_range_rejects_ambiguous_alias() {
+    let (mut parameters, mut arguments, state) = external_byte_range_caller();
+    parameters.push(syntax::C0Parameter::new(
+        C0Type::UInt8Pointer,
+        "alias".to_string(),
+        None,
+    ));
+    arguments.push(arguments[0].clone());
+    let requirement = Proposition::CMemoryLoadable {
+        memory: state.memory().clone(),
+        base: match &arguments[0] {
+            CExpression::Value(CValue::Pointer(pointer)) => pointer.pointer().clone(),
+            _ => unreachable!(),
+        },
+        bytes: Bitvector32Term::Constant(4),
+    };
+    assert!(
+        synthesize_source_projection_proposition_with_bound_variable_names(
+            &requirement,
+            &parameters,
+            &arguments,
+            &state,
+            &BTreeMap::new(),
+        )
+        .is_none(),
+        "an exact aliased pointer must not select one source spelling by position"
+    );
+}
+
 /// The `forall_loadable_range` call requirement as the kernel emits it:
 /// every in-range byte of an external-argument pointer is loadable, its byte
 /// count left as the written `(k + 1) - k`.

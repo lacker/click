@@ -752,14 +752,20 @@ impl<'a> Proof<'a> {
                     continue;
                 }
                 leaf => {
-                    let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
-                        &leaf,
-                        view.parameters,
-                        view.arguments,
-                        entry_state,
-                        &bound_names,
-                    ) else {
-                        return Ok(None);
+                    let Some(surface) =
+                        crate::surface::proof::surface_synthesis::synthesize_source_projection_proposition_with_bound_variable_names(
+                            &leaf,
+                            view.parameters,
+                            view.arguments,
+                            entry_state,
+                            &bound_names,
+                        )
+                    else {
+                        // Retain the exact subset of leaves that can
+                        // round-trip at this source boundary. Every retained
+                        // leaf is checked below; an unsynthesizable sibling
+                        // does not invalidate those independent identities.
+                        continue;
                     };
                     let surface = surface_at_snapshot(&surface, &source_selector)?;
                     let validation_surface = substitute_click_proposition(
@@ -792,7 +798,9 @@ impl<'a> Proof<'a> {
                         ))
                     })?;
                     if lowered != leaf {
-                        return Ok(None);
+                        // A surface leaf is usable only when it lowers back
+                        // to this exact selected kernel leaf.
+                        continue;
                     }
                     leaves.push(ChosenProjectionLeaf {
                         source_token: ProjectionSourceToken {

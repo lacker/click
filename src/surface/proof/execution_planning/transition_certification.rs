@@ -135,7 +135,8 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
     let mut assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact
         | StatementPrerequisitePolicy::Explicit
-        | StatementPrerequisitePolicy::Contextual => context
+        | StatementPrerequisitePolicy::Contextual
+        | StatementPrerequisitePolicy::Retained => context
             .cloned()
             .unwrap_or_else(|| assumptions_from_propositions(pure_facts)),
         StatementPrerequisitePolicy::Planning => {
@@ -215,7 +216,27 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         }
                     }
                     StatementPrerequisitePolicy::Explicit
-                    | StatementPrerequisitePolicy::Contextual => {
+                    | StatementPrerequisitePolicy::Contextual
+                    | StatementPrerequisitePolicy::Retained => {
+                        if matches!(
+                            prerequisite_policy,
+                            StatementPrerequisitePolicy::Retained
+                        ) && source_backed_requirement_should_intercept(
+                            obligation,
+                            state.memory(),
+                        )? {
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing condition prerequisite{}: {:?}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    obligation.proposition()
+                                ),
+                                obligation,
+                            ));
+                        }
                         if prerequisite_assumptions.proves(obligation.proposition()) {
                         } else {
                             return Err(missing_prerequisite_error(
@@ -879,32 +900,8 @@ fn certified_transitions_from_execution(
                             ));
                         }
                     }
-                    StatementPrerequisitePolicy::Contextual => {
-                        // Source-backed non-memory call requirements are
-                        // handled by the smart retained-have adapter. Keep
-                        // memory-backed and unsupported shapes on the
-                        // compatibility path until their transport exists.
-                        if source_backed_requirement_should_intercept(
-                            obligation,
-                            state.memory(),
-                        )? {
-                            return Err(missing_prerequisite_error(
-                                format!(
-                                    "{context_label} is missing prerequisite{}: {}",
-                                    obligation
-                                        .context()
-                                        .map(|context| format!(" ({context})"))
-                                        .unwrap_or_default(),
-                                    describe_derivation_failure(
-                                        proposition,
-                                        pure_facts,
-                                        environment,
-                                        predicate_environment,
-                                    ),
-                                ),
-                                obligation,
-                            ));
-                        }
+                    StatementPrerequisitePolicy::Contextual
+                    | StatementPrerequisitePolicy::Retained => {
                         // A retained checked derivation over the context, or
                         // the exact structural rules the explicit law used (a
                         // listed premise covering a loadability, a matching
@@ -928,6 +925,30 @@ fn certified_transitions_from_execution(
                                 &prerequisite_assumptions,
                             );
                         let proposition = resolved.as_ref().unwrap_or(proposition);
+                        if matches!(
+                            prerequisite_policy,
+                            StatementPrerequisitePolicy::Retained
+                        ) && source_backed_requirement_should_intercept(
+                            obligation,
+                            state.memory(),
+                        )? {
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing prerequisite{}: {}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    describe_derivation_failure(
+                                        proposition,
+                                        pure_facts,
+                                        environment,
+                                        predicate_environment,
+                                    ),
+                                ),
+                                obligation,
+                            ));
+                        }
                         if exact_fact_is_available(proposition, pure_facts)
                             || exactly_available_fact(proposition, pure_facts).is_some()
                             // The same rule for a prerequisite the resolution

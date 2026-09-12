@@ -129,19 +129,35 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             step_facts.push(resource_fact);
         }
     }
-    let successor = execute_step_successor_from_frontier_position(
-        execution,
-        proof_context,
-        &step_facts,
-        tactic_name,
-        prerequisite_policy,
-        // A step transports nothing: the kernel keeps the names of cells it
-        // proves unwritten from the whole context, and ambient facts are
-        // restored below at their original snapshots.
-        StatementFactTransportPolicy::None,
-        loop_step_policy,
-        context,
-    )?;
+    let apply = |policy| {
+        execute_step_successor_from_frontier_position(
+            execution,
+            proof_context,
+            &step_facts,
+            tactic_name,
+            policy,
+            // A step transports nothing: the kernel keeps the names of cells it
+            // proves unwritten from the whole context, and ambient facts are
+            // restored below at their original snapshots.
+            StatementFactTransportPolicy::None,
+            loop_step_policy,
+            context,
+        )
+    };
+    let successor = match apply(prerequisite_policy) {
+        Err(error) if matches!(prerequisite_policy, StatementPrerequisitePolicy::Retained) => {
+            let exact_retained_requirement =
+                error.unresolved_requirement().is_some_and(|requirement| {
+                    requirement.call_site.is_some()
+                        && requirement_pure_facts.contains(&requirement.proposition)
+                });
+            if !exact_retained_requirement {
+                return Err(error);
+            }
+            apply(StatementPrerequisitePolicy::Contextual)?
+        }
+        result => result?,
+    };
     Ok(CheckedStatementStep {
         execution: successor.execution,
         facts: requirement_pure_facts.with_statement_facts(successor.pure_facts),

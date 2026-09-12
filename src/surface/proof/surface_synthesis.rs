@@ -397,6 +397,40 @@ pub(in crate::surface) fn synthesize_surface_proposition_with_bound_variable_nam
     )
 }
 
+/// Reconstruct one checked chosen-body leaf. The exact external byte-range
+/// spelling is available only at this source-identified projection boundary;
+/// ordinary synthesis must not gain a new global search candidate from it.
+pub(in crate::surface::proof) fn synthesize_source_projection_proposition_with_bound_variable_names(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
+    let _scope = SurfaceSynthesisScope::enter();
+    if let Proposition::CMemoryLoadable { base, bytes, .. } = proposition {
+        match synthesize_exact_external_zero_based_byte_range(
+            base,
+            bytes,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        ) {
+            Ok(Some(surface)) => return Some(surface),
+            Ok(None) => {}
+            Err(()) => return None,
+        }
+    }
+    synthesize_surface_proposition_with_guard_fallback(
+        proposition,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )
+}
+
 fn synthesize_surface_proposition_with_guard_fallback(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],
@@ -766,6 +800,75 @@ fn synthesize_zero_based_loadable_segment(
             },
         },
     })
+}
+
+/// `loadable(bytes[0..n])` for one exact external byte-pointer parameter.
+///
+/// External argument pointers may carry a symbolic allocation offset, so the
+/// general pointer synthesizer cannot treat that offset as a range index. If
+/// the load starts at the exact pointer value supplied for a declared byte
+/// parameter, the byte count is already the written element count. Require a
+/// unique exact parameter match: an aliased parameter is not enough source
+/// information to choose one spelling over another.
+fn synthesize_exact_external_zero_based_byte_range(
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Result<Option<ClickProposition>, ()> {
+    if base.block != PointerBlock::ExternalArgument {
+        return Ok(None);
+    }
+    let mut matches = parameters
+        .iter()
+        .zip(arguments)
+        .filter_map(|(parameter, argument)| {
+            if parameter
+                .c_type()
+                .pointee_type()?
+                .to_kernel_type()
+                .byte_width()
+                != 1
+            {
+                return None;
+            }
+            let pointer = match argument {
+                CExpression::Value(CValue::Pointer(pointer)) => pointer,
+                CExpression::Variable(name) => match state.locals().get(name) {
+                    Some(CValue::Pointer(pointer)) => pointer,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            (pointer.pointer() == base && pointer.c_type().pointee_type()?.byte_width() == 1)
+                .then(|| parameter.name().to_string())
+        });
+    let Some(name) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(());
+    }
+    let end = synthesize_surface_bitvector(bytes, parameters, arguments, state, bound_variables)
+        .and_then(|end| contract_expression_to_c_fragment(&end))
+        .ok_or(())?;
+    let named = CExpression::Variable(name);
+    let start = CExpression::Value(int32(0));
+    Ok(Some(ClickProposition::Loadable {
+        segment: ContractSegment {
+            state: ContractSegmentState::Current,
+            base: named.clone(),
+            start: start.clone(),
+            end: end.clone(),
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(named),
+                start: ContractExpression::CFragment(start),
+                end: ContractExpression::CFragment(end),
+            },
+        },
+    }))
 }
 
 /// `loadable(p[a..b])`: a range of one named pointer, the form a contract

@@ -338,10 +338,7 @@ impl<'a> Proof<'a> {
         &self,
         step: ProofStep,
     ) -> Result<Self, ClickError> {
-        self.apply_execution_statement_step_with_policy(
-            step,
-            StatementPrerequisitePolicy::Contextual,
-        )
+        self.apply_execution_statement_step_with_policy(step, StatementPrerequisitePolicy::Retained)
     }
 
     pub(in crate::surface::proof) fn apply_execution_statement_step_with_policy(

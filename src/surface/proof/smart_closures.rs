@@ -19,6 +19,8 @@ use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
+const MAX_DIRECT_CALLER_CHOICE_NAMES: usize = 4096;
+
 fn collect_signed_surface_terms<'a>(
     expression: &'a ContractExpression,
     terms: &mut Vec<&'a ContractExpression>,
@@ -5083,7 +5085,14 @@ impl<'a> Proof<'a> {
         step: ProofStep,
         retried_requirements: &mut std::collections::BTreeSet<PropositionIdentityKey>,
     ) -> Result<Self, ClickError> {
-        let initial = self.apply_step(step.clone());
+        // Smart execution exposes supported missing source-backed
+        // prerequisites before contextual compatibility reasoning can
+        // discharge them invisibly. The retained proof retries the same
+        // ordinary checked step after publishing its `have`.
+        let initial = self.apply_execution_statement_step_with_policy(
+            step.clone(),
+            StatementPrerequisitePolicy::Retained,
+        );
         self.retry_statement_after_refusal(step, retried_requirements, initial)
     }
 
@@ -5159,6 +5168,14 @@ impl<'a> Proof<'a> {
                             &execution.core.state,
                         )
                     };
+                    let direct_caller = requirement.call_site.as_ref().and_then(|_| {
+                        source_backed_direct_caller_requirement(
+                            &requirement,
+                            &step,
+                            execution,
+                            context,
+                        )
+                    });
                     let surface = if requirement.call_site.is_some() {
                         // A source-backed call may only use the source form
                         // after all carrier/call/frontier/ordinal checks have
@@ -5193,6 +5210,15 @@ impl<'a> Proof<'a> {
                         };
                         surface
                     };
+                    if let Some((predicate_name, _)) = &direct_caller {
+                        let Some(unfolded) = attempt::candidate_outcome(
+                            proof.apply_step(ProofStep::UnfoldPredicate(predicate_name.clone())),
+                        )?
+                        else {
+                            return Err(error);
+                        };
+                        proof = unfolded;
+                    }
                     let have = match proof.begin_have(surface.clone()) {
                         Ok(have) => have,
                         Err(_) => {
@@ -5200,10 +5226,24 @@ impl<'a> Proof<'a> {
                             return Err(error);
                         }
                     };
-                    let mut closure_surfaces = vec![surface.clone()];
-                    closure_surfaces.extend(collect_bounded_surface_conjunct_leaves(&surface)?);
-                    let Some(closed) = have.try_simp_closure_with_surfaces(&closure_surfaces)?
-                    else {
+                    let closed = match direct_caller {
+                        Some((predicate_name, selection)) => {
+                            let _ = predicate_name;
+                            match have.try_direct_caller_requirement_closure(&selection) {
+                                Ok(closed) => closed,
+                                Err(_) => {
+                                    check_verification_deadline()?;
+                                    return Err(error);
+                                }
+                            }
+                        }
+                        None => {
+                            let mut surfaces = vec![surface.clone()];
+                            surfaces.extend(collect_bounded_surface_conjunct_leaves(&surface)?);
+                            have.try_simp_closure_with_surfaces(&surfaces)?
+                        }
+                    };
+                    let Some(closed) = closed else {
                         return Err(error);
                     };
                     // `join` publishes the checked proposition into the exact
@@ -5262,6 +5302,86 @@ impl<'a> Proof<'a> {
         self.try_statement_step_with_apply(|proof| {
             proof.try_statement_step_with_retries(step.clone(), retried_requirements)
         })
+    }
+
+    pub(in crate::surface::proof) fn try_direct_caller_requirement_closure(
+        &self,
+        selection: &CallerRequirementSelection,
+    ) -> Result<Option<Self>, ClickError> {
+        let mut proof = self.clone();
+        let choice_name = (0..MAX_DIRECT_CALLER_CHOICE_NAMES)
+            .map(|suffix| {
+                if suffix == 0 {
+                    format!("__click_choice_{}", selection.source_id.outer_ordinal)
+                } else {
+                    format!(
+                        "__click_choice_{}_{}",
+                        selection.source_id.outer_ordinal, suffix
+                    )
+                }
+            })
+            .find(|candidate| {
+                self.local_binding(candidate).is_none()
+                    && self.execution().is_none_or(|execution| {
+                        !execution.core.state.locals().contains_name(candidate)
+                    })
+            });
+        let Some(choice_name) = choice_name else {
+            return Ok(None);
+        };
+        let Some(chosen) =
+            attempt::candidate_outcome(proof.apply_step(ProofStep::Choose(ProofChoice {
+                name: choice_name.clone(),
+                source: ProofFactSource::Requirement(selection.source_id.outer_ordinal),
+            })))?
+        else {
+            return Ok(None);
+        };
+        let Some(projection) = chosen
+            .execution()
+            .and_then(|execution| execution.presentation.chosen_projection.as_ref())
+        else {
+            return Ok(None);
+        };
+        if projection.source_id != selection.source_id
+            || projection.principal_fact_index != selection.principal_fact_index
+            || projection.source_proposition != selection.source_proposition
+        {
+            return Ok(None);
+        }
+        if chosen.focused_discharged() {
+            return Ok(Some(chosen));
+        }
+        let source_leaves = projection
+            .leaves
+            .iter()
+            .map(|leaf| leaf.surface.clone())
+            .collect::<Vec<_>>();
+        let Some(ClickProposition::Exists {
+            name, written_name, ..
+        }) = chosen.surface_goal()
+        else {
+            return Ok(None);
+        };
+        let witness_name = written_name.as_ref().unwrap_or(name).clone();
+        let Some(witnessed) =
+            attempt::candidate_outcome(chosen.apply_step(ProofStep::Witness(ProofWitness {
+                name: witness_name,
+                value: ContractExpression::CFragment(CExpression::Variable(choice_name)),
+            })))?
+        else {
+            return Ok(None);
+        };
+        proof = witnessed;
+        for source in &source_leaves {
+            let Some(extracted) =
+                attempt::candidate_outcome(proof.apply_step(ProofStep::Extract(source.clone())))?
+            else {
+                return Ok(None);
+            };
+            proof = extracted;
+        }
+        proof.try_simp_closure_with_surfaces(&source_leaves)
     }
 
     pub(in crate::surface::proof) fn try_statement_step_with_apply(
@@ -5707,6 +5827,14 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
         return None;
     };
     let entry_state = context.constants.function_entry_state.as_ref()?;
+    let entry_snapshot = crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory());
+    // Phase 1 projects entry requirements only across an effect-free prefix.
+    // Local declarations change the current snapshot without adding an
+    // effect, while stores and havoc do add one. Crossing a recorded memory
+    // effect requires the later generated-load transport identity.
+    if !execution.core.effect_facts.is_empty() {
+        return None;
+    }
     let owner = context.constants.caller_source_owner.as_ref()?;
     let selection = context
         .constants
@@ -5717,7 +5845,7 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
             *predicate_argument_slot,
             *caller_parameter_slot,
             &substituted_arguments,
-            crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory()),
+            entry_snapshot,
         )?;
     Some((predicate_name, selection))
 }
