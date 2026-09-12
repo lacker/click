@@ -608,3 +608,54 @@ fn negative_mdtest_failures_include_structured_kernel_context() {
         assert!(!message.contains("CMemory {"), "{name}: {message}");
     }
 }
+
+/// An undecided C `if` reported its two condition paths with the kernel
+/// `Debug` of their facts. A condition whose load has not been named by a
+/// load variable — the shape `list_count_live` reaches after its recursive
+/// call — then carries the whole `CMemory` snapshot, blocks and heap
+/// included, twice. That is the raw-state dump `AGENTS.md` names. Each path
+/// is now spelled on its own line in the bounded source vocabulary, which is
+/// what says which condition each arm assumes.
+#[test]
+fn undecided_c_branch_step_reports_its_paths_without_a_memory_dump() {
+    let c_source = r#"
+struct node {
+    int32 value;
+    unsigned long word;
+};
+
+int32 pick(struct node* node) {
+    if ((node->word & 1) != 0) {
+        return 1;
+    }
+    return 0;
+}
+"#;
+    let click_source = r#"
+verifying "pick.c";
+
+int32 pick(struct node* node) {
+    requires node != 0;
+    views object(node);
+
+    ensures 0 <= result;
+} by {
+    step();
+    simp();
+}
+"#;
+    let error = verify_c0_sources(click_source, &[("pick.c", c_source)]).unwrap_err();
+    let message = error.message();
+    assert!(
+        message.contains("feasible condition paths"),
+        "the step should report the undecided C `if`: {message}"
+    );
+    assert!(
+        message.contains("condition path 0:") && message.contains("condition path 1:"),
+        "each arm's assumption should be spelled on its own line: {message}"
+    );
+    assert!(!message.contains("CMemory {"), "{message}");
+    assert!(!message.contains("CHeapMemory {"), "{message}");
+    assert!(!message.contains("CBlock {"), "{message}");
+    assert!(message.len() < 2000, "{message}");
+}

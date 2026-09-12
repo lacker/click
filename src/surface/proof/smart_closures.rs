@@ -2892,12 +2892,22 @@ impl<'a> Proof<'a> {
                 else {
                     continue;
                 };
-                // Rewriting is directional even when its admitted premise is
-                // a symmetric equality. Keep the selected fact fixed, but
-                // try both Surface orientations so the side occurring in the
-                // focused branch goal can be replaced.
+                // A recorded spelling can stop denoting the fact it was
+                // recorded for. A proof `match` case fact states the
+                // scrutinee's constructor at unchanged function entry, and
+                // once the arm has refolded its instance, `c.model == C(..)`
+                // reads the refolded field: the pair still answers a map
+                // lookup, so the rewrite is admitted here and then rechecked
+                // against the fold's own equation. When the spelling no
+                // longer lowers to this fact on its own, try the
+                // entry-anchored spelling that does, before it.
+                let anchored = entry_anchored_constructor_equality(&proof, &surface, &equality);
                 let reverse = reverse_surface_equality(&surface);
-                for oriented in std::iter::once(surface).chain(reverse) {
+                for oriented in anchored
+                    .into_iter()
+                    .chain(std::iter::once(surface))
+                    .chain(reverse)
+                {
                     let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) else {
                         continue;
                     };
@@ -4996,6 +5006,42 @@ impl<'a> Proof<'a> {
         // with the step's diagnostic.
         apply(self).map(Some)
     }
+}
+
+/// The entry-anchored spelling of a constructor equality whose written form no
+/// longer lowers to `equality` at this frontier. `None` when the written form
+/// still denotes the fact, when the equality is not a constructor equation, or
+/// when anchoring does not recover the same fact.
+fn entry_anchored_constructor_equality(
+    proof: &Proof<'_>,
+    surface: &ClickProposition,
+    equality: &Proposition,
+) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = surface
+    else {
+        return None;
+    };
+    if !matches!(right, ContractExpression::AlgebraicConstructor { .. })
+        || matches!(left, ContractExpression::Old(_))
+        || proof
+            .lower_surface_proposition_direct(surface, "entry-anchored premise form")
+            .is_ok_and(|lowered| &lowered == equality)
+    {
+        return None;
+    }
+    let anchored = ClickProposition::Comparison {
+        left: ContractExpression::Old(Box::new(left.clone())),
+        operator: ComparisonOperator::Equal,
+        right: right.clone(),
+    };
+    proof
+        .lower_surface_proposition_direct(&anchored, "entry-anchored premise form")
+        .is_ok_and(|lowered| &lowered == equality)
+        .then_some(anchored)
 }
 
 /// The existential witness closer is reserved for the source-backed range

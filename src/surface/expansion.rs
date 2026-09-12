@@ -515,6 +515,88 @@ pub(super) fn verification_target_at_context(
     )))
 }
 
+/// The diagnostic spellings `describe_pointer` falls back to when a kernel
+/// pointer has no source form. None of them is Click syntax, so an expansion
+/// that renders one cannot parse; expansion has to say which name it is
+/// missing instead of handing the parse error on.
+const UNSPELLABLE_POINTER_FORMS: [&str; 5] = [
+    "symbolic-pointer:",
+    "symbolic-function-pointer:",
+    "heap-allocation:",
+    "arg-memory",
+    "string:",
+];
+
+/// Reports why a rendered expansion is not Click. A composite resource's
+/// existential witness is bound to a kernel pointer with no source spelling
+/// (the language reference states that a witness needs no syntax at fold or
+/// unfold), so a certificate that has to cite the witness cannot be written
+/// at all. Naming the witness reports the language gap; the parse error does
+/// not.
+fn unparseable_expansion_error(
+    click_source: &str,
+    sources: &CSourceContext<'_>,
+    replacement: &str,
+    parse_error: ClickError,
+) -> ClickError {
+    if !UNSPELLABLE_POINTER_FORMS
+        .iter()
+        .any(|form| replacement.contains(form))
+    {
+        return ClickError::new(format!(
+            "the expansion did not parse as Click: {}",
+            parse_error.message()
+        ));
+    }
+    let witnesses = parse_source_with_c_layouts_context(click_source, sources)
+        .map(|file| {
+            file.resource_definitions()
+                .iter()
+                .filter_map(|definition| {
+                    let body = definition.composite_body()?;
+                    Some(
+                        body.witnesses()
+                            .iter()
+                            .map(|witness| {
+                                format!("`{}` of `{}`", witness.name(), definition.name())
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .flatten()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let named = match witnesses.as_slice() {
+        [] => "a value the kernel introduced".to_string(),
+        [only] => format!("the witness {only}"),
+        several => format!("one of the witnesses {}", several.join(", ")),
+    };
+    ClickError::new(format!(
+        "the expansion needs a name for {named}, which has no surface spelling"
+    ))
+}
+
+/// Rejects a rendered expansion that is not Click before it reaches the
+/// caller's verification, so the reported failure is the missing name rather
+/// than the parse error the unparseable text produces.
+fn checked_expanded_source(
+    click_source: &str,
+    sources: &CSourceContext<'_>,
+    replacement: &str,
+    expanded: String,
+) -> Result<String, ClickError> {
+    match parse_source_with_c_layouts_context(&expanded, sources) {
+        Ok(_) => Ok(expanded),
+        Err(error) => Err(unparseable_expansion_error(
+            click_source,
+            sources,
+            replacement,
+            error,
+        )),
+    }
+}
+
 /// Expands one tactic and returns the rewritten source.
 ///
 /// Certificate capture verifies the selected proof prefix. The caller is
@@ -626,7 +708,12 @@ pub fn expand_c0_tactic_source_at(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    Ok(expanded)
+    checked_expanded_source(
+        click_source,
+        &CSourceContext::bundle(c_sources),
+        &replacement,
+        expanded,
+    )
 }
 
 /// Expands one tactic using compiler-prepared translation units throughout
@@ -723,7 +810,7 @@ pub fn expand_c0_prepared_tactic_source_at(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    Ok(expanded)
+    checked_expanded_source(click_source, &sources, &replacement, expanded)
 }
 
 fn expand_pure_theorem_source(

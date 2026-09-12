@@ -779,12 +779,17 @@ impl ProofExecutionView<'_> {
         path_index: usize,
         tactics: &[ProofTactic],
     ) -> Option<Vec<bool>> {
+        // Decisions are retained in decision order, outermost first, and the
+        // skeleton is walked outermost first too. Consuming them in reverse
+        // found the outer condition only after the inner ones had already
+        // been skipped, so every path through more than one surface `if`
+        // reported no branch path at all and its closer was stitched onto
+        // every leaf instead of its own.
         let mut decisions = self
             .outcome_provenance
             .get(path_index)?
             .branch_decisions
-            .iter()
-            .rev();
+            .iter();
         let mut path = Vec::new();
         let mut current = tactics;
         loop {

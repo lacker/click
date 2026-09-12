@@ -125,6 +125,23 @@ fn describe_context_pure_and_execution_facts(
     format!("[{}]", entries.join(", "))
 }
 
+/// The bounded spelling of a fact list against the current function's
+/// parameters: a diagnostic that reports several fact lists (the condition
+/// paths of an undecided C `if`, for one) must not print a kernel debug dump
+/// of every memory snapshot those facts read.
+pub(super) fn describe_pure_facts_for_diagnostic(
+    pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    if pure_facts.is_empty() {
+        return "[]".to_string();
+    }
+    describe_bounded_list(pure_facts, |fact| {
+        describe_pure_fact(fact, parameters, arguments)
+    })
+}
+
 pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
     if pure_facts.is_empty() {
         return "[]".to_string();

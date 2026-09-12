@@ -452,14 +452,28 @@ pub(super) fn execute_branch_step_from_frontier_position(
         let expected = requested_branch.map_or("one exact truth value", |take_then| {
             if take_then { "true" } else { "false" }
         });
+        // The path facts of an undecided C condition carry the whole memory
+        // snapshot each load reads. Spelling them in the bounded source
+        // vocabulary keeps the useful part -- which condition each arm
+        // assumes -- without the repeated `CMemory` dump.
+        let paths = condition_transitions
+            .iter()
+            .enumerate()
+            .map(|(index, transition)| {
+                format!(
+                    "\n  condition path {index}: {}",
+                    describe_pure_facts_for_diagnostic(
+                        &transition.path_facts,
+                        parameters,
+                        arguments
+                    )
+                )
+            })
+            .collect::<String>();
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n  condition path facts: {:?}\n{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths{paths}\n{}",
             describe_c_expression(&condition),
             condition_transitions.len(),
-            condition_transitions
-                .iter()
-                .map(|transition| &transition.path_facts)
-                .collect::<Vec<_>>(),
             describe_proof_context(
                 available_pure_facts,
                 &current_resources,
