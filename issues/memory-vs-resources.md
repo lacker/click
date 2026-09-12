@@ -1053,26 +1053,24 @@ first callback stores through its owned `node->left` footprint; the later
 consumed and returned. This is covered by
 `mdtests/rb_augment_callbacks_helper_mutates_body.md`.
 
-Two negative reductions establish selective retirement. Replacing
+Two negative reductions establish selective checking. Replacing
 `augment->copy` with the known `dummy_rotate` pointer through a checked helper
 allows the unaffected `rotate` callback but rejects the subsequent `Copy` call
 because the newly loaded pointer has no `Copy` fact. Consuming the folded
-`callback_suite` between callback calls likewise retires its old callback
-predicates. These cases are covered by
+`callback_suite` between callback calls also rejects the later call, because
+the body-declared callback fact and its supporting authority are gone. This is
+not retirement of an independently established pure theorem about an exact
+function-pointer value. These cases are covered by
 `mdtests/rb_augment_callbacks_helper_rejects_changed_cell.md` and
 `mdtests/rb_augment_callbacks_helper_consumes_suite.md`.
 
-No stale callback authorization was reproduced: callback lookup already keys
-the requirement by the current loaded function-pointer value, and checked
-table-cell ownership/memory transitions retire the old predicate. Therefore no
-FactProvenance sidecar, unconditional callback-fact retention list, or other
-representation change was added. Existing deterministic callback scaling
-tests continue to cover selected-call work versus unrelated functions/facts;
-no new hot-path index was introduced. Richer composite prerequisite-load
-footprints were not required by this callback reduction and remain outside
-this checkpoint. This is a green partial D checkpoint, not a complete W5
-claim. No existing C source, syntax, budget, quarantine, or unrelated
-semantics changed.
+No stale authorization of an independently established pure theorem was
+reproduced, so no FactProvenance sidecar, unconditional callback-fact
+retention list, or other representation change was added. Existing
+deterministic callback scaling remains a narrow lookup microcurve, and richer
+composite prerequisite-load footprints remain outside this checkpoint. This
+is a green partial D checkpoint, not a complete W5 claim. No existing C
+source, syntax, budget, quarantine, or unrelated semantics changed.
 
 #### W5 checkpoint E handoff (2026-09-12)
 
@@ -1110,6 +1108,29 @@ arbitrary declared predicate bodies or opaque nested composite cores; those
 remain conservative or require a later design. The callback/table and scope
 claims are not broadened beyond the reductions above. No existing C source,
 syntax, budget, quarantine, or unrelated semantics changed.
+
+#### W5 checkpoint E2 investigation (2026-09-12)
+
+E2 starts from the pushed E1/master head `29d7071e` and rechecks the callback
+reductions against the clarified fact semantics. Ordinary no-memory
+`Predicate` facts are pure exact-pointer theorems and are not retired merely
+because a resource occurrence changes; a known bad pointer still fails, while
+a value restored to the same independently established pointer remains
+eligible. A predicate declared inside a composite resource is instead
+supported by that resource body.
+
+The decisive non-vacuous probe could not be expressed at the surface boundary:
+`fact Copy(augment->copy)` requires owned coverage, and a function-pointer
+resource parameter cannot serve as an independently retained cell view. The
+earlier generic missing-view failure is therefore not evidence of stale
+callback authorization, and no FactProvenance sidecar or unconditional
+callback-fact retention was added. Existing changed-cell, consumed-suite,
+owned-footprint, table, and three-call helper fixtures remain green.
+
+The requested end-to-end callback-table/resource-context two-axis scaling
+matrix and nested declared-predicate alternative coverage remain open. This
+is an investigation checkpoint only, not a green or complete W5 claim. No C
+source, syntax, budget, quarantine, or unrelated semantics changed.
 
 ### W6 — Unify existing binder transport and snapshot substitution
 
