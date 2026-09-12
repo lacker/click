@@ -764,7 +764,8 @@ pub(in crate::surface) fn evaluate_fixed_state_array_ref_through_kernel(
     )?;
     let CValue::Pointer(pointer) = value else {
         return Err(format!(
-            "array reference expression did not evaluate to a pointer: `{value:?}`"
+            "array reference expression did not evaluate to a pointer: `{}`",
+            crate::surface::diagnostics::describe_c_value(&value, &[], &[])
         ));
     };
     let memory = match expression {
@@ -792,8 +793,12 @@ fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
         .iter()
         .find(|obligation| crate::kernel::c_loadability_obligation_impossible(obligation))
     {
+        // `Debug` on a loadability obligation prints the whole memory
+        // snapshot it is indexed by; the bounded sentence names the base and
+        // width, which is what the reader has to fix.
         return Err(format!(
-            "the proposition reads memory that is not loadable here: {obligation:?}"
+            "the proposition reads memory that is not loadable here: {}",
+            crate::surface::diagnostics::describe_pure_fact(obligation, &[], &[])
         ));
     }
     Ok(())

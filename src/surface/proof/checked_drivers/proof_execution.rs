@@ -1840,12 +1840,18 @@ fn advance_execution_match<'a>(
     let proof = proof.begin_execution_match();
     let marker = proof.checkpoint();
     let plan = proof.plan_execution_match(source)?;
-    let mut certificates = Vec::with_capacity(arms.len());
+    // A checked contradiction covers its dead constructor without a C outcome,
+    // so only the live arms are executed and joined. Certificates are placed by
+    // constructor index, not by the order the live arms are visited.
+    let mut certificates: Vec<Option<ProofCertificate>> = (0..arms.len())
+        .map(|index| plan.excluded_certificate(index).cloned())
+        .collect();
+    let live = plan.live_cases();
     let Some(proof) = advance_execution_match_group(
         proof,
         &plan,
         arms,
-        0..arms.len(),
+        &live,
         &mut certificates,
         expansion_capture,
         proof_site,
@@ -1855,6 +1861,11 @@ fn advance_execution_match<'a>(
     else {
         return decline();
     };
+    let Some(certificates) = certificates.into_iter().collect::<Option<Vec<_>>>() else {
+        return Err(ClickError::new(
+            "proof `match` left a constructor without a checked arm certificate",
+        ));
+    };
     Ok(Some(proof.finish_execution_match(
         &marker,
         source,
@@ -1862,12 +1873,15 @@ fn advance_execution_match<'a>(
     )?))
 }
 
+/// Executes one group of live constructor arms, splitting the frontier in half
+/// until a single arm remains. Every live arm costs one entry, its own region,
+/// and at most one enclosing split, so an N-constructor match costs its N arms.
 fn advance_execution_match_group<'a>(
     proof: Proof<'a>,
     plan: &super::super::proof_object::ExecutionMatchPlan,
     arms: &[InternalProofNode],
-    range: std::ops::Range<usize>,
-    certificates: &mut Vec<ProofCertificate>,
+    live: &[usize],
+    certificates: &mut [Option<ProofCertificate>],
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
@@ -1876,46 +1890,21 @@ fn advance_execution_match_group<'a>(
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return decline();
     }
-    if range.len() == 1 {
-        if let Some(certificate) = plan.excluded_certificate(range.start) {
-            certificates.push(certificate.clone());
-            return Ok(Some(proof));
-        }
-        let proof = proof.enter_execution_match_arm(plan, range.start)?;
-        let marker = proof.checkpoint();
-        let Some(proof) = advance_focused_execution_region(
-            proof,
-            None,
-            &arms[range.start],
-            expansion_capture,
-            proof_site,
-            owning_source_index,
-            depth + 1,
-        )?
-        else {
-            return decline();
-        };
-        if !proof.is_at_function_exit() {
+    let [index] = live else {
+        let (left, right) = live.split_at(live.len() / 2);
+        if left.is_empty() {
             return Err(ClickError::new(
-                "each proof `match` arm must reach function exit",
+                "proof `match` needs at least one live constructor arm",
             ));
         }
-        certificates.push(proof.execution_match_arm_certificate(&marker)?);
-        return Ok(Some(proof.leave_execution_match_arm(plan)?));
-    }
-    let middle = range.start + range.len() / 2;
-    if range
-        .clone()
-        .any(|index| plan.excluded_certificate(index).is_some())
-    {
-        // A checked contradiction covers the dead constructor without a C outcome.
-        let mut proof = proof;
-        for index in range {
+        let (mut proof, record) = proof.split_execution_match_group(plan.condition(left))?;
+        for (take_left, group) in [(true, left), (false, right)] {
+            let focused = proof.focus_execution_if_arm(&record, take_left)?;
             let Some(next) = advance_execution_match_group(
-                proof,
+                focused,
                 plan,
                 arms,
-                index..index + 1,
+                group,
                 certificates,
                 expansion_capture.as_deref_mut(),
                 proof_site,
@@ -1927,29 +1916,30 @@ fn advance_execution_match_group<'a>(
             };
             proof = next;
         }
-        return Ok(Some(proof));
+        return Ok(Some(proof.join_focused_execution_if_terminal(&record)?));
+    };
+    let index = *index;
+    let proof = proof.enter_execution_match_arm(plan, index)?;
+    let marker = proof.checkpoint();
+    let Some(proof) = advance_focused_execution_region(
+        proof,
+        None,
+        &arms[index],
+        expansion_capture,
+        proof_site,
+        owning_source_index,
+        depth + 1,
+    )?
+    else {
+        return decline();
+    };
+    if !proof.is_at_function_exit() {
+        return Err(ClickError::new(
+            "each proof `match` arm must reach function exit",
+        ));
     }
-    let (mut proof, record) =
-        proof.split_execution_match_group(plan.condition(range.start..middle))?;
-    for (left, child_range) in [(true, range.start..middle), (false, middle..range.end)] {
-        let focused = proof.focus_execution_if_arm(&record, left)?;
-        let Some(next) = advance_execution_match_group(
-            focused,
-            plan,
-            arms,
-            child_range,
-            certificates,
-            expansion_capture.as_deref_mut(),
-            proof_site,
-            owning_source_index,
-            depth + 1,
-        )?
-        else {
-            return decline();
-        };
-        proof = next;
-    }
-    Ok(Some(proof.join_focused_execution_if_terminal(&record)?))
+    certificates[index] = Some(proof.execution_match_arm_certificate(&marker)?);
+    Ok(Some(proof.leave_execution_match_arm(plan)?))
 }
 
 fn advance_focused_execution_region<'a>(

@@ -402,8 +402,9 @@ appears to need one reports the need instead of adding it.
   removal, 531b5651) is on master; the scaffold audits 26 of 26 sites. T3
   dispatched for gap 14; T2 is gating.
 - 2026-09-12: A8 (proof `match` of any width, with excluded arms grouped
-  correctly) is green and gating; it found gaps 15 and 16. A9 dispatches
-  when A8 lands; A10 alongside it.
+  correctly, 590b2553) and T2 (bounded failed-`simp` diagnostic, 92a81e32)
+  are on master with a confirming full gate; A8 found gaps 15 and 16. A9
+  and A10 are dispatched; T3 is in progress.
 
 ## Work packages
 

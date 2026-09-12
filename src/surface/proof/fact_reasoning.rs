@@ -296,7 +296,10 @@ pub(super) fn describe_derivation_failure(
             predicate_environment,
         )
     } else {
-        bounded_debug(proposition)
+        // Every other shape goes through the same bounded sentence the rest
+        // of the proof diagnostics use. `Debug` here dumped the kernel
+        // proposition, schemas and snapshots included.
+        describe_pure_fact(proposition, &[], &[])
     }
 }
 
