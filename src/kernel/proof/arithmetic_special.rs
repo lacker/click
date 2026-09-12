@@ -840,10 +840,9 @@ fn tagged_form_inner(
                 return None;
             }
             let form = tagged_form_inner(inner, relation, alignments, seen)?;
-            if !alignments
-                .iter()
-                .any(|(pointer, candidate)| *pointer == &form.pointer && *candidate >= alignment)
-            {
+            if !alignments.iter().any(|(pointer, candidate)| {
+                pointer_equal(pointer, &form.pointer) && *candidate >= alignment
+            }) {
                 return None;
             }
             Some(TaggedAddress {
@@ -864,7 +863,7 @@ fn tagged_form_inner(
             let form = tagged_form_inner(inner, relation, alignments, seen)?;
             if constant != 0
                 && !alignments.iter().any(|(pointer, candidate)| {
-                    *pointer == &form.pointer && *candidate >= alignment
+                    pointer_equal(pointer, &form.pointer) && *candidate >= alignment
                 })
             {
                 return None;
@@ -921,7 +920,7 @@ fn pointer_word_equality(
         let Some((pointer, alignment)) = condition.as_pointer_alignment() else {
             return false;
         };
-        if !charge_pointer_offset(&pointer.offset) {
+        if !charge_pointer(pointer) {
             return false;
         }
         alignments.push((pointer, alignment));
@@ -935,7 +934,8 @@ fn pointer_word_equality(
     let goal_right_form = tagged_form(goal_right, (left, right), &alignments);
     let equal = match (goal_left_form, goal_right_form) {
         (Some(goal_left), Some(goal_right)) => {
-            goal_left.pointer == goal_right.pointer && goal_left.tag == goal_right.tag
+            pointer_equal(&goal_left.pointer, &goal_right.pointer)
+                && bitvector_equal(&goal_left.tag, &goal_right.tag)
         }
         _ => false,
     };
@@ -946,7 +946,9 @@ fn pointer_word_equality(
             tagged_form(goal_left, (left, right), &alignments),
             tagged_form(goal_right, (left, right), &alignments),
         ) {
-            (Some(goal_left), Some(goal_right)) if goal_left.pointer == goal_right.pointer => {
+            (Some(goal_left), Some(goal_right))
+                if pointer_equal(&goal_left.pointer, &goal_right.pointer) =>
+            {
                 matches!(
                     (goal_left.tag.uint64_as_const(), goal_right.tag.uint64_as_const()),
                     (Some(left), Some(right)) if left != right
@@ -1495,6 +1497,54 @@ mod tests {
             };
             assert!(matches!(
                 certificate.check(&relation, std::slice::from_ref(&relation)),
+                Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+            ));
+        }
+    }
+
+    #[test]
+    fn alignment_premise_charges_concrete_and_string_literal_blocks() {
+        let normal_pointer = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(normal_pointer.clone()));
+        let word = Bitvector32Term::Variable(crate::kernel::Variable(92));
+        let relation = Proposition::ConditionIs(
+            ConditionTerm::Bitvector64Equal(
+                Box::new(word.clone()),
+                Box::new(Bitvector32Term::uint64_add(
+                    address.clone(),
+                    Bitvector32Term::UInt64Constant(1),
+                )),
+            ),
+            true,
+        );
+        let blocks = [
+            PointerBlock::Concrete("c".repeat(MAX_TERM_PAYLOAD + 1)),
+            PointerBlock::StringLiteral {
+                identity: "s".repeat(MAX_TERM_PAYLOAD / 2 + 1),
+                bytes: vec![b'x'; MAX_TERM_PAYLOAD / 2 + 1],
+            },
+        ];
+        for block in blocks {
+            let alignment = Proposition::ConditionIs(
+                ConditionTerm::pointer_aligned(
+                    Pointer {
+                        block,
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    8,
+                ),
+                true,
+            );
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![1],
+                    result: relation.clone(),
+                }],
+                conclusion: 0,
+            };
+            assert!(matches!(
+                certificate.check(&relation, &[relation.clone(), alignment]),
                 Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
             ));
         }
