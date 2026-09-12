@@ -18,12 +18,23 @@ traversals have no C local naming the focused node's parent. A *descent* needs
 no such local, so it re-keys cleanly. This *ascent* is the opposite case: what
 makes it work below is exactly that the frame's `fact parent != 0` names the
 C local the loop reassigns, so the failed guard `parent != 0` refutes the
-`Left` and `Right` arms and the exit learns `c.model == Context::Top`. With the
-parent in the payload the arm fact is about a payload the `unfold` binds
-freshly, the failed guard refutes nothing, and the exit cannot name `Top`. The
-bridge a node-keyed ascent needs — a C pointer equated to a frame payload that
-survives `unfold` — is the same one
-[`rb_replace_node.md`](rb_replace_node.md)'s closing note records.
+`Left` and `Right` arms and the exit learns `c.model == Context::Top`.
+
+What is left of that after package A20 is one step, and it is a *loop-head*
+step rather than the payload bridge the earlier note guessed at. Reading a
+frame's cells through its own `identity` payload works — that is gap 43, fixed,
+and `rb_replace_node.md` verifies all three frames on it — and parent/child
+consistency is now statable as a pure predicate over the model, so a node-keyed
+ascent carries `invariant ctx_node_is(c.model, parent) == 1;` through the loop
+body and reaches its exit. The one thing it cannot do is refute `Context::Top`
+at the guard: arm refutation matches a path fact against an arm's own
+binding-free fact, and with the parent in the payload the `Left` and `Right`
+arms state `identity != 0` about a binding rather than `parent != 0` about the
+C local. Turning `ctx_node_is(c.model, parent) == 1` plus `parent != 0` into
+`c.model != Context::Top` is a case analysis over the model, which neither
+`simp` nor a `contradiction` arm inside `preserve` performs, and a pure lemma
+for it runs into the opaque pointer test of gap 45. That is the next thing a
+node-keyed ascent needs.
 
 The loop body reads the parent through the unchanged Linux `rb_parent`, so
 each iteration clears the color tag out of the packed word and recovers the

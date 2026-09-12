@@ -1300,6 +1300,23 @@ fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> boo
     contains_base_offset(&pointer.offset, &base.offset)
 }
 
+/// The one snapshot a pure-function pointer argument is anchored to when the
+/// callee provably reads no memory.
+///
+/// Such a function is a function of its argument values, so the ambient
+/// snapshot in the argument term is dead weight — and live weight would be
+/// worse than dead: it makes the same proposition a different term on either
+/// side of any C write, which is what stopped a `fold` from discharging a
+/// body fact applying a pure predicate to a pointer. The snapshot is empty, so
+/// nothing can be read through it by construction, and it is cached per thread
+/// so repeated uses share one storage root.
+pub fn value_independent_click_memory() -> CMemory {
+    thread_local! {
+        static CANONICAL: CMemory = CMemory::new();
+    }
+    CANONICAL.with(Clone::clone)
+}
+
 impl CMemory {
     pub fn new() -> Self {
         Self::default()

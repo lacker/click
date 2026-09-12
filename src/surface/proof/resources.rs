@@ -338,7 +338,7 @@ pub(in crate::surface) fn selected_resource_instance_arm(
     click_function_environment: &ClickFunctionEnvironment,
     instance: &ResourceInstance,
     assumptions: &PureFactContext,
-) -> Option<ResourceDefinition> {
+) -> Option<SelectedInstanceArm> {
     let definition = resource_environment.get(instance.name())?;
     let matched = definition
         .composite_body()
@@ -361,17 +361,44 @@ pub(in crate::surface) fn selected_resource_instance_arm(
     )
     .ok()?;
     match crate::kernel::select_resource_model_arm(model, assumptions) {
-        Some(selection) => scopes
-            .into_iter()
-            .find(|(variant, _, _)| variant == selection.variant())
-            .map(|(_, _, arm)| arm),
+        Some(selection) => {
+            let arm = scopes
+                .into_iter()
+                .find(|(variant, _, _)| variant == selection.variant())
+                .map(|(_, _, arm)| arm)?;
+            // A `Constructor` selection knows what the arm's bindings hold, so
+            // a memory clause written over a pointer payload denotes a cell
+            // this projection can name. A `Variant` selection does not.
+            let bindings = match selection {
+                crate::kernel::ResourceModelArmSelection::Constructor(constructor) => {
+                    match constructor.node {
+                        crate::kernel::AlgebraicTermNode::Constructor { fields, .. } => fields,
+                        _ => Vec::new(),
+                    }
+                }
+                crate::kernel::ResourceModelArmSelection::Variant(_) => Vec::new(),
+            };
+            Some(SelectedInstanceArm { arm, bindings })
+        }
         // No single arm: what every arm the premises leave possible owns is
         // still readable, and that is what this projects.
         None => common_possible_instance_arm(
             scopes,
             &crate::kernel::possible_resource_model_arm_variants(model, assumptions),
-        ),
+        )
+        .map(|arm| SelectedInstanceArm {
+            arm,
+            bindings: Vec::new(),
+        }),
     }
+}
+
+/// One arm scope together with what the selection proved its constructor
+/// bindings hold. The bindings are empty when no constructor is known, which
+/// is exactly when a memory clause written over a binding names no cell.
+pub(in crate::surface) struct SelectedInstanceArm {
+    arm: ResourceDefinition,
+    bindings: Vec<AlgebraicValue>,
 }
 
 /// The arm scope holding exactly the memory clauses every possible arm owns.
@@ -469,7 +496,7 @@ pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
     instance: &ResourceInstance,
     assumptions: &PureFactContext,
 ) -> CState {
-    let Some(arm) = selected_resource_instance_arm(
+    let Some(selected) = selected_resource_instance_arm(
         resource_environment,
         click_function_environment,
         instance,
@@ -478,7 +505,7 @@ pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
         return state;
     };
     project_selected_instance_arm_cells(
-        &arm,
+        &selected,
         instance,
         parameters,
         arguments,
@@ -506,7 +533,7 @@ pub(super) fn project_initial_composite_resource_cores(
         // arm's own memory clauses, so this projects cells and never a
         // contained instance.
         if let CResource::Instance(instance) = resource.resource() {
-            let Some(arm) = selected_resource_instance_arm(
+            let Some(selected) = selected_resource_instance_arm(
                 resource_environment,
                 click_function_environment,
                 instance,
@@ -515,7 +542,7 @@ pub(super) fn project_initial_composite_resource_cores(
                 continue;
             };
             state = project_selected_instance_arm_cells(
-                &arm,
+                &selected,
                 instance,
                 parameters,
                 arguments,
@@ -624,7 +651,7 @@ pub(super) fn project_initial_composite_resource_cores(
 /// exposes nothing, which is the same outcome as an unselected arm. The read
 /// that needed the cell reports it.
 fn project_selected_instance_arm_cells(
-    arm: &ResourceDefinition,
+    selected: &SelectedInstanceArm,
     instance: &ResourceInstance,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -632,12 +659,14 @@ fn project_selected_instance_arm_cells(
     assumptions: &PureFactContext,
     include_owned: bool,
 ) -> CState {
+    let arm = &selected.arm;
     let Some(body) = arm.composite_body() else {
         return state;
     };
     let Ok(substitutions) = resource_value_substitutions_for_parameters(
         arm.name(),
         instance.arguments(),
+        &selected.bindings,
         arm.parameters(),
     ) else {
         return state;
@@ -673,16 +702,25 @@ fn project_selected_instance_arm_cells(
 
 /// The parameter substitutions for one arm scope. The arm's parameter list
 /// begins with the resource's own parameters and continues with the C-typed
-/// constructor bindings, which no memory clause of the arm may name.
+/// constructor bindings, in constructor-field order.
+///
+/// A memory clause may name one of those bindings — that is what lets a
+/// context frame own the cells of the node its own payload carries (A5) — so
+/// the bindings are substituted too whenever the selection knew the
+/// constructor. Without them the projection could not evaluate
+/// `identity->rb_left`, the cell would stay unnamed, and a later C read of it
+/// across a write to a separately owned object would mint a second load
+/// identity for one cell.
 fn resource_value_substitutions_for_parameters(
     name: &str,
     instance_arguments: &[AlgebraicValue],
+    constructor_bindings: &[AlgebraicValue],
     parameters: &[FunctionParameter],
 ) -> Result<BTreeMap<String, ContractExpression>, String> {
     if parameters.len() < instance_arguments.len() {
         return Err(format!("resource `{name}` received too many arguments"));
     }
-    parameters
+    let mut substitutions = parameters
         .iter()
         .zip(instance_arguments)
         .map(|(parameter, argument)| {
@@ -694,7 +732,23 @@ fn resource_value_substitutions_for_parameters(
                 ContractExpression::CFragment(CExpression::Value(argument.clone())),
             ))
         })
-        .collect()
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    // Only C-typed constructor fields become arm parameters, and they are
+    // pushed in field order, so one forward pass pairs them up.
+    let mut binding_parameters = parameters[instance_arguments.len()..].iter();
+    for binding in constructor_bindings {
+        let Some(value) = binding.as_c_value() else {
+            continue;
+        };
+        let Some(parameter) = binding_parameters.next() else {
+            break;
+        };
+        substitutions.insert(
+            parameter.name().to_string(),
+            ContractExpression::CFragment(CExpression::Value(value.clone())),
+        );
+    }
+    Ok(substitutions)
 }
 
 pub(super) fn project_initial_resource_facts(

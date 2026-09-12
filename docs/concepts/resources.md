@@ -567,6 +567,54 @@ indexed by the child it focuses. A binding of any other type is not a base and
 is refused as one. The regression is
 `mdtests/resource_arm_binding_struct_base.md`.
 
+An arm fact may also apply a pure function to a pointer -- the resource's own
+parameter, a pointer-typed constructor binding, or both. That is how a model
+states a relation between a node and one of its submodels without repeating it
+in every contract: `rb_at`'s `Node` arm states
+`fact rb_parent_is(left_model, p) == 1`, and folding the node re-establishes
+parent/child consistency. `fold` discharges a body fact *exactly* -- the
+proposition it lowers from the arm has to be an available checked fact, since a
+fold proves nothing on its own -- so the term the arm lowers to and the term the
+proof established have to be the same term.
+
+They are, and that needs one rule. A pure function's pointer parameter is
+lowered as an array reference, a memory snapshot with a pointer and an element
+type, so that a function such as the standard library's `count(p, lo, hi, x)`
+can index it. When the function's body -- and, transitively, the body of every
+function it calls -- reads no C memory, its result is a function of its argument
+*values* and the snapshot in that triple is dead weight. Such a function's
+pointer arguments are therefore anchored to one canonical snapshot instead of
+the ambient one. Without that, the same proposition would be two different terms
+on either side of any C write, and a fact proved before `execute()` would not
+discharge the identical body fact demanded by the `fold` after it. The
+classification is syntactic and conservative: a field place, an index, a
+qualified global, a snapshot selector such as `old(...)`, a resource field or
+count, a predicate call, or a call to an undeclared function all make a function
+memory-dependent, and those keep the ambient snapshot they have always had. The
+regressions are `mdtests/fold_pointer_argument_body_fact.md` with its negative
+`mdtests/fold_pointer_argument_body_fact_rejects_other_owner.md`, and
+`mdtests/rb_at_link_helpers.md` and `mdtests/rb_first_last.md` for the
+parent/child consistency this makes statable in the body.
+
+Naming reaches those cells too. A cell a contract `owns` is materialized at
+function entry and keeps one load identity, so a fact about it survives a write
+to a separately owned sibling even inside a single inlined statement
+(`mdtests/guard_after_sibling_write.md`); an `unfold` names the cells it
+exposes the same way, and that projection evaluates the arm's memory clauses
+with the *constructor bindings* substituted as well as the resource's own
+parameters. A clause written over a pointer payload therefore denotes a cell
+the projection can name, whenever the selection came from a constructor premise
+that says what the payload holds. Without those substitutions the clause did
+not evaluate, the cell stayed unnamed, and a later C read of it across a write
+to a separately owned object minted a second load identity for one cell,
+leaving a guard over it undecided. The positive is
+`mdtests/guard_after_sibling_write_through_unfold.md` and the whole-function
+case is `mdtests/rb_replace_node.md`'s `Left` and `Right` frames. A selection
+that names only the variant supplies no bindings, and a payload no premise pins
+names no cell: `mdtests/guard_after_sibling_write_rejects_unknown_payload.md`.
+A read through a folded instance still refuses when the arm is not selected at
+all; nothing here grants ownership, which only an explicit `unfold` produces.
+
 If a fact reads mutable memory, the composite body must contain an owned memory
 resource covering that memory. This is what makes the fact stable while the
 resource is folded:

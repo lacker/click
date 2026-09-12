@@ -4190,6 +4190,9 @@ impl AnnotationLowerer<'_> {
         arguments: &[ContractExpression],
         environment: &SpecElaborationContext,
     ) -> Result<Vec<crate::kernel::SpecPureFunctionArgument>, String> {
+        let memory_independent = self
+            .click_function_environment
+            .is_memory_independent(definition.name());
         definition
             .parameters()
             .iter()
@@ -4208,7 +4211,20 @@ impl AnnotationLowerer<'_> {
                 ClickType::C(_) if parameter_is_click_array_ref(parameter) => {
                     let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
                     Ok(crate::kernel::SpecPureFunctionArgument::ArrayRef {
-                        memory: array_ref.memory,
+                        // A function that reads no memory is a function of
+                        // its argument values, so its pointer arguments are
+                        // anchored to one canonical snapshot instead of the
+                        // ambient one. Without this the same proposition is a
+                        // different term on either side of a C write, and a
+                        // `fold` cannot discharge a body fact that applies a
+                        // pure predicate to a pointer (gap 42).
+                        memory: if memory_independent {
+                            crate::kernel::SpecMemory::Fixed(
+                                crate::kernel::value_independent_click_memory(),
+                            )
+                        } else {
+                            array_ref.memory
+                        },
                         pointer: array_ref.pointer,
                         element_type: array_ref.element_type,
                     })

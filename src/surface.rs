@@ -4427,6 +4427,9 @@ impl PredicateEnvironment {
 struct ClickFunctionEnvironment {
     definitions: BTreeMap<String, ClickFunctionDefinition>,
     algebraic_type_definitions: BTreeMap<String, AlgebraicTypeDefinition>,
+    /// Functions whose value provably cannot depend on C memory contents.
+    /// See [`memory_independent_click_functions`].
+    memory_independent: BTreeSet<String>,
 }
 
 impl ClickFunctionEnvironment {
@@ -4447,11 +4450,209 @@ impl ClickFunctionEnvironment {
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
+            memory_independent: memory_independent_click_functions(definitions),
         }
     }
 
     fn get(&self, name: &str) -> Option<&ClickFunctionDefinition> {
         self.definitions.get(name)
+    }
+
+    /// Whether this function's result is a function of its argument *values*
+    /// alone. A pointer argument of such a function carries a memory snapshot
+    /// only as dead weight, and that snapshot would otherwise make the same
+    /// proposition a different term before and after any C write — which is
+    /// what stops a body fact such as `rb_parent_is(left_model, p) == 1` from
+    /// being discharged at a `fold` that follows one (gap 42).
+    fn is_memory_independent(&self, name: &str) -> bool {
+        self.memory_independent
+            .contains(generic_instance_source_name(name))
+    }
+}
+
+/// The declared name a possibly generic instance name came from. Generic
+/// instantiation mangles `f` into `f::<T>` without changing the body, so the
+/// body-derived classifications are looked up under the source name.
+fn generic_instance_source_name(name: &str) -> &str {
+    match name.find("::<") {
+        Some(index) => &name[..index],
+        None => name,
+    }
+}
+
+/// Click functions whose bodies, transitively, read no C memory.
+///
+/// The classification is deliberately conservative and syntactic: any field
+/// place, index, qualified global, snapshot selector, resource field or count,
+/// predicate call, or C fragment beyond a bare name or literal makes a
+/// function memory-dependent, and so does calling a memory-dependent or
+/// undeclared function. It is computed once per environment from the declared
+/// bodies, never on a verifier hot path.
+fn memory_independent_click_functions(definitions: &[ClickFunctionDefinition]) -> BTreeSet<String> {
+    let mut callers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut dependent: Vec<&str> = Vec::new();
+    let mut candidates: BTreeSet<String> = BTreeSet::new();
+    let declared = definitions
+        .iter()
+        .map(|definition| definition.name())
+        .collect::<BTreeSet<_>>();
+    for definition in definitions {
+        let mut callees = Vec::new();
+        let reads = contract_expression_reads_memory(definition.body(), &mut callees);
+        let unknown_callee = callees
+            .iter()
+            .any(|callee| !declared.contains(generic_instance_source_name(callee)));
+        if reads || unknown_callee {
+            dependent.push(definition.name());
+            continue;
+        }
+        candidates.insert(definition.name().to_string());
+        for callee in &callees {
+            let callee = generic_instance_source_name(callee);
+            let Some(declared_callee) = declared.get(callee) else {
+                continue;
+            };
+            callers
+                .entry(*declared_callee)
+                .or_default()
+                .push(definition.name());
+        }
+    }
+    // Propagate memory dependence backwards along the call graph, visiting
+    // each edge at most once.
+    while let Some(name) = dependent.pop() {
+        for caller in callers.get(name).map(Vec::as_slice).unwrap_or_default() {
+            if candidates.remove(*caller) {
+                dependent.push(caller);
+            }
+        }
+    }
+    candidates
+}
+
+fn contract_expression_reads_memory(
+    expression: &ContractExpression,
+    callees: &mut Vec<String>,
+) -> bool {
+    match expression {
+        ContractExpression::IntegerLiteral(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::CFragment(CExpression::Variable(_) | CExpression::Value(_)) => false,
+        // A memory read, a snapshot selector, a resource observation, or any
+        // C fragment richer than a name is conservatively memory-dependent.
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::ResourceField(_)
+        | ContractExpression::ResourceCount(_)
+        | ContractExpression::ResourceWildcard
+        | ContractExpression::CFragment(_)
+        | ContractExpression::Field { .. }
+        | ContractExpression::Index(_, _)
+        | ContractExpression::ArrayIndex { .. }
+        | ContractExpression::Old(_)
+        | ContractExpression::At { .. } => true,
+        ContractExpression::AlgebraicConstructor { arguments, .. }
+        | ContractExpression::SequenceLiteral(arguments) => arguments
+            .iter()
+            .any(|argument| contract_expression_reads_memory(argument, callees)),
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            contract_expression_reads_memory(scrutinee, callees)
+                || arms
+                    .iter()
+                    .any(|arm| contract_expression_reads_memory(&arm.body, callees))
+        }
+        ContractExpression::SequenceConcat(left, right)
+        | ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right) => {
+            contract_expression_reads_memory(left, callees)
+                || contract_expression_reads_memory(right, callees)
+        }
+        ContractExpression::Negate(inner) | ContractExpression::BitwiseNot(inner) => {
+            contract_expression_reads_memory(inner, callees)
+        }
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            click_proposition_reads_memory(condition, callees)
+                || contract_expression_reads_memory(then_branch, callees)
+                || contract_expression_reads_memory(else_branch, callees)
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            contract_expression_reads_memory(start, callees)
+                || contract_expression_reads_memory(end, callees)
+                || contract_expression_reads_memory(initial, callees)
+                || contract_expression_reads_memory(body, callees)
+        }
+        ContractExpression::Let { value, body, .. } => {
+            contract_expression_reads_memory(value, callees)
+                || contract_expression_reads_memory(body, callees)
+        }
+        ContractExpression::Call { name, arguments } => {
+            callees.push(name.clone());
+            arguments
+                .iter()
+                .any(|argument| contract_expression_reads_memory(argument, callees))
+        }
+    }
+}
+
+fn click_proposition_reads_memory(
+    proposition: &ClickProposition,
+    callees: &mut Vec<String>,
+) -> bool {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            contract_expression_reads_memory(left, callees)
+                || contract_expression_reads_memory(right, callees)
+        }
+        ClickProposition::FloatClassification { expression, .. }
+        | ClickProposition::Defined { expression } => {
+            contract_expression_reads_memory(expression, callees)
+        }
+        // Resource separation, containment, loadability, snapshots, and
+        // predicates all observe the C state.
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::At { .. }
+        | ClickProposition::PredicateCall { .. } => true,
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            click_proposition_reads_memory(left, callees)
+                || click_proposition_reads_memory(right, callees)
+        }
+        ClickProposition::Not(inner) => click_proposition_reads_memory(inner, callees),
+        ClickProposition::ForAll { body, .. } | ClickProposition::Exists { body, .. } => {
+            click_proposition_reads_memory(body, callees)
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            contract_expression_reads_memory(start, callees)
+                || contract_expression_reads_memory(end, callees)
+                || click_proposition_reads_memory(body, callees)
+        }
     }
 }
 
