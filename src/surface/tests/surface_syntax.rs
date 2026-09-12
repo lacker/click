@@ -1279,6 +1279,24 @@ fn special_arithmetic_certificate_round_trips_and_rejects_bad_premises() {
 }
 
 #[test]
+fn special_certificate_rejects_deep_premise_identity_without_recursive_walk() {
+    let nested = format!("{}aligned(p, 8)", "aligned(p, 8) and ".repeat(300),);
+    let source = format!(
+        "theorem deep_special_certificate(p: int32) {{ ensures {nested} by {{\
+            arithmetic_certificate special {{\
+                premise 0: {nested} => {nested};\
+                pointer_alignment premise 0 => {nested};\
+                conclusion 0;\
+            }}\
+        }} }}"
+    );
+    assert!(
+        parse(&source).is_err(),
+        "deep explicit certificate premise identity must fail closed before recursive equality"
+    );
+}
+
+#[test]
 fn float_reflexive_smart_expansion_has_one_finite_premise_and_rechecks() {
     let source = r#"
         theorem finite_float_reflexive(value: float) {

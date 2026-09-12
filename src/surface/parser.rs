@@ -20,6 +20,324 @@ pub(super) struct QualifiedCObject {
 pub(super) const PARENTHESIS_NESTING_LIMIT: usize = 16;
 pub(super) const MATCH_NESTING_LIMIT: usize = 16;
 
+/// Check that a pair of source propositions is small enough for the derived
+/// leaf comparisons used by the parser.  The parser owns source-shaped trees,
+/// so an explicit certificate must not hand an unbounded proposition to
+/// `PartialEq` (which is recursive for the boxed proposition spine).  Walk
+/// the proposition and contract-expression spines iteratively first; the
+/// final equality is then over a bounded tree and cannot be used as an
+/// attacker-controlled work or stack amplifier.
+fn bounded_click_proposition_equal(left: &ClickProposition, right: &ClickProposition) -> bool {
+    let mut propositions = vec![(left, right)];
+    let mut work = 0usize;
+    while let Some((left, right)) = propositions.pop() {
+        work = work.saturating_add(1);
+        if work > 256 || crate::instrumentation::deadline_exceeded_with_work(1) {
+            return false;
+        }
+        match (left, right) {
+            (ClickProposition::And(a, b), ClickProposition::And(c, d))
+            | (ClickProposition::Or(a, b), ClickProposition::Or(c, d))
+            | (ClickProposition::Implies(a, b), ClickProposition::Implies(c, d)) => {
+                propositions.push((a, c));
+                propositions.push((b, d));
+            }
+            (ClickProposition::Not(a), ClickProposition::Not(b)) => propositions.push((a, b)),
+            (
+                ClickProposition::At {
+                    selector: left_selector,
+                    proposition: left_body,
+                },
+                ClickProposition::At {
+                    selector: right_selector,
+                    proposition: right_body,
+                },
+            ) if left_selector == right_selector => propositions.push((left_body, right_body)),
+            (
+                ClickProposition::ForAll {
+                    click_type: left_type,
+                    name: left_name,
+                    body: left_body,
+                },
+                ClickProposition::ForAll {
+                    click_type: right_type,
+                    name: right_name,
+                    body: right_body,
+                },
+            )
+            | (
+                ClickProposition::Exists {
+                    click_type: left_type,
+                    name: left_name,
+                    body: left_body,
+                },
+                ClickProposition::Exists {
+                    click_type: right_type,
+                    name: right_name,
+                    body: right_body,
+                },
+            ) if left_type == right_type && left_name == right_name => {
+                propositions.push((left_body, right_body));
+            }
+            (
+                ClickProposition::RangeAll {
+                    start: left_start,
+                    end: left_end,
+                    item: left_item,
+                    body: left_body,
+                },
+                ClickProposition::RangeAll {
+                    start: right_start,
+                    end: right_end,
+                    item: right_item,
+                    body: right_body,
+                },
+            )
+            | (
+                ClickProposition::RangeAny {
+                    start: left_start,
+                    end: left_end,
+                    item: left_item,
+                    body: left_body,
+                },
+                ClickProposition::RangeAny {
+                    start: right_start,
+                    end: right_end,
+                    item: right_item,
+                    body: right_body,
+                },
+            ) if left_item == right_item
+                && bounded_contract_expression(left_start)
+                && bounded_contract_expression(right_start)
+                && bounded_contract_expression(left_end)
+                && bounded_contract_expression(right_end) =>
+            {
+                propositions.push((left_body, right_body));
+            }
+            (
+                ClickProposition::Comparison {
+                    left: left_left,
+                    right: left_right,
+                    ..
+                },
+                ClickProposition::Comparison {
+                    left: right_left,
+                    right: right_right,
+                    ..
+                },
+            ) => {
+                if !bounded_contract_expression(left_left)
+                    || !bounded_contract_expression(left_right)
+                    || !bounded_contract_expression(right_left)
+                    || !bounded_contract_expression(right_right)
+                {
+                    return false;
+                }
+            }
+            (
+                ClickProposition::Defined {
+                    expression: left_expression,
+                },
+                ClickProposition::Defined {
+                    expression: right_expression,
+                },
+            ) => {
+                if !bounded_contract_expression(left_expression)
+                    || !bounded_contract_expression(right_expression)
+                {
+                    return false;
+                }
+            }
+            (
+                ClickProposition::FloatClassification {
+                    expression: left_expression,
+                    ..
+                },
+                ClickProposition::FloatClassification {
+                    expression: right_expression,
+                    ..
+                },
+            ) => {
+                if !bounded_contract_expression(left_expression)
+                    || !bounded_contract_expression(right_expression)
+                {
+                    return false;
+                }
+            }
+            (ClickProposition::Separate { .. }, ClickProposition::Separate { .. })
+            | (ClickProposition::Contains { .. }, ClickProposition::Contains { .. })
+            | (ClickProposition::Loadable { .. }, ClickProposition::Loadable { .. })
+            | (ClickProposition::PredicateCall { .. }, ClickProposition::PredicateCall { .. }) => {
+                return false;
+            }
+            _ => return false,
+        }
+    }
+    left == right
+}
+
+fn bounded_contract_expression(root: &ContractExpression) -> bool {
+    let mut pending = vec![root];
+    let mut work = 0usize;
+    while let Some(expression) = pending.pop() {
+        work = work.saturating_add(1);
+        if work > 256 || crate::instrumentation::deadline_exceeded_with_work(1) {
+            return false;
+        }
+        match expression {
+            ContractExpression::AlgebraicConstructor { arguments, .. }
+            | ContractExpression::SequenceLiteral(arguments)
+            | ContractExpression::Call { arguments, .. } => pending.extend(arguments),
+            ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+                pending.push(scrutinee);
+                pending.extend(arms.iter().map(|arm| &arm.body));
+            }
+            ContractExpression::SequenceConcat(left, right)
+            | ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right)
+            | ContractExpression::Divide(left, right)
+            | ContractExpression::Remainder(left, right)
+            | ContractExpression::ShiftLeft(left, right)
+            | ContractExpression::ShiftRight(left, right)
+            | ContractExpression::BitwiseAnd(left, right)
+            | ContractExpression::BitwiseOr(left, right)
+            | ContractExpression::BitwiseXor(left, right)
+            | ContractExpression::Index(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            ContractExpression::Field { base, lowered, .. } => {
+                pending.push(base);
+                if !bounded_c_expression(lowered) {
+                    return false;
+                }
+            }
+            ContractExpression::Old(base)
+            | ContractExpression::At {
+                expression: base, ..
+            }
+            | ContractExpression::Negate(base)
+            | ContractExpression::BitwiseNot(base) => pending.push(base),
+            ContractExpression::ArrayIndex {
+                base,
+                indexes,
+                lowered,
+            } => {
+                pending.push(base);
+                if !bounded_c_expression(lowered)
+                    || indexes.iter().any(|index| !bounded_c_expression(index))
+                {
+                    return false;
+                }
+            }
+            ContractExpression::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if !bounded_click_proposition_equal(condition, condition) {
+                    return false;
+                }
+                pending.push(then_branch);
+                pending.push(else_branch);
+            }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                pending.push(start);
+                pending.push(end);
+                pending.push(initial);
+                pending.push(body);
+            }
+            ContractExpression::Let { value, body, .. } => {
+                pending.push(value);
+                pending.push(body);
+            }
+            ContractExpression::IntegerLiteral(_)
+            | ContractExpression::ResourceField(_)
+            | ContractExpression::AlgebraicVariable { .. }
+            | ContractExpression::Binding(_)
+            | ContractExpression::CBinding(_)
+            | ContractExpression::ResourceCount(_)
+            | ContractExpression::ResourceWildcard => {}
+            ContractExpression::QualifiedC { lowered, .. } => {
+                if !bounded_c_expression(lowered) {
+                    return false;
+                }
+            }
+            ContractExpression::CFragment(expression) => {
+                if !bounded_c_expression(expression) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn bounded_c_expression(root: &CExpression) -> bool {
+    let mut pending = vec![root];
+    let mut work = 0usize;
+    while let Some(expression) = pending.pop() {
+        work = work.saturating_add(1);
+        if work > 256 || crate::instrumentation::deadline_exceeded_with_work(1) {
+            return false;
+        }
+        match expression {
+            CExpression::Cast { expression, .. }
+            | CExpression::FloatNegate(expression)
+            | CExpression::FloatClassification { expression, .. }
+            | CExpression::AddressOf(expression)
+            | CExpression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | CExpression::Not(expression)
+            | CExpression::BitwiseNot(expression)
+            | CExpression::Load(expression) => pending.push(expression),
+            CExpression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                pending.push(condition);
+                pending.push(then_branch);
+                pending.push(else_branch);
+            }
+            CExpression::LessThan(left, right)
+            | CExpression::LessEqual(left, right)
+            | CExpression::GreaterThan(left, right)
+            | CExpression::GreaterEqual(left, right)
+            | CExpression::Equal(left, right)
+            | CExpression::NotEqual(left, right)
+            | CExpression::And(left, right)
+            | CExpression::Or(left, right)
+            | CExpression::Add(left, right)
+            | CExpression::Subtract(left, right)
+            | CExpression::Multiply(left, right)
+            | CExpression::Divide(left, right)
+            | CExpression::Remainder(left, right)
+            | CExpression::ShiftLeft(left, right)
+            | CExpression::ShiftRight(left, right)
+            | CExpression::BitwiseAnd(left, right)
+            | CExpression::BitwiseOr(left, right)
+            | CExpression::BitwiseXor(left, right)
+            | CExpression::Index(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            CExpression::TypedLoad { pointer, .. } => pending.push(pointer),
+            CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
+        }
+    }
+    true
+}
+
 /// The index shape and scalar element type of a C global or static array
 /// visible to one function's contract. Resource lowering only knows parameter
 /// types, so the element type travels with the name to give a byte or
@@ -4776,7 +5094,7 @@ impl Parser {
                     self.expect(Token::FatArrow)?;
                     let result = self.parse_proposition()?;
                     self.expect(Token::Semicolon)?;
-                    if proposition != result {
+                    if !bounded_click_proposition_equal(&proposition, &result) {
                         return Err(self.error(format!(
                             "special arithmetic premise {index} must repeat the same proposition on both sides"
                         )));

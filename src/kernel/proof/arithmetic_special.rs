@@ -585,6 +585,10 @@ impl SpecialArithmeticCertificate {
                 ) {
                     return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
                 }
+                let mut seen_bounds = HashSet::new();
+                if bounds.iter().any(|bound| !seen_bounds.insert(*bound)) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
+                }
                 let relation_proposition = premises
                     .get(*relation)
                     .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
@@ -626,6 +630,13 @@ impl SpecialArithmeticCertificate {
                     alignments.len().saturating_add(1),
                 ) {
                     return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let mut seen_alignments = HashSet::new();
+                if alignments
+                    .iter()
+                    .any(|alignment| !seen_alignments.insert(*alignment))
+                {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
                 }
                 let relation = premises
                     .get(*relation)
@@ -2252,6 +2263,68 @@ mod tests {
             Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
                 | Err(SpecialArithmeticCheckError::InvalidPremise(_))
         ));
+    }
+
+    #[test]
+    fn special_certificate_rejects_duplicate_reference_lists() {
+        let relation = pointer_eq(
+            PointerOffsetTerm::Constant(0),
+            PointerOffsetTerm::Constant(0),
+        );
+        let bound = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::Constant(0)),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerTranslation {
+                    relation: 0,
+                    bounds: vec![1, 1],
+                    result: relation.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&relation, &[relation.clone(), bound])
+            .is_err(),
+            "translation bounds must not repeat a premise"
+        );
+
+        let pointer = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(pointer.clone()));
+        let word_relation = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::Variable(crate::kernel::Variable(901)),
+                Bitvector32Term::uint64_add(address.clone(), Bitvector32Term::UInt64Constant(1)),
+            ),
+            true,
+        );
+        let alignment = Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer, 8), true);
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_or(
+                    Bitvector32Term::Variable(crate::kernel::Variable(901)),
+                    Bitvector32Term::UInt64Constant(2),
+                ),
+                Bitvector32Term::uint64_add(address, Bitvector32Term::UInt64Constant(3)),
+            ),
+            true,
+        );
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![1, 1],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, &[word_relation, alignment])
+            .is_err(),
+            "tagged-word alignment evidence must not repeat a premise"
+        );
     }
 
     #[test]
