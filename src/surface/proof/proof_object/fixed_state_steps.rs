@@ -1729,11 +1729,11 @@ impl<'a> Proof<'a> {
             (source.clone(), target.clone(), premises.to_vec())
         } else {
             (
-                self.substitute_goal_surface_bindings_in_proposition(source)?,
-                self.substitute_goal_surface_bindings_in_proposition(target)?,
+                self.substitute_fixed_state_locals_in_proposition(source)?,
+                self.substitute_fixed_state_locals_in_proposition(target)?,
                 premises
                     .iter()
-                    .map(|premise| self.substitute_goal_surface_bindings_in_proposition(premise))
+                    .map(|premise| self.substitute_fixed_state_locals_in_proposition(premise))
                     .collect::<Result<Vec<_>, _>>()?,
             )
         };

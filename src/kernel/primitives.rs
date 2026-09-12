@@ -1777,6 +1777,20 @@ pub struct CLoopEffectCheck {
     pub(super) effect: CLoopEffect,
     pub(super) span: CLoopEffectSpan,
     pub(super) context: Option<String>,
+    /// Semantic provenance is typed so diagnostics cannot be mistaken for
+    /// authority.  Inherited resource frames are replaced by
+    /// `validated_ranges` at the function entry before loop proof starts.
+    pub(super) origin: CLoopEffectOrigin,
+    pub(super) validated_ranges: Option<Vec<CMemoryRange>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CLoopEffectOrigin {
+    #[default]
+    Unspecified,
+    Explicit,
+    DeclaredResource,
+    InheritedResourceDerived,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2144,12 +2158,18 @@ pub struct CFunctionContractInterface {
     /// `requires` clause, or `None` for a generated definedness clause.
     pub(super) contract_requirement_sources: ContractRequirementSources,
     pub(crate) contract_ensures: Vec<SpecProposition>,
-    /// Checked effect information. Resource-derived frames deliberately share
-    /// this carrier with explicit `Effect` frames, while retaining their
-    /// distinct certification rule in `contract_effect_claim_required`.
+    /// Explicit checked effect information, or source-oriented metadata for
+    /// resource-derived frames. Resource-derived memory authority is computed
+    /// from the checked transition; this vector remains available to body and
+    /// diagnostic consumers without becoming a modular-call input.
     pub(crate) contract_mutable: Vec<CMemorySegment>,
+    /// The exact surface-derived resource frame retained for loop metadata.
+    /// Keeping it separate lets the derived-frame marker reject accidental
+    /// mixtures with startup or explicit effect segments.
+    pub(crate) resource_derived_mutable_segments: Vec<CMemorySegment>,
     pub(crate) contract_effect_claim_required: bool,
     pub(crate) resource_derived_mutable_frame: bool,
+    pub(crate) resource_derived_frame_mixed: bool,
     pub(crate) contract_claims: Vec<CFunctionContractClaim>,
     pub(crate) opaque_contract_supported: bool,
     pub(crate) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
@@ -5000,6 +5020,31 @@ pub struct PureFactContext {
         crate::persistent::PersistentMap<Bitvector32Term, ConditionTerm>,
     >,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
+    /// What an exact fact says about the null-ness of a pointer, keyed by
+    /// that pointer's offset term and carrying the block the fact named
+    /// together with the fact itself. Derived incrementally from
+    /// `condition_facts`: every equality against the null pointer files its
+    /// other side here. A comparison of two pointers in one block is a
+    /// `PointerOffsetEqual` that no longer names the block, so this index is
+    /// what lets "one of these is null and the other is not" be two keyed
+    /// lookups instead of a scan. The conclusion is about the offset terms
+    /// alone: if `B + left` is null and `B + right` is not, then `left` and
+    /// `right` are different offsets whatever block the query came from.
+    pub(super) null_pointer_offsets: crate::persistent::PersistentMap<
+        PointerOffsetTerm,
+        crate::persistent::PersistentMap<(PointerBlock, bool), ConditionTerm>,
+    >,
+    /// Addresses of the first elements of two separated memory ranges of
+    /// one block, keyed by the unordered pair and carrying the separation
+    /// facts that state it. Mirrors `memory_separation_facts` and
+    /// `composition_separation_facts` under a key a pointer comparison can
+    /// build. Each range holds the element at its own anchor, so two
+    /// separated ranges cannot share one anchor -- again a statement about
+    /// the offset terms alone, whatever block the comparison came from.
+    pub(super) separated_anchor_offsets: crate::persistent::PersistentMap<
+        (PointerOffsetTerm, PointerOffsetTerm),
+        crate::persistent::PersistentSet<Proposition>,
+    >,
     /// Exact signed-order bounds keyed by either endpoint — under the term
     /// the fact wrote and, when different, its canonical form as an alias.
     /// Each entry carries the fact's own endpoint term first, so evidence

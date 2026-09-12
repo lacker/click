@@ -203,6 +203,30 @@ pub fn conditions_equal_ignoring_memories(left: &ConditionTerm, right: &Conditio
     conditions_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
 }
 
+/// The address of a memory range's first element, when the range provably
+/// has one.
+///
+/// This anchor is what makes a separation say something about two pointers:
+/// each range holds the element at its own anchor, so two separated ranges
+/// cannot have the same anchor. A range that may be empty holds nothing and
+/// states nothing about its anchor, so both endpoints must be constants that
+/// settle that here, with no reasoning and no wrap-around question.
+///
+/// The anchor is computed the way any element address is, which also
+/// normalizes a range that a composition re-expressed against another
+/// object's base back to the address the pointer itself carries.
+fn memory_range_anchor(range: &CMemoryRange) -> Option<PointerOffsetTerm> {
+    let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
+        return None;
+    };
+    (range.element_width() > 0 && (start as i32) < (end as i32)).then(|| {
+        range
+            .base()
+            .offset_by_elements(range.start().clone(), range.element_width())
+            .offset
+    })
+}
+
 pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResource) -> bool {
     let values_match = |left: &CValue, right: &CValue| match (left, right) {
         (CValue::Int32(left), CValue::Int32(right))
@@ -1536,6 +1560,135 @@ impl PureFactContext {
         }
     }
 
+    /// The pointer whose null-ness one condition fact decides, as the
+    /// non-null-block side of an equality against the null pointer.
+    ///
+    /// Only an equality against the null pointer itself qualifies. A pointer
+    /// already displaced from null is not a null test, and a fact relating
+    /// two pointers of the null block says nothing about either being null.
+    fn condition_as_null_pointer_fact(condition: &ConditionTerm) -> Option<&Pointer> {
+        let ConditionTerm::PointerEqual(left, right) = condition else {
+            return None;
+        };
+        let null = Pointer::null();
+        match (left.as_ref() == &null, right.as_ref() == &null) {
+            (true, false) => Some(right.as_ref()),
+            (false, true) => Some(left.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Files or withdraws one null-ness fact under its pointer's offset.
+    ///
+    /// Touches exactly the one offset key the fact names, so a context that
+    /// gains a null test pays for that test alone.
+    fn adjust_null_pointer_offset(&mut self, condition: &ConditionTerm, value: bool, insert: bool) {
+        let Some(pointer) = Self::condition_as_null_pointer_fact(condition) else {
+            return;
+        };
+        let (block, offset) = (pointer.block.clone(), pointer.offset.clone());
+        let key = (block, value);
+        let blocks = self
+            .null_pointer_offsets
+            .get(&offset)
+            .cloned()
+            .unwrap_or_default();
+        let blocks = if insert {
+            blocks.with_inserted(key, condition.clone())
+        } else {
+            blocks.without_key(&key)
+        };
+        self.null_pointer_offsets = if blocks.is_empty() {
+            self.null_pointer_offsets.without_key(&offset)
+        } else {
+            self.null_pointer_offsets.with_inserted(offset, blocks)
+        };
+    }
+
+    pub(super) fn rebuild_null_pointer_offsets(&mut self) {
+        self.null_pointer_offsets = crate::persistent::PersistentMap::default();
+        let facts = self
+            .condition_facts
+            .iter()
+            .map(|(condition, value)| (condition.clone(), *value))
+            .collect::<Vec<_>>();
+        for (condition, value) in facts {
+            self.adjust_null_pointer_offset(&condition, value, true);
+        }
+    }
+
+    pub(super) fn separated_anchor_key(
+        left: PointerOffsetTerm,
+        right: PointerOffsetTerm,
+    ) -> (PointerOffsetTerm, PointerOffsetTerm) {
+        if left <= right {
+            (left, right)
+        } else {
+            (right, left)
+        }
+    }
+
+    /// Files or withdraws one separation under its two anchor offsets.
+    ///
+    /// Both ranges must share a block and have a first element: only then
+    /// does the separation say the two anchors are different addresses.
+    fn adjust_separated_anchor_offsets(
+        &mut self,
+        proposition: &Proposition,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+        insert: bool,
+    ) {
+        if left.base().block != right.base().block {
+            return;
+        }
+        let (Some(left_anchor), Some(right_anchor)) =
+            (memory_range_anchor(left), memory_range_anchor(right))
+        else {
+            return;
+        };
+        let key = Self::separated_anchor_key(left_anchor, right_anchor);
+        let facts = self
+            .separated_anchor_offsets
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        let facts = if insert {
+            facts.with_value(proposition.clone())
+        } else {
+            facts.without_value(proposition)
+        };
+        self.separated_anchor_offsets = if facts.is_empty() {
+            self.separated_anchor_offsets.without_key(&key)
+        } else {
+            self.separated_anchor_offsets.with_inserted(key, facts)
+        };
+    }
+
+    /// Rebuilds the anchor separation index from the two sources it mirrors:
+    /// the stated memory separations and the same-block pairs projected from
+    /// the resource compositions.
+    pub(super) fn rebuild_separated_anchor_offsets(&mut self) {
+        self.separated_anchor_offsets = crate::persistent::PersistentMap::default();
+        let stated = self
+            .prop_facts
+            .iter()
+            .filter_map(|proposition| {
+                Self::proposition_memory_separation(proposition)
+                    .map(|(left, right)| (proposition.clone(), left, right))
+            })
+            .collect::<Vec<_>>();
+        let projected = self
+            .composition_separation_facts
+            .values()
+            .flatten()
+            .map(|(proposition, left, right, _)| (proposition.clone(), left.clone(), right.clone()))
+            .collect::<Vec<_>>();
+        for (proposition, left, right) in stated.into_iter().chain(projected) {
+            self.adjust_separated_anchor_offsets(&proposition, &left, &right, true);
+        }
+    }
+
     pub(super) fn rebuild_signed_order_bounds(&mut self) {
         self.signed_order_bounds = crate::persistent::PersistentMap::default();
         let facts = self
@@ -1809,6 +1962,7 @@ impl PureFactContext {
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.memory_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.nonmemory_separation_facts = std::sync::Arc::new(Vec::new());
+        self.separated_anchor_offsets = crate::persistent::PersistentMap::default();
         self.recompute_content_fingerprint();
     }
 
@@ -2256,6 +2410,7 @@ impl PureFactContext {
         let Some(pair) = Self::proposition_memory_separation(proposition) else {
             return;
         };
+        self.adjust_separated_anchor_offsets(proposition, &pair.0, &pair.1, insert);
         let key = Self::memory_separation_key(&pair.0.base().block, &pair.1.base().block);
         let index = std::sync::Arc::make_mut(&mut self.memory_separation_facts);
         if insert {
@@ -2289,6 +2444,10 @@ impl PureFactContext {
             self.adjust_memory_separation_fact(&proposition, true);
             self.adjust_nonmemory_separation_fact(&proposition, true);
         }
+        // The projected composition pairs survive this rebuild, so restore
+        // the anchor index from both of its sources rather than from the
+        // stated facts alone.
+        self.rebuild_separated_anchor_offsets();
     }
 
     /// Maintains the residual separation-fact list: `CResourceSeparate`
@@ -2319,12 +2478,20 @@ impl PureFactContext {
             return;
         }
         let index = std::sync::Arc::make_mut(&mut self.composition_separation_facts);
+        let mut added = Vec::new();
         for entry in entries {
             let key = Self::memory_separation_key(&entry.1.base().block, &entry.2.base().block);
             let bucket = index.entry(key).or_default();
             if !bucket.iter().any(|existing| existing.0 == entry.0) {
+                added.push((entry.0.clone(), entry.1.clone(), entry.2.clone()));
                 bucket.push((entry.0, entry.1, entry.2, resources.clone()));
             }
+        }
+        // Mirror only the pairs this projection added, so the anchor index
+        // costs what the new composition states and not what the context
+        // already held.
+        for (proposition, left, right) in added {
+            self.adjust_separated_anchor_offsets(&proposition, &left, &right, true);
         }
     }
 
@@ -2529,6 +2696,7 @@ impl PureFactContext {
     pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
+        self.separated_anchor_offsets = crate::persistent::PersistentMap::default();
         self.retain_proposition_facts(|proposition| {
             !matches!(
                 proposition,
@@ -2715,6 +2883,7 @@ impl PureFactContext {
             );
             self.adjust_bitvector64_equality(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
+            self.adjust_null_pointer_offset(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
         }
         self.adjust_stated_proposition_index(
@@ -2722,6 +2891,7 @@ impl PureFactContext {
             true,
         );
         self.adjust_signed_order_bound(&condition, value, true);
+        self.adjust_null_pointer_offset(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
@@ -2832,6 +3002,7 @@ impl PureFactContext {
             restricted.insert_proposition_fact(proposition.clone());
         }
         restricted.rebuild_signed_order_bounds();
+        restricted.rebuild_null_pointer_offsets();
         restricted.rebuild_memory_load_condition_facts();
         restricted.recompute_content_fingerprint();
         restricted
@@ -2887,6 +3058,7 @@ impl PureFactContext {
             false,
         );
         self.adjust_signed_order_bound(condition, assumed, false);
+        self.adjust_null_pointer_offset(condition, assumed, false);
         self.rebuild_memory_load_condition_facts();
         self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), assumed));
     }
@@ -2918,6 +3090,7 @@ impl PureFactContext {
                 |facts, (condition, value)| facts.with_inserted(condition.clone(), *value),
             );
         assumptions.rebuild_signed_order_bounds();
+        assumptions.rebuild_null_pointer_offsets();
         assumptions.rebuild_memory_load_condition_facts();
         assumptions.retain_proposition_facts(|proposition| {
             !proposition_has_free_bitvector_variable(proposition, variable)

@@ -35,6 +35,124 @@ pub(crate) fn resolve_minted_load_pointer(
     resolved
 }
 
+#[cfg(test)]
+mod resource_frame_substitution_tests {
+    use super::*;
+
+    fn inherited_check(range: CMemoryRange) -> CLoopEffectCheck {
+        CLoopEffectCheck {
+            effect: CLoopEffect::Mutable(Vec::new()),
+            span: CLoopEffectSpan::Whole,
+            context: None,
+            origin: CLoopEffectOrigin::InheritedResourceDerived,
+            validated_ranges: Some(vec![range]),
+        }
+    }
+
+    #[test]
+    fn bitvector_substitution_rewrites_validated_inherited_ranges() {
+        let from = Variable(71_001);
+        let range = CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::Concrete("substitution:range".into()),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(Bitvector32Term::Variable(from)),
+                    byte_width: 4,
+                },
+            },
+            Bitvector32Term::Variable(from),
+            Bitvector32Term::Add(
+                Box::new(Bitvector32Term::Variable(from)),
+                Box::new(Bitvector32Term::Constant(1)),
+            ),
+        );
+        let statement = CStatement::While {
+            condition: c_int32_literal(0),
+            invariant: Vec::new(),
+            invariant_checks: Vec::new(),
+            effect_checks: vec![inherited_check(range)],
+            resource_specs: Vec::new(),
+            ranking_measures: Vec::new(),
+            structural_measure: None,
+            body: Box::new(CStatement::Skip),
+            do_while: false,
+        };
+        let substituted = substitute_bitvector_variable_in_c_statement(
+            &statement,
+            from,
+            &Bitvector32Term::Constant(4),
+        );
+        let CStatement::While { effect_checks, .. } = substituted else {
+            panic!("substitution changed the statement shape");
+        };
+        let actual = effect_checks[0]
+            .validated_ranges()
+            .expect("validated carrier must be retained");
+        assert_eq!(actual[0].start, Bitvector32Term::Constant(4));
+        assert_eq!(actual[0].end, Bitvector32Term::Constant(5));
+        assert_eq!(actual[0].base.offset, PointerOffsetTerm::Constant(16));
+    }
+
+    #[test]
+    fn pointer_substitution_rewrites_validated_ranges_and_derived_interface() {
+        let from = Variable(71_002);
+        let replacement = Pointer {
+            block: PointerBlock::Concrete("substitution:replacement".into()),
+            offset: PointerOffsetTerm::Constant(2),
+        };
+        let range = CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::Symbolic(from),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let statement = CStatement::While {
+            condition: c_int32_literal(0),
+            invariant: Vec::new(),
+            invariant_checks: Vec::new(),
+            effect_checks: vec![inherited_check(range)],
+            resource_specs: Vec::new(),
+            ranking_measures: Vec::new(),
+            structural_measure: None,
+            body: Box::new(CStatement::Skip),
+            do_while: false,
+        };
+        let substituted =
+            substitute_pointer_variable_in_c_statement(&statement, from, &replacement);
+        let CStatement::While { effect_checks, .. } = substituted else {
+            panic!("substitution changed the statement shape");
+        };
+        assert_eq!(
+            effect_checks[0].validated_ranges().unwrap()[0].base.offset,
+            replacement.offset
+        );
+
+        let derived_segment = CMemorySegment::new(
+            CExpression::Value(CValue::pointer(Pointer {
+                block: PointerBlock::Symbolic(from),
+                offset: PointerOffsetTerm::Constant(0),
+            })),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        );
+        let function = CFunction::new(CType::Void, "substitution", Vec::new(), statement)
+            .with_resource_summary(Vec::new(), Vec::new())
+            .with_resource_derived_mutable_segments(vec![derived_segment])
+            .with_resource_derived_mutable_frame();
+        let substituted = substitute_pointer_variable_in_c_function(&function, from, &replacement);
+        assert!(substituted.resource_derived_mutable_frame());
+        assert_eq!(
+            substituted
+                .contract_interface()
+                .resource_derived_mutable_segments[0]
+                .base,
+            CExpression::Value(CValue::pointer(replacement))
+        );
+    }
+}
+
 /// Rewrites a havoced symbolic pointer local through one explicit pointer
 /// equality. The equality is deliberately limited to an exact fact and one
 /// hop: resource lookup can use the concrete block's index without turning
@@ -2645,6 +2763,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
                     effect: substitute_bitvector_variable_in_loop_effect(check.effect(), from, to),
                     span: check.span,
                     context: check.context.clone(),
+                    origin: check.origin,
+                    validated_ranges: check.validated_ranges.as_ref().map(|ranges| {
+                        ranges
+                            .iter()
+                            .map(|range| {
+                                substitute_bitvector_variable_in_c_memory_range(range, from, to)
+                            })
+                            .collect()
+                    }),
                 })
                 .collect(),
             do_while: *do_while,
@@ -3716,16 +3843,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
     interface.contract_mutable = function
         .contract_mutable()
         .iter()
-        .map(|segment| CMemorySegment {
-            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
-            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
-            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
-            element_width: segment.element_width,
-            guard: segment
-                .guard
-                .as_ref()
-                .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
-        })
+        .map(|segment| substitute_bitvector_variable_in_c_memory_segment(segment, from, to))
+        .collect();
+    interface.resource_derived_mutable_segments = function
+        .contract_interface()
+        .resource_derived_mutable_segments
+        .iter()
+        .map(|segment| substitute_bitvector_variable_in_c_memory_segment(segment, from, to))
         .collect();
     interface.composite_resource_definitions = function
         .composite_resource_definitions()
@@ -3938,6 +4062,23 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_memory_range(
         substitute_bitvector_variable(&range.start, from, to),
         substitute_bitvector_variable(&range.end, from, to),
     )
+}
+
+fn substitute_bitvector_variable_in_c_memory_segment(
+    segment: &CMemorySegment,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> CMemorySegment {
+    CMemorySegment {
+        base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+        start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+        end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+        element_width: segment.element_width,
+        guard: segment
+            .guard
+            .as_ref()
+            .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
+    }
 }
 
 pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(
@@ -5553,6 +5694,15 @@ fn substitute_pointer_variable_in_c_statement(
                     effect: substitute_pointer_variable_in_loop_effect(check.effect(), from, to),
                     span: check.span,
                     context: check.context.clone(),
+                    origin: check.origin,
+                    validated_ranges: check.validated_ranges.as_ref().map(|ranges| {
+                        ranges
+                            .iter()
+                            .map(|range| {
+                                substitute_pointer_variable_in_c_memory_range(range, from, to)
+                            })
+                            .collect()
+                    }),
                 })
                 .collect(),
             do_while: *do_while,
@@ -5863,6 +6013,23 @@ fn substitute_pointer_variable_in_c_memory_range(
         range.start.clone(),
         range.end.clone(),
     )
+}
+
+fn substitute_pointer_variable_in_c_memory_segment(
+    segment: &CMemorySegment,
+    from: Variable,
+    to: &Pointer,
+) -> CMemorySegment {
+    CMemorySegment {
+        base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
+        start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),
+        end: substitute_pointer_variable_in_c_expression(&segment.end, from, to),
+        element_width: segment.element_width,
+        guard: segment
+            .guard
+            .as_ref()
+            .map(|guard| substitute_pointer_variable_in_spec_proposition(guard, from, to)),
+    }
 }
 
 fn substitute_pointer_variable_in_memory(
@@ -6711,16 +6878,13 @@ fn substitute_pointer_variable_in_c_function(
     interface.contract_mutable = function
         .contract_mutable()
         .iter()
-        .map(|segment| CMemorySegment {
-            base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
-            start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),
-            end: substitute_pointer_variable_in_c_expression(&segment.end, from, to),
-            element_width: segment.element_width,
-            guard: segment
-                .guard
-                .as_ref()
-                .map(|guard| substitute_pointer_variable_in_spec_proposition(guard, from, to)),
-        })
+        .map(|segment| substitute_pointer_variable_in_c_memory_segment(segment, from, to))
+        .collect();
+    interface.resource_derived_mutable_segments = function
+        .contract_interface()
+        .resource_derived_mutable_segments
+        .iter()
+        .map(|segment| substitute_pointer_variable_in_c_memory_segment(segment, from, to))
         .collect();
     interface.composite_resource_definitions = function
         .composite_resource_definitions()

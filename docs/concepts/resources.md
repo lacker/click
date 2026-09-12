@@ -433,6 +433,15 @@ These steps are bounded by design. A proof that needs facts inside a nested
 composite resource should name the path with repeated `observe(...)` steps
 instead of relying on `auto` to search through every possible nested body.
 
+A contract clause speaks about parameters, so `consumes t: tree_at(root);`
+names the tree at the entry argument. These tactics are not contract clauses:
+they name the state the execution has reached. After `root = root->left` a
+`fold(ctx_at(root), ...)` is the frame of the node the proof is standing on,
+and a body fact such as `fact parent->left == child` instantiates to the link
+the body just walked. The fold's field values are read the same way, so one
+tactic never straddles two states
+(`mdtests/fold_argument_reads_current_cursor.md`).
+
 ### Conditional and recursive bodies
 
 A composite resource may put its entire body under one load-free `if`:

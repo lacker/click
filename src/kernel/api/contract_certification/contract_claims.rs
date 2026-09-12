@@ -616,6 +616,7 @@ struct CertifiedFunctionClaimPath {
     return_state: Option<CState>,
     entry_state: CState,
     required_resources: ResourceContext,
+    checked_required_resources: Vec<crate::kernel::functions::CCheckedResourceFact>,
     entry_resources: ResourceContext,
     post_state: Option<CState>,
     post_resources: Option<ResourceContext>,
@@ -839,25 +840,26 @@ fn prepare_function_claim_path(
         return Err("the function entry state cannot be reconstructed".to_string());
     };
     let mut budget = ExecutionBudget::default();
-    let required_resources = match evaluate_function_resource_context(
-        &entry_state,
-        function.resource_requires(),
-        function.composite_resource_definitions(),
-        &assumptions,
-        &mut budget,
-    ) {
-        Ok(Ok(resources)) => resources,
-        Ok(Err(error)) => {
-            return Err(format!(
-                "the required resource context cannot be evaluated: {error:?}"
-            ));
-        }
-        Err(limit) => {
-            return Err(format!(
-                "the required resource context hit execution limit {limit:?}"
-            ));
-        }
-    };
+    let (required_resources, checked_required_resources) =
+        match evaluate_function_resource_context_with_metadata(
+            &entry_state,
+            function.resource_requires(),
+            function.composite_resource_definitions(),
+            &assumptions,
+            &mut budget,
+        ) {
+            Ok(Ok(resources)) => resources,
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "the required resource context cannot be evaluated: {error:?}"
+                ));
+            }
+            Err(limit) => {
+                return Err(format!(
+                    "the required resource context hit execution limit {limit:?}"
+                ));
+            }
+        };
     let Some((_, definition_facts)) = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
         function.composite_resource_definitions(),
@@ -920,6 +922,7 @@ fn prepare_function_claim_path(
             return_state: None,
             entry_state,
             required_resources,
+            checked_required_resources,
             entry_resources,
             post_state: None,
             post_resources: None,
@@ -1024,6 +1027,7 @@ fn prepare_function_claim_path(
         return_state: Some(claim_return_state),
         entry_state,
         required_resources,
+        checked_required_resources,
         entry_resources,
         post_state: Some(post_state),
         post_resources: Some(post_resources),
@@ -1046,6 +1050,7 @@ fn function_claim_holds_on_prepared_path(
         return_state,
         entry_state,
         required_resources,
+        checked_required_resources,
         entry_resources,
         post_state,
         post_resources,
@@ -1313,33 +1318,19 @@ fn function_claim_holds_on_prepared_path(
             })
         }
         CFunctionContractClaimTarget::Effect => {
-            let mut mutable_ranges = Vec::new();
-            for segment in function.contract_mutable() {
-                let element_width = segment.element_width();
-                if let Some(guard) = segment.guard() {
-                    match evaluate_guarded_contract_condition(
-                        guard,
-                        entry_state,
-                        assumptions,
-                        &mut budget,
-                    ) {
-                        Some(true) => {}
-                        Some(false) => continue,
-                        None => return false,
-                    }
-                }
-                let Ok(Ok(segment)) =
-                    evaluate_loop_effect_segment(entry_state, segment, assumptions, &mut budget)
-                else {
-                    return false;
-                };
-                mutable_ranges.push(CMemoryRange::new_with_element_width(
-                    segment.base,
-                    segment.start,
-                    segment.end,
-                    element_width,
-                ));
-            }
+            let Ok(Ok(projection)) =
+                crate::kernel::functions::project_contract_memory_effects_with_guard_policy(
+                    entry_state,
+                    function.contract_interface(),
+                    Some(checked_required_resources),
+                    assumptions,
+                    &mut budget,
+                    true,
+                )
+            else {
+                return false;
+            };
+            let mutable_ranges = projection.ranges().to_vec();
             let mut effect_memory = caller_state.memory().clone();
             let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();
             let is_function_fresh_heap_pointer = |pointer: &Pointer, current: &CMemory| {
@@ -2420,5 +2411,52 @@ int32 array_fold_append_at_zero(int32 a[]) {
             &[("integer_range_fold_array_body.c", c_source)],
         )
         .unwrap_or_else(|error| panic!("array fold surface smoke failed: {error:?}"));
+    }
+
+    #[test]
+    fn certification_does_not_promote_body_facts_to_entry_premises() {
+        let function = CFunction::new(
+            CType::Int32,
+            "entry_resource_fact_boundary",
+            Vec::new(),
+            c_return(c_int32_literal(0)),
+        );
+        // This is deliberately a fact recorded by execution after entry.  It
+        // must not make an entry-dependent resource term evaluable during
+        // certification setup.
+        let body_fact = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(
+                Bitvector32Term::Variable(Variable(93_001)),
+                Bitvector32Term::Constant(8),
+            ),
+            true,
+        );
+        let state = CState::new();
+        let proposition = Proposition::CFunctionExecutes {
+            state: state.clone(),
+            function: function.clone(),
+            arguments: Vec::new(),
+            outcome: CFunctionOutcome::Return {
+                value: CValue::Int32(Bitvector32Term::Constant(0)),
+                state,
+            },
+        };
+        let fact = ExecutionPureFact::new(body_fact.clone());
+        let path = SymbolicCExecutionPath {
+            assumptions: PureFactContext::new(),
+            facts: vec![fact.clone()],
+            effect_facts: Vec::new(),
+            obligations: Vec::new(),
+            theorem: Theorem::new(wrap_proof_facts(
+                proposition,
+                &PureFactContext::new(),
+                &[fact],
+                &[],
+            )),
+        };
+        let (_, _, _, entry_assumptions) =
+            super::super::certified_function_path_parts(&function, &path)
+                .expect("the exact function path should be accepted");
+        assert!(!entry_assumptions.contains_proposition_fact(&body_fact));
     }
 }

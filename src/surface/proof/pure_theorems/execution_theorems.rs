@@ -315,8 +315,15 @@ pub(super) fn verify_execution_theorem(
         functions,
         theorem.name(),
     )?;
-    let function = annotated_function(
-        &block, &parsed, &state, &arguments, predicates, functions, resources,
+    let function = annotated_function_with_assumptions(
+        &block,
+        &parsed,
+        &state,
+        &arguments,
+        predicates,
+        functions,
+        resources,
+        Some(&assumptions_from_propositions(&facts)),
     )?;
     let artifacts = verified
         .iter()

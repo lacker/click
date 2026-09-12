@@ -50,6 +50,7 @@ pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use eval::terms_have_same_canonical_form;
 #[cfg(test)]
 pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_capacity};
+pub(crate) use functions::establish_resource_derived_loop_frames;
 pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::initialize_c_program_storage;
 #[cfg(test)]
@@ -61,8 +62,10 @@ pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use functions::{
-    evaluate_function_resource_context, quantified_resource_requirement_assumptions,
+    evaluate_function_resource_context, evaluate_function_resource_context_with_metadata,
+    project_contract_memory_effects, quantified_resource_requirement_assumptions,
     resource_clause_position_note, resource_clause_stall_note,
+    validate_resource_derived_loop_frames,
 };
 pub use loops::CLoopBinder;
 pub(crate) use loops::{

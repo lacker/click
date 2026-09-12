@@ -728,3 +728,170 @@ void object_retain_many(struct object* obj, int32 amount) {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn audit_reports_a_witness_the_expansion_cannot_spell() {
+    // `mdtests/resource_witness_unfold_fold.md` reduced. The closer's
+    // certificate has to cite the `where` fact of the resource's existential
+    // witness, whose kernel value renders as the diagnostic
+    // `symbolic-pointer:...@0`. Audit used to report only the parse error
+    // that unparseable text produced (`unexpected character @`); the site now
+    // fails with the language gap it actually hit.
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-witness-{}", std::process::id()));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    let c_source = r#"struct node {
+    int32 value;
+    unsigned long word;
+};
+
+struct node* unpack(struct node* node) {
+    return (struct node*)(node->word & ~1);
+}"#;
+    let click_source = r#"resource packed(node: struct node*) {
+    owns object(node);
+    let next: struct node* where aligned(next, 8) and node->word == address(next) + (node->word & 1);
+}
+
+verifying "unpack.c";
+
+struct node* unpack(struct node* node) {
+    requires node != 0;
+    owns packed(node);
+    ensures address(result) == (node->word & ~1);
+} by {
+    unfold(packed(node));
+    execute();
+    fold(packed(node));
+    simp();
+}
+"#;
+    let click_path = directory.join("witness.click");
+    fs::write(directory.join("unpack.c"), c_source).unwrap();
+    fs::write(&click_path, click_source).unwrap();
+    verify_c0_sources(click_source, &[("unpack.c", c_source)])
+        .expect("the witness fold/unfold proof should verify");
+
+    let closer_line = click_source
+        .lines()
+        .position(|line| line.trim() == "simp();")
+        .expect("proof should contain the closer")
+        + 1;
+    let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+    let site = sites
+        .iter()
+        .find(|site| site.position.line == closer_line)
+        .expect("the closer should be an auditable site");
+    let error = expand_location(&format_location(&site_location(site)))
+        .expect_err("the expansion needs a name the language does not give it");
+    assert!(
+        error.contains("the expansion needs a name for the witness `next` of `packed`"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("unexpected character"),
+        "the refusal should replace the parse error, not report it: {error}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn audits_an_undecided_wide_guard_after_a_recursive_call() {
+    // `list_count_live` in `examples/marked-linked-list` reduced: a recursive
+    // call whose result lands in a local, then a C `if` whose condition loads
+    // an `unsigned long` cell of the node the call did not touch, all inside
+    // the `else` arm of a surface `if`. `execute()` renders the guard it
+    // cannot decide as a proof `if` anchored at the statement's entry, and the
+    // recheck applies each arm's `step()` under `RequireProven`: the arm
+    // assumes the surface lowering of the guard while the C guard evaluates
+    // against the snapshot its own load resolved. Those agree only because
+    // every integer scalar one to eight bytes wide is named where it is
+    // loaded; an unnamed `load_uint64` reads the whole current snapshot, which
+    // after the call differs by the `local:rest` cell the load cannot alias,
+    // and audit reported `2 feasible condition paths` where `click verify`
+    // passed.
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-wide-guard-{}", std::process::id()));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    let c_source = r#"struct cell {
+    int32 value;
+    unsigned long word;
+};
+
+uint32 count_live(struct cell *node) {
+    if (node == 0) {
+        return 0;
+    }
+    uint32 rest = count_live((struct cell *)(node->word & ~1));
+    if ((node->word & 1) != 0) {
+        return rest;
+    }
+    return rest + 1;
+}"#;
+    let click_source = r#"resource tagged(node: struct cell*) {
+    if node != 0 {
+        owns object(node);
+        fact aligned(node, 8);
+        let next: struct cell* where aligned(next, 8) and node->word == address(next) + (node->word & 1);
+        contains tagged(next);
+    }
+}
+
+verifying "count_live.c";
+
+uint32 count_live(struct cell* node) {
+    decreases tagged(node);
+    owns tagged(node);
+} by {
+    if node == 0 {
+        execute();
+        simp();
+    } else {
+        unfold(tagged(node));
+        execute();
+        fold(tagged(node));
+        simp();
+    }
+}
+"#;
+    let click_path = directory.join("count_live.click");
+    fs::write(directory.join("count_live.c"), c_source).unwrap();
+    fs::write(&click_path, click_source).unwrap();
+    verify_c0_sources(click_source, &[("count_live.c", c_source)])
+        .expect("the recursive count proof should verify");
+
+    let arm_execute = click_source
+        .rfind("execute();")
+        .expect("proof should contain the `else` arm's execute");
+    let line = click_source[..arm_execute]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+    let site = sites
+        .iter()
+        .find(|site| site.position.line == line)
+        .expect("the arm's execute should be an auditable site");
+    let expanded = expand_location(&format_location(&site_location(site)))
+        .expect("the arm's execute should expand");
+    assert!(
+        expanded.contains("if at(statement(5).entry, (load_uint64(byte_offset(node, 8)) & 1))"),
+        "the undecided C guard should expand to an anchored proof `if`: {expanded}"
+    );
+    let source = load_audit_source_from_text(&click_path, expanded.clone()).unwrap();
+    let refs = source_refs(&source.c_sources);
+    verify_c0_sources(&source.click_source, &refs)
+        .unwrap_or_else(|error| panic!("the rewritten arm should reverify: {}", error.message()));
+    assert_eq!(
+        reexpand_source(&click_path, &site.claim, &expanded).unwrap(),
+        expanded
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

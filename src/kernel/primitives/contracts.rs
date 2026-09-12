@@ -698,8 +698,10 @@ impl CFunctionContractInterface {
             contract_requirement_sources: ContractRequirementSources::default(),
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
+            resource_derived_mutable_segments: Vec::new(),
             contract_effect_claim_required: false,
             resource_derived_mutable_frame: false,
+            resource_derived_frame_mixed: false,
             contract_claims: Vec::new(),
             opaque_contract_supported: true,
             composite_resource_definitions: Vec::new(),
@@ -775,6 +777,10 @@ impl CFunctionContractInterface {
         self.resource_derived_mutable_frame
     }
 
+    pub(crate) fn resource_derived_frame_mixed(&self) -> bool {
+        self.resource_derived_frame_mixed
+    }
+
     pub fn contract_claims(&self) -> &[CFunctionContractClaim] {
         &self.contract_claims
     }
@@ -817,7 +823,10 @@ impl CFunctionContractInterface {
             && self.contract_requires == other.contract_requires
             && self.contract_ensures == other.contract_ensures
             && self.contract_mutable == other.contract_mutable
+            && self.resource_derived_mutable_segments == other.resource_derived_mutable_segments
             && self.contract_effect_claim_required == other.contract_effect_claim_required
+            && self.resource_derived_mutable_frame == other.resource_derived_mutable_frame
+            && self.resource_derived_frame_mixed == other.resource_derived_frame_mixed
             && self.composite_resource_definitions == other.composite_resource_definitions
             && self.predicate_unfoldings == other.predicate_unfoldings
     }
@@ -959,6 +968,11 @@ impl CFunction {
         self
     }
 
+    pub(crate) fn with_body(mut self, body: CStatement) -> Self {
+        self.body = body;
+        self
+    }
+
     pub fn with_resource_summary(
         mut self,
         requires: Vec<CResourceSpec>,
@@ -987,11 +1001,33 @@ impl CFunction {
             ContractRequirementSources(vec![None; self.contract_interface.contract_requires.len()]);
         self.contract_interface.contract_ensures = ensures;
         self.contract_interface.contract_mutable = mutable;
+        self.contract_interface
+            .resource_derived_mutable_segments
+            .clear();
+        self.contract_interface.resource_derived_frame_mixed = false;
         self.contract_interface.contract_effect_claim_required =
             !self.contract_interface.contract_mutable.is_empty();
         self.contract_interface.resource_derived_mutable_frame = false;
         self.contract_interface.contract_claims = claims;
         self.contract_interface.opaque_contract_supported = opaque_supported;
+        self
+    }
+
+    /// Retain the source-derived resource frame separately from startup or
+    /// explicit effect metadata. This is checked when the derived marker is
+    /// installed, so a mixed interface cannot silently drop an explicit
+    /// segment from its modular memory authority.
+    pub(crate) fn with_resource_derived_mutable_segments(
+        mut self,
+        segments: Vec<CMemorySegment>,
+    ) -> Self {
+        self.contract_interface.resource_derived_mutable_segments = segments;
+        if self.contract_interface.resource_derived_mutable_frame {
+            self.contract_interface.resource_derived_frame_mixed =
+                !self.contract_interface.contract_mutable.is_empty()
+                    && self.contract_interface.contract_mutable
+                        != self.contract_interface.resource_derived_mutable_segments;
+        }
         self
     }
 
@@ -1019,6 +1055,23 @@ impl CFunction {
     /// default requirement that a nonempty frame have an Effect claim.
     pub(crate) fn with_resource_derived_mutable_frame(mut self) -> Self {
         self.contract_interface.contract_effect_claim_required = false;
+        if self
+            .contract_interface
+            .resource_derived_mutable_segments
+            .is_empty()
+        {
+            self.contract_interface.resource_derived_mutable_segments = self
+                .contract_interface
+                .resource_requires
+                .iter()
+                .filter_map(CResourceSpec::memory_segment)
+                .cloned()
+                .collect();
+        }
+        self.contract_interface.resource_derived_frame_mixed =
+            !self.contract_interface.contract_mutable.is_empty()
+                && self.contract_interface.contract_mutable
+                    != self.contract_interface.resource_derived_mutable_segments;
         self.contract_interface.resource_derived_mutable_frame = true;
         self
     }
@@ -1397,6 +1450,8 @@ impl CLoopEffectCheck {
             effect,
             span: CLoopEffectSpan::Step,
             context,
+            origin: CLoopEffectOrigin::Unspecified,
+            validated_ranges: None,
         }
     }
 
@@ -1409,7 +1464,29 @@ impl CLoopEffectCheck {
             effect,
             span,
             context,
+            origin: CLoopEffectOrigin::Unspecified,
+            validated_ranges: None,
         }
+    }
+
+    pub fn new_with_origin(
+        effect: CLoopEffect,
+        span: CLoopEffectSpan,
+        origin: CLoopEffectOrigin,
+        context: Option<String>,
+    ) -> Self {
+        Self {
+            effect,
+            span,
+            context,
+            origin,
+            validated_ranges: None,
+        }
+    }
+
+    pub(crate) fn with_validated_ranges(mut self, ranges: Vec<CMemoryRange>) -> Self {
+        self.validated_ranges = Some(ranges);
+        self
     }
 
     pub fn effect(&self) -> &CLoopEffect {
@@ -1422,6 +1499,14 @@ impl CLoopEffectCheck {
 
     pub fn context(&self) -> Option<&str> {
         self.context.as_deref()
+    }
+
+    pub fn origin(&self) -> CLoopEffectOrigin {
+        self.origin
+    }
+
+    pub(crate) fn validated_ranges(&self) -> Option<&[CMemoryRange]> {
+        self.validated_ranges.as_deref()
     }
 }
 

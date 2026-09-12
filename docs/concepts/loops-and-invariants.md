@@ -282,6 +282,11 @@ the negated guard available; above, `i == n` turns the invariant into the
 postcondition. A loop binder may reuse an enclosing binder's name, as `c` does
 here; that is a rebinding of the same instance rather than a second one.
 
+Reuse the enclosing name. A fresh name takes the instance over for the rest of
+the function, so it names nothing before the loop, and an invariant that reads
+it at loop entry has nothing to read. That is refused by name rather than as a
+failed lowering (`mdtests/loop_binder_rejects_fresh_name_in_invariant.md`).
+
 ### Structural loop measures
 
 A loop that walks a recursive structure has no numeric counter to rank, and

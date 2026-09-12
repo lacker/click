@@ -346,6 +346,7 @@ impl PureFactContext {
                         .condition_facts
                         .get(condition)
                         .copied()
+                        .or_else(|| self.decide_pointer_disequality(condition))
                         .or_else(|| self.decide_from_order_facts(condition));
                 }
                 let simplified = self.simplify_condition_under_assumptions(condition);
@@ -369,6 +370,97 @@ impl PureFactContext {
                     .or_else(|| self.decide_from_order_facts(condition))
             }
         }
+    }
+
+    /// Decides a pointer comparison false from what the context already
+    /// states about the two pointers themselves: that one is null and the
+    /// other is not, or that each holds the first element of one of two
+    /// separated memory ranges.
+    ///
+    /// Both routes are keyed lookups on the pointers in the query, never a
+    /// search: null-ness is indexed by the offset term a null test named,
+    /// and separation by the pair of anchor offsets. Neither ever answers
+    /// `Some(true)`; two pointers may be equal for reasons no index holds.
+    fn decide_pointer_disequality(&self, condition: &ConditionTerm) -> Option<bool> {
+        match condition {
+            ConditionTerm::PointerEqual(left, right) => {
+                let left = self.pointer_nullness(left)?;
+                let right = self.pointer_nullness(right)?;
+                (left != right).then_some(false)
+            }
+            ConditionTerm::PointerOffsetEqual(left, right) => self
+                .offsets_distinct_by_nullness(left, right)
+                .or_else(|| self.offsets_distinct_by_separation(left, right)),
+            _ => None,
+        }
+    }
+
+    /// Whether an exact fact settles this pointer's null-ness.
+    ///
+    /// The null pointer is null intrinsically, and a pointer whose block is
+    /// proven distinct from the null block is not null by the same rule that
+    /// decides any other block disequality.
+    fn pointer_nullness(&self, pointer: &Pointer) -> Option<bool> {
+        let null = Pointer::null();
+        if *pointer == null {
+            return Some(true);
+        }
+        if let Some(value) = self.exact_condition_value(&ConditionTerm::PointerEqual(
+            Box::new(pointer.clone()),
+            Box::new(null.clone()),
+        )) {
+            return Some(value);
+        }
+        pointer.blocks_proven_distinct(&null).then_some(false)
+    }
+
+    /// Two offsets differ when one names a null pointer of some block and
+    /// the other names a non-null pointer of that same block: if the offsets
+    /// were equal the two pointers would be one pointer.
+    fn offsets_distinct_by_nullness(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> Option<bool> {
+        let left_blocks = self.null_pointer_offsets.get(left)?;
+        let right_blocks = self.null_pointer_offsets.get(right)?;
+        // One entry per block a null test named for this exact offset term,
+        // which in practice is the single block the pointer came from.
+        for ((block, value), _) in left_blocks.iter() {
+            if !right_blocks.contains_key(&(block.clone(), !*value)) {
+                continue;
+            }
+            // The index only nominates the block. Both premises are then
+            // taken through the exact check, so they are recorded exactly
+            // and a stale entry can never decide anything on its own.
+            let pointer_at = |offset: &PointerOffsetTerm| Pointer {
+                block: block.clone(),
+                offset: offset.clone(),
+            };
+            if self.pointer_nullness(&pointer_at(left)) == Some(*value)
+                && self.pointer_nullness(&pointer_at(right)) == Some(!*value)
+            {
+                return Some(false);
+            }
+        }
+        None
+    }
+
+    /// Two offsets differ when each is the address of the first element of
+    /// one of two separated memory ranges: one address cannot hold an
+    /// element of both.
+    fn offsets_distinct_by_separation(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> Option<bool> {
+        if left == right {
+            return None;
+        }
+        let key = Self::separated_anchor_key(left.clone(), right.clone());
+        let separation = self.separated_anchor_offsets.get(&key)?.iter().next()?;
+        record_implicit_reasoning_provenance(self, separation);
+        Some(false)
     }
 
     fn decide_reflexive_float_comparison(&self, condition: &ConditionTerm) -> Option<bool> {

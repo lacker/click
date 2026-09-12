@@ -436,6 +436,21 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
 - **Retained evidence names premises, never a context.** A derivation leaf
   carries the propositions it cites, and its check rebuilds a context from
   exactly those.
+- **A cited spelling must still lower to the fact it cites.** The surface
+  map records which Surface form produced which kernel proposition, but a
+  form can stop denoting that fact where the certificate is written: a proof
+  `match` arm's case fact states the scrutinee's constructor at unchanged
+  function entry, and once the arm has refolded its instance, `c.model ==
+  C(..)` reads the refolded field instead. A refold is the only move that
+  does this, so resolving a premise spelled as a constructor equation lowers
+  the candidate again at the state it will be rechecked in: the recorded pair
+  settles that shape only when the form has no lowering there at all, and a
+  form that lowers to some other fact is not a spelling for this one. The
+  stale case falls back on the entry-anchored `old(c.model) == C(..)`, which
+  does lower to it, and only where the bare pair would have answered — a
+  lookup that reached no spelling still reaches none. Every other premise
+  keeps the cheap recorded-pair route, because re-lowering every candidate
+  costs a smart `have` about half its real-time budget again.
 
 The target invariants are:
 

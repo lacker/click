@@ -1402,3 +1402,165 @@ fn explicit_simple_project_with_ambient_facts(size: usize) -> (String, String) {
     );
     (c_source, click_source)
 }
+
+/// An N-constructor execution `match` must cost its N arms.
+///
+/// A wide match is joined by a chain of two-way group splits, so a deferred
+/// post-execution operation reaches the join as a nested `if` tree whose
+/// conditions select constructor subsets. Serializing that tree back into the
+/// lexical arms only recognized the two-constructor selector, so every wider
+/// match cloned the complete N-leaf tree into each of its N arms. The retained
+/// certificate was therefore quadratic in the width, and it was rebuilt and
+/// then structurally compared once per certified path and claim, which grew a
+/// debug `click verify` about thirteen times per doubling.
+#[test]
+fn wide_execution_match_join_has_near_linear_width_work() {
+    let mut samples = Vec::new();
+    let mut certificate_sizes = Vec::new();
+    for width in [4, 8, 16, 32] {
+        let (click_source, c_source) = wide_execution_match_project(width);
+        let (verified, sample) = scaling_sample(width, || {
+            verify_c0_sources(&click_source, &[("read.c", c_source.as_str())])
+        });
+        let verified = verified.unwrap_or_else(|error| {
+            panic!(
+                "width {width} execution match failed: {}",
+                error.message().replace('\n', " ")
+            )
+        });
+        let certificate = verified
+            .first()
+            .and_then(|theorem| theorem.expanded_proof.as_ref())
+            .unwrap_or_else(|| panic!("width {width} retained no certificate"));
+        // Every certified path and claim retains the one certificate this
+        // proof produced. Rebuilding it per theorem instead made both the
+        // clone and the later theorem-set comparison pay its full size.
+        assert!(
+            verified.iter().all(|theorem| theorem
+                .expanded_proof
+                .as_ref()
+                .is_some_and(|retained| retained.shares_steps_with(certificate))),
+            "width {width} rebuilt the retained certificate per theorem"
+        );
+        certificate_sizes.push((width, certificate_step_count(certificate.steps())));
+        samples.push(sample);
+    }
+    // The certificate is this join's own output, and one arm's operations
+    // belong to that arm alone, so the whole match stays linear in its
+    // constructor count: doubling the width may double the certificate, never
+    // square it.
+    for pair in certificate_sizes.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 * 5 / 2,
+            "the retained certificate grows faster than the constructor count: {certificate_sizes:?}"
+        );
+    }
+    assert_near_linear_scaling("wide execution match join", &samples);
+}
+
+/// Counts every step of a certificate, including those its structured steps
+/// own, so a certificate that re-emits a join tree inside each arm is
+/// distinguishable from one that does not.
+fn certificate_step_count(steps: &[ProofStep]) -> usize {
+    fn nested(step: &ProofStep) -> usize {
+        1 + match step {
+            ProofStep::Match { arms, .. } => arms
+                .iter()
+                .map(|arm| certificate_step_count(arm.proof.steps()))
+                .sum(),
+            ProofStep::CloseInvariantsBy(proof) => certificate_step_count(proof.steps()),
+            ProofStep::Both {
+                left_proof,
+                right_proof,
+            }
+            | ProofStep::Cases {
+                left_proof,
+                right_proof,
+                ..
+            } => {
+                certificate_step_count(left_proof.steps())
+                    + certificate_step_count(right_proof.steps())
+            }
+            ProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            }
+            | ProofStep::Branch {
+                then_proof,
+                else_proof,
+                ..
+            } => {
+                certificate_step_count(then_proof.steps())
+                    + certificate_step_count(else_proof.steps())
+            }
+            ProofStep::Have { proof, .. } | ProofStep::Open { proof, .. } => {
+                certificate_step_count(proof.steps())
+            }
+            _ => 0,
+        }
+    }
+    steps.iter().map(nested).sum()
+}
+
+/// A `width`-constructor model over one cell, read by one C load, proved by a
+/// proof `match` whose arms are identical up to the constant each constructor
+/// carries. Only the constructor count varies with `width`: the C source, the
+/// contract shape, and each arm's proof are fixed.
+fn wide_execution_match_project(width: usize) -> (String, String) {
+    let variants = (0..width)
+        .map(|index| format!("V{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let code_arms = (0..width)
+        .map(|index| format!("        Wide::V{index} => {index},\n"))
+        .collect::<String>();
+    let resource_arms = (0..width)
+        .map(|index| {
+            format!("        Wide::V{index} => {{ owns p[0..1]; fact p[0] == {index}; }},\n")
+        })
+        .collect::<String>();
+    let proof_arms = (0..width)
+        .map(|index| {
+            format!(
+                "        Wide::V{index} => {{\n\
+                 \x20           unfold(c);\n\
+                 \x20           execute();\n\
+                 \x20           let c = fold(cell(p), {{ model: Wide::V{index} }}, {{}});\n\
+                 \x20           have wide_code(old(c.model)) == {index} by {{\n\
+                 \x20               rewrite(old(c.model) == Wide::V{index});\n\
+                 \x20               unfold(wide_code(Wide::V{index}));\n\
+                 \x20               normalize();\n\
+                 \x20           }}\n\
+                 \x20           simp();\n\
+                 \x20       }},\n"
+            )
+        })
+        .collect::<String>();
+    let click_source = format!(
+        "verifying \"read.c\";\n\
+         \n\
+         spec enum Wide {{ {variants} }}\n\
+         \n\
+         function wide_code(q: Wide) -> int32 {{\n\
+         \x20   match q {{\n{code_arms}\x20   }}\n\
+         }}\n\
+         \n\
+         resource cell(p: int32*) {{\n\
+         \x20   field model: Wide;\n\
+         \x20   match model {{\n{resource_arms}\x20   }}\n\
+         }}\n\
+         \n\
+         int32 read(int32* p) {{\n\
+         \x20   owns c: cell(p);\n\
+         \x20   ensures c.model == old(c.model);\n\
+         \x20   ensures result == wide_code(old(c.model));\n\
+         }} by {{\n\
+         \x20   match c.model {{\n{proof_arms}\x20   }}\n\
+         }}\n"
+    );
+    (
+        click_source,
+        "int32 read(int32* p) { return *p; }".to_string(),
+    )
+}

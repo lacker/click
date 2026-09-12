@@ -1,5 +1,5 @@
 use super::*;
-use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
+use crate::kernel::{AlgebraicTerm, AlgebraicTermNode, CLoopEffectOrigin};
 
 fn integer_comparison_operator(
     operator: ComparisonOperator,
@@ -258,6 +258,7 @@ type FunctionContractSummary = (
     Vec<Option<usize>>,
     Vec<SpecProposition>,
     Vec<CMemorySegment>,
+    Vec<CMemorySegment>,
     Vec<CFunctionContractClaim>,
     bool,
     Vec<CPredicateUnfolding>,
@@ -454,6 +455,28 @@ pub(in crate::surface) fn annotated_function(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<CFunction, ClickError> {
+    annotated_function_with_assumptions(
+        function_block,
+        parsed_function,
+        entry_state,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        None,
+    )
+}
+
+pub(in crate::surface) fn annotated_function_with_assumptions(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    entry_state: &CState,
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    entry_assumptions: Option<&crate::kernel::PureFactContext>,
+) -> Result<CFunction, ClickError> {
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, parsed_function, resource_environment)?;
     let resource_constructors = function_resource_constructors(function_block)?;
@@ -462,6 +485,7 @@ pub(in crate::surface) fn annotated_function(
         contract_requirement_sources,
         contract_ensures,
         contract_mutable,
+        resource_derived_mutable,
         contract_claims,
         opaque_contract_supported,
         predicate_unfoldings,
@@ -472,15 +496,19 @@ pub(in crate::surface) fn annotated_function(
         click_function_environment,
         resource_environment,
     )?;
+    let resource_derived_mutable_frame = function_block
+        .requires()
+        .iter()
+        .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
     // `consumes` grants the callee a write-capable owned range. Carry that
     // frame into loop summaries so checked proof artifacts retain the same
-    // memory-footprint evidence as independent contract certification.
-    let implicit_contract_mutable_segments = contract_mutable.as_slice();
-    let resource_derived_mutable_frame = !contract_mutable.is_empty()
-        || function_block
-            .requires()
-            .iter()
-            .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
+    // memory-footprint evidence as independent contract certification. A
+    // derived function inherits only its separately tracked resource frame.
+    let implicit_contract_mutable_segments = if resource_derived_mutable_frame {
+        resource_derived_mutable.as_slice()
+    } else {
+        contract_mutable.as_slice()
+    };
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         implicit_contract_mutable_segments,
@@ -598,6 +626,47 @@ pub(in crate::surface) fn annotated_function(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
+    let function = function.with_resource_derived_mutable_segments(resource_derived_mutable);
+    let function = if resource_derived_mutable_frame {
+        let function = function.with_resource_derived_mutable_frame();
+        if !function_block.is_external()
+            && let Some(entry_assumptions) = entry_assumptions
+        {
+            let frame_entry =
+                crate::kernel::c_function_entry_state(entry_state, &function, arguments)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "could not construct the resource-derived loop entry for `{}`",
+                            parsed_function.name()
+                        ))
+                    })?;
+            let mut budget = crate::kernel::ExecutionBudget::default();
+            match crate::kernel::establish_resource_derived_loop_frames(
+                function,
+                &frame_entry,
+                entry_assumptions,
+                &mut budget,
+            ) {
+                Ok(Ok(function)) => function,
+                Ok(Err(message)) => {
+                    return Err(ClickError::new(format!(
+                        "could not establish resource-derived loop frames for `{}`: {message}",
+                        parsed_function.name()
+                    )));
+                }
+                Err(limit) => {
+                    return Err(ClickError::new(format!(
+                        "resource-derived loop-frame establishment for `{}` exceeded its execution budget: {limit:?}",
+                        parsed_function.name()
+                    )));
+                }
+            }
+        } else {
+            function
+        }
+    } else {
+        function
+    };
     if let Some(parameter) =
         crate::kernel::modified_by_value_aggregate_parameter_with_current_ensure_in_source(
             &function,
@@ -607,11 +676,7 @@ pub(in crate::surface) fn annotated_function(
             "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
         )));
     }
-    Ok(if resource_derived_mutable_frame {
-        function.with_resource_derived_mutable_frame()
-    } else {
-        function
-    })
+    Ok(function)
 }
 
 /// Lowers one `branch ensuring` fact as a state-parametric kernel
@@ -1013,7 +1078,7 @@ pub(in crate::surface) fn function_contract_summary(
     parsed_function: &syntax::C0Function,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
+    _resource_environment: &ResourceEnvironment,
 ) -> Result<FunctionContractSummary, ClickError> {
     let entry_state = crate::kernel::initialize_c_function_globals(
         &CState::new(),
@@ -1162,6 +1227,7 @@ pub(in crate::surface) fn function_contract_summary(
     }
 
     let mut mutable = Vec::new();
+    let mut resource_derived_mutable = Vec::new();
     {
         if let Some(startup) = &parsed_function.program_entry_state {
             mutable.extend(startup.resources().facts().iter().filter_map(|fact| {
@@ -1176,17 +1242,22 @@ pub(in crate::surface) fn function_contract_summary(
                 )
             }));
         }
+        // Keep the lowered owned segments separate from startup/explicit
+        // metadata. The kernel's modular-call projection derives authority
+        // from checked resource facts; these segments are only for body and
+        // loop proof framing after their equivalence is checked.
         for requirement in function_block.requires() {
             if let Requirement::Resource(resource) = requirement.inner() {
                 collect_owned_resource_memory_segments(
                     resource,
-                    resource_environment,
+                    _resource_environment,
                     parsed_function.parameters(),
                     &mut lowerer,
-                    &mut mutable,
+                    &mut resource_derived_mutable,
                 )?;
             }
         }
+        mutable.extend(resource_derived_mutable.iter().cloned());
     }
     let claims = if function_block.ensures().is_empty() {
         vec![CFunctionContractClaim::body_safety()]
@@ -1217,6 +1288,7 @@ pub(in crate::surface) fn function_contract_summary(
         contract_requirement_sources,
         ensures,
         mutable,
+        resource_derived_mutable,
         claims,
         opaque_contract_supported,
         predicate_unfoldings,
@@ -5116,17 +5188,19 @@ impl AnnotationLowerer<'_> {
             // A loop that declares its own resources has the shape of a
             // callee: its footprint is the memory it owns, not everything the
             // function owns. The claim stays checked at every back edge.
-            checks.push(CLoopEffectCheck::new_with_span(
+            checks.push(CLoopEffectCheck::new_with_origin(
                 CLoopEffect::Mutable(declaration.owned_segments.clone()),
                 CLoopEffectSpan::Whole,
+                CLoopEffectOrigin::DeclaredResource,
                 Some(format!("loop {loop_index} declared owned resource frame")),
             ));
         } else if self.inherits_resource_derived_frame
             || !self.implicit_contract_mutable_segments.is_empty()
         {
-            checks.push(CLoopEffectCheck::new_with_span(
+            checks.push(CLoopEffectCheck::new_with_origin(
                 CLoopEffect::Mutable(self.implicit_contract_mutable_segments.to_vec()),
                 CLoopEffectSpan::Whole,
+                CLoopEffectOrigin::InheritedResourceDerived,
                 Some(format!("loop {loop_index} inherited owned resource frame")),
             ));
         }

@@ -98,6 +98,60 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
 }
 
 #[test]
+fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:borrow-role:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let range = CMemoryRange::new(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let requirement = CResourceSpec::owned_memory(CMemorySegment::new(
+        CExpression::Variable("p".into()),
+        CExpression::Value(int32(0)),
+        CExpression::Value(int32(1)),
+    ))
+    .with_role(CResourceTransferRole::Borrow)
+    .with_snapshot(CResourceSnapshot::Entry);
+    let function = c_function(
+        CType::Void,
+        "borrow_role",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::Skip,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![requirement], vec![]);
+    let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range));
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 4))
+        .with_resource_context(resources);
+    let transfer = prepare_contract_resource_transfer(
+        &state,
+        &state,
+        function.name(),
+        function.contract_interface(),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(transfer.borrowed_inputs.len(), 1);
+    assert!(transfer.consumed_inputs.is_empty());
+    assert_eq!(
+        transfer.borrowed_inputs[0].snapshot,
+        CResourceSnapshot::Entry
+    );
+    assert_eq!(
+        transfer.borrowed_inputs[0].role,
+        CResourceTransferRole::Borrow
+    );
+}
+
+#[test]
 fn named_contract_application_discards_template_body_and_storage() {
     let body_variable = Variable(987_654);
     let pointer_parameter = c_parameter("p", CType::UInt8Pointer);
@@ -540,6 +594,494 @@ fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
             "preparation must not enumerate {count} unrelated resources"
         );
     }
+}
+
+#[test]
+fn authoritative_memory_projection_scales_with_used_members_not_unrelated_frames() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:projection:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 512));
+    let mut samples = Vec::new();
+    for used_members in [1usize, 4, 16, 64] {
+        let mut memory = state.memory.clone();
+        for unrelated in 0..256 {
+            memory = memory.with_block(format!("local:projection:frame:{unrelated}"), 4);
+        }
+        let state = state.clone().with_memory(memory);
+        let function = c_function(
+            CType::Void,
+            format!("project_{used_members}"),
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::Skip,
+        )
+        .with_contract(
+            vec![],
+            vec![],
+            (0..used_members)
+                .map(|index| {
+                    CMemorySegment::new(
+                        c_variable("p"),
+                        c_int32_literal(index as u32),
+                        c_int32_literal(index as u32 + 1),
+                    )
+                })
+                .collect(),
+            vec![],
+            true,
+        );
+        let mut budget = ExecutionBudget::default();
+        let (projection, work) = crate::instrumentation::measure_deterministic_work(|| {
+            project_contract_memory_effects(
+                &state,
+                function.contract_interface(),
+                None,
+                &PureFactContext::new(),
+                &mut budget,
+            )
+        });
+        assert_eq!(projection.unwrap().unwrap().ranges.len(), used_members);
+        samples.push((used_members, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 * (pair[1].0 / pair[0].0).max(1) + 64,
+            "memory projection should charge used members, not unrelated frames: {samples:?}"
+        );
+    }
+
+    // Resource-derived frames use the checked transition as their source of
+    // memory authority. A bare resource summary without this marker must not
+    // turn an abstract callback into an unconditional memory havoc.
+    let resource = CResourceSpec::owned_memory(CMemorySegment::new(
+        c_variable("p"),
+        c_int32_literal(0),
+        c_int32_literal(1),
+    ));
+    let resource_function = c_function(
+        CType::Void,
+        "project_resource",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::Skip,
+    )
+    .with_resource_summary(vec![resource], vec![])
+    .with_resource_derived_mutable_frame();
+    let checked_resources = [CCheckedResourceFact {
+        fact: CResourceFact::own_memory(CMemoryRange::new(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )),
+        role: CResourceTransferRole::Consume,
+        snapshot: CResourceSnapshot::Entry,
+        clause_position: None,
+    }];
+    let projection = project_contract_memory_effects(
+        &state,
+        resource_function.contract_interface(),
+        Some(&checked_resources),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(projection.ranges.len(), 1);
+}
+
+#[test]
+fn checked_transition_projection_ignores_unrelated_caller_frame() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:transition:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut samples = Vec::new();
+    for used_members in [1usize, 4, 16, 64] {
+        let requirements = (0..used_members)
+            .map(|index| {
+                CResourceSpec::owned_memory(CMemorySegment::new(
+                    CExpression::Variable("p".into()),
+                    CExpression::Value(int32(index as u32)),
+                    CExpression::Value(int32(index as u32 + 1)),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let owned = (0..used_members)
+            .map(|index| {
+                CResourceFact::own_memory(CMemoryRange::new(
+                    pointer.clone(),
+                    Bitvector32Term::Constant(index as u32),
+                    Bitvector32Term::Constant(index as u32 + 1),
+                ))
+            })
+            .chain((0..256).map(|index| {
+                CResourceFact::own_token(format!("unrelated_transition_token_{index}"), vec![])
+            }))
+            .collect::<Vec<_>>();
+        let state = CState::new()
+            .with_local("p", CValue::pointer(pointer.clone()))
+            .with_memory(CMemory::new().with_block(pointer.block.clone(), 512))
+            .with_resource_context(ResourceContext::new().unchecked_with_facts(owned));
+        let function = c_function(
+            CType::Void,
+            format!("transition_projection_{used_members}"),
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::Skip,
+        )
+        .with_contract(vec![], vec![], vec![], vec![], true)
+        .with_resource_summary(requirements, vec![])
+        .with_resource_derived_mutable_frame();
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let transfer = prepare_contract_resource_transfer(
+                &state,
+                &state,
+                function.name(),
+                function.contract_interface(),
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+                false,
+            )
+            .unwrap()
+            .unwrap();
+            let mut inputs = transfer.borrowed_inputs.clone();
+            inputs.extend(transfer.consumed_inputs.clone());
+            project_contract_memory_effects(
+                &state,
+                function.contract_interface(),
+                Some(&inputs),
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+        });
+        assert_eq!(result.unwrap().unwrap().ranges.len(), used_members);
+        samples.push((used_members, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 * (pair[1].0 / pair[0].0).max(1) + 128,
+            "checked transition work should charge used members, not unrelated frame: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn checked_wrapper_projection_scales_with_used_members() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:wrapper:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut samples = Vec::new();
+    for used_members in [1usize, 4, 16, 64] {
+        let contains = (0..used_members)
+            .map(|index| {
+                CResourceSpec::owned_memory(CMemorySegment::new(
+                    CExpression::Variable("data".into()),
+                    CExpression::Value(int32(index as u32)),
+                    CExpression::Value(int32(index as u32 + 1)),
+                ))
+            })
+            .collect();
+        let definition = CCompositeResourceDefinition::new(
+            "TransitionWrapper",
+            vec![c_parameter("data", CType::Int32Pointer)],
+            None,
+            false,
+            contains,
+            vec![],
+        );
+        let requirement = CResourceSpec::composite(
+            CResourceAccessMode::Own,
+            "TransitionWrapper".into(),
+            vec![CExpression::Variable("p".into())],
+            vec![CType::Int32Pointer],
+        );
+        let state = CState::new()
+            .with_local("p", CValue::pointer(pointer.clone()))
+            .with_memory(CMemory::new().with_block(pointer.block.clone(), 512))
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(
+                CResourceFact::own_composite(
+                    "TransitionWrapper".into(),
+                    vec![CValue::pointer(pointer.clone())],
+                ),
+            ));
+        let function = c_function(
+            CType::Void,
+            format!("wrapper_projection_{used_members}"),
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::Skip,
+        )
+        .with_contract(vec![], vec![], vec![], vec![], true)
+        .with_resource_summary(vec![requirement], vec![])
+        .with_composite_resource_definitions(vec![definition])
+        .with_resource_derived_mutable_frame();
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let transfer = prepare_contract_resource_transfer(
+                &state,
+                &state,
+                function.name(),
+                function.contract_interface(),
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+                false,
+            )
+            .unwrap()
+            .unwrap();
+            let mut inputs = transfer.borrowed_inputs.clone();
+            inputs.extend(transfer.consumed_inputs.clone());
+            project_contract_memory_effects(
+                &state,
+                function.contract_interface(),
+                Some(&inputs),
+                &PureFactContext::new(),
+                &mut ExecutionBudget::default(),
+            )
+        });
+        // Adjacent body members are normalized to one physical range; the
+        // curve still charges their checked expansion and effect projection.
+        assert_eq!(result.unwrap().unwrap().ranges.len(), 1);
+        samples.push((used_members, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 * (pair[1].0 / pair[0].0).max(1) + 256,
+            "wrapper projection should charge used members: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn resource_derived_refinement_compares_checked_ranges() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:resource-refinement:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 8));
+    let resource = |start| {
+        CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(start)),
+            CExpression::Value(int32(start + 1)),
+        ))
+    };
+    let target = c_function(CType::Void, "resource_target", vec![], CStatement::Skip)
+        .with_contract(vec![], vec![], vec![], vec![], true)
+        .with_resource_summary(vec![resource(0)], vec![])
+        .with_resource_derived_mutable_frame();
+    let implementation = c_function(
+        CType::Void,
+        "resource_implementation",
+        vec![],
+        CStatement::Skip,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![resource(1)], vec![])
+    .with_resource_derived_mutable_frame();
+    assert!(
+        !mutable_footprint_is_compatible(
+            &target,
+            &implementation,
+            &state,
+            &state,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn resource_derived_frame_rejects_mixed_explicit_effect_metadata() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:mixed-resource-frame:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 4));
+    let function = c_function(
+        CType::Void,
+        "mixed_resource_frame",
+        vec![],
+        CStatement::Skip,
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![
+            CMemorySegment::new(
+                CExpression::Variable("p".into()),
+                CExpression::Value(int32(0)),
+                CExpression::Value(int32(1)),
+            ),
+            CMemorySegment::new(
+                CExpression::Variable("p".into()),
+                CExpression::Value(int32(2)),
+                CExpression::Value(int32(3)),
+            ),
+        ],
+        vec![],
+        true,
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ))],
+        vec![],
+    )
+    .with_resource_derived_mutable_frame();
+    let projection = project_contract_memory_effects(
+        &state,
+        function.contract_interface(),
+        None,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(projection.is_err());
+}
+
+#[test]
+fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:loop-wrapper:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let definition = CCompositeResourceDefinition::new(
+        "LoopWrapper",
+        vec![c_parameter("data", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("data".into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ))],
+        vec![],
+    );
+    let requirement = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "LoopWrapper".into(),
+        vec![CExpression::Variable("p".into())],
+        vec![CType::Int32Pointer],
+    );
+    let wrong_loop_frame = CLoopEffectCheck::new_with_origin(
+        CLoopEffect::Mutable(vec![CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(1)),
+            CExpression::Value(int32(2)),
+        )]),
+        CLoopEffectSpan::Whole,
+        CLoopEffectOrigin::InheritedResourceDerived,
+        Some("loop 0 inherited owned resource frame".into()),
+    );
+    let body = CStatement::While {
+        condition: c_int32_literal(0),
+        invariant: vec![],
+        invariant_checks: vec![],
+        effect_checks: vec![wrong_loop_frame],
+        resource_specs: vec![],
+        ranking_measures: vec![],
+        structural_measure: None,
+        do_while: false,
+        body: Box::new(CStatement::Skip),
+    };
+    let function = c_function(
+        CType::Void,
+        "wrong_loop_wrapper_frame",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        body,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![requirement], vec![])
+    .with_composite_resource_definitions(vec![definition])
+    .with_resource_derived_mutable_frame();
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block, 4));
+    let result = validate_resource_derived_loop_frames(
+        &function,
+        &state,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(result.is_err());
+}
+
+#[test]
+fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:loop-fallback:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let source_segment = CMemorySegment::new(
+        CExpression::Variable("p".into()),
+        CExpression::Value(int32(0)),
+        CExpression::Value(int32(1)),
+    );
+    let token = CResourceSpec::declared(
+        ResourceFamily::Token,
+        CResourceAccessMode::Own,
+        "slot".into(),
+        vec![],
+        vec![],
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    let quantity = CResourceSpec::quantified(
+        CExpression::Variable("missing_quantity".into()),
+        token,
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    let inherited = CLoopEffectCheck::new_with_origin(
+        CLoopEffect::Mutable(vec![source_segment.clone()]),
+        CLoopEffectSpan::Whole,
+        CLoopEffectOrigin::InheritedResourceDerived,
+        Some("loop 0 inherited owned resource frame".into()),
+    );
+    let function = c_function(
+        CType::Void,
+        "reject_loop_surface_fallback",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::While {
+            condition: c_int32_literal(0),
+            invariant: vec![],
+            invariant_checks: vec![],
+            effect_checks: vec![inherited],
+            resource_specs: vec![],
+            ranking_measures: vec![],
+            structural_measure: None,
+            do_while: false,
+            body: Box::new(CStatement::Skip),
+        },
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![quantity], vec![])
+    .with_resource_derived_mutable_frame()
+    .with_resource_derived_mutable_segments(vec![source_segment]);
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block, 4));
+    let result = establish_resource_derived_loop_frames(
+        function,
+        &state,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(
+        result.is_err(),
+        "unchecked metadata must not authorize a loop frame"
+    );
 }
 
 #[test]

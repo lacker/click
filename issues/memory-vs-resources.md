@@ -588,6 +588,70 @@ was introduced. W3 did not merge or push; the manager should cherry-pick
 `56958fa6` and this documentation commit after checking the primary branch
 base.
 
+## W4 handoff (2026-09-11)
+
+W4 starts from `fa86dd96` in the isolated `codex/mvr-w4` worktree. The
+verified application path now carries one checked `CFunctionResourceTransfer`
+record for its entry transition: role- and snapshot-preserving borrowed and
+consumed inputs, callee resources, the caller residual after requirements, and
+the canonical memory-effect projection. After return-resource evaluation the
+same record retains and consumes the post outputs for allocation/return state.
+The memory projection is produced by `project_contract_memory_effects`, which
+evaluates resource-derived owned memory only from those checked transition
+facts when the interface marks that frame, then evaluates explicit effect
+guards/dependent addresses and canonical physical ranges together with their
+checked evidence facts.
+
+Modular call havoc, `CMemoryEffectSummary`, callback transition ambiguity,
+automatic refinement containment, certification Effect claims, and
+storage-write footprint checking now consume that projection helper. The old
+inline mutable-range traversal in verified application preparation and the
+independent certification Effect evaluator were removed. Tokens and views
+contribute no write range; resource-derived owned memory, guarded/subrange
+ranges, read-only storage rejection, allocation continuity, recursive
+explicit representations, instance identity/fresh fields, and
+dynamic-population rejection remain on their existing specialized paths. A
+resource summary alone does not imply abstract havoc; only the checked
+resource-derived-frame marker permits its owned memory to enter the
+projection. Direct body execution still checks stores against the transferred
+resource context rather than applying abstract call havoc.
+
+Refinement compares target and implementation projections, including
+resource-derived ranges even when their retained surface metadata is empty;
+guarded explicit effects retain exact-route refusal and range candidates are
+indexed by memory family/width before endpoint containment. Resource-derived
+frame metadata is stored separately from startup/explicit segments, and
+marking a mixed interface is rejected; the checked evidence identity includes
+both the retained metadata and mixed-frame bit. Inherited loop frames carry a
+typed origin and are rewritten to canonical entry ranges before loop proof,
+so a pointer-field mutation cannot retarget a back edge. Before storage
+certification iterates paths, it constructs one checked entry transition from
+entry-only certification facts; path/body facts are used only for the later
+write-coverage check and cannot bootstrap that transition.
+
+Loop-frame setup adds only the existing entry-only nonnegativity assumptions
+for counted resource quantities, then evaluates the checked transition once;
+if that transition cannot be established, retained source-oriented metadata
+cannot authorize a frame. The post-setup loop check validates only the typed
+canonical carrier and does not re-evaluate resource expressions.
+
+The surface `collect_owned_resource_memory_segments` traversal remains as
+checked, source-oriented metadata for body diagnostics; it is not used as a
+modular call effect source or as loop/storage authority. The kernel projection
+is authoritative there. The explicit refinement guard-decision helper remains
+a conservative adapter for its unreachable explicit-case route, while
+automatic refinement and storage checks use the authoritative projection.
+
+The deterministic regressions use sizes `1, 4, 16, 64`: one checks explicit
+effect members with 256 unrelated memory frames, one runs actual transition
+preparation/projection with 256 unrelated token-frame facts, and one expands a
+one-layer wrapper containing the explicitly used members. They check that
+work is charged to selected members rather than unrelated frames. Existing
+callback, resource, guarded-refinement, read-only, deallocation, return-indexed,
+wrapper, certification, and expansion fixtures remain the behavioral
+regressions for R4 and the memory half of R5. No C source, Click syntax,
+budget, quarantine, excluded semantics, or new issue changed.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

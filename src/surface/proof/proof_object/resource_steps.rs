@@ -41,22 +41,13 @@ impl<'a> Proof<'a> {
             let ResourceClause::Named { resource, .. } = resource else {
                 unreachable!()
             };
-            let lowered = if let Some(goal) = outcome {
-                lower_resource_clause_at_state_with_result(
-                    resource,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    before,
-                    &goal.data.core.result,
-                )?
-            } else {
-                lower_resource_clause_at_state(
-                    resource,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    before,
-                )?
-            };
+            let lowered = lower_resource_clause_at_current_locals(
+                resource,
+                context.parsed_function.parameters(),
+                context.arguments,
+                before,
+                outcome.map(|goal| &*goal.data.core.result),
+            )?;
             let CResourceFact::Own(CResource::Composite { name, arguments }, _) = lowered else {
                 return Err(self.step_error("fold construction requires an owned resource"));
             };

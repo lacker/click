@@ -2577,7 +2577,30 @@ impl<'a> Proof<'a> {
     ) -> Option<ClickProposition> {
         let _qualified_sources =
             super::surface_synthesis::QualifiedSynthesisScope::enter(surface_facts);
+        // A refold moves a constructor equation: a proof `match` arm's case
+        // fact states the scrutinee's constructor at unchanged function entry,
+        // and once the arm has refolded its instance, `c.model == C(..)` reads
+        // the refolded field. That is the one shape whose recorded pair can
+        // still answer a lookup while the spelling itself has moved to another
+        // fact, so it is the one shape re-lowered below. Testing the kernel's
+        // shape once keeps every other premise on the cheap recorded-pair
+        // route: re-lowering every candidate costs a smart `have` about half
+        // its real-time budget again.
+        let constructor_equation = matches!(
+            kernel,
+            Proposition::Equal(
+                Term::Algebraic(_),
+                Term::Algebraic(crate::kernel::AlgebraicTerm {
+                    node: crate::kernel::AlgebraicTermNode::Constructor { .. },
+                    ..
+                })
+            )
+        );
         let matches_kernel = |candidate: &ClickProposition| {
+            let lower = |candidate: &ClickProposition| {
+                self.lower_surface_proposition_direct(candidate, "typed simp premise form")
+                    .ok()
+            };
             if self.focused_outcome_data().is_some()
                 && surface_facts
                     .available_kernel_matching(candidate, |fact| self.facts().contains(fact))
@@ -2585,11 +2608,19 @@ impl<'a> Proof<'a> {
                         lowered == kernel || condition_polarity_equivalent(lowered, kernel)
                     })
             {
-                return Some(());
+                let Some(lowered) = constructor_equation.then(|| lower(candidate)).flatten() else {
+                    // Either the pair is authoritative for this shape, or the
+                    // spelling has no lowering here at all and the pair is all
+                    // there is to go on.
+                    return Some(());
+                };
+                // The spelling lowers to some other fact, so it has stopped
+                // denoting this one: citing it would hand the rechecked proof
+                // the fact it now names instead.
+                return (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
+                    .then_some(());
             }
-            let lowered = self
-                .lower_surface_proposition_direct(candidate, "typed simp premise form")
-                .ok()?;
+            let lowered = lower(candidate)?;
             (lowered == *kernel
                 || condition_polarity_equivalent(&lowered, kernel)
                 || quantified_equivalent_available_fact(kernel, std::slice::from_ref(&lowered))
@@ -2729,6 +2760,31 @@ impl<'a> Proof<'a> {
             .cloned()
         {
             return Some(surface);
+        }
+        // A proof `match` arm's case fact states the scrutinee's constructor at
+        // unchanged function entry, and the spelling recorded for it is the
+        // written, unanchored `c.model == C(..)`. Once the arm refolds its
+        // instance, that spelling denotes the fold's own equation, so the
+        // direct check above rejects it. The entry-anchored
+        // `old(c.model) == C(..)` still lowers to this exact fact. Offer it
+        // exactly where the recorded pair alone used to be taken as proof that
+        // the written form named this premise -- that acceptance is what let a
+        // certificate cite a spelling that is rechecked as a different fact --
+        // and nowhere else, so a lookup that found no spelling at all still
+        // finds none.
+        if constructor_equation
+            && self.focused_outcome_data().is_some()
+            && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
+                surface_facts
+                    .available_kernel_matching(surface, |fact| self.facts().contains(fact))
+                    .is_some_and(|recorded| {
+                        recorded == kernel || condition_polarity_equivalent(recorded, kernel)
+                    })
+                    .then(|| entry_anchored_constructor_equality(self, surface, kernel))
+                    .flatten()
+            })
+        {
+            return Some(anchored);
         }
         // Quantified execution facts may be retained in the canonical memory
         // form used by the kernel while their recorded Surface form lowers to
@@ -2964,10 +3020,10 @@ impl<'a> Proof<'a> {
                 else {
                     continue;
                 };
-                // Rewriting is directional even when its admitted premise is
-                // a symmetric equality. Keep the selected fact fixed, but
-                // try both Surface orientations so the side occurring in the
-                // focused branch goal can be replaced.
+                // `available_surface_fact` has already resolved the spelling
+                // that still lowers to this fact, anchoring a stale constructor
+                // equality at function entry when the written form stopped
+                // denoting it, so only the orientation is open here.
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
                     let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) else {
@@ -5085,6 +5141,44 @@ impl<'a> Proof<'a> {
         // with the step's diagnostic.
         apply(self).map(Some)
     }
+}
+
+/// The entry-anchored spelling of a constructor equality whose written form no
+/// longer lowers to `equality` at this frontier. `None` when the written form
+/// still denotes the fact, when the equality is not a constructor equation, or
+/// when anchoring does not recover the same fact. Anchoring is a last resort in
+/// [`Proof::available_surface_fact`]: it renames one premise the source already
+/// stated, never a fact no spelling reached.
+fn entry_anchored_constructor_equality(
+    proof: &Proof<'_>,
+    surface: &ClickProposition,
+    equality: &Proposition,
+) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = surface
+    else {
+        return None;
+    };
+    if !matches!(right, ContractExpression::AlgebraicConstructor { .. })
+        || matches!(left, ContractExpression::Old(_))
+        || proof
+            .lower_surface_proposition_direct(surface, "entry-anchored premise form")
+            .is_ok_and(|lowered| &lowered == equality)
+    {
+        return None;
+    }
+    let anchored = ClickProposition::Comparison {
+        left: ContractExpression::Old(Box::new(left.clone())),
+        operator: ComparisonOperator::Equal,
+        right: right.clone(),
+    };
+    proof
+        .lower_surface_proposition_direct(&anchored, "entry-anchored premise form")
+        .is_ok_and(|lowered| &lowered == equality)
+        .then_some(anchored)
 }
 
 /// The existential witness closer is reserved for the source-backed range
