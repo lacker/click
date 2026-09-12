@@ -442,6 +442,38 @@ enough to become the first regression of the package that fixes them.
     itself because the fact is kernel-minted with no surface spelling
     (`cases(...)` works); the S1 successor-refusal diagnostic no longer has
     a reachable shape.
+41. **Soundness hole 2, closed by C1b: capture in pure-function unfold.**
+    `unfold(f(args))` substituted arguments and then reduced the body's
+    `match`, capturing a match-arm binding that shared a name with a
+    parameter, so `unfold(reparent(Node(node, node, ...), parent))`
+    produced the old parent and a false equation closed under `requires
+    node != parent`. `prepare_contract_match_arm` now renames the binding
+    out of the way (regressions `spec_function_arm_binding_capture*.md`).
+42. **A body fact applying a pure predicate to a pointer is not discharged
+    at fold.** C1b: `fact rb_parent_is(left_model, p) == 1` makes every
+    fold refuse although the identical proposition is an available checked
+    fact just before; `fact color_bit(color) >= 0` discharges, and even the
+    constant `rb_parent_is(RbTree::Empty, identity) == 1` does not. So
+    parent/child consistency is stated in contracts, not in the body,
+    which deviates from D2. Package A20.
+43. **A frame's identity payload does not stand for the C local that names
+    the same node on unfolded cells.** C1b: `rb_replace_node`'s non-root
+    frame fails with "requires exactly one statement successor, got 2"
+    because `unfold` binds the frame's `identity` freshly and the inlined
+    `__rb_change_child` reads `parent->rb_left` while the frame owns
+    `identity->rb_left`; the re-keyed ascending walk has the same problem
+    at its exit refutation (`fact parent != 0` no longer names the C local),
+    so `rb_ascending_walk_to_root.md` stays on the parameter spelling. The
+    bridge exists: `requires t.model == rb_reparent(t.model, parent)` plus
+    `extract` yields `identity == parent` in the arm; what is missing is
+    that equality reaching the unfolded frame's owned cells and guards.
+    Package A20.
+44. **Two `RbTree` shapes.** `examples/rbtree-model` (C2) still has the
+    four-payload `Node`; the rbtree fixtures now use the five-payload
+    re-keyed one. Package C2b ports the pure library. The verbatim `rb_next`
+    guard does not parse in C0 (assignment expression;
+    kernel-scale-preprocessing) and is pinned as
+    `mdtests/rb_next_conjunctive_guard.md`.
 
 ## Design decisions
 
@@ -712,6 +744,11 @@ appears to need one reports the need instead of adding it.
   guard is certified and joined, and proof nesting goes from an effective
   five levels to eleven. Its masked-word part was a misdiagnosis (gap 38);
   A18 and A19 dispatched. C1b in progress.
+- 2026-09-12: C1b (368c4aec) is on master: the rbtree model is keyed by
+  node with the parent in the payload; **the unchanged Linux `rb_first`
+  and `rb_last` verify and audit** (19 of 19 sites), with the seven link
+  helpers, `__rb_change_child` in all three frames, and `rb_replace_node`
+  at the root; soundness hole 2 closed. C2b dispatched; A20 after A18.
 
 ## Work packages
 
@@ -976,6 +1013,22 @@ folded matched instance, publish as views the cells every remaining arm
 owns, at contract lowering, loop heads, and within a guard's own
 short-circuit evaluation. Regression: the verbatim `rb_next` ascent guard
 on the re-keyed frame. C1b's `rb_next` and C3's fixup guards depend on
+it.
+
+**A20. Pointer-argument body facts and payload-to-local identity (gaps 42,
+43).** Scope: make a body fact applying a pure function to a pointer
+argument dischargeable at fold exactly as a scalar one; and let a proved
+equality between a frame's identity payload and a C local (`identity ==
+parent`) apply to the unfolded frame's owned cells and to guard reads, so
+`rb_replace_node`'s non-root frames and the re-keyed ascent verify.
+Regressions: `rb_parent_is` as a body fact; `rb_replace_node` `Left` and
+`Right` frames; `rb_ascending_walk_to_root.md` ported to `rb_at(p)`/`ctx_at`.
+Depends on A18 (same fold check). C3 depends on it.
+
+**C2b. Port the pure red-black library to the re-keyed model.** Scope:
+`examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
+right)`, keeping every theorem, and adding the parent-consistency predicate
+and its preservation by rotation and recolor. Fixtures only. C3 depends on
 it.
 
 **T4. Make wide execution joins linear.**
