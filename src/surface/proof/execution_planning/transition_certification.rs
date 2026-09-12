@@ -232,6 +232,19 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
+                        if source_backed_requirement_should_intercept(obligation)? {
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing condition prerequisite{}: {:?}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    obligation.proposition()
+                                ),
+                                obligation,
+                            ));
+                        }
                         // The prover moved out of the kernel with package
                         // 15, so a derivation is now planning output rather
                         // than a kernel result. This leg still discharges an
@@ -859,6 +872,28 @@ fn certified_transitions_from_execution(
                         }
                     }
                     StatementPrerequisitePolicy::Contextual => {
+                        // Source-backed non-memory call requirements are
+                        // handled by the smart retained-have adapter. Keep
+                        // memory-backed and unsupported shapes on the
+                        // compatibility path until their transport exists.
+                        if source_backed_requirement_should_intercept(obligation)? {
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing prerequisite{}: {}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    describe_derivation_failure(
+                                        proposition,
+                                        pure_facts,
+                                        environment,
+                                        predicate_environment,
+                                    ),
+                                ),
+                                obligation,
+                            ));
+                        }
                         // A retained checked derivation over the context, or
                         // the exact structural rules the explicit law used (a
                         // listed premise covering a loadability, a matching
@@ -931,6 +966,24 @@ fn certified_transitions_from_execution(
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
+                        if source_backed_requirement_should_intercept(obligation)? {
+                            return Err(missing_prerequisite_error(
+                                format!(
+                                    "{context_label} is missing prerequisite{}: {}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    describe_derivation_failure(
+                                        proposition,
+                                        pure_facts,
+                                        environment,
+                                        predicate_environment,
+                                    ),
+                                ),
+                                obligation,
+                            ));
+                        }
                         if exact_fact_is_available(proposition, pure_facts) {
                             None
                         } else {

@@ -733,6 +733,136 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
     Planning,
 }
 
+/// The source-backed retry currently admits only a pure condition/logical
+/// proposition tree. Every other kernel proposition shape remains on the
+/// compatibility route until its source transport is defined.
+pub(in crate::surface) fn source_backed_requirement_is_supported(
+    proposition: &Proposition,
+    source_requirement_ordinal: Option<usize>,
+    source_requirement_is_state_independent: bool,
+) -> Result<bool, ClickError> {
+    if source_requirement_ordinal.is_none() || !source_requirement_is_state_independent {
+        return Ok(false);
+    }
+    const MAX_NODES: usize = 4096;
+    enum Work<'a> {
+        Proposition(&'a Proposition),
+        Condition(&'a ConditionTerm),
+        Bitvector(&'a Bitvector32Term),
+    }
+    let mut work = vec![Work::Proposition(proposition)];
+    let mut visited = 0;
+    while let Some(item) = work.pop() {
+        visited += 1;
+        crate::instrumentation::record_deterministic_work(1);
+        if visited > MAX_NODES {
+            return Err(ClickError::new(format!(
+                "source-backed requirement capability exceeded structural limit {MAX_NODES}"
+            )));
+        }
+        super::super::check_verification_deadline()?;
+        match item {
+            Work::Proposition(Proposition::ConditionIs(condition, _)) => {
+                work.push(Work::Condition(condition));
+            }
+            Work::Proposition(Proposition::And(left, right))
+            | Work::Proposition(Proposition::Or(left, right))
+            | Work::Proposition(Proposition::Implies(left, right)) => {
+                work.push(Work::Proposition(right));
+                work.push(Work::Proposition(left));
+            }
+            Work::Proposition(Proposition::Not(body))
+            | Work::Proposition(Proposition::ForAll { body, .. })
+            | Work::Proposition(Proposition::Exists { body, .. }) => {
+                work.push(Work::Proposition(body));
+            }
+            Work::Proposition(_) => return Ok(false),
+            Work::Condition(
+                ConditionTerm::Bitvector32SignedLessThan(left, right)
+                | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector32Equal(left, right)
+                | ConditionTerm::Bitvector64SignedLessThan(left, right)
+                | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+                | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+                | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+                | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector64Equal(left, right)
+                | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right),
+            ) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
+            }
+            Work::Condition(ConditionTerm::Constant(_)) => {}
+            Work::Condition(ConditionTerm::Variable(variable))
+                if !crate::kernel::is_load_variable(variable) => {}
+            Work::Condition(_) => return Ok(false),
+            Work::Bitvector(
+                Bitvector32Term::Constant(_)
+                | Bitvector32Term::Int64Constant(_)
+                | Bitvector32Term::UInt64Constant(_),
+            ) => {}
+            Work::Bitvector(Bitvector32Term::Variable(variable))
+                if !crate::kernel::is_load_variable(variable) => {}
+            Work::Bitvector(
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::Multiply(left, right)
+                | Bitvector32Term::Divide(left, right)
+                | Bitvector32Term::UnsignedDivide(left, right)
+                | Bitvector32Term::Remainder(left, right)
+                | Bitvector32Term::UnsignedRemainder(left, right)
+                | Bitvector32Term::ShiftLeft(left, right)
+                | Bitvector32Term::ArithmeticShiftRight(left, right)
+                | Bitvector32Term::LogicalShiftRight(left, right)
+                | Bitvector32Term::BitwiseAnd(left, right)
+                | Bitvector32Term::BitwiseOr(left, right)
+                | Bitvector32Term::BitwiseXor(left, right),
+            ) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
+            }
+            Work::Bitvector(Bitvector32Term::BitwiseNot(body)) => {
+                work.push(Work::Bitvector(body));
+            }
+            Work::Bitvector(_) => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+/// Whether this non-assumable call obligation is eligible for the
+/// source-backed retained-have path.  Contextual checking and Planning share
+/// this gate so neither route can silently derive the same source requirement.
+pub(in crate::surface) fn source_backed_requirement_should_intercept(
+    obligation: &ProofObligation,
+) -> Result<bool, ClickError> {
+    if obligation.is_assumable() {
+        return Ok(false);
+    }
+    let Some(site) = obligation.call_requirement_site() else {
+        return Ok(false);
+    };
+    source_backed_requirement_is_supported(
+        obligation.proposition(),
+        site.source_requirement_ordinal,
+        site.source_requirement_is_state_independent,
+    )
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::surface) enum StatementFactTransportPolicy {
     None,
@@ -755,4 +885,36 @@ pub(in crate::surface::proof) enum BranchStepPolicy {
 pub(in crate::surface::proof) enum LoopPreservationSource {
     Automatic,
     ExecutionProof,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_capability_walk_is_iterative_and_bounded() {
+        let leaf = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let supported = (0..1024).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
+        assert!(source_backed_requirement_is_supported(&supported, Some(0), true,).unwrap());
+
+        let over_budget = (0..4096).fold(leaf, |body, _| Proposition::Not(Box::new(body)));
+        let error = source_backed_requirement_is_supported(&over_budget, Some(0), true)
+            .expect_err("the structural capability bound must be an actionable error");
+        assert!(error.message().contains("structural limit"));
+
+        let load_variable = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(1 << 40))),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        assert!(!source_backed_requirement_is_supported(&load_variable, Some(0), true,).unwrap());
+
+        let error = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+            source_backed_requirement_is_supported(&supported, Some(0), true)
+        })
+        .expect_err("an expired capability deadline must remain an error");
+        assert!(error.message().contains("budget exhausted"));
+    }
 }

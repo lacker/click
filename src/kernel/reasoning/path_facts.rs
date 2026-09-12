@@ -945,23 +945,39 @@ fn add_required_proof_obligation_with_context_and_site(
     if required_obligation_is_exactly_discharged(assumptions, &proposition) {
         return;
     }
-    if let Some(existing) = obligations
-        .iter_mut()
-        .find(|obligation| obligation.proposition == proposition)
-    {
-        reconcile_call_requirement_site(existing, call_site);
-        return;
-    }
-
     let mut obligation = ProofObligation::verification_condition(proposition)
         .with_shared_introductions(introductions);
     if let Some(call_site) = call_site {
         obligation = obligation.with_call_requirement_site(call_site.clone());
     }
-    obligations.push(match context {
+    let obligation = match context {
         Some(context) => obligation.with_context(context),
         None => obligation,
-    });
+    };
+    if let Some(existing) = obligations
+        .iter_mut()
+        .find(|existing| existing.proposition == obligation.proposition)
+    {
+        match (
+            existing.call_requirement_site(),
+            obligation.call_requirement_site(),
+        ) {
+            (None, Some(_)) => {
+                // Replace the complete tuple, not only source metadata.
+                *existing = obligation;
+                return;
+            }
+            (Some(_), None) | (None, None) => return,
+            (Some(existing), Some(incoming)) if existing.as_ref() == incoming.as_ref() => return,
+            (Some(_), Some(_)) => {
+                // Distinct source carriers remain finite alternatives. One
+                // checked Have can discharge equal propositions from both.
+                obligations.push(obligation);
+                return;
+            }
+        }
+    }
+    obligations.push(obligation);
 }
 
 /// The same, suppressing only by the exact fact index, and carrying the same
@@ -994,32 +1010,35 @@ fn add_required_proof_obligation_without_search_and_site(
     if assumptions.proves_exact(&proposition) {
         return;
     }
-    if let Some(existing) = obligations
-        .iter_mut()
-        .find(|obligation| obligation.proposition == proposition)
-    {
-        reconcile_call_requirement_site(existing, call_site);
-        return;
-    }
     let mut obligation = ProofObligation::new(proposition).with_shared_introductions(introductions);
     if let Some(call_site) = call_site {
         obligation = obligation.with_call_requirement_site(call_site.clone());
     }
-    obligations.push(match context {
+    let obligation = match context {
         Some(context) => obligation.with_context(context),
         None => obligation,
-    });
-}
-
-fn reconcile_call_requirement_site(
-    existing: &mut ProofObligation,
-    incoming: Option<&std::sync::Arc<CallRequirementSource>>,
-) {
-    match (existing.call_requirement_site.as_ref(), incoming) {
-        (None, None) => {}
-        (Some(existing), Some(incoming)) if existing.as_ref() == incoming.as_ref() => {}
-        _ => existing.call_requirement_site = None,
+    };
+    if let Some(existing) = obligations
+        .iter_mut()
+        .find(|existing| existing.proposition == obligation.proposition)
+    {
+        match (
+            existing.call_requirement_site(),
+            obligation.call_requirement_site(),
+        ) {
+            (None, Some(_)) => {
+                *existing = obligation;
+                return;
+            }
+            (Some(_), None) | (None, None) => return,
+            (Some(existing), Some(incoming)) if existing.as_ref() == incoming.as_ref() => return,
+            (Some(_), Some(_)) => {
+                obligations.push(obligation);
+                return;
+            }
+        }
     }
+    obligations.push(obligation);
 }
 
 pub(in crate::kernel) fn append_required_proof_obligations(
@@ -1154,8 +1173,24 @@ pub(in crate::kernel) fn merge_obligations(
                 .iter_mut()
                 .find(|existing| existing.proposition() == obligation.proposition())
             {
-                reconcile_call_requirement_site(existing, obligation.call_requirement_site());
-                continue;
+                match (
+                    existing.call_requirement_site(),
+                    obligation.call_requirement_site(),
+                ) {
+                    (None, Some(_)) => {
+                        // Replace the complete tuple, preserving the incoming
+                        // source's context, introductions, and kind.
+                        *existing = obligation.clone();
+                        continue;
+                    }
+                    (Some(_), None) | (None, None) => continue,
+                    (Some(existing), Some(incoming)) if existing.as_ref() == incoming.as_ref() => {
+                        continue;
+                    }
+                    (Some(_), Some(_)) => {
+                        // Distinct source carriers remain finite alternatives.
+                    }
+                }
             }
             if let Proposition::ConditionIs(condition, value) = obligation.proposition()
                 && (assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), !*value))
@@ -1409,7 +1444,7 @@ mod mandatory_integer_obligation_tests {
         );
         assert!(under_path[0].call_requirement_site().is_some());
 
-        let conflicting = ProofObligation::verification_condition(proposition)
+        let conflicting = ProofObligation::verification_condition(proposition.clone())
             .with_call_requirement_site(call_source("other", 0));
         append_required_proof_obligations(
             &mut under_path,
@@ -1417,9 +1452,74 @@ mod mandatory_integer_obligation_tests {
             std::slice::from_ref(&conflicting),
         );
         assert!(
-            under_path[0].call_requirement_site().is_none(),
-            "conflicting duplicate provenance must fail closed"
+            under_path[0].call_requirement_site().is_some()
+                && under_path[1].call_requirement_site().is_some(),
+            "conflicting duplicate provenance must remain source-bearing"
         );
+        assert_eq!(under_path.len(), 2);
+
+        let same_site_different_ordinal = ProofObligation::verification_condition(proposition)
+            .with_call_requirement_site(call_source("selected", 1));
+        append_required_proof_obligations(
+            &mut under_path,
+            &assumptions,
+            std::slice::from_ref(&same_site_different_ordinal),
+        );
+        assert_eq!(under_path.len(), 3);
+        assert!(under_path[2].call_requirement_site().is_some());
+
+        let carrierless_duplicate =
+            ProofObligation::verification_condition(Proposition::Predicate {
+                name: "required".to_string(),
+                arguments: vec![],
+            });
+        append_required_proof_obligations(
+            &mut under_path,
+            &assumptions,
+            std::slice::from_ref(&carrierless_duplicate),
+        );
+        assert_eq!(under_path.len(), 3);
+        assert!(
+            under_path
+                .iter()
+                .all(|obligation| obligation.call_requirement_site().is_some())
+        );
+
+        let tuple_proposition = Proposition::Predicate {
+            name: "tuple".to_string(),
+            arguments: vec![],
+        };
+        let incoming_introductions =
+            std::sync::Arc::new(vec![LoweringIntroduction::WrittenNegation]);
+        let incoming_source = call_source("incoming", 2);
+        let mut tuple_obligations = vec![
+            ProofObligation::verification_condition(tuple_proposition.clone())
+                .with_context("old context")
+                .with_introductions(vec![LoweringIntroduction::PathFactGuard]),
+        ];
+        add_required_proof_obligation_with_context_and_site(
+            &mut tuple_obligations,
+            &assumptions,
+            tuple_proposition,
+            Some("incoming context"),
+            Some(&incoming_introductions),
+            Some(&incoming_source),
+        );
+        assert_eq!(tuple_obligations.len(), 1);
+        assert_eq!(
+            tuple_obligations[0].context.as_deref(),
+            Some("incoming context")
+        );
+        assert_eq!(
+            tuple_obligations[0].introductions.as_deref(),
+            Some(incoming_introductions.as_ref())
+        );
+        assert!(std::sync::Arc::ptr_eq(
+            tuple_obligations[0]
+                .call_requirement_site()
+                .expect("replacement keeps incoming source"),
+            &incoming_source
+        ));
     }
 
     #[test]

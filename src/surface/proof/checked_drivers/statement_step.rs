@@ -19,6 +19,31 @@ pub(in crate::surface::proof) fn check_statement_step(
     requirement_pure_facts: &ProofFacts,
     context: Option<&PureFactContext>,
 ) -> Result<CheckedStatementStep, ClickError> {
+    let prerequisite_policy = if context.is_some() {
+        StatementPrerequisitePolicy::Contextual
+    } else {
+        StatementPrerequisitePolicy::Explicit
+    };
+    check_statement_step_with_policy(
+        execution,
+        proof_context,
+        requirement_pure_facts,
+        context,
+        prerequisite_policy,
+    )
+}
+
+/// Checks one statement with the caller-selected prerequisite policy. The
+/// source-backed retry policy shares Contextual derivation and differs only in
+/// exposing a supported call carrier before hidden derivation.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn check_statement_step_with_policy(
+    execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
+    requirement_pure_facts: &ProofFacts,
+    context: Option<&PureFactContext>,
+    prerequisite_policy: StatementPrerequisitePolicy,
+) -> Result<CheckedStatementStep, ClickError> {
     let function_block = proof_context.function_block;
     let function = proof_context.function;
     let parsed_function = proof_context.parsed_function;
@@ -34,11 +59,6 @@ pub(in crate::surface::proof) fn check_statement_step(
     // are proved from it, and nothing is transported per step because the
     // kernel keeps cell names it can prove unwritten from that context.
     let tactic_name = "step()";
-    let prerequisite_policy = if context.is_some() {
-        StatementPrerequisitePolicy::Contextual
-    } else {
-        StatementPrerequisitePolicy::Explicit
-    };
     let loop_step_policy = LoopStepPolicy::EnterBody;
     // Resuming from a completed branch region reaches this statement without
     // recording its entry snapshot. Later facts may still name this boundary.

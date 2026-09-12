@@ -243,6 +243,17 @@ impl<'a> Proof<'a> {
         &self,
         step: ProofStep,
     ) -> Result<Self, ClickError> {
+        self.apply_execution_statement_step_with_policy(
+            step,
+            StatementPrerequisitePolicy::Contextual,
+        )
+    }
+
+    pub(in crate::surface::proof) fn apply_execution_statement_step_with_policy(
+        &self,
+        step: ProofStep,
+        prerequisite_policy: StatementPrerequisitePolicy,
+    ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step` requires an execution-frontier proof"));
         };
@@ -345,7 +356,17 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
-        let checked = check_statement_step(&mut execution, context, self.facts(), fact_context)?;
+        let checked = if matches!(prerequisite_policy, StatementPrerequisitePolicy::Contextual) {
+            check_statement_step(&mut execution, context, self.facts(), fact_context)?
+        } else {
+            check_statement_step_with_policy(
+                &mut execution,
+                context,
+                self.facts(),
+                fact_context,
+                prerequisite_policy,
+            )?
+        };
         let mut checked = checked;
         // A fact the statement introduces (a callee's `ensures`, a store's
         // value) is recorded under its readable spelling at the successor

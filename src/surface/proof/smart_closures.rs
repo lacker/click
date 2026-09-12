@@ -4119,7 +4119,7 @@ impl<'a> Proof<'a> {
         self.retry_statement_after_refusal(step, retried_requirements, initial)
     }
 
-    /// Continues one checked smart statement after its initial exact attempt
+    /// Continues one checked smart statement after its initial checked attempt
     /// has reported an unresolved requirement.  Keeping the refused result as
     /// an input makes the retry core directly testable without changing the
     /// production checked-step dispatch.
@@ -4135,13 +4135,6 @@ impl<'a> Proof<'a> {
                 let Some(mut requirement) = error.unresolved_requirement().cloned() else {
                     return Err(error);
                 };
-                // D1 intentionally handles the first non-load synthesis
-                // shape only.  Loadability requirements need the canonical
-                // load spelling/epoch path and remain on the existing error
-                // route until that package lands.
-                if proposition_contains_memory_loadability(&requirement.proposition)? {
-                    return Err(error);
-                }
                 let Some(identity) = proposition_identity_key(&requirement.proposition) else {
                     return Err(error);
                 };
@@ -4157,25 +4150,38 @@ impl<'a> Proof<'a> {
                     let Some(execution) = proof.execution() else {
                         return Err(error);
                     };
-                    // Qualified static/file-scope loads are only spellable
-                    // through the caller's recorded surface map.  Keep the
-                    // retry on the same checked presentation path as
-                    // ordinary surface construction; otherwise a real call
-                    // requirement over a foreign static array is reported as
-                    // unsynthesizable even when the caller explicitly stated
-                    // every indexed cell.
                     let execution_view = execution.view(context);
                     let _qualified_sources =
                         super::surface_synthesis::QualifiedSynthesisScope::enter(
                             execution_view.surface_propositions,
                         );
-                    let Some(surface) = synthesize_surface_proposition(
-                        &requirement.proposition,
-                        context.parsed_function.parameters(),
-                        context.arguments,
-                        &execution.core.state,
-                    ) else {
-                        return Err(error);
+                    // A call requirement is authoritative only at the call
+                    // site that produced it. Resolve its source clause from
+                    // the immutable registry/interface definition, after
+                    // checking that this proof is still at that exact call.
+                    // In particular, do not synthesize from the caller's
+                    // reduced snapshot or use the kernel candidate ordinal
+                    // as a source selector.
+                    let surface = if requirement.call_site.is_some() {
+                        match source_backed_call_requirement_surface(
+                            &requirement,
+                            &step,
+                            execution,
+                            context,
+                        ) {
+                            Some(surface) => surface,
+                            None => return Err(error),
+                        }
+                    } else {
+                        let Some(surface) = synthesize_surface_proposition(
+                            &requirement.proposition,
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                            &execution.core.state,
+                        ) else {
+                            return Err(error);
+                        };
+                        surface
                     };
                     let lowered = match proof
                         .lower_surface_goal(&surface, "smart retained-have requirement")
@@ -4212,10 +4218,8 @@ impl<'a> Proof<'a> {
                             else {
                                 return Err(next_error);
                             };
-                            if proposition_contains_memory_loadability(
-                                &next_requirement.proposition,
-                            )? {
-                                return Err(next_error);
+                            if requirement_uses_planning_compatibility(&next_requirement)? {
+                                return proof.apply_step(step.clone());
                             }
                             let Some(next_identity) =
                                 proposition_identity_key(&next_requirement.proposition)
@@ -4256,7 +4260,7 @@ impl<'a> Proof<'a> {
         })
     }
 
-    fn try_statement_step_with_apply(
+    pub(in crate::surface::proof) fn try_statement_step_with_apply(
         &self,
         mut apply: impl FnMut(&Self) -> Result<Self, ClickError>,
     ) -> Result<Option<Self>, ClickError> {
@@ -4287,9 +4291,13 @@ impl<'a> Proof<'a> {
             // per path.
             return match apply(self) {
                 Ok(proof) => Ok(Some(proof)),
-                Err(_) => {
-                    check_verification_deadline()?;
-                    Ok(None)
+                Err(error) => {
+                    if source_backed_refusal(&error)? {
+                        Err(error)
+                    } else {
+                        check_verification_deadline()?;
+                        Ok(None)
+                    }
                 }
             };
         }
@@ -4300,35 +4308,183 @@ impl<'a> Proof<'a> {
     }
 }
 
-/// D1 retries only propositions whose tree contains no memory-loadability
-/// atom.  This is deliberately structural: it never inspects unrelated facts
-/// or searches the ambient context.
-fn proposition_contains_memory_loadability(proposition: &Proposition) -> Result<bool, ClickError> {
-    const WALK_LIMIT: usize = 16_384;
-    let mut pending = vec![proposition];
-    let mut work = 0;
-    while let Some(proposition) = pending.pop() {
-        work += 1;
-        if work > WALK_LIMIT || crate::instrumentation::deadline_exceeded_with_work(1) {
-            return Err(ClickError::new(
-                "verification budget exhausted inside smart requirement shape guard",
-            ));
-        }
-        match proposition {
-            Proposition::CMemoryLoadable { .. } => return Ok(true),
-            Proposition::And(left, right)
-            | Proposition::Or(left, right)
-            | Proposition::Implies(left, right) => {
-                pending.push(left);
-                pending.push(right);
-            }
-            Proposition::Not(body)
-            | Proposition::ForAll { body, .. }
-            | Proposition::Exists { body, .. } => pending.push(body),
-            _ => {}
-        }
+fn source_backed_refusal(error: &ClickError) -> Result<bool, ClickError> {
+    let Some(requirement) = error.unresolved_requirement() else {
+        return Ok(false);
+    };
+    let Some(site) = requirement.call_site.as_ref() else {
+        return Ok(false);
+    };
+    source_backed_requirement_is_supported(
+        &requirement.proposition,
+        site.source_requirement_ordinal,
+        site.source_requirement_is_state_independent,
+    )
+}
+
+/// Recover the written source clause that produced one unresolved call
+/// requirement.  This is deliberately a narrow, fail-closed lookup: the
+/// carrier's callee, interface, source ordinal, argument expressions, and
+/// frontier memory identity all have to agree before a source form is
+/// admitted to the retained-have retry.
+fn source_backed_call_requirement_surface(
+    requirement: &UnresolvedRequirement,
+    step: &ProofStep,
+    execution: &ExecutionProofState,
+    context: &ExecutionProofContext<'_>,
+) -> Option<ClickProposition> {
+    let source = requirement.call_site.as_ref()?;
+    let source_ordinal = source.source_requirement_ordinal?;
+    let site = source.site.as_ref();
+
+    if crate::kernel::CMemorySnapshotIdentity::of(execution.core.state.memory())
+        != site.source_snapshot
+    {
+        return None;
     }
-    Ok(false)
+
+    // Confirm that the refused operation is still the exact source call that
+    // generated this carrier. This protects retries after a caller has been
+    // moved to a different frontier, and keeps source arguments authoritative
+    // rather than reconstructing them from a reduced state.
+    let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
+        execution.view(context),
+        &execution.core.state,
+        context.function,
+        context.arguments,
+        context.claim_label,
+        context.tactic_index,
+        "smart retained-have call source",
+    )
+    .ok()?;
+    let (callee, arguments) = match statement {
+        CStatement::Call {
+            function_name,
+            arguments,
+        }
+        | CStatement::CallAssign {
+            function_name,
+            arguments,
+            ..
+        } => (function_name, arguments),
+        _ => return None,
+    };
+    let source_registry = context.function_source_registry();
+    let ordinary_source = source_registry.ordinary_function(site.callee.as_ref());
+    match step {
+        ProofStep::StepContract(_) => {}
+        ProofStep::StepCall(_) => {
+            // StepCall is the concrete-call operation: both the C symbol and
+            // the selected interface must be the carrier's concrete callee.
+            if callee != site.callee || site.interface.as_ref() != site.callee {
+                return None;
+            }
+        }
+        ProofStep::Step => {
+            // A plain step may execute an indirect callback.  When the
+            // selected interface differs from the concrete callee, the C
+            // statement names only its function-pointer symbol and the
+            // authoritative carrier routes source lookup through that named
+            // interface.  Ordinary direct calls still require the concrete
+            // source symbol to agree with the carrier.
+            let indirect = site.interface.as_ref() != site.callee;
+            if !indirect && ordinary_source.is_some() && callee != site.callee {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    if arguments.as_slice() != site.source_arguments.as_slice() {
+        return None;
+    }
+    let expected_interface = match step {
+        ProofStep::StepContract(application) => application.name.as_str(),
+        ProofStep::Step | ProofStep::StepCall(_) => site.interface.as_ref(),
+        _ => return None,
+    };
+    if site.interface.as_ref() != expected_interface {
+        return None;
+    }
+
+    // Ordinary C calls use the file-scoped registry keyed by the carrier's
+    // callee. Named callback and StepContract interfaces instead resolve by
+    // their interface name. Both paths index directly by the checked source
+    // ordinal; resources, generated clauses, and out-of-range entries fail
+    // closed without consulting ambient/project facts.
+    let use_named_interface = matches!(step, ProofStep::StepContract(_))
+        || site.interface.as_ref() != site.callee.as_str()
+        // An indirect callback may carry the selected interface as both its
+        // callee and interface name even though the C statement names only
+        // the function-pointer variable. In that case the ordinary registry
+        // has no entry, so resolve the exact named definition instead.
+        || ordinary_source.is_none();
+    let (source_parameter_names, source_proposition) = if use_named_interface {
+        let definition = context
+            .predicate_environment
+            .contract_definition(site.interface.as_ref());
+        let definition = definition?;
+        let requirement = definition.function_block().requires().get(source_ordinal)?;
+        (
+            definition
+                .function_block()
+                .signature()
+                .parameters()
+                .iter()
+                .map(|parameter| parameter.name().to_string())
+                .collect::<Vec<_>>(),
+            requirement.proposition()?.clone(),
+        )
+    } else {
+        let source = ordinary_source?.get(source_ordinal)?;
+        let proposition = match source {
+            FunctionRequirementSource::Proposition(proposition) => proposition.clone(),
+            FunctionRequirementSource::LoadableSegment(_) => return None,
+        };
+        let function = context
+            .function_environment
+            .get_function(site.callee.as_ref())?;
+        (
+            function
+                .parameters()
+                .iter()
+                .map(|parameter| parameter.name().to_string())
+                .collect::<Vec<_>>(),
+            proposition,
+        )
+    };
+
+    if source_parameter_names.len() != site.source_arguments.len() {
+        return None;
+    }
+    let substitutions = source_parameter_names
+        .iter()
+        .zip(site.source_arguments.iter())
+        .map(|(parameter, argument)| {
+            (
+                parameter.clone(),
+                ContractExpression::CFragment(argument.clone()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    substitute_click_proposition(&source_proposition, &substitutions).ok()
+}
+
+fn requirement_uses_planning_compatibility(
+    requirement: &UnresolvedRequirement,
+) -> Result<bool, ClickError> {
+    let Some(source) = requirement.call_site.as_ref() else {
+        // No carrier means this is not a source-backed call requirement; keep
+        // the established planner route for ordinary statement obligations.
+        return Ok(true);
+    };
+    if source.source_requirement_ordinal.is_none() {
+        return Ok(true);
+    }
+    Ok(!source_backed_requirement_is_supported(
+        &requirement.proposition,
+        source.source_requirement_ordinal,
+        source.source_requirement_is_state_independent,
+    )?)
 }
 
 /// Candidate spellings of one kernel fact from recorded program-point

@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn source_backed_call_requirement_expands_and_reverifies() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/call_precondition_disjunction_is_an_obligation.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = r#"
+verifying "either.c";
+
+extern int32 either_positive(int32 x, int32 y) {
+    requires x > 0 or y > 0;
+    ensures result == 0;
+}
+
+int32 caller(int32 x, int32 y) {
+    requires x > 0;
+    ensures result == 0 by { execute(); }
+}
+"#;
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources)
+        .expect("source-backed call requirement should verify");
+    let expanded =
+        expand_c0_claim_source(click_source, &c_sources, "caller", CProofClaim::Ensure(0))
+            .expect("source-backed call requirement should expand");
+    assert!(
+        expanded.contains("have x > 0 or y > 0 by"),
+        "expanded proof should retain the checked call requirement Have: {expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("expanded source-backed call requirement should reverify");
+
+    let have_start = expanded
+        .find("have x > 0 or y > 0 by")
+        .expect("the expansion should contain the retained requirement");
+    let step_start = expanded[have_start..]
+        .find("step();")
+        .map(|offset| have_start + offset)
+        .expect("the retained have should precede the call step");
+    let mut without_have = expanded.clone();
+    without_have.replace_range(have_start..step_start, "");
+    let error = verify_c0_sources(&without_have, &c_sources)
+        .expect_err("deleting the retained have must reject the call precondition");
+    assert!(
+        error.unresolved_requirement().is_some(),
+        "the deleted retained have should expose the structured call requirement: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/c_named_function_contract_source_refusal_in_symbolic_branch.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("symbolic-branch mdtest should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources)
+        .expect("symbolic-branch source requirement should verify");
+    let expanded = expand_c0_claim_source(click_source, &c_sources, "apply", CProofClaim::Grouped)
+        .expect("symbolic-branch source requirement should expand");
+    let have = "have value >= 0 or value == -1 by";
+    let have_start = expanded
+        .find(have)
+        .unwrap_or_else(|| panic!("expanded proof should retain `{have}`: {expanded}"));
+    let step_start = expanded[have_start..]
+        .find("step();")
+        .map(|offset| have_start + offset)
+        .expect("the retained Have should precede the callback step");
+    assert!(have_start < step_start, "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("expanded symbolic-branch source requirement should reverify");
+
+    let mut without_have = expanded.clone();
+    without_have.replace_range(have_start..step_start, "");
+    let error = verify_c0_sources(&without_have, &c_sources)
+        .expect_err("deleting the retained Have must reject the callback precondition");
+    assert!(
+        error.unresolved_requirement().is_some(),
+        "deleted branch-local Have should expose the structured callback requirement: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn integer_sum_range_fold_expands_and_reverifies() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/integer_sum_range_fold.md");

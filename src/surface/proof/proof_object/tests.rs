@@ -3687,6 +3687,134 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
             .frontier
             .is_at_function_entry()
     );
+
+    // A source-backed requirement whose authoritative source entry is
+    // unavailable must remain an error.  In particular, a smart execution
+    // caller must not turn this structured refusal into a Planning scratch
+    // descendant.  The test fixture intentionally has no source-registry
+    // entry for `identity`, so the checked resolver fails closed.
+    let supported = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
+        "identity",
+        "identity",
+        0,
+        &arguments,
+        root.execution().unwrap().core.state.memory(),
+    ));
+    let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
+        site,
+        0,
+        Some(0),
+        true,
+    ));
+    let refusal = ClickError::new("injected supported source refusal").with_unresolved_requirement(
+        &ProofObligation::verification_condition(supported).with_call_requirement_site(source),
+    );
+    let error = match root.retry_statement_after_refusal(
+        ProofStep::Step,
+        &mut BTreeSet::new(),
+        Err(refusal),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("a missing authoritative source must not enter Planning"),
+    };
+    assert!(error.unresolved_requirement().is_some());
+    assert!(root.certificate().steps().is_empty());
+    assert!(
+        root.execution()
+            .unwrap()
+            .core
+            .frontier
+            .is_at_function_entry()
+    );
+}
+
+#[test]
+fn supported_source_refusal_on_branch_does_not_enter_planning() {
+    let click_file = crate::surface::parse(
+        r#"
+            int32 identity(int32 x) {
+                ensures result == 0;
+            }
+        "#,
+    )
+    .expect("test function should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let parsed_function =
+        syntax::parse_function("int32 identity(int32 x) { if (x) { return x; } return x; }")
+            .expect("test C function should parse");
+    let function = parsed_function.to_kernel_function();
+    let function_environment = CExecutionEnvironment::new();
+    let resource_environment = ResourceEnvironment::new(&[]);
+    let arguments = [CExpression::Value(CValue::Int32(
+        Bitvector32Term::Constant(7),
+    ))];
+    let root = Proof::for_execution_frontier(
+        "smart branch refusal",
+        0,
+        ExecutionProofState::at_entry(
+            CState::new(),
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        Vec::new(),
+        ExecutionProofConstants {
+            source_layout: SourceExecutionLayout::new(parsed_function.body()),
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
+        "identity",
+        "identity",
+        0,
+        &arguments,
+        root.execution().unwrap().core.state.memory(),
+    ));
+    let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
+        site,
+        0,
+        Some(0),
+        true,
+    ));
+    let refusal = ClickError::new("injected supported branch refusal").with_unresolved_requirement(
+        &ProofObligation::verification_condition(Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true,
+        ))
+        .with_call_requirement_site(source),
+    );
+    let mut refusal = Some(refusal);
+    let result = root.try_statement_step_with_apply(|_| {
+        Err(refusal
+            .take()
+            .expect("the branch selector should invoke the test operation once"))
+    });
+    assert!(
+        result.is_err(),
+        "supported refusal must not become a planner miss"
+    );
+    assert!(root.certificate().steps().is_empty());
+    assert!(
+        root.execution()
+            .unwrap()
+            .core
+            .frontier
+            .is_at_function_entry()
+    );
 }
 
 /// A retained-have retry must use the caller's recorded qualified spelling
