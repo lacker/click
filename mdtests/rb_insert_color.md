@@ -26,7 +26,8 @@ the rule that now accepts it. Nothing else in the function needed a translation:
 `WRITE_ONCE`, the function-pointer parameter and the indirect call through it
 all lower.
 
-**The proof does not.** The fixup loop is `while (true)` with four `break`s —
+**The body's proof does not yet.** The fixup loop is `while (true)` with four
+`break`s —
 the root-blackening exit, the black-parent exit, and the two case-3 rotations —
 and two `continue`s, the uncle-red recolours. The `loop` tactic now has a rule
 for both: a `continue` is the back edge
@@ -74,12 +75,41 @@ The three the contract still shows:
   and is the position the fixup links
   ([`rb_produces_through_the_root_cell.md`](rb_produces_through_the_root_cell.md)).
 
-What the fixture pins now is the loop's own entry: the invariants it declares do
-not follow from the contract by `simp` alone, because relating the C local
-`parent` that `rb_red_parent` computed to the frame's node payload is proof work
-this fixture does not do. `initialize` fails on the fourth invariant, `c.model ==
-ctx_reroot(c.model, parent)`, and package C3 owns both that and the `break`s and
-`continue`s behind it.
+The loop's entry is now proved. The invariants do not follow from the contract
+by `simp` alone: the contract says where the focused subtree sits in its frame,
+`ctx_holds(c.model, t.model) == 1`, while the loop and the body talk about the C
+local `parent` that `rb_red_parent` computed. The bridge is pure and it is in
+this file. `rb_has_parent(sub, p)` says the focus is a node whose parent payload
+is `p` — the `Empty` case is `0`, not `1`, so two frames that both hold the same
+focus name the same node — and `ctx_holds` is restated on it.
+`ctx_node_is_from_parent` then takes the contract's gluing requirement and
+`rb_has_parent(t.model, node_parent)` to `ctx_node_is(c.model, node_parent) ==
+1`, and `ctx_reroot_fixed` takes that to `c.model == ctx_reroot(c.model,
+node_parent)`, which is the ascent shape
+[`rb_ascending_walk_to_root.md`](rb_ascending_walk_to_root.md) carries. Both are
+applied with `using`, because `apply`'s premise search does not find a pure fact
+a `have` proved by rewriting through the arm's constructor
+([`theorem_premise_search_names_the_premise.md`](theorem_premise_search_names_the_premise.md)).
+`parent == node_parent` itself is one `simp`: the node is red by the contract,
+so its parent word carries no tag and `rb_red_parent`'s cast is the payload.
+
+Two orderings in that preamble are forced rather than chosen. A pure `have`
+proved by `unfold` and `normalize` stops lowering once `parent == node_parent`
+has been established, so every pure step comes first and only `simp` bridges
+follow. And the loop's in-order invariant names the entry tree through the entry
+`match` arm's constructor rather than `old(t.model)`, because a loop invariant's
+`old` on an instance the body unfolded and refolded before the loop runs out of
+paths
+([`loop_invariant_old_field_after_a_refold.md`](loop_invariant_old_field_after_a_refold.md)).
+`old(c.model)`, on the context the preamble never unfolds, lowers in the same
+invariant.
+
+What the fixture pins now is the body. `preserve` is omitted, so the loop tactic
+tries to execute one iteration on its own and stops at the first guard it cannot
+read through. The four `break`s, the two `continue`s, the two rotations and the
+frame-level case theorems `examples/rbtree-model` proves for them
+(`ctx_insert_case1_left`, `ctx_insert_case2_left`, `ctx_insert_case3_left` and
+their mirrors) are the rest of package C3.
 
 The contract itself is D3 and D4 on the node-keyed model. `__rb_insert` returns
 `void` and reassigns `node`, so the cursor at the exit has no C name and the

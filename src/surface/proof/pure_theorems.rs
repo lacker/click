@@ -4958,7 +4958,8 @@ fn prove_pure_theorem_tactics(
                 let certificate = ProofCertificate::from_proof_tactics(have_tactics).map_err(
                     |error| {
                         ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: invalid `have` certificate: {error:?}"
+                            "`{claim_label}` tactic {tactic_index}: a `have` inside a theorem takes an explicit simple proof, and this one uses {}",
+                            error.message()
                         ))
                     },
                 )?;

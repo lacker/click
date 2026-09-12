@@ -3683,6 +3683,61 @@ impl CertificateError {
     pub fn path(&self) -> &[CertificatePathSegment] {
         &self.path
     }
+
+    /// Names the refused tactic and where it sits, in the spelling the author
+    /// wrote. A certificate holds simple steps only, so the refusal a user
+    /// meets is almost always a smart tactic written where an explicit script
+    /// is required; saying which one and where is the whole diagnostic.
+    pub fn message(&self) -> String {
+        let tactic = match self.tactic_class {
+            TacticClass::Smart(kind) => format!("smart tactic `{}`", smart_tactic_spelling(kind)),
+            TacticClass::Control(_) => "a control tactic".to_string(),
+            TacticClass::Simple(_) => "a step with no certificate form".to_string(),
+        };
+        let mut place = String::new();
+        for segment in &self.path {
+            let segment = match segment {
+                CertificatePathSegment::MatchArm(index) => format!("match arm {index}"),
+                CertificatePathSegment::InvariantBody => "invariant body".to_string(),
+                CertificatePathSegment::LeftConjunct => "left conjunct".to_string(),
+                CertificatePathSegment::RightConjunct => "right conjunct".to_string(),
+                CertificatePathSegment::Tactic(index) => format!("tactic {index}"),
+                CertificatePathSegment::HaveBody => "`have` body".to_string(),
+                CertificatePathSegment::OpenBody => "open scope".to_string(),
+                CertificatePathSegment::ThenBranch => "then branch".to_string(),
+                CertificatePathSegment::ElseBranch => "else branch".to_string(),
+                CertificatePathSegment::LeftCase => "left case".to_string(),
+                CertificatePathSegment::RightCase => "right case".to_string(),
+                CertificatePathSegment::InductionArm(index) => format!("induction arm {index}"),
+                CertificatePathSegment::LoopInitialize => "loop `initialize`".to_string(),
+                CertificatePathSegment::LoopPreserve => "loop `preserve`".to_string(),
+                CertificatePathSegment::LoopItem(index) => format!("loop item {index}"),
+            };
+            if !place.is_empty() {
+                place.push_str(" > ");
+            }
+            place.push_str(&segment);
+        }
+        if place.is_empty() {
+            tactic
+        } else {
+            format!("{tactic} at {place}")
+        }
+    }
+}
+
+/// The source spelling of a smart tactic, for diagnostics.
+fn smart_tactic_spelling(kind: SmartTacticKind) -> &'static str {
+    match kind {
+        SmartTacticKind::CloseInvariants => "close_invariants",
+        SmartTacticKind::Auto => "auto",
+        SmartTacticKind::ApplyTheorem => "apply",
+        SmartTacticKind::Arithmetic => "arithmetic",
+        SmartTacticKind::FactTransport => "normalize",
+        SmartTacticKind::SmartExecute => "execute",
+        SmartTacticKind::ExecuteUntil => "execute_until",
+        SmartTacticKind::Simp => "simp",
+    }
 }
 
 /// Classifies one certificate step by the tactic it prints as.

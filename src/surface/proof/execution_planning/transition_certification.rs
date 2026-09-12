@@ -323,7 +323,8 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                     outcome: CConditionOutcome::RuntimeError(error),
                     ..
                 } => Err(ClickError::new(format!(
-                    "{context_label} produced runtime error while evaluating the condition: {error:?}"
+                    "{context_label} produced runtime error while evaluating the condition: {}",
+                    crate::surface::diagnostics::describe_runtime_error(error, &[], &[]),
                 ))),
                 proposition => Err(ClickError::new(format!(
                     "{context_label} saw unexpected condition theorem {proposition:?}"

@@ -586,8 +586,9 @@ impl<'a> Proof<'a> {
             }
             if candidates.is_empty() {
                 return Err(self.step_error(format!(
-                    "theorem application `{}` has no checked surface form for exact premise `{requirement:?}`",
-                    application.name
+                    "theorem application `{}` has no checked surface form for exact premise `{}`",
+                    application.name,
+                    crate::surface::proof_diagnostics::render::render_proposition(&requirement),
                 )));
             }
             let surface = candidates
@@ -621,8 +622,9 @@ impl<'a> Proof<'a> {
                 })
                 .ok_or_else(|| {
                     self.step_error(format!(
-                        "theorem application `{}` has no checked surface form for exact premise `{requirement:?}`{}",
+                        "theorem application `{}` has no checked surface form for exact premise `{}`{}",
                         application.name,
+                        crate::surface::proof_diagnostics::render::render_proposition(&requirement),
                         snapshot_surface_error
                             .as_ref()
                             .map(|error| format!(": {}", error.message()))
