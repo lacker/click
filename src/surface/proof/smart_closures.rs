@@ -2209,7 +2209,12 @@ impl<'a> Proof<'a> {
             let allows_chain = matches!(goal, Proposition::ConditionIs(_, _));
             let mut refinement = None;
             let goal_variable_count = crate::kernel::proposition_variables(&goal).len();
-            for equality in proof.facts().bitvector_equalities_mentioning(&goal) {
+            let equalities = proof
+                .facts()
+                .bitvector_equalities_mentioning(&goal)
+                .into_iter()
+                .chain(proof.facts().algebraic_equalities_mentioning(&goal));
+            for equality in equalities {
                 let equality_has_literal_endpoint = matches!(
                     &equality,
                     Proposition::ConditionIs(
@@ -2320,6 +2325,7 @@ impl<'a> Proof<'a> {
                     Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
                         | Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(_, _), true)
                         | Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)
+                        | Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_))
                 )
             })
             .map(|(_, surface)| surface.clone())

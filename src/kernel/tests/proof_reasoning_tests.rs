@@ -221,6 +221,40 @@ fn checked_algebraic_constructor_rules_are_sound() {
 }
 
 #[test]
+fn algebraic_equality_lookup_for_constructor_disequality_is_goal_local() {
+    let algebraic_type = maybe_int32_type();
+    let model = AlgebraicTerm {
+        algebraic_type: algebraic_type.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_020)),
+    };
+    let source = Proposition::Equal(
+        Term::Algebraic(model.clone()),
+        Term::Algebraic(maybe_constructor(&algebraic_type, "Some", vec![int32(7)])),
+    );
+    let unrelated = Proposition::Equal(
+        Term::Algebraic(AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(Variable(89_021)),
+        }),
+        Term::Algebraic(maybe_constructor(&algebraic_type, "None", vec![])),
+    );
+    let goal = Proposition::Not(Box::new(Proposition::Equal(
+        Term::Algebraic(model),
+        Term::Algebraic(maybe_constructor(&algebraic_type, "None", vec![])),
+    )));
+    let facts = crate::kernel::proof::ProofFacts::from_ordered(&[source.clone(), unrelated]);
+    assert_eq!(facts.algebraic_equalities_mentioning(&goal), vec![source]);
+    let unmatched = Proposition::Not(Box::new(Proposition::Equal(
+        Term::Algebraic(AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(Variable(89_022)),
+        }),
+        Term::Algebraic(maybe_constructor(&algebraic_type, "None", vec![])),
+    )));
+    assert!(facts.algebraic_equalities_mentioning(&unmatched).is_empty());
+}
+
+#[test]
 fn algebraic_symbolic_reflexivity_checks_well_formed_terms() {
     let ty = maybe_int32_type();
     let variable = AlgebraicTerm {

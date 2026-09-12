@@ -45,6 +45,10 @@ pub(crate) struct ProofFacts {
     /// the goal and their buckets.
     bitvector_equalities_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
+    /// Exact algebraic equalities keyed by their root terms.  Goal-local
+    /// constructor disequality rewrites need the variable-to-constructor
+    /// premise without scanning unrelated proposition facts.
+    algebraic_equalities_by_term: PersistentMap<AlgebraicTerm, PersistentSequence<Proposition>>,
     by_quantified_equivalence:
         PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<Proposition>>,
     /// Selected load identities checked while presenting a rewritten goal.
@@ -245,6 +249,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut by_integer_condition_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
+        let mut algebraic_equalities_by_term = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
         let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
@@ -273,6 +278,8 @@ impl ProofFacts {
                         index_integer_condition_fact(by_integer_condition_alpha, &conjunct);
                     bitvector_equalities_by_atom =
                         index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
+                    algebraic_equalities_by_term =
+                        index_algebraic_equality_fact(algebraic_equalities_by_term, &conjunct);
                     exact = exact.with_value(conjunct);
                 }
             }
@@ -281,6 +288,8 @@ impl ProofFacts {
                 index_integer_condition_fact(by_integer_condition_alpha, fact);
             bitvector_equalities_by_atom =
                 index_bitvector_equality_fact(bitvector_equalities_by_atom, fact);
+            algebraic_equalities_by_term =
+                index_algebraic_equality_fact(algebraic_equalities_by_term, fact);
             exact = exact.with_value(fact.clone());
             assumptions = assumptions.assume_proposition(fact.clone());
             implicit_transport_assumptions =
@@ -296,6 +305,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            algebraic_equalities_by_term,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
             rewritten_load_evidence: PersistentSequence::default(),
@@ -356,6 +366,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         let mut by_integer_condition_alpha = self.by_integer_condition_alpha.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
+        let mut algebraic_equalities_by_term = self.algebraic_equalities_by_term.clone();
         let by_quantified_equivalence =
             index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
         let implications_by_consequent =
@@ -370,6 +381,8 @@ impl ProofFacts {
                     index_integer_condition_fact(by_integer_condition_alpha, &conjunct);
                 bitvector_equalities_by_atom =
                     index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
+                algebraic_equalities_by_term =
+                    index_algebraic_equality_fact(algebraic_equalities_by_term, &conjunct);
                 exact = exact.with_value(conjunct);
             }
         }
@@ -378,6 +391,8 @@ impl ProofFacts {
             index_integer_condition_fact(by_integer_condition_alpha, &fact);
         bitvector_equalities_by_atom =
             index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
+        algebraic_equalities_by_term =
+            index_algebraic_equality_fact(algebraic_equalities_by_term, &fact);
         exact = exact.with_value(fact.clone());
         let mut ordered = self.ordered.clone();
         ordered.push(fact.clone());
@@ -397,6 +412,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            algebraic_equalities_by_term,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             rewritten_load_evidence: self.rewritten_load_evidence.clone(),
@@ -875,6 +891,25 @@ impl ProofFacts {
             .collect()
     }
 
+    /// Returns exact algebraic equalities attached to terms occurring in
+    /// this proposition.  The persistent term index keeps constructor
+    /// disequality rewrites goal-local; callers never inspect unrelated
+    /// proposition facts.
+    pub(crate) fn algebraic_equalities_mentioning(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Proposition> {
+        let mut terms = BTreeSet::new();
+        collect_proposition_algebraic_terms(proposition, &mut terms);
+        let mut equalities = BTreeSet::new();
+        for term in terms {
+            if let Some(bucket) = self.algebraic_equalities_by_term.get(&term) {
+                equalities.extend(bucket.iter().cloned());
+            }
+        }
+        equalities.into_iter().collect()
+    }
+
     /// Like [`Self::bitvector_equalities_mentioning`], also returning indexed
     /// pointer-offset equalities between scaled offsets, for the pointer side
     /// of the load-variable chain bridge.
@@ -1088,6 +1123,52 @@ fn index_bitvector_equality_fact(
         index = index.with_inserted(key, bucket);
     }
     index
+}
+
+fn index_algebraic_equality_fact(
+    mut index: PersistentMap<AlgebraicTerm, PersistentSequence<Proposition>>,
+    fact: &Proposition,
+) -> PersistentMap<AlgebraicTerm, PersistentSequence<Proposition>> {
+    let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = fact else {
+        return index;
+    };
+    for term in [left, right]
+        .into_iter()
+        .filter(|term| !matches!(term.node, AlgebraicTermNode::Constructor { .. }))
+    {
+        let mut bucket = index.get(term).cloned().unwrap_or_default();
+        if !bucket.iter().any(|candidate| candidate == fact) {
+            bucket.push(fact.clone());
+            index = index.with_inserted(term.clone(), bucket);
+        }
+    }
+    index
+}
+
+fn collect_proposition_algebraic_terms(
+    proposition: &Proposition,
+    terms: &mut BTreeSet<AlgebraicTerm>,
+) {
+    match proposition {
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
+            terms.insert(left.clone());
+            terms.insert(right.clone());
+        }
+        Proposition::ConditionIs(ConditionTerm::AlgebraicEqual(left, right), _) => {
+            terms.insert(left.as_ref().clone());
+            terms.insert(right.as_ref().clone());
+        }
+        Proposition::Not(body)
+        | Proposition::ForAll { body, .. }
+        | Proposition::Exists { body, .. } => collect_proposition_algebraic_terms(body, terms),
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_proposition_algebraic_terms(left, terms);
+            collect_proposition_algebraic_terms(right, terms);
+        }
+        _ => {}
+    }
 }
 
 fn bitvector_equality_atom_key(term: &Bitvector32Term) -> Option<BitvectorEqualityAtomKey> {

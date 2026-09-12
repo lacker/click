@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn simp_rewrites_constructor_equality_before_disequality() {
+    let click_source = r#"
+            spec enum Mark { Clear, Set }
+
+            theorem constructor_disequality(value: Mark) {
+                requires value == Mark::Set;
+                ensures value != Mark::Clear by {
+                    simp();
+                }
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("simp should rewrite a constructor equality before proving disequality");
+    let without_equality =
+        click_source.replace("                requires value == Mark::Set;\n", "");
+    assert!(
+        verify_c0_sources(&without_equality, &[]).is_err(),
+        "simp must not prove a constructor disequality without the equality premise"
+    );
+}
+
+#[test]
 fn defined_fact_makes_simple_statement_step_explicit() {
     let c_source = r#"
             int32 increment(int32 x) {
