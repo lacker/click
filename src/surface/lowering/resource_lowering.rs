@@ -1016,6 +1016,32 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
     lower_resource_clause_with_values(resource, parameters, &values, state, Some(result))
 }
 
+/// Lowers a proof tactic's resource clause with every C name it mentions read
+/// in the state the proof has reached.
+///
+/// A contract clause speaks about parameters, so its names are the entry
+/// argument values and `lower_resource_clause_at_state` is right for it. A
+/// proof `fold` names the cursor the execution is standing on: inside a loop
+/// body that has reassigned `root`, `fold(ctx_at(root->left), ...)` is the
+/// frame of the current node, not of the node the function was called with.
+/// The fold's own field values are already read this way
+/// ([`contract_environment_at_state`]), so lowering its arguments at entry
+/// split one tactic across two states and built the instance at an address
+/// its fields did not describe.
+pub(in crate::surface) fn lower_resource_clause_at_current_locals(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    result: Option<&CValue>,
+) -> Result<CResourceFact, ClickError> {
+    let values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, _) = contract_environment_at_state(&values, &array_refs, state);
+    lower_resource_clause_with_values(resource, parameters, &values, state, result)
+}
+
 pub(in crate::surface) fn lower_resource_clause_facts_at_state_with_result(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
