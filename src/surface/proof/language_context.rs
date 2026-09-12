@@ -101,6 +101,9 @@ pub(in crate::surface::proof) struct ExecutionProofConstants {
     /// `execution_start_facts`. It is presentation metadata only.
     #[allow(dead_code)]
     pub(in crate::surface::proof) entry_fact_origins: Arc<Vec<EntryFactOrigin>>,
+    /// Bounded proof-local index of direct caller predicate requirements.
+    /// This is presentation/planning metadata and is not proof authority.
+    pub(in crate::surface::proof) caller_requirement_index: Arc<CallerRequirementIndex>,
     /// Exact ordinary caller whose entry requirement identities populate the
     /// proof-local index. Missing ownership makes source selection fail closed.
     #[allow(dead_code)]
@@ -121,6 +124,7 @@ impl Default for ExecutionProofConstants {
             source_layout: SourceExecutionLayout::default(),
             execution_start_facts: Arc::new(Vec::new()),
             entry_fact_origins: Arc::new(Vec::new()),
+            caller_requirement_index: Arc::new(CallerRequirementIndex::default()),
             caller_source_owner: None,
             function_entry_state: None,
             function_source_registry: Arc::new(FunctionSourceRegistry::default()),

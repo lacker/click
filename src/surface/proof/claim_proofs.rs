@@ -295,6 +295,14 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         claim_label,
         Some(&caller_source_owner),
     )?;
+    let caller_requirement_index = CallerRequirementIndex::from_entry_facts(
+        caller_source_owner.clone(),
+        function_block,
+        parsed_function.parameters(),
+        &pure_facts,
+        &entry_fact_origins,
+        crate::kernel::CMemorySnapshotIdentity::of(state.memory()),
+    );
     let function = annotated_function_with_assumptions(
         function_block,
         parsed_function,
@@ -329,6 +337,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
         entry_fact_origins: Arc::new(entry_fact_origins),
+        caller_requirement_index: Arc::new(caller_requirement_index),
         caller_source_owner: Some(caller_source_owner),
         function_entry_state: Some(function_entry_state),
         function_source_registry,
@@ -487,6 +496,14 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         &proof_label,
         Some(&caller_source_owner),
     )?;
+    let caller_requirement_index = CallerRequirementIndex::from_entry_facts(
+        caller_source_owner.clone(),
+        function_block,
+        parsed_function.parameters(),
+        &pure_facts,
+        &entry_fact_origins,
+        crate::kernel::CMemorySnapshotIdentity::of(state.memory()),
+    );
     let function = annotated_function_with_assumptions(
         function_block,
         parsed_function,
@@ -520,6 +537,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
         entry_fact_origins: Arc::new(entry_fact_origins),
+        caller_requirement_index: Arc::new(caller_requirement_index),
         caller_source_owner: Some(caller_source_owner),
         function_entry_state: Some(function_entry_state),
         function_source_registry,
