@@ -467,6 +467,8 @@ appears to need one reports the need instead of adding it.
   `is_recursive` unified) is green and rebasing; the scaffold walks it was
   to deliver are blocked by gaps 19 to 21, now package A12, which
   dispatches when A9 lands.
+- 2026-09-12: A9 (66bd8005) is on master. A12 dispatched; A11 and T5 in
+  progress.
 
 ## Work packages
 
