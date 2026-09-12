@@ -2144,9 +2144,10 @@ pub struct CFunctionContractInterface {
     /// `requires` clause, or `None` for a generated definedness clause.
     pub(super) contract_requirement_sources: ContractRequirementSources,
     pub(crate) contract_ensures: Vec<SpecProposition>,
-    /// Checked effect information. Resource-derived frames deliberately share
-    /// this carrier with explicit `Effect` frames, while retaining their
-    /// distinct certification rule in `contract_effect_claim_required`.
+    /// Explicit checked effect information, or source-oriented metadata for
+    /// resource-derived frames. Resource-derived memory authority is computed
+    /// from the checked transition; this vector remains available to body and
+    /// diagnostic consumers without becoming a modular-call input.
     pub(crate) contract_mutable: Vec<CMemorySegment>,
     pub(crate) contract_effect_claim_required: bool,
     pub(crate) resource_derived_mutable_frame: bool,

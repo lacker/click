@@ -464,11 +464,10 @@ pub(in crate::surface) fn annotated_function(
     // frame into loop summaries so checked proof artifacts retain the same
     // memory-footprint evidence as independent contract certification.
     let implicit_contract_mutable_segments = contract_mutable.as_slice();
-    let resource_derived_mutable_frame = !contract_mutable.is_empty()
-        || function_block
-            .requires()
-            .iter()
-            .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
+    let resource_derived_mutable_frame = function_block
+        .requires()
+        .iter()
+        .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         implicit_contract_mutable_segments,
@@ -983,7 +982,7 @@ pub(in crate::surface) fn function_contract_summary(
     parsed_function: &syntax::C0Function,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
+    _resource_environment: &ResourceEnvironment,
 ) -> Result<FunctionContractSummary, ClickError> {
     let entry_state = crate::kernel::initialize_c_function_globals(
         &CState::new(),
@@ -1143,11 +1142,16 @@ pub(in crate::surface) fn function_contract_summary(
                 )
             }));
         }
+        // Keep the lowered owned segments as proof/diagnostic metadata.  The
+        // kernel's modular-call projection deliberately ignores this derived
+        // list when a resource transition is present; it is retained here so
+        // body effect checking and loop summaries can remain source-oriented
+        // read-only consumers during the migration.
         for requirement in function_block.requires() {
             if let Requirement::Resource(resource) = requirement.inner() {
                 collect_owned_resource_memory_segments(
                     resource,
-                    resource_environment,
+                    _resource_environment,
                     parsed_function.parameters(),
                     &mut lowerer,
                     &mut mutable,

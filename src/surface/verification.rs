@@ -3994,11 +3994,10 @@ pub(in crate::surface) fn build_function_environment(
                     click_function_environment,
                     resource_environment,
                 )?;
-                let resource_derived_mutable_frame = !contract_mutable.is_empty()
-                    || function_block
-                        .requires()
-                        .iter()
-                        .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
+                let resource_derived_mutable_frame = function_block
+                    .requires()
+                    .iter()
+                    .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
                 let function = function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
