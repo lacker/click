@@ -1151,12 +1151,12 @@ fn collect_proposition_algebraic_terms(
 ) {
     match proposition {
         Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
-            terms.insert(left.clone());
-            terms.insert(right.clone());
+            collect_algebraic_term_roots(left, terms);
+            collect_algebraic_term_roots(right, terms);
         }
         Proposition::ConditionIs(ConditionTerm::AlgebraicEqual(left, right), _) => {
-            terms.insert(left.as_ref().clone());
-            terms.insert(right.as_ref().clone());
+            collect_algebraic_term_roots(left, terms);
+            collect_algebraic_term_roots(right, terms);
         }
         Proposition::Not(body)
         | Proposition::ForAll { body, .. }
@@ -1168,6 +1168,38 @@ fn collect_proposition_algebraic_terms(
             collect_proposition_algebraic_terms(right, terms);
         }
         _ => {}
+    }
+}
+
+fn collect_algebraic_term_roots(term: &AlgebraicTerm, terms: &mut BTreeSet<AlgebraicTerm>) {
+    terms.insert(term.clone());
+    match &term.node {
+        AlgebraicTermNode::Variable(_) => {}
+        AlgebraicTermNode::Constructor { fields, .. } => {
+            for field in fields {
+                if let AlgebraicValue::Algebraic(value) = field {
+                    collect_algebraic_term_roots(value, terms);
+                }
+            }
+        }
+        AlgebraicTermNode::Match { scrutinee, arms } => {
+            collect_algebraic_term_roots(scrutinee, terms);
+            for arm in arms {
+                for binding in &arm.bindings {
+                    if let AlgebraicValue::Algebraic(value) = binding {
+                        collect_algebraic_term_roots(value, terms);
+                    }
+                }
+                collect_algebraic_term_roots(&arm.body, terms);
+            }
+        }
+        AlgebraicTermNode::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                if let PureFunctionArgument::Algebraic(value) = argument {
+                    collect_algebraic_term_roots(value, terms);
+                }
+            }
+        }
     }
 }
 

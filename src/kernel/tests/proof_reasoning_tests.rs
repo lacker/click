@@ -255,6 +255,79 @@ fn algebraic_equality_lookup_for_constructor_disequality_is_goal_local() {
 }
 
 #[test]
+fn algebraic_equality_lookup_descends_constructor_fields() {
+    let variants: std::sync::Arc<[AlgebraicVariantType]> = vec![
+        AlgebraicVariantType {
+            name: "Empty".into(),
+            fields: vec![],
+        },
+        AlgebraicVariantType {
+            name: "Node".into(),
+            fields: vec![AlgebraicValueType::Algebraic {
+                name: "Tree".into(),
+                arguments: vec![],
+            }],
+        },
+    ]
+    .into();
+    let value_type = AlgebraicValueType::Algebraic {
+        name: "Tree".into(),
+        arguments: vec![],
+    };
+    let algebraic_type = AlgebraicType {
+        rigid: false,
+        name: "Tree".into(),
+        arguments: vec![],
+        variants: variants.clone(),
+        schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+            value_type, variants,
+        )]))),
+    };
+    let value = AlgebraicTerm {
+        algebraic_type: algebraic_type.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_030)),
+    };
+    let middle = AlgebraicTerm {
+        algebraic_type: algebraic_type.clone(),
+        node: AlgebraicTermNode::Variable(Variable(89_031)),
+    };
+    let function = AlgebraicTerm {
+        algebraic_type: algebraic_type.clone(),
+        node: AlgebraicTermNode::PureFunctionApplication {
+            name: "shape_left".into(),
+            arguments: vec![PureFunctionArgument::Algebraic(value)],
+        },
+    };
+    let source = Proposition::Equal(
+        Term::Algebraic(function.clone()),
+        Term::Algebraic(middle.clone()),
+    );
+    let constructor = |field: AlgebraicTerm| AlgebraicTerm {
+        algebraic_type: algebraic_type.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Node".into(),
+            fields: vec![AlgebraicValue::Algebraic(field)],
+        },
+    };
+    let goal = Proposition::Equal(
+        Term::Algebraic(constructor(function)),
+        Term::Algebraic(constructor(middle)),
+    );
+    let unrelated = Proposition::Equal(
+        Term::Algebraic(AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(Variable(89_032)),
+        }),
+        Term::Algebraic(AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(Variable(89_033)),
+        }),
+    );
+    let facts = crate::kernel::proof::ProofFacts::from_ordered(&[source.clone(), unrelated]);
+    assert_eq!(facts.algebraic_equalities_mentioning(&goal), vec![source]);
+}
+
+#[test]
 fn algebraic_symbolic_reflexivity_checks_well_formed_terms() {
     let ty = maybe_int32_type();
     let variable = AlgebraicTerm {

@@ -41,9 +41,9 @@ consumed subtrees and its produced result through the call's binder map.
 Two proof-shaping notes. The equations that unfold `shape_left` and
 `shape_right` are proved before the callback call, but the model equation
 itself has to be restated after it: the callee returns fresh instance fields
-tied to the entry fields only by `t.model == old(t.model)`, and the closing
-`simp()` does not orient the two `shape_*` equations on its own, so the `have`
-after the call supplies them with explicit `rewrite`s.
+tied to the entry fields only by `t.model == old(t.model)`. The closing
+`simp()` now orients the retained `shape_*` equations through the returned
+constructor, so the `have` after the call needs no explicit rewrites.
 
 ```c filename=augment_rotate_model.c
 struct node {
@@ -217,8 +217,6 @@ struct node* rotate_left(
             have rotated.model == Shape::Node(old(node->right),
                 Shape::Node(node, old(l.model), shape_left(old(r.model))),
                 shape_right(old(r.model))) by {
-                rewrite(shape_left(old(r.model)) == middle_model);
-                rewrite(shape_right(old(r.model)) == far_model);
                 simp();
             }
             step();

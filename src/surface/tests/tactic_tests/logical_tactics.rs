@@ -24,6 +24,42 @@ fn simp_rewrites_constructor_equality_before_disequality() {
 }
 
 #[test]
+fn simp_orients_pure_function_equality_inside_constructor_goal() {
+    let click_source = r#"
+            spec enum Shape {
+                Empty,
+                Node(Shape, Shape),
+            }
+
+            function shape_left(tree: Shape) -> Shape {
+                match tree {
+                    Shape::Empty => Shape::Empty,
+                    Shape::Node(left, right) => left,
+                }
+            }
+
+            theorem pure_function_equation(value: Shape, middle: Shape) {
+                requires shape_left(value) == middle;
+                ensures Shape::Node(shape_left(value), Shape::Empty) ==
+                    Shape::Node(middle, Shape::Empty) by {
+                    simp();
+                }
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[])
+        .expect("simp should orient a pure-function equality inside a constructor");
+    let without_equality = click_source.replace(
+        "                requires shape_left(value) == middle;\n",
+        "",
+    );
+    assert!(
+        verify_c0_sources(&without_equality, &[]).is_err(),
+        "simp must not prove the constructor equality without its function premise"
+    );
+}
+
+#[test]
 fn defined_fact_makes_simple_statement_step_explicit() {
     let c_source = r#"
             int32 increment(int32 x) {

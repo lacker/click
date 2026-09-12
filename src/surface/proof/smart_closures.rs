@@ -2206,7 +2206,11 @@ impl<'a> Proof<'a> {
         let mut used = BTreeSet::new();
         loop {
             let goal = proof.goal()?.clone();
-            let allows_chain = matches!(goal, Proposition::ConditionIs(_, _));
+            let allows_chain = matches!(goal, Proposition::ConditionIs(_, _))
+                || matches!(
+                    goal,
+                    Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_))
+                );
             let mut refinement = None;
             let goal_variable_count = crate::kernel::proposition_variables(&goal).len();
             let equalities = proof
