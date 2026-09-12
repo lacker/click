@@ -3786,6 +3786,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                     .collect(),
             }),
             recursive: definition.recursive,
+            matched_recursive: definition.matched_recursive,
             counted_population: definition.counted_population,
             contains: definition
                 .contains
@@ -6780,6 +6781,7 @@ fn substitute_pointer_variable_in_c_function(
                     .collect(),
             }),
             recursive: definition.recursive,
+            matched_recursive: definition.matched_recursive,
             counted_population: definition.counted_population,
             contains: definition
                 .contains

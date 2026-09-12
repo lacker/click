@@ -1242,6 +1242,7 @@ impl CCompositeResourceDefinition {
             witnesses: Vec::new(),
             condition,
             recursive,
+            matched_recursive: false,
             counted_population: false,
             contains,
             facts,
@@ -1272,6 +1273,7 @@ impl CCompositeResourceDefinition {
             witnesses: Vec::new(),
             condition,
             recursive: false,
+            matched_recursive: false,
             counted_population: true,
             contains,
             facts,
@@ -1290,8 +1292,22 @@ impl CCompositeResourceDefinition {
         self.condition.as_ref()
     }
 
+    /// Whether this definition contains an instance of itself, wherever the
+    /// child clause is written.
+    ///
+    /// A matched definition keeps its children inside the arms, so the
+    /// `recursive` flag — which describes the unmatched memory body that
+    /// instance fold/unfold rewrites — never sees them. Callers that ask about
+    /// the definition rather than about that body (expansion cycle guards,
+    /// certification-cache and eager-expansion declines, structural measures)
+    /// must see a matched `tree_at` as recursive too.
     pub fn is_recursive(&self) -> bool {
-        self.recursive
+        self.recursive || self.matched_recursive
+    }
+
+    pub(crate) fn with_matched_recursion(mut self, matched_recursive: bool) -> Self {
+        self.matched_recursive = matched_recursive;
+        self
     }
 
     pub fn is_counted_population(&self) -> bool {

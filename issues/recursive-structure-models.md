@@ -219,6 +219,40 @@ enough to become the first regression of the package that fixes them.
     generated `have c.model == old(c.model)` inside a match arm omits the
     entry-anchored rewrite because the certificate was searched against a
     goal with the entry model already substituted. Package T5.
+18. **A pointer disequality is not decided from null-ness or separation.**
+    Found by package A10 on the `Right` frame of `__rb_change_child`: the
+    inner test `parent->rb_left == old` must be false, but from
+    `parent->rb_left == 0` and `old != 0`, or from the sibling being a
+    separately owned node, the exact condition check does not derive
+    `parent->rb_left != old`. Package A11.
+19. **Folding the D3 frame fails on `fact parent->left == child`.** Found by
+    package A9 on the scaffold's descent: with `ctx_at(child)` exactly as
+    `mdtests/resource_arm_binding_struct_base.md` declares it, `let frame =
+    fold(ctx_at(root->left), { model: Context::Left(root, v, r, ctx.model) },
+    { sibling: rt, up: ctx });` fails with `fold requires the instance body
+    facts for the proposed fields`; bisecting the arm shows the one blocker
+    is `fact parent->left == child`, even though the clause instantiates to
+    `root->left == root->left`. Package A12.
+20. **A pointer-typed model payload is not a memory base for ownership at
+    fold.** Found by package A9: folding the frame after the cursor moves,
+    with `parent` bound to the `HeapTree::Node` identity binding, fails
+    with `fold requires ownership of the complete instance body` while the
+    pointer equality between the binding and the cell's owner is an
+    available premise; substituting a C local moves it past ownership to
+    gap 19. A6 fixed payloads in propositions, not in ownership lookup.
+    Package A12.
+21. **Smaller scaffold-walk blockers from A9**, all pre-existing: `have
+    p->left == root by simp;` does not lower ("0 paths") when `p` is a
+    pointer local aliasing `root`; the selected arm's `fact p != 0` is not
+    published at contract lowering (A1 published cells only, D7 says facts
+    too), so `tree_leftmost`'s `if (root == 0)` needs a `branch` whose then
+    arm unfolds and is infeasible; `old(t.model)` in a loop invariant fails
+    with "resource instance `t` is not owned at this snapshot" once `t` was
+    unfolded and refolded before the loop, while the same `old(t.model)`
+    works in a `have`; a loop binder under a fresh name fails with the bare
+    "could not lower entry invariants: Paths"; match-arm bindings are out
+    of scope in loop clauses; and `observe` cannot name a fielded binder.
+    Package A12 owns the first four; the last two are not scheduled.
 
 ## Design decisions
 
@@ -424,6 +458,17 @@ appears to need one reports the need instead of adding it.
 - 2026-09-12: T3 (three audit modes fixed: post-exit `have` in an open
   scope, scope `have` expansion recording, `assumption` closing a produced
   resource claim; bb009743) is on master. T5 dispatched for the residue.
+- 2026-09-12: A10 (wide integer loads named by their load variable, so a
+  frame's unwritten facts survive a sibling write; one contract over the
+  `Top` and `Left` frames of `__rb_change_child`; b0cfc0e6) is on master
+  with a confirming full gate. A11 dispatched for gap 18. A9 and T5 are in
+  progress.
+- 2026-09-12: A9 (proof `match` at loop-body frontiers and after C steps,
+  `is_recursive` unified) is green and rebasing; the scaffold walks it was
+  to deliver are blocked by gaps 19 to 21, now package A12, which
+  dispatches when A9 lands.
+- 2026-09-12: A9 (66bd8005) is on master. A12 dispatched; A11 and T5 in
+  progress.
 
 ## Work packages
 
@@ -580,6 +625,30 @@ path premises versus contract assumptions). Regressions: the reduction as a
 positive; the same with the fact genuinely invalidated by the write as a
 negative. Depends on A8; C3 and C5 depend on it.
 
+**A11. Decide `p != q` from `p == 0` and `q != 0`, and from separation.**
+Scope: a bounded derived pointer fact in the exact condition check and in
+`simp`/`normalize`, keyed by the pointers involved. Regressions: the two
+null-ness reductions, a negative with neither pointer known non-null, the
+separation case, and the `Right` arm added to
+`mdtests/rb_ctx_change_child_one_contract.md` so one contract covers all
+three frames. Depends on A10; C3 and C5 depend on it.
+
+**A12. Unblock the scaffold walks (gaps 19, 20, 21) and deliver B1's core.**
+Scope: fix the fold body-fact check for a clause that instantiates to a
+reflexive equality through a struct-pointer binding (gap 19); let a
+pointer-typed payload binding resolve ownership at fold when it is
+provably equal to the owner (gap 20); lower a `have` over an aliasing
+pointer local; publish the selected arm's facts at contract lowering as
+D7 states; make `old(name.field)` in a loop invariant read the function
+entry instance regardless of intervening unfold/refold; and name the
+refusal for a fresh loop binder. Acceptance is B1's core: the unchanged
+`tree_leftmost` and `tree_rightmost` verified and audited on
+`examples/modeled-binary-tree` with `Context`, `ctx_at(child, parent)`,
+`plug`, loop binders, a loop-body `match`, and `decreases sub;`, plus the
+ascending and rotate-then-ascend fixtures and the two context negatives
+A4 and A9 could not land. Depends on A9. B1 then only adds the README and
+docs.
+
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
 nested `branch` fixtures from gap 15, remove the deep clones or make them
@@ -647,7 +716,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, A8, A9, A10, B1, C1, C2.
+on A4, A8, A9, A10, A11, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with

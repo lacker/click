@@ -225,6 +225,9 @@ pub(in crate::surface::proof) struct PlanningExecutionContext {
 pub(in crate::surface::proof) struct ProofCaseChoice {
     pub(in crate::surface::proof) condition: ClickProposition,
     pub(in crate::surface::proof) value: bool,
+    /// Set when the case is one arm of a proof `match`. Merging then groups
+    /// the paths by arm and rebuilds the `match` instead of an `if`.
+    pub(in crate::surface::proof) match_arm: Option<ProofMatchArmCase>,
 }
 
 #[derive(Clone)]
@@ -284,10 +287,24 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
             )));
         }
         let condition = paths[0].case_path[0].condition.clone();
-        if paths
-            .iter()
-            .any(|path| path.case_path[0].condition != condition)
-        {
+        let match_header = paths[0].case_path[0]
+            .match_arm
+            .as_ref()
+            .map(|case| case.source.clone());
+        if let Some(header) = &match_header {
+            if paths.iter().any(|path| {
+                path.case_path[0]
+                    .match_arm
+                    .as_ref()
+                    .is_none_or(|case| &case.source != header)
+            }) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path-aligned certificates have incompatible next proof `match`"
+                )));
+            }
+        } else if paths.iter().any(|path| {
+            path.case_path[0].condition != condition || path.case_path[0].match_arm.is_some()
+        }) {
             return Err(ClickError::new(format!(
                 "`{claim_label}` path-aligned certificates have incompatible next branch conditions"
             )));
@@ -339,6 +356,39 @@ pub(in crate::surface::proof) fn merge_path_aligned_certificates(
                 }
             }
             prefix = shared;
+        }
+        if let Some(header) = match_header {
+            let mut arm_paths: Vec<Vec<PathCertificate>> = vec![Vec::new(); header.arms.len()];
+            for mut path in paths {
+                let choice = path.case_path.remove(0);
+                if let Some(offsets) = &mut path.case_offsets
+                    && !offsets.is_empty()
+                {
+                    offsets.remove(0);
+                }
+                let arm = choice.match_arm.expect("a match case names its arm").arm;
+                let Some(slot) = arm_paths.get_mut(arm) else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` path-aligned certificate names an unknown proof `match` arm"
+                    )));
+                };
+                slot.push(path);
+            }
+            let mut rebuilt = Arc::unwrap_or_clone(header);
+            for (arm, paths) in rebuilt.arms.iter_mut().zip(arm_paths) {
+                // An arm a checked `contradiction` closed produces no path;
+                // its written tactics are already the whole arm proof.
+                if paths.is_empty() {
+                    continue;
+                }
+                arm.tactics = merge(claim_label, paths)?.to_proof_tactics().to_vec();
+            }
+            prefix.push(ProofTactic::Match(Box::new(rebuilt)));
+            return ProofCertificate::from_proof_tactics(&prefix).map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` merged an invalid path-aligned certificate: {error:?}"
+                ))
+            });
         }
         let mut then_paths = Vec::new();
         let mut else_paths = Vec::new();
@@ -421,34 +471,63 @@ pub(in crate::surface::proof) fn certificate_leaf_for_case_path(
         offsets: &mut Vec<usize>,
     ) -> Result<(), ClickError> {
         for tactic in tactics {
-            let ProofTactic::If(proof_if) = tactic else {
-                selected.push(tactic.clone());
-                continue;
-            };
-            offsets.push(selected.len());
-            let choice = case_path.get(*next_case).ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` surface certificate has more branches than its validation path"
-                ))
-            })?;
-            if choice.condition != proof_if.condition {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` surface certificate branch condition does not match its validation path"
-                )));
+            match tactic {
+                ProofTactic::If(proof_if) => {
+                    offsets.push(selected.len());
+                    let choice = case_path.get(*next_case).ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` surface certificate has more branches than its validation path"
+                        ))
+                    })?;
+                    if choice.condition != proof_if.condition || choice.match_arm.is_some() {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` surface certificate branch condition does not match its validation path"
+                        )));
+                    }
+                    *next_case += 1;
+                    select(
+                        claim_label,
+                        if choice.value {
+                            &proof_if.then_tactics
+                        } else {
+                            &proof_if.else_tactics
+                        },
+                        case_path,
+                        next_case,
+                        selected,
+                        offsets,
+                    )?;
+                }
+                ProofTactic::Match(proof_match) => {
+                    offsets.push(selected.len());
+                    let choice = case_path.get(*next_case).ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` surface certificate has more branches than its validation path"
+                        ))
+                    })?;
+                    let Some(arm_case) = choice.match_arm.as_ref() else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` surface certificate has a proof `match` its validation path does not take"
+                        )));
+                    };
+                    let arm = proof_match.arms.get(arm_case.arm).ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` surface certificate proof `match` has no arm {}",
+                            arm_case.arm
+                        ))
+                    })?;
+                    *next_case += 1;
+                    select(
+                        claim_label,
+                        &arm.tactics,
+                        case_path,
+                        next_case,
+                        selected,
+                        offsets,
+                    )?;
+                }
+                _ => selected.push(tactic.clone()),
             }
-            *next_case += 1;
-            select(
-                claim_label,
-                if choice.value {
-                    &proof_if.then_tactics
-                } else {
-                    &proof_if.else_tactics
-                },
-                case_path,
-                next_case,
-                selected,
-                offsets,
-            )?;
         }
         Ok(())
     }

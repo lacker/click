@@ -1380,9 +1380,36 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
 ) -> Result<Proof<'a>, ClickError> {
     check_verification_deadline()?;
     match node {
-        InternalProofNode::Match { .. } => Err(ClickError::new(
-            "proof `match` currently requires unchanged function entry, not a loop-body frontier",
-        )),
+        InternalProofNode::Match {
+            index,
+            proof_match,
+            arms,
+            continuation,
+            ..
+        } => {
+            let proof = proof.with_execution_tactic_index(*index)?;
+            let plan = proof.plan_execution_match(proof_match)?;
+            // Every arm continues into the region's own continuation: a
+            // preservation path never rejoins across the back edge, so each
+            // arm closes the invariants and reaches the loop's boundary on
+            // its own, with its own resource state.
+            let mut arm_pending: Vec<&InternalProofNode> = Vec::with_capacity(pending.len() + 1);
+            arm_pending.push(continuation.as_ref());
+            arm_pending.extend_from_slice(pending);
+            advance_preservation_match_group(
+                proof,
+                &plan,
+                arms,
+                &plan.live_cases(),
+                &arm_pending,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                claim_label,
+                leaves,
+                0,
+            )
+        }
         InternalProofNode::Done => {
             let Some((next, rest)) = pending.split_first() else {
                 if !proof.is_at_region_boundary() {
@@ -1616,6 +1643,74 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
         }
     }
 }
+
+/// Runs one group of a preservation `match`'s live constructor arms, halving
+/// the group with the same frontier split the entry-time driver uses until a
+/// single arm remains.
+///
+/// Nothing joins: each arm's path reaches the loop's typed boundary as its own
+/// leaf, keeping the resource state that arm folded before the back edge. The
+/// certificate is reassembled from those leaves by path-aligned merging, which
+/// rebuilds this `match` from the arm case each leaf recorded.
+#[allow(clippy::too_many_arguments)]
+fn advance_preservation_match_group<'a>(
+    proof: Proof<'a>,
+    plan: &super::super::proof_object::ExecutionMatchPlan,
+    arms: &[InternalProofNode],
+    live: &[usize],
+    pending: &[&InternalProofNode],
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    claim_label: &str,
+    leaves: &mut Vec<Proof<'a>>,
+    depth: usize,
+) -> Result<Proof<'a>, ClickError> {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return Err(ClickError::new(format!(
+            "`{claim_label}`: proof `match` splits deeper than the checked region bound"
+        )));
+    }
+    let [index] = live else {
+        let (left, right) = live.split_at(live.len() / 2);
+        if left.is_empty() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}`: proof `match` needs at least one live constructor arm"
+            )));
+        }
+        let (mut proof, record) = proof.split_execution_match_group(plan.condition(left))?;
+        for (take_left, group) in [(true, left), (false, right)] {
+            let focused = proof.focus_execution_if_arm(&record, take_left)?;
+            proof = advance_preservation_match_group(
+                focused,
+                plan,
+                arms,
+                group,
+                pending,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+                claim_label,
+                leaves,
+                depth + 1,
+            )?;
+        }
+        return Ok(proof);
+    };
+    let index = *index;
+    let proof = proof.enter_execution_match_arm(plan, index)?;
+    advance_preservation_region(
+        proof,
+        &arms[index],
+        pending,
+        expansion_capture,
+        proof_site,
+        owning_source_index,
+        claim_label,
+        leaves,
+    )
+}
+
 /// Advances one sibling arm of an in-`Proof` execution split through its
 /// linear source tactics, on a proof focused at that arm's recorded goal.
 /// Every operation is the ordinary focused `Proof` form; the bounded arm
@@ -2865,6 +2960,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
                     value,
                     fact: Some(kernel_fact),
                     at_function_entry: false,
+                    match_arm: None,
                 });
             return Ok(true);
         }
@@ -2879,6 +2975,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
                 value,
                 fact: None,
                 at_function_entry: false,
+                match_arm: None,
             });
         return Ok(true);
     }
@@ -2936,6 +3033,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
             value,
             fact: Some(kernel_fact),
             at_function_entry,
+            match_arm: None,
         });
     Ok(true)
 }

@@ -25,6 +25,19 @@ pub(super) struct ExpansionCursor {
     pub(super) deferred_expansion_path_choices: PersistentSequence<SurfacePathChoice>,
 }
 
+/// One arm of a proof `match` as a path-aligned case.
+///
+/// `source` is the whole `match` as written, shared by every arm of one plan,
+/// so paths that took different arms compare it by pointer. The certificate
+/// merge rebuilds the `match` from it, replacing each arm that produced paths
+/// with their merged certificate and keeping the written tactics of an arm
+/// that produced none — the arm a checked `contradiction` closed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ProofMatchArmCase {
+    pub(super) source: Arc<ProofMatch>,
+    pub(super) arm: usize,
+}
+
 #[derive(Clone)]
 pub(super) struct CaseAssumption {
     pub(super) tactic_index: usize,
@@ -32,6 +45,9 @@ pub(super) struct CaseAssumption {
     pub(super) value: bool,
     pub(super) fact: Option<Proposition>,
     pub(super) at_function_entry: bool,
+    /// Set when this case is one arm of a proof `match` rather than one
+    /// polarity of a condition.
+    pub(super) match_arm: Option<ProofMatchArmCase>,
 }
 
 #[derive(Clone, Default)]

@@ -16,6 +16,7 @@ use super::super::{
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 const SIGNED_MIN: i64 = i32::MIN as i64;
 const SIGNED_MAX: i64 = i32::MAX as i64;
@@ -227,7 +228,9 @@ fn pointer_offset_equal(left: &PointerOffsetTerm, right: &PointerOffsetTerm) -> 
 }
 
 fn pointer_equal(left: &Pointer, right: &Pointer) -> bool {
-    pointer_block_equal(&left.block, &right.block)
+    charge_pointer(left)
+        && charge_pointer(right)
+        && pointer_block_equal(&left.block, &right.block)
         && pointer_offset_equal(&left.offset, &right.offset)
 }
 
@@ -235,6 +238,9 @@ fn pointer_equal(left: &Pointer, right: &Pointer) -> bool {
 /// This avoids recursive equality on attacker-controlled expression depth after
 /// the payload has already been charged.
 fn bitvector_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    if !charge_bitvector(left) || !charge_bitvector(right) {
+        return false;
+    }
     let mut pending = vec![(left, right)];
     while let Some((left, right)) = pending.pop() {
         match (left, right) {
@@ -498,7 +504,20 @@ impl SpecialArithmeticCertificate {
         if crate::instrumentation::deadline_exceeded_with_work(1) {
             return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
         }
+        for (index, node) in self.nodes.iter().enumerate() {
+            Self::check_node(index, node, premises)?;
+        }
         let node = &self.nodes[self.conclusion];
+        proposition_identity(node.result(), goal)
+            .then_some(())
+            .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+    }
+
+    fn check_node(
+        index: usize,
+        node: &SpecialArithmeticNode,
+        premises: &[Proposition],
+    ) -> Result<(), SpecialArithmeticCheckError> {
         match node {
             SpecialArithmeticNode::PointerTranslation {
                 relation,
@@ -522,13 +541,9 @@ impl SpecialArithmeticCertificate {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 if !pointer_translation(relation_proposition, &bound_propositions, result) {
-                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
-                        self.conclusion,
-                    ));
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
                 }
-                proposition_identity(result, goal)
-                    .then_some(())
-                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+                Ok(())
             }
             SpecialArithmeticNode::PointerAlignment { premise, result } => {
                 if crate::instrumentation::deadline_exceeded_with_work(1) {
@@ -542,13 +557,9 @@ impl SpecialArithmeticCertificate {
                     })
                     .transpose()?;
                 if !pointer_alignment(premise, result) {
-                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
-                        self.conclusion,
-                    ));
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
                 }
-                proposition_identity(result, goal)
-                    .then_some(())
-                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+                Ok(())
             }
             SpecialArithmeticNode::PointerWordEquality {
                 relation,
@@ -572,13 +583,9 @@ impl SpecialArithmeticCertificate {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 if !pointer_word_equality(relation, &alignments, result) {
-                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
-                        self.conclusion,
-                    ));
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
                 }
-                proposition_identity(result, goal)
-                    .then_some(())
-                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+                Ok(())
             }
             SpecialArithmeticNode::FloatReflexive { finite, result } => {
                 if crate::instrumentation::deadline_exceeded_with_work(1) {
@@ -588,14 +595,21 @@ impl SpecialArithmeticCertificate {
                     .get(*finite)
                     .ok_or(SpecialArithmeticCheckError::InvalidPremise(*finite))?;
                 if !float_reflexive(finite, result) {
-                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
-                        self.conclusion,
-                    ));
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
                 }
-                proposition_identity(result, goal)
-                    .then_some(())
-                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+                Ok(())
             }
+        }
+    }
+}
+
+impl SpecialArithmeticNode {
+    fn result(&self) -> &Proposition {
+        match self {
+            Self::PointerTranslation { result, .. }
+            | Self::PointerAlignment { result, .. }
+            | Self::PointerWordEquality { result, .. }
+            | Self::FloatReflexive { result, .. } => result,
         }
     }
 }
@@ -727,12 +741,12 @@ fn pointer_translation(
     let (left, right) = match (goal_blocks, premise_blocks) {
         (None, None) => (goal_left, goal_right),
         (Some((goal_l, goal_r)), Some((premise_l, premise_r)))
-            if goal_l == premise_l && goal_r == premise_r =>
+            if pointer_block_equal(goal_l, premise_l) && pointer_block_equal(goal_r, premise_r) =>
         {
             (goal_left, goal_right)
         }
         (Some((goal_l, goal_r)), Some((premise_l, premise_r)))
-            if goal_l == premise_r && goal_r == premise_l =>
+            if pointer_block_equal(goal_l, premise_r) && pointer_block_equal(goal_r, premise_l) =>
         {
             (goal_right, goal_left)
         }
@@ -831,7 +845,9 @@ fn offset_difference(goal: &PointerOffsetTerm, premise: &PointerOffsetTerm) -> O
         let mut pending = vec![offset];
         while let Some(offset) = pending.pop() {
             match offset {
-                PointerOffsetTerm::Constant(value) => constant += sign * i128::from(*value),
+                PointerOffsetTerm::Constant(value) => {
+                    constant = constant.checked_add(sign * i128::from(*value))?
+                }
                 PointerOffsetTerm::Add(left, right) => {
                     pending.push(left);
                     pending.push(right);
@@ -840,7 +856,8 @@ fn offset_difference(goal: &PointerOffsetTerm, premise: &PointerOffsetTerm) -> O
                     if !charge_map_insert(other, terms.len()) {
                         return None;
                     }
-                    *terms.entry(other.clone()).or_default() += sign;
+                    let coefficient = terms.entry(other.clone()).or_default();
+                    *coefficient = coefficient.checked_add(sign)?;
                 }
             }
         }
@@ -875,13 +892,21 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         if !charge_pointer(base) {
             return false;
         }
-        if base.block != goal_pointer.block || alignment % goal_alignment != 0 {
+        if !pointer_block_equal(&base.block, &goal_pointer.block) || alignment % goal_alignment != 0
+        {
             return false;
         }
-        let Some(delta) = offset_difference(&goal_pointer.offset, &base.offset) else {
+        let mut candidates = vec![goal_pointer.offset.clone()];
+        if let Some(reduced) = drop_aligned_scaled_addends(&goal_pointer.offset, goal_alignment) {
+            candidates.push(reduced);
+        }
+        let Some(aligned) = candidates.into_iter().find_map(|candidate| {
+            offset_difference(&candidate, &base.offset)
+                .map(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+        }) else {
             return false;
         };
-        delta.rem_euclid(goal_alignment as i128) == 0
+        aligned
     } else {
         let intrinsic_alignment = if pointer_equal(goal_pointer, &Pointer::null()) {
             // The null address is zero, so every valid power-of-two alignment
@@ -914,14 +939,136 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
     *expected == aligned
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TaggedAddress {
-    pointer: Pointer,
-    tag: Bitvector32Term,
+/// Remove symbolic scaled addends whose byte scale is divisible by the target
+/// alignment.  Such an addend cannot change the pointer's residue.  The
+/// traversal is iterative because this helper runs on source-shaped pointer
+/// offsets and must not inherit their nesting depth.
+fn drop_aligned_scaled_addends(
+    offset: &PointerOffsetTerm,
+    alignment: u64,
+) -> Option<PointerOffsetTerm> {
+    if !charge_pointer_offset(offset) {
+        return None;
+    }
+    let alignment = i64::try_from(alignment).ok()?;
+    let mut pending = vec![offset];
+    let mut parts = Vec::new();
+    while let Some(offset) = pending.pop() {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            other => parts.push(other.clone()),
+        }
+    }
+    fn constant_factor(term: &Bitvector32Term) -> Option<i64> {
+        match term {
+            Bitvector32Term::Multiply(left, right) => left
+                .as_const()
+                .map(|constant| i64::from(constant as i32))
+                .or_else(|| right.as_const().map(|constant| i64::from(constant as i32))),
+            _ => None,
+        }
+    }
+    let divisible = |part: &PointerOffsetTerm| match part {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+        | PointerOffsetTerm::Int64Scaled {
+            value, byte_width, ..
+        } => {
+            let scale = constant_factor(value)
+                .and_then(|factor| factor.checked_mul(*byte_width))
+                .unwrap_or(*byte_width);
+            scale != 0 && scale % alignment == 0
+        }
+        _ => false,
+    };
+    if !parts.iter().any(divisible) {
+        return None;
+    }
+    Some(
+        parts
+            .into_iter()
+            .filter(|part| !divisible(part))
+            .reduce(PointerOffsetTerm::add)
+            .unwrap_or(PointerOffsetTerm::Constant(0)),
+    )
+}
+
+#[derive(Clone, Debug)]
+enum TaggedTag<'a> {
+    Constant(u64),
+    Source(&'a Bitvector32Term),
+    Add(Arc<TaggedTag<'a>>, &'a Bitvector32Term),
+    Subtract(Arc<TaggedTag<'a>>, &'a Bitvector32Term),
+    BitwiseAnd(Arc<TaggedTag<'a>>, u64),
+    BitwiseOr(Arc<TaggedTag<'a>>, u64),
+}
+
+#[derive(Clone, Debug)]
+struct TaggedAddress<'a> {
+    /// Pointer payloads can be large symbolic offset trees.  The iterative
+    /// evaluator keeps one of these forms at every visited term, so sharing
+    /// the payload is essential: cloning a `Pointer` here would turn a tag
+    /// chain over a deep pointer into a payload-depth by tag-depth operation.
+    pointer: Arc<Pointer>,
+    tag: Arc<TaggedTag<'a>>,
     /// The tag's constant value, when it is known.  Keeping this alongside
     /// the term is important: a symbolic tag chain must not be recursively
     /// re-evaluated every time another address operation extends it.
     tag_constant: Option<u64>,
+}
+
+/// Compare compact tag expressions without materializing their nested
+/// bitvector syntax.  Shared tag prefixes are discharged by pointer identity;
+/// distinct source leaves use the bounded iterative term comparator.
+fn tagged_tag_equal<'a>(left: &Arc<TaggedTag<'a>>, right: &Arc<TaggedTag<'a>>) -> bool {
+    let mut pending = vec![(Arc::clone(left), Arc::clone(right))];
+    while let Some((left, right)) = pending.pop() {
+        if Arc::ptr_eq(&left, &right) {
+            continue;
+        }
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return false;
+        }
+        match (&*left, &*right) {
+            (TaggedTag::Constant(left), TaggedTag::Constant(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (TaggedTag::Source(left), TaggedTag::Source(right)) => {
+                if !bitvector_equal(left, right) {
+                    return false;
+                }
+            }
+            (TaggedTag::Add(left_tag, left_term), TaggedTag::Add(right_tag, right_term))
+            | (
+                TaggedTag::Subtract(left_tag, left_term),
+                TaggedTag::Subtract(right_tag, right_term),
+            ) => {
+                if !bitvector_equal(left_term, right_term) {
+                    return false;
+                }
+                pending.push((Arc::clone(left_tag), Arc::clone(right_tag)));
+            }
+            (
+                TaggedTag::BitwiseAnd(left_tag, left_mask),
+                TaggedTag::BitwiseAnd(right_tag, right_mask),
+            )
+            | (
+                TaggedTag::BitwiseOr(left_tag, left_mask),
+                TaggedTag::BitwiseOr(right_tag, right_mask),
+            ) => {
+                if left_mask != right_mask {
+                    return false;
+                }
+                pending.push((Arc::clone(left_tag), Arc::clone(right_tag)));
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn bounded_uint64_constants(roots: &[&Bitvector32Term]) -> HashMap<usize, Option<u64>> {
@@ -1090,6 +1237,10 @@ fn bounded_uint64_constants(roots: &[&Bitvector32Term]) -> HashMap<usize, Option
 }
 
 fn pointer_identity_hash(pointer: &Pointer) -> Option<u64> {
+    let payload = pointer_payload(pointer)?;
+    if crate::instrumentation::deadline_exceeded_with_work(payload.max(1)) {
+        return None;
+    }
     let mut hasher = DefaultHasher::new();
     pointer.block.hash(&mut hasher);
     let mut pending = vec![&pointer.offset];
@@ -1117,6 +1268,62 @@ fn pointer_identity_hash(pointer: &Pointer) -> Option<u64> {
         }
     }
     Some(hasher.finish())
+}
+
+/// An indexed view of the alignment evidence for one certificate node.  The
+/// hash is only an index: a collision still goes through the bounded,
+/// iterative pointer comparison before evidence is accepted.
+struct AlignmentIndex<'a> {
+    by_hash: HashMap<u64, Vec<AlignmentEntry<'a>>>,
+}
+
+struct AlignmentEntry<'a> {
+    pointer: &'a Pointer,
+    max_alignment: u64,
+}
+
+impl<'a> AlignmentIndex<'a> {
+    fn new(alignments: &'a [(&'a Pointer, u64)]) -> Option<Self> {
+        let mut by_hash: HashMap<u64, Vec<AlignmentEntry<'a>>> = HashMap::new();
+        for (pointer, alignment) in alignments {
+            if crate::instrumentation::deadline_exceeded_with_work(1) {
+                return None;
+            }
+            let candidates = by_hash.entry(pointer_identity_hash(pointer)?).or_default();
+            let mut matched = false;
+            for candidate in candidates.iter_mut() {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return None;
+                }
+                if pointer_equal(pointer, candidate.pointer) {
+                    candidate.max_alignment = candidate.max_alignment.max(*alignment);
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                candidates.push(AlignmentEntry {
+                    pointer,
+                    max_alignment: *alignment,
+                });
+            }
+        }
+        Some(Self { by_hash })
+    }
+
+    fn supports(&self, pointer: &Pointer, required: u64) -> bool {
+        let Some(hash) = pointer_identity_hash(pointer) else {
+            return false;
+        };
+        self.by_hash.get(&hash).is_some_and(|candidates| {
+            candidates.iter().any(|candidate| {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return false;
+                }
+                candidate.max_alignment >= required && pointer_equal(pointer, candidate.pointer)
+            })
+        })
+    }
 }
 
 fn bounded_term_hashes(roots: &[&Bitvector32Term]) -> Option<HashMap<usize, u64>> {
@@ -1190,15 +1397,18 @@ fn constant_value(term: &Bitvector32Term, constants: &HashMap<usize, Option<u64>
         .flatten()
 }
 
-fn add_tag(
-    form: TaggedAddress,
-    right: Bitvector32Term,
+fn add_tag<'a>(
+    form: TaggedAddress<'a>,
+    right: &'a Bitvector32Term,
     right_constant: Option<u64>,
-) -> TaggedAddress {
+) -> TaggedAddress<'a> {
     if form.tag_constant == Some(0) {
         TaggedAddress {
             pointer: form.pointer,
-            tag: right,
+            tag: right_constant.map_or_else(
+                || Arc::new(TaggedTag::Source(right)),
+                |value| Arc::new(TaggedTag::Constant(value)),
+            ),
             tag_constant: right_constant,
         }
     } else if right_constant == Some(0) {
@@ -1206,7 +1416,10 @@ fn add_tag(
     } else {
         TaggedAddress {
             pointer: form.pointer,
-            tag: Bitvector32Term::uint64_add(form.tag, right),
+            tag: form.tag_constant.zip(right_constant).map_or_else(
+                || Arc::new(TaggedTag::Add(form.tag, right)),
+                |(left, right)| Arc::new(TaggedTag::Constant(left.wrapping_add(right))),
+            ),
             tag_constant: form
                 .tag_constant
                 .zip(right_constant)
@@ -1215,11 +1428,11 @@ fn add_tag(
     }
 }
 
-fn tagged_form(
-    term: &Bitvector32Term,
-    relation: (&Bitvector32Term, &Bitvector32Term),
-    alignments: &[(&Pointer, u64)],
-) -> Option<TaggedAddress> {
+fn tagged_form<'a>(
+    term: &'a Bitvector32Term,
+    relation: (&'a Bitvector32Term, &'a Bitvector32Term),
+    alignments: &AlignmentIndex<'_>,
+) -> Option<TaggedAddress<'a>> {
     let identities = bounded_term_hashes(&[term, relation.0, relation.1])?;
     let constants = bounded_uint64_constants(&[term, relation.0, relation.1]);
     if constants.is_empty() {
@@ -1229,186 +1442,276 @@ fn tagged_form(
         *identities.get(&(relation.0 as *const _ as usize))?,
         *identities.get(&(relation.1 as *const _ as usize))?,
     );
-    let mut seen = HashSet::new();
-    tagged_form_inner(
-        term,
-        relation,
-        relation_keys,
-        &identities,
-        &constants,
-        alignments,
-        &mut seen,
-    )
-}
-
-fn tagged_form_inner(
-    term: &Bitvector32Term,
-    relation: (&Bitvector32Term, &Bitvector32Term),
-    relation_keys: (u64, u64),
-    identities: &HashMap<usize, u64>,
-    constants: &HashMap<usize, Option<u64>>,
-    alignments: &[(&Pointer, u64)],
-    seen: &mut HashSet<usize>,
-) -> Option<TaggedAddress> {
-    let identity = term as *const Bitvector32Term as usize;
-    if !seen.insert(identity) {
-        return None;
+    enum Task<'a> {
+        Visit(&'a Bitvector32Term),
+        FinishAdd {
+            term: &'a Bitvector32Term,
+            left: &'a Bitvector32Term,
+            right: &'a Bitvector32Term,
+        },
+        FinishAddRight {
+            term: &'a Bitvector32Term,
+            left: &'a Bitvector32Term,
+            right: &'a Bitvector32Term,
+        },
+        FinishSubtract {
+            term: &'a Bitvector32Term,
+            right: &'a Bitvector32Term,
+        },
+        FinishAnd {
+            term: &'a Bitvector32Term,
+            mask: u64,
+            alignment: u64,
+        },
+        FinishOr {
+            term: &'a Bitvector32Term,
+            constant: u64,
+            alignment: u64,
+        },
+        FinishRelation {
+            term: &'a Bitvector32Term,
+        },
     }
-    let direct = match term {
-        Bitvector32Term::PointerAddress(pointer) => Some(TaggedAddress {
-            pointer: pointer.as_ref().clone(),
-            tag: Bitvector32Term::UInt64Constant(0),
-            tag_constant: Some(0),
-        }),
-        Bitvector32Term::UInt64Add(left, right) => tagged_form_inner(
-            left,
-            relation,
-            relation_keys,
-            identities,
-            constants,
-            alignments,
-            seen,
-        )
-        .map(|form| {
-            add_tag(
-                form,
-                right.as_ref().clone(),
-                constant_value(right, constants),
-            )
-        })
-        .or_else(|| {
-            tagged_form_inner(
-                right,
-                relation,
-                relation_keys,
-                identities,
-                constants,
-                alignments,
-                seen,
-            )
-            .map(|form| add_tag(form, left.as_ref().clone(), constant_value(left, constants)))
-        }),
-        Bitvector32Term::UInt64Subtract(left, right) => tagged_form_inner(
-            left,
-            relation,
-            relation_keys,
-            identities,
-            constants,
-            alignments,
-            seen,
-        )
-        .map(|form| TaggedAddress {
-            pointer: form.pointer,
-            tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
-            tag_constant: form
-                .tag_constant
-                .zip(constant_value(right, constants))
-                .map(|(left, right)| left.wrapping_sub(right)),
-        }),
-        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            let (inner, mask) = match (
-                constant_value(left, constants),
-                constant_value(right, constants),
-            ) {
-                (None, Some(mask)) => (left.as_ref(), mask),
-                (Some(mask), None) => (right.as_ref(), mask),
-                _ => return None,
-            };
-            let alignment = (!mask).checked_add(1)?.max(1);
-            if !alignment.is_power_of_two() {
-                return None;
+
+    fn store<'a>(
+        identity: usize,
+        result: Option<TaggedAddress<'a>>,
+        active: &mut HashSet<usize>,
+        results: &mut HashMap<usize, Option<TaggedAddress<'a>>>,
+        values: &mut Vec<Option<TaggedAddress<'a>>>,
+    ) {
+        active.remove(&identity);
+        values.push(result.clone());
+        results.insert(identity, result);
+    }
+
+    let mut tasks = vec![Task::Visit(term)];
+    let mut values = Vec::new();
+    let mut active = HashSet::new();
+    let mut results: HashMap<usize, Option<TaggedAddress<'a>>> = HashMap::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(current) => {
+                let identity = current as *const _ as usize;
+                if let Some(result) = results.get(&identity) {
+                    values.push(result.clone());
+                    continue;
+                }
+                if active.contains(&identity) {
+                    values.push(None);
+                    continue;
+                }
+                active.insert(identity);
+                match current {
+                    Bitvector32Term::PointerAddress(pointer) => store(
+                        identity,
+                        Some(TaggedAddress {
+                            pointer: Arc::new(pointer.as_ref().clone()),
+                            tag: Arc::new(TaggedTag::Constant(0)),
+                            tag_constant: Some(0),
+                        }),
+                        &mut active,
+                        &mut results,
+                        &mut values,
+                    ),
+                    Bitvector32Term::UInt64Add(left, right) => {
+                        tasks.push(Task::FinishAdd {
+                            term: current,
+                            left,
+                            right,
+                        });
+                        tasks.push(Task::Visit(left));
+                    }
+                    Bitvector32Term::UInt64Subtract(left, right) => {
+                        tasks.push(Task::FinishSubtract {
+                            term: current,
+                            right,
+                        });
+                        tasks.push(Task::Visit(left));
+                    }
+                    Bitvector32Term::UInt64BitwiseAnd(left, right) => {
+                        let (inner, mask) = match (
+                            constant_value(left, &constants),
+                            constant_value(right, &constants),
+                        ) {
+                            (None, Some(mask)) => (left.as_ref(), mask),
+                            (Some(mask), None) => (right.as_ref(), mask),
+                            _ => {
+                                store(identity, None, &mut active, &mut results, &mut values);
+                                continue;
+                            }
+                        };
+                        let Some(alignment) =
+                            (!mask).checked_add(1).filter(|v| v.is_power_of_two())
+                        else {
+                            store(identity, None, &mut active, &mut results, &mut values);
+                            continue;
+                        };
+                        tasks.push(Task::FinishAnd {
+                            term: current,
+                            mask,
+                            alignment,
+                        });
+                        tasks.push(Task::Visit(inner));
+                    }
+                    Bitvector32Term::UInt64BitwiseOr(left, right) => {
+                        let (inner, constant) = match (
+                            constant_value(left, &constants),
+                            constant_value(right, &constants),
+                        ) {
+                            (None, Some(constant)) => (left.as_ref(), constant),
+                            (Some(constant), None) => (right.as_ref(), constant),
+                            _ => {
+                                store(identity, None, &mut active, &mut results, &mut values);
+                                continue;
+                            }
+                        };
+                        let Some(alignment) = constant
+                            .checked_add(1)
+                            .and_then(|value| value.checked_next_power_of_two())
+                        else {
+                            store(identity, None, &mut active, &mut results, &mut values);
+                            continue;
+                        };
+                        tasks.push(Task::FinishOr {
+                            term: current,
+                            constant,
+                            alignment,
+                        });
+                        tasks.push(Task::Visit(inner));
+                    }
+                    _ if identities.get(&identity) == Some(&relation_keys.0)
+                        && bitvector_equal(current, relation.0) =>
+                    {
+                        tasks.push(Task::FinishRelation { term: current });
+                        tasks.push(Task::Visit(relation.1));
+                    }
+                    _ if identities.get(&identity) == Some(&relation_keys.1)
+                        && bitvector_equal(current, relation.1) =>
+                    {
+                        tasks.push(Task::FinishRelation { term: current });
+                        tasks.push(Task::Visit(relation.0));
+                    }
+                    _ => store(identity, None, &mut active, &mut results, &mut values),
+                }
             }
-            let form = tagged_form_inner(
-                inner,
-                relation,
-                relation_keys,
-                identities,
-                constants,
-                alignments,
-                seen,
-            )?;
-            if !alignments.iter().any(|(pointer, candidate)| {
-                pointer_equal(pointer, &form.pointer) && *candidate >= alignment
-            }) {
-                return None;
+            Task::FinishAdd { term, left, right } => {
+                let left_form = values.pop().flatten();
+                if let Some(form) = left_form {
+                    store(
+                        term as *const _ as usize,
+                        Some(add_tag(form, right, constant_value(right, &constants))),
+                        &mut active,
+                        &mut results,
+                        &mut values,
+                    );
+                } else {
+                    tasks.push(Task::FinishAddRight { term, left, right });
+                    tasks.push(Task::Visit(right));
+                }
             }
-            Some(TaggedAddress {
-                pointer: form.pointer,
-                tag: Bitvector32Term::uint64_bitwise_and(
-                    form.tag,
-                    Bitvector32Term::UInt64Constant(mask),
-                ),
-                tag_constant: form.tag_constant.map(|tag| tag & mask),
-            })
+            Task::FinishAddRight {
+                term,
+                left,
+                right: _,
+            } => {
+                let right_form = values.pop().flatten();
+                store(
+                    term as *const _ as usize,
+                    right_form.map(|form| add_tag(form, left, constant_value(left, &constants))),
+                    &mut active,
+                    &mut results,
+                    &mut values,
+                );
+            }
+            Task::FinishSubtract { term, right } => {
+                let left_form = values.pop().flatten();
+                store(
+                    term as *const _ as usize,
+                    left_form.map(|form| {
+                        let right_constant = constant_value(right, &constants);
+                        let tag = form.tag_constant.zip(right_constant).map_or_else(
+                            || Arc::new(TaggedTag::Subtract(form.tag, right)),
+                            |(left, right)| Arc::new(TaggedTag::Constant(left.wrapping_sub(right))),
+                        );
+                        TaggedAddress {
+                            pointer: form.pointer,
+                            tag,
+                            tag_constant: form
+                                .tag_constant
+                                .zip(right_constant)
+                                .map(|(left, right)| left.wrapping_sub(right)),
+                        }
+                    }),
+                    &mut active,
+                    &mut results,
+                    &mut values,
+                );
+            }
+            Task::FinishAnd {
+                term,
+                mask,
+                alignment,
+            } => {
+                let form = values.pop().flatten();
+                store(
+                    term as *const _ as usize,
+                    form.and_then(|form| {
+                        let tag = form.tag_constant.map_or_else(
+                            || Arc::new(TaggedTag::BitwiseAnd(form.tag, mask)),
+                            |value| Arc::new(TaggedTag::Constant(value & mask)),
+                        );
+                        alignments
+                            .supports(form.pointer.as_ref(), alignment)
+                            .then_some(TaggedAddress {
+                                pointer: form.pointer,
+                                tag,
+                                tag_constant: form.tag_constant.map(|tag| tag & mask),
+                            })
+                    }),
+                    &mut active,
+                    &mut results,
+                    &mut values,
+                );
+            }
+            Task::FinishOr {
+                term,
+                constant,
+                alignment,
+            } => {
+                let form = values.pop().flatten();
+                store(
+                    term as *const _ as usize,
+                    form.and_then(|form| {
+                        let tag = form.tag_constant.map_or_else(
+                            || Arc::new(TaggedTag::BitwiseOr(form.tag, constant)),
+                            |value| Arc::new(TaggedTag::Constant(value | constant)),
+                        );
+                        (constant == 0 || alignments.supports(form.pointer.as_ref(), alignment))
+                            .then_some(TaggedAddress {
+                                pointer: form.pointer,
+                                tag,
+                                tag_constant: form.tag_constant.map(|tag| tag | constant),
+                            })
+                    }),
+                    &mut active,
+                    &mut results,
+                    &mut values,
+                );
+            }
+            Task::FinishRelation { term } => {
+                let result = values.pop().flatten();
+                store(
+                    term as *const _ as usize,
+                    result,
+                    &mut active,
+                    &mut results,
+                    &mut values,
+                );
+            }
         }
-        Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            let (inner, constant) = match (
-                constant_value(left, constants),
-                constant_value(right, constants),
-            ) {
-                (None, Some(constant)) => (left.as_ref(), constant),
-                (Some(constant), None) => (right.as_ref(), constant),
-                _ => return None,
-            };
-            let alignment = constant.checked_add(1)?.next_power_of_two();
-            let form = tagged_form_inner(
-                inner,
-                relation,
-                relation_keys,
-                identities,
-                constants,
-                alignments,
-                seen,
-            )?;
-            if constant != 0
-                && !alignments.iter().any(|(pointer, candidate)| {
-                    pointer_equal(pointer, &form.pointer) && *candidate >= alignment
-                })
-            {
-                return None;
-            }
-            Some(TaggedAddress {
-                pointer: form.pointer,
-                tag: Bitvector32Term::uint64_bitwise_or(
-                    form.tag,
-                    Bitvector32Term::UInt64Constant(constant),
-                ),
-                tag_constant: form.tag_constant.map(|tag| tag | constant),
-            })
-        }
-        _ => None,
-    };
-    let result = if direct.is_some() {
-        direct
-    } else if identities.get(&identity) == Some(&relation_keys.0)
-        && bitvector_equal(term, relation.0)
-    {
-        tagged_form_inner(
-            relation.1,
-            relation,
-            relation_keys,
-            identities,
-            constants,
-            alignments,
-            seen,
-        )
-    } else if identities.get(&identity) == Some(&relation_keys.1)
-        && bitvector_equal(term, relation.1)
-    {
-        tagged_form_inner(
-            relation.0,
-            relation,
-            relation_keys,
-            identities,
-            constants,
-            alignments,
-            seen,
-        )
-    } else {
-        None
-    };
-    seen.remove(&identity);
-    result
+    }
+    values.pop().flatten()
 }
 
 fn pointer_word_equality(
@@ -1445,17 +1748,20 @@ fn pointer_word_equality(
         }
         alignments.push((pointer, alignment));
     }
-    if tagged_form(left, (left, right), &alignments).is_none()
-        || tagged_form(right, (left, right), &alignments).is_none()
+    let Some(alignment_index) = AlignmentIndex::new(&alignments) else {
+        return false;
+    };
+    if tagged_form(left, (left, right), &alignment_index).is_none()
+        || tagged_form(right, (left, right), &alignment_index).is_none()
     {
         return false;
     }
-    let goal_left_form = tagged_form(goal_left, (left, right), &alignments);
-    let goal_right_form = tagged_form(goal_right, (left, right), &alignments);
+    let goal_left_form = tagged_form(goal_left, (left, right), &alignment_index);
+    let goal_right_form = tagged_form(goal_right, (left, right), &alignment_index);
     let equal = match (goal_left_form, goal_right_form) {
         (Some(goal_left), Some(goal_right)) => {
-            pointer_equal(&goal_left.pointer, &goal_right.pointer)
-                && bitvector_equal(&goal_left.tag, &goal_right.tag)
+            pointer_equal(goal_left.pointer.as_ref(), goal_right.pointer.as_ref())
+                && tagged_tag_equal(&goal_left.tag, &goal_right.tag)
         }
         _ => false,
     };
@@ -1463,11 +1769,11 @@ fn pointer_word_equality(
         equal
     } else {
         match (
-            tagged_form(goal_left, (left, right), &alignments),
-            tagged_form(goal_right, (left, right), &alignments),
+            tagged_form(goal_left, (left, right), &alignment_index),
+            tagged_form(goal_right, (left, right), &alignment_index),
         ) {
             (Some(goal_left), Some(goal_right))
-                if pointer_equal(&goal_left.pointer, &goal_right.pointer) =>
+                if pointer_equal(goal_left.pointer.as_ref(), goal_right.pointer.as_ref()) =>
             {
                 matches!(
                     (goal_left.tag_constant, goal_right.tag_constant),
@@ -1558,6 +1864,56 @@ mod tests {
 
     fn add(left: PointerOffsetTerm, right: PointerOffsetTerm) -> PointerOffsetTerm {
         PointerOffsetTerm::Add(Box::new(left), Box::new(right))
+    }
+
+    fn tagged_tag_nodes(root: &Arc<TaggedTag<'_>>) -> usize {
+        let mut pending = vec![Arc::clone(root)];
+        let mut seen = HashSet::new();
+        while let Some(tag) = pending.pop() {
+            let identity = Arc::as_ptr(&tag) as usize;
+            if !seen.insert(identity) {
+                continue;
+            }
+            match &*tag {
+                TaggedTag::Add(child, _)
+                | TaggedTag::Subtract(child, _)
+                | TaggedTag::BitwiseAnd(child, _)
+                | TaggedTag::BitwiseOr(child, _) => pending.push(Arc::clone(child)),
+                TaggedTag::Constant(_) | TaggedTag::Source(_) => {}
+            }
+        }
+        seen.len()
+    }
+
+    fn deep_pointer(depth: usize) -> Pointer {
+        let mut offset = PointerOffsetTerm::Constant(0);
+        for _ in 0..depth {
+            offset = add(offset, PointerOffsetTerm::Constant(1));
+        }
+        pointer(offset)
+    }
+
+    fn measured_tagged_form(pointer_depth: usize, tag_depth: usize) -> (bool, usize, usize) {
+        let address = Bitvector32Term::PointerAddress(Box::new(deep_pointer(pointer_depth)));
+        let variable = Bitvector32Term::Variable(crate::kernel::Variable(394));
+        let mut tagged = address;
+        for index in 0..tag_depth {
+            tagged = Bitvector32Term::UInt64Add(
+                Box::new(tagged),
+                Box::new(Bitvector32Term::Variable(crate::kernel::Variable(
+                    (400 + index) as u64,
+                ))),
+            );
+        }
+        let alignments = AlignmentIndex::new(&[]).expect("empty alignment index");
+        let (form, work) = crate::instrumentation::measure_deterministic_work(|| {
+            tagged_form(&variable, (&variable, &tagged), &alignments)
+        });
+        let nodes = form
+            .as_ref()
+            .map(|form| tagged_tag_nodes(&form.tag))
+            .unwrap_or(0);
+        (form.is_some(), work, nodes)
     }
 
     fn scaled(value: Bitvector32Term) -> PointerOffsetTerm {
@@ -1866,6 +2222,53 @@ mod tests {
     }
 
     #[test]
+    fn alignment_certificate_drops_aligned_symbolic_scaled_displacement() {
+        let base = pointer(PointerOffsetTerm::Variable(crate::kernel::Variable(710)));
+        let aligned_base =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(base.clone(), 8), true);
+        let scaled = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(crate::kernel::Variable(711))),
+            byte_width: 8,
+        };
+        let goal_pointer = Pointer {
+            block: base.block.clone(),
+            offset: PointerOffsetTerm::Add(Box::new(base.offset.clone()), Box::new(scaled)),
+        };
+        let goal = Proposition::ConditionIs(ConditionTerm::pointer_aligned(goal_pointer, 8), true);
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                premise: Some(0),
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&goal, std::slice::from_ref(&aligned_base))
+        .unwrap();
+
+        let unaligned_scaled = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(crate::kernel::Variable(712))),
+            byte_width: 4,
+        };
+        let negative_pointer = Pointer {
+            block: base.block,
+            offset: PointerOffsetTerm::Add(Box::new(base.offset), Box::new(unaligned_scaled)),
+        };
+        let negative =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(negative_pointer, 8), false);
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: Some(0),
+                    result: negative.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&negative, std::slice::from_ref(&aligned_base)),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
     fn tagged_word_certificate_requires_exact_alignment() {
         let next = pointer(PointerOffsetTerm::Constant(0));
         let address = Bitvector32Term::PointerAddress(Box::new(next.clone()));
@@ -1895,7 +2298,161 @@ mod tests {
             }],
             conclusion: 0,
         };
-        certificate.check(&goal, &[relation, alignment]).unwrap();
+        certificate
+            .check(&goal, &[relation.clone(), alignment.clone()])
+            .unwrap();
+
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, std::slice::from_ref(&relation))
+            .is_err(),
+            "a tag mask must not be used without alignment evidence"
+        );
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 1,
+                    alignments: vec![0],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, &[relation.clone(), alignment.clone()])
+            .is_err(),
+            "the relation reference must name the exact word equality"
+        );
+
+        // Keep the source form used by tagged-pointer resources: the word is
+        // related directly to address(p) plus its low tag bit.
+        let word = Bitvector32Term::Variable(crate::kernel::Variable(11));
+        let direct_address =
+            Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0))));
+        let direct_tag =
+            Bitvector32Term::uint64_bitwise_and(word.clone(), Bitvector32Term::UInt64Constant(1));
+        let direct = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                word.clone(),
+                Bitvector32Term::uint64_add(direct_address.clone(), direct_tag.clone()),
+            ),
+            true,
+        );
+        let direct_alignment = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(pointer(PointerOffsetTerm::Constant(0)), 2),
+            true,
+        );
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                relation: 0,
+                alignments: vec![1],
+                result: direct.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&direct, &[direct.clone(), direct_alignment.clone()])
+        .unwrap();
+
+        let wrong_mask = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                word.clone(),
+                Bitvector32Term::uint64_add(
+                    direct_address.clone(),
+                    Bitvector32Term::uint64_bitwise_and(
+                        word.clone(),
+                        Bitvector32Term::UInt64Constant(3),
+                    ),
+                ),
+            ),
+            true,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![1],
+                    result: wrong_mask.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&wrong_mask, &[direct, direct_alignment]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+
+        let wrong_polarity = Proposition::ConditionIs(
+            match goal {
+                Proposition::ConditionIs(condition, _) => condition,
+                _ => unreachable!(),
+            },
+            false,
+        );
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![1],
+                    result: wrong_polarity.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&wrong_polarity, &[relation, alignment])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn tagged_word_alignment_index_scales_with_alignment_count() {
+        let pointer = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(pointer.clone()));
+        let word = Bitvector32Term::Variable(crate::kernel::Variable(12));
+        let relation = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                word.clone(),
+                Bitvector32Term::uint64_add(address.clone(), Bitvector32Term::UInt64Constant(1)),
+            ),
+            true,
+        );
+        let mut deep_word = word.clone();
+        for _ in 0..64 {
+            deep_word = Bitvector32Term::uint64_add(deep_word, Bitvector32Term::UInt64Constant(0));
+        }
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_or(deep_word, Bitvector32Term::UInt64Constant(2)),
+                Bitvector32Term::uint64_add(address, Bitvector32Term::UInt64Constant(3)),
+            ),
+            true,
+        );
+        let low_alignment =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer.clone(), 2), true);
+        let alignment = Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer, 8), true);
+        let mut previous = None;
+        for size in [1, 4, 16, 64, 256, 1024] {
+            let mut premises = vec![relation.clone()];
+            premises.extend((1..size).map(|_| low_alignment.clone()));
+            premises.push(alignment.clone());
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: (1..=size).collect(),
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            };
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate.check(&goal, &premises).is_ok()
+            });
+            assert!(valid);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 4);
+            }
+            previous = Some(work);
+        }
     }
 
     #[test]
@@ -2154,6 +2711,59 @@ mod tests {
     }
 
     #[test]
+    fn tagged_word_tag_arena_stays_linear_for_deep_symbolic_chains() {
+        let alignments = AlignmentIndex::new(&[]).expect("empty alignment index");
+        let mut previous = 0;
+        for depth in [4, 16, 64, 256, 1024] {
+            let address =
+                Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0))));
+            let variable = Bitvector32Term::Variable(crate::kernel::Variable(294));
+            let mut tagged = address;
+            for index in 0..depth {
+                tagged = Bitvector32Term::UInt64Add(
+                    Box::new(tagged),
+                    Box::new(Bitvector32Term::Variable(crate::kernel::Variable(
+                        300 + index,
+                    ))),
+                );
+            }
+            let form = tagged_form(&variable, (&variable, &tagged), &alignments)
+                .expect("the relation should provide a tagged form");
+            let nodes = tagged_tag_nodes(&form.tag);
+            assert_eq!(nodes, depth as usize);
+            assert!(nodes >= previous);
+            previous = nodes;
+        }
+    }
+
+    #[test]
+    fn tagged_form_shares_deep_pointer_payload_across_tag_depth() {
+        let (small_valid, small_work, small_nodes) = measured_tagged_form(4, 4);
+        let (deep_pointer_valid, deep_pointer_work, deep_pointer_nodes) =
+            measured_tagged_form(64, 4);
+        let (deep_tags_valid, deep_tags_work, deep_tags_nodes) = measured_tagged_form(4, 64);
+        let (cross_valid, cross_work, cross_nodes) = measured_tagged_form(64, 64);
+
+        assert!(small_valid && deep_pointer_valid && deep_tags_valid && cross_valid);
+        assert_eq!(small_nodes, 4);
+        assert_eq!(deep_pointer_nodes, 4);
+        assert_eq!(deep_tags_nodes, 64);
+        assert_eq!(cross_nodes, 64);
+
+        // Sharing the pointer payload makes the two dimensions additive.  A
+        // pointer clone at every tag node would make the cross case grow like
+        // pointer_depth * tag_depth and violate this bound by a wide margin.
+        let additive_bound = small_work
+            .saturating_add(deep_pointer_work)
+            .saturating_add(deep_tags_work)
+            .saturating_add(64);
+        assert!(
+            cross_work <= additive_bound,
+            "cross-product work was not additive: small={small_work}, pointer={deep_pointer_work}, tags={deep_tags_work}, cross={cross_work}"
+        );
+    }
+
+    #[test]
     fn pointer_block_payload_is_bounded_before_block_comparison() {
         let blocks = [
             PointerBlock::Concrete("c".repeat(MAX_TERM_PAYLOAD + 1)),
@@ -2365,7 +2975,7 @@ mod tests {
     }
 
     #[test]
-    fn checker_ignores_unselected_nodes_without_cloning_results() {
+    fn checker_validates_unselected_nodes_and_scales_without_cloning_results() {
         let value = Bitvector32Term::Variable(crate::kernel::Variable(91));
         let finite = Proposition::ConditionIs(
             ConditionTerm::float32_classification(value.clone(), CFloatClassification::Finite),
@@ -2383,11 +2993,37 @@ mod tests {
             finite: usize::MAX,
             result: Proposition::ConditionIs(ConditionTerm::Constant(false), true),
         }));
-        SpecialArithmeticCertificate {
+        let invalid = SpecialArithmeticCertificate {
             nodes,
             conclusion: 0,
+        };
+        assert!(matches!(
+            invalid.check(&goal, std::slice::from_ref(&finite)),
+            Err(SpecialArithmeticCheckError::InvalidPremise(usize::MAX))
+        ));
+
+        let mut previous = None;
+        for size in [1, 4, 16, 64, 256, 1024] {
+            let nodes = (0..size)
+                .map(|_| SpecialArithmeticNode::FloatReflexive {
+                    finite: 0,
+                    result: goal.clone(),
+                })
+                .collect();
+            let certificate = SpecialArithmeticCertificate {
+                nodes,
+                conclusion: 0,
+            };
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate
+                    .check(&goal, std::slice::from_ref(&finite))
+                    .is_ok()
+            });
+            assert!(valid);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 4);
+            }
+            previous = Some(work);
         }
-        .check(&goal, &[finite])
-        .unwrap();
     }
 }

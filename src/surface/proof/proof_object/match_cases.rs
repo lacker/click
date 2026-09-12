@@ -1,4 +1,9 @@
-//! Lexically scoped constructor elimination on unchanged execution frontiers.
+//! Lexically scoped constructor elimination at an execution frontier.
+//!
+//! The frontier may be a function entry, a point after checked C steps, or a
+//! loop body. Where the arms end is the caller's business: a function proof
+//! joins them at function exit, while a preservation region runs each to the
+//! loop's own boundary and never joins them.
 
 use super::*;
 use crate::kernel::proof::CheckedProofCasePartition;
@@ -7,6 +12,9 @@ use crate::kernel::{AlgebraicTermNode, AlgebraicValue, Term};
 pub(in crate::surface::proof) struct ExecutionMatchPlan {
     partition: Arc<CheckedProofCasePartition>,
     source: ProofMatch,
+    /// One shared copy of the written `match`, so every arm of this plan
+    /// records the same path-aligned case identity.
+    arm_case_source: Arc<ProofMatch>,
     case_indices: Vec<usize>,
     bindings: Vec<PersistentMap<String, ContractExpression>>,
     integer_bindings: Vec<PersistentMap<String, crate::kernel::SpecIntegerExpression>>,
@@ -212,9 +220,20 @@ impl<'a> Proof<'a> {
         // slot per binder. The kernel, not this spelling, checks freshness.
         let first = self.state.locals().next_choice_variable.max(4_000_000);
         let first = 4_000_000 + (first - 4_000_000).div_ceil(65_536) * 65_536;
-        let (partition, _, next) = execution.core.algebraic_case_partition(
-            self.facts(), &value, context.function_environment, first, 65_536,
-        ).ok_or_else(|| self.step_error("proof `match` requires a supported ADT at unchanged function entry, before C execution or resource unfolding"))?;
+        let (partition, _, next) = execution
+            .core
+            .algebraic_case_partition(
+                self.facts(),
+                &value,
+                context.function_environment,
+                first,
+                65_536,
+            )
+            .ok_or_else(|| {
+                self.step_error(
+                    "proof `match` requires a supported ADT scrutinee at this execution frontier",
+                )
+            })?;
         let mut bindings = Vec::with_capacity(source.arms.len());
         let mut integer_bindings = Vec::with_capacity(source.arms.len());
         for (arm, &index) in source.arms.iter().zip(&case_indices) {
@@ -263,6 +282,7 @@ impl<'a> Proof<'a> {
         let mut plan = ExecutionMatchPlan {
             partition,
             source: source.clone(),
+            arm_case_source: Arc::new(source.clone()),
             case_indices,
             bindings,
             integer_bindings,
@@ -351,6 +371,26 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(context) => context.tactic_index,
             _ => unreachable!(),
         };
+        // A constructor equation is an entry assumption of the whole function
+        // only when the match ran before any C step. At a later frontier —
+        // after a step, or inside a loop body — it holds on this path from the
+        // split onwards, and the function's own certification must not assume
+        // it as a requirement.
+        let at_function_entry = self
+            .execution()
+            .is_some_and(|execution| execution.core.frontier.is_at_function_entry());
+        // Where the arms complete the function proof, the `match` step is
+        // assembled from the arm certificates by `finish_execution_match`.
+        // Where they do not — a loop body, whose arms each close the
+        // invariants on their own path — each arm is a separate certified
+        // path, so record the arm as a path-aligned case and note where in
+        // this path's tactics it was taken. Path merging rebuilds the `match`
+        // from those.
+        let arm_case = ProofMatchArmCase {
+            source: plan.arm_case_source.clone(),
+            arm: index,
+        };
+        let tactic_offset = self.certificate().steps().len();
         let proof = self.with_kernel_state(state.with_locals(locals));
         let (proof, result) = proof.edit_execution_presentation(|presentation| {
             presentation
@@ -358,11 +398,23 @@ impl<'a> Proof<'a> {
                 .record_lowering(&surface, &case)?;
             presentation.case_assumptions.push(CaseAssumption {
                 tactic_index,
-                condition: surface,
+                condition: surface.clone(),
                 value: true,
                 fact: Some(case),
-                at_function_entry: true,
+                at_function_entry,
+                match_arm: Some(arm_case),
             });
+            if !at_function_entry && presentation.surface_record.blocker.is_none() {
+                presentation
+                    .surface_record
+                    .path_choices
+                    .push(SurfacePathChoice {
+                        occurrence: tactic_index,
+                        condition: surface,
+                        value: true,
+                        tactic_offset,
+                    });
+            }
             Ok::<_, ClickError>(())
         })?;
         result?;

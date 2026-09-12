@@ -319,6 +319,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         .map(|choice| ProofCaseChoice {
             condition: choice.condition.clone(),
             value: choice.value,
+            match_arm: choice.match_arm.clone(),
         })
         .collect();
     let mut verified_loop_rules = Vec::new();

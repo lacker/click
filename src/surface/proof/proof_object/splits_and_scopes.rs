@@ -613,6 +613,7 @@ impl<'a> Proof<'a> {
                 value,
                 fact: Some(fact.clone()),
                 at_function_entry,
+                match_arm: None,
             });
             Ok(presentation)
         };

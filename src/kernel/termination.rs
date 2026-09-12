@@ -748,9 +748,10 @@ fn structural_resource_children(
         .iter()
         .find(|definition| definition.name() == name)
         .ok_or_else(|| error(format!("resource measure `{name}` has no definition")))?;
-    // A matched definition carries its children inside its arms, so the
-    // definition-level recursion flag does not see them; the arm walk below
-    // reports "no direct recursive child" when there really is none.
+    // A matched definition carries its children inside its arms. The
+    // definition-level flag counts those too, but the arm walk below gives the
+    // better message ("no direct recursive child") for a matched body, so keep
+    // this early refusal for the unmatched shape.
     if definition.matched.is_none() && !definition.is_recursive() {
         return Err(error(format!(
             "resource measure `{name}` is not directly recursive"

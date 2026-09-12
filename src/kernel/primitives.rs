@@ -2233,6 +2233,11 @@ pub struct CCompositeResourceDefinition {
     pub(super) witnesses: Vec<CParameter>,
     pub(super) condition: Option<SpecProposition>,
     pub(super) recursive: bool,
+    /// A same-family child declared inside a matched arm rather than in the
+    /// unmatched memory body. `recursive` describes that body, which instance
+    /// fold/unfold rewrites; [`CCompositeResourceDefinition::is_recursive`]
+    /// answers for the definition as a whole.
+    pub(super) matched_recursive: bool,
     pub(super) counted_population: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,

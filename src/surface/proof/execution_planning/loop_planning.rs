@@ -625,6 +625,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
             .map(|choice| ProofCaseChoice {
                 condition: choice.condition.clone(),
                 value: choice.value,
+                match_arm: choice.match_arm.clone(),
             })
             .collect::<Vec<_>>();
         let surface_tactics = leaf.path_certificate()?.to_proof_tactics();
@@ -897,6 +898,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             .map(|choice| ProofCaseChoice {
                 condition: choice.condition.clone(),
                 value: choice.value,
+                match_arm: choice.match_arm.clone(),
             })
             .collect::<Vec<_>>();
         let source_tactics = leaf.path_certificate()?.to_proof_tactics();

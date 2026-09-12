@@ -1231,7 +1231,6 @@ pub(crate) struct CheckedFunctionEntry {
     assumptions: PureFactContext,
     /// `resource_relation_assumptions(&self.assumptions)`, computed once.
     relation_facts: Option<PureFactContext>,
-    match_reserved_variables: std::sync::OnceLock<std::collections::BTreeSet<Variable>>,
 }
 
 impl CheckedFunctionEntry {
@@ -1253,7 +1252,6 @@ impl CheckedFunctionEntry {
             entry_state,
             assumptions,
             relation_facts: None,
-            match_reserved_variables: Default::default(),
         };
         entry.relation_facts = entry.resource_relation_assumptions(&entry.assumptions);
         Some(Arc::new(entry))
@@ -2741,6 +2739,12 @@ pub(crate) struct ProofExecutionContinuation {
 pub(crate) struct ExecutionProofCore {
     pub(crate) state: SharedValue<CState>,
     initial_match_scope: SharedValue<CState>,
+    /// Every variable `initial_match_scope` mentions, built once and shared by
+    /// every branch forked from this region. A constructor witness introduced
+    /// anywhere in the region must avoid these; everything the kernel has
+    /// issued since is below `next_kernel_variable`, which the same freshness
+    /// probe checks without a second scan.
+    initial_match_reserved: Arc<std::sync::OnceLock<std::collections::BTreeSet<Variable>>>,
     /// The state the retained evidence has reached on the open trace: the
     /// outcome of the last recorded theorem, observation, rewrite, or
     /// join. `None` until the first is recorded, when the theorem starts
@@ -3766,6 +3770,7 @@ impl ExecutionProofCore {
         let state: SharedValue<CState> = state.into();
         Self {
             initial_match_scope: state.clone(),
+            initial_match_reserved: Arc::new(std::sync::OnceLock::new()),
             state,
             evidence_state: None,
             evidence_completed: false,
@@ -4475,9 +4480,15 @@ impl ExecutionProofCore {
         arm_index: usize,
         facts: ProofFacts,
     ) -> bool {
-        if partition.witness_scope.as_ref().is_some_and(|scope| {
-            self.evidence_state.is_some() || !self.state.shares_storage_with(scope)
-        }) {
+        // A generative constructor witness belongs to the exact state its
+        // partition was issued against: no C step may run between the split
+        // and its arms. Recorded evidence before the split is no obstacle —
+        // the witnesses were checked fresh against the whole region.
+        if partition
+            .witness_scope
+            .as_ref()
+            .is_some_and(|scope| !self.state.shares_storage_with(scope))
+        {
             return false;
         }
         let arm = CheckedProofCaseArm {
@@ -4494,9 +4505,52 @@ impl ExecutionProofCore {
         true
     }
 
-    /// Constructor elimination at function entry. Reserve the selected
-    /// function/state once, then query the persistent fact index for each
-    /// fresh field; nested matches do not rescan the execution state.
+    /// Every variable the region this proof started in already mentions,
+    /// built once and shared by every branch forked from it. This is the
+    /// frontier-independent half of a constructor witness's freshness: the
+    /// other half is `next_kernel_variable`, which bounds everything the
+    /// kernel has issued since, so no later frontier rescans the state.
+    fn initial_match_reserved_variables(&self) -> &std::collections::BTreeSet<Variable> {
+        self.initial_match_reserved.get_or_init(|| {
+            use crate::kernel::CFunctionOutcome;
+            #[cfg(test)]
+            MATCH_SCOPE_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
+            let mut reserved = std::collections::BTreeSet::new();
+            crate::kernel::reasoning::collect_c_state_bitvector_variables(
+                &self.initial_match_scope,
+                &mut reserved,
+            );
+            crate::kernel::reasoning::collect_c_state_bound_variables(
+                &self.initial_match_scope,
+                &mut reserved,
+            );
+            if let Some(entry) = self.function_entry.as_ref() {
+                reserved.extend(crate::kernel::proposition_variables(
+                    &Proposition::CFunctionExecutes {
+                        state: entry.caller_state.clone(),
+                        function: entry.function.clone(),
+                        arguments: entry.arguments.clone(),
+                        outcome: CFunctionOutcome::Return {
+                            value: CValue::Void,
+                            state: entry.entry_state.clone(),
+                        },
+                    },
+                ));
+            }
+            reserved
+        })
+    }
+
+    /// Constructor elimination at any frontier this proof has reached: a
+    /// function entry, a loop body, or a point after checked C steps.
+    ///
+    /// The witnesses are fresh against everything the region can name. Its
+    /// entry state (and, at a function entry, the entry theorem) is reserved
+    /// once by [`Self::initial_match_reserved_variables`]; every variable the
+    /// kernel has issued since lies below `next_kernel_variable`, so the probe
+    /// is one comparison rather than a rescan of the current state. The
+    /// environment, the scrutinee, and the persistent fact index are queried
+    /// per candidate as before.
     pub(crate) fn algebraic_case_partition(
         &self,
         facts: &ProofFacts,
@@ -4509,28 +4563,12 @@ impl ExecutionProofCore {
         Vec<Vec<(Variable, crate::kernel::Sort)>>,
         u64,
     )> {
-        use crate::kernel::{CFunctionOutcome, Term};
-        if stride == 0
-            || self.evidence_state.is_some()
-            || !self.frontier.is_at_function_entry()
-            || !self.state.shares_storage_with(&self.initial_match_scope)
-        {
+        use crate::kernel::Term;
+        if stride == 0 {
             return None;
         }
-        let entry = self.function_entry.as_ref()?;
-        let reserved = entry.match_reserved_variables.get_or_init(|| {
-            #[cfg(test)]
-            MATCH_SCOPE_INDEX_BUILDS.with(|count| count.set(count.get() + 1));
-            crate::kernel::proposition_variables(&Proposition::CFunctionExecutes {
-                state: entry.caller_state.clone(),
-                function: entry.function.clone(),
-                arguments: entry.arguments.clone(),
-                outcome: CFunctionOutcome::Return {
-                    value: CValue::Void,
-                    state: entry.entry_state.clone(),
-                },
-            })
-        });
+        let reserved = self.initial_match_reserved_variables();
+        let issued = self.next_kernel_variable;
         let environment_variables =
             crate::kernel::reasoning::execution_environment_variable_index(environment);
         let value_variables = crate::kernel::proposition_variables(&Proposition::Equal(
@@ -4551,7 +4589,8 @@ impl ExecutionProofCore {
                         overflow = true;
                         return candidate;
                     }
-                    if !reserved.contains(&candidate)
+                    if candidate.0 >= issued
+                        && !reserved.contains(&candidate)
                         && !environment_variables.contains(&candidate)
                         && !value_variables.contains(&candidate)
                         && !facts.reserves_variable(candidate)
@@ -5368,18 +5407,22 @@ mod tests {
             });
             assert!(!wrong.record_proof_case_arm(partition.clone(), 0, extra));
             wrong.state = CState::new().with_local("changed", int32(1)).into();
+            // A witness belongs to the exact state its partition was issued
+            // against, so the moved frontier cannot take an arm of the old one.
             assert!(!wrong.record_proof_case_arm(partition.clone(), 0, facts));
-            assert!(
-                wrong
-                    .algebraic_case_partition(
-                        &root,
-                        &value,
-                        &crate::kernel::CExecutionEnvironment::new(),
-                        0,
-                        1
-                    )
-                    .is_none()
-            );
+            // It can issue its own, though: a proof `match` runs at any
+            // frontier the proof has reached, not only at an unchanged entry.
+            let (moved, _, _) = wrong
+                .algebraic_case_partition(
+                    &root,
+                    &value,
+                    &crate::kernel::CExecutionEnvironment::new(),
+                    4_000_000,
+                    65_536,
+                )
+                .expect("a frontier that has moved still issues its partition");
+            let moved_facts = root.with_fact(moved.case_fact(0).unwrap().clone());
+            assert!(wrong.record_proof_case_arm(moved, 0, moved_facts));
         }
     }
 
@@ -5464,6 +5507,31 @@ mod tests {
             core.algebraic_case_partition(&root, &value, &env, 0, 0)
                 .is_none()
         );
+    }
+
+    /// A frontier that is not a function entry reserves the region's own entry
+    /// state and everything the kernel has issued since, so a witness can
+    /// neither name a value the region started with nor one issued inside it.
+    #[test]
+    fn constructor_partition_witnesses_avoid_the_region_state_and_issued_variables() {
+        let (_, value) = constructor_partition_fixture(2);
+        let occupied = Variable(4_000_000);
+        let state =
+            CState::new().with_local("cursor", CValue::Int32(Bitvector32Term::Variable(occupied)));
+        let core = ExecutionProofCore::at_entry(state, ExecutionFrontier::default());
+        let root = ProofFacts::default();
+        let env = crate::kernel::CExecutionEnvironment::new();
+        let (_, fields, _) = core
+            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .expect("a loop-body frontier issues its partition");
+        assert!(fields.iter().flatten().all(|(var, _)| *var != occupied));
+
+        let mut issued = core.clone();
+        issued.next_kernel_variable = 4_200_000;
+        let (_, fields, _) = issued
+            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .expect("a partition skips the issued range");
+        assert!(fields.iter().flatten().all(|(var, _)| var.0 >= 4_200_000));
     }
 
     #[test]
