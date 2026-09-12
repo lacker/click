@@ -683,6 +683,177 @@ impl CStringLiteral {
     }
 }
 
+impl CFunctionContractInterface {
+    pub(crate) fn new(return_type: CType, parameters: Vec<CParameter>) -> Self {
+        Self {
+            return_type,
+            return_pointee_constant: false,
+            return_aggregate_layout: None,
+            parameters,
+            proof_parameters: Default::default(),
+            resource_requires: Vec::new(),
+            resource_ensures: Vec::new(),
+            resource_constructors: Vec::new(),
+            contract_requires: Vec::new(),
+            contract_requirement_sources: ContractRequirementSources::default(),
+            contract_ensures: Vec::new(),
+            contract_mutable: Vec::new(),
+            contract_effect_claim_required: false,
+            resource_derived_mutable_frame: false,
+            contract_claims: Vec::new(),
+            opaque_contract_supported: true,
+            composite_resource_definitions: Vec::new(),
+            predicate_unfoldings: Vec::new(),
+        }
+    }
+
+    pub fn return_type(&self) -> CType {
+        self.return_type
+    }
+
+    pub fn return_pointee_is_constant(&self) -> bool {
+        self.return_pointee_constant
+    }
+
+    pub fn return_aggregate_layout(&self) -> Option<&CAggregateLayout> {
+        self.return_aggregate_layout.as_ref()
+    }
+
+    pub fn parameters(&self) -> &[CParameter] {
+        &self.parameters
+    }
+
+    pub(crate) fn proof_parameters(&self) -> &[CResourceSpec] {
+        &self.proof_parameters
+    }
+
+    pub(crate) fn with_proof_parameters(mut self, parameters: Vec<CResourceSpec>) -> Self {
+        self.proof_parameters = parameters.into();
+        self
+    }
+
+    pub fn resource_requires(&self) -> &[CResourceSpec] {
+        &self.resource_requires
+    }
+
+    pub fn resource_ensures(&self) -> &[CResourceSpec] {
+        &self.resource_ensures
+    }
+
+    pub fn resource_constructors(&self) -> &[CResourceSpec] {
+        &self.resource_constructors
+    }
+
+    pub fn contract_requires(&self) -> &[SpecProposition] {
+        &self.contract_requires
+    }
+
+    pub(crate) fn contract_requirement_sources(&self) -> &[Option<usize>] {
+        self.contract_requirement_sources.as_slice()
+    }
+
+    pub(crate) fn contract_requirement_source(&self, index: usize) -> Option<Option<usize>> {
+        self.contract_requirement_sources
+            .as_slice()
+            .get(index)
+            .copied()
+    }
+
+    pub fn contract_ensures(&self) -> &[SpecProposition] {
+        &self.contract_ensures
+    }
+
+    pub fn contract_mutable(&self) -> &[CMemorySegment] {
+        &self.contract_mutable
+    }
+
+    pub(crate) fn contract_effect_claim_required(&self) -> bool {
+        self.contract_effect_claim_required
+    }
+
+    pub(crate) fn resource_derived_mutable_frame(&self) -> bool {
+        self.resource_derived_mutable_frame
+    }
+
+    pub fn contract_claims(&self) -> &[CFunctionContractClaim] {
+        &self.contract_claims
+    }
+
+    pub fn opaque_contract_supported(&self) -> bool {
+        self.opaque_contract_supported
+    }
+
+    pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
+        &self.composite_resource_definitions
+    }
+
+    pub fn predicate_unfoldings(&self) -> &[CPredicateUnfolding] {
+        &self.predicate_unfoldings
+    }
+
+    pub(crate) fn function_pointer_type(&self) -> CType {
+        CType::FunctionPointer(CType::qualified_function_pointer_signature(
+            self.return_type(),
+            self.return_pointee_is_constant(),
+            &self
+                .parameters()
+                .iter()
+                .map(|parameter| (parameter.c_type(), parameter.pointee_is_constant()))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Compare exactly the semantic interface, including normalized resource
+    /// role/snapshot metadata, while ignoring its nominal contract name.
+    pub(crate) fn exactly_matches(&self, other: &Self) -> bool {
+        self.return_type == other.return_type
+            && self.return_pointee_constant == other.return_pointee_constant
+            && self.return_aggregate_layout == other.return_aggregate_layout
+            && self.parameters == other.parameters
+            && self.proof_parameters == other.proof_parameters
+            && self.resource_requires == other.resource_requires
+            && self.resource_ensures == other.resource_ensures
+            && self.contract_requires == other.contract_requires
+            && self.contract_ensures == other.contract_ensures
+            && self.contract_mutable == other.contract_mutable
+            && self.contract_effect_claim_required == other.contract_effect_claim_required
+            && self.composite_resource_definitions == other.composite_resource_definitions
+            && self.predicate_unfoldings == other.predicate_unfoldings
+    }
+
+    /// Compare the signature and resource vocabulary used by automatic
+    /// callback formation. Proof binders and behavioral clauses are checked by
+    /// their dedicated refinement judgments.
+    pub(crate) fn has_compatible_signature_and_resource_vocabulary(&self, other: &Self) -> bool {
+        self.has_compatible_signature_and_composite_vocabulary(other)
+            && self.proof_parameters.is_empty()
+    }
+
+    pub(crate) fn has_compatible_signature_and_composite_vocabulary(&self, other: &Self) -> bool {
+        self.return_type == other.return_type
+            && self.return_pointee_constant == other.return_pointee_constant
+            && self.return_aggregate_layout == other.return_aggregate_layout
+            && self.parameters.len() == other.parameters.len()
+            && self
+                .parameters
+                .iter()
+                .zip(&other.parameters)
+                .all(|(left, right)| {
+                    left.c_type == right.c_type
+                        && left.aggregate_layout == right.aggregate_layout
+                        && left.volatile == right.volatile
+                        && left.pointee_volatile == right.pointee_volatile
+                        && left.constant == right.constant
+                        && left.pointee_constant == right.pointee_constant
+                })
+            && self.composite_resource_definitions == other.composite_resource_definitions
+    }
+
+    pub(crate) fn has_same_predicate_unfoldings(&self, other: &Self) -> bool {
+        self.predicate_unfoldings == other.predicate_unfoldings
+    }
+}
+
 impl CFunction {
     pub(crate) fn with_program_entry(mut self) -> Self {
         self.program_entry = true;
@@ -700,28 +871,12 @@ impl CFunction {
         body: CStatement,
     ) -> Self {
         Self {
-            return_type,
-            return_pointee_constant: false,
-            return_aggregate_layout: None,
             program_entry: false,
             name: name.into(),
             inline_body: false,
-            parameters,
             source_body: body.clone(),
             body,
-            resource_requires: Vec::new(),
-            resource_ensures: Vec::new(),
-            resource_constructors: Vec::new(),
-            contract_requires: Vec::new(),
-            contract_requirement_sources: ContractRequirementSources::default(),
-            contract_ensures: Vec::new(),
-            contract_mutable: Vec::new(),
-            contract_effect_claim_required: false,
-            resource_derived_mutable_frame: false,
-            contract_claims: Vec::new(),
-            opaque_contract_supported: true,
-            composite_resource_definitions: Vec::new(),
-            predicate_unfoldings: Vec::new(),
+            contract_interface: CFunctionContractInterface::new(return_type, parameters),
             global_variables: Vec::new(),
             global_arrays: Vec::new(),
             static_variables: Vec::new(),
@@ -807,13 +962,13 @@ impl CFunction {
         requires: Vec<CResourceSpec>,
         ensures: Vec<CResourceSpec>,
     ) -> Self {
-        self.resource_requires = requires;
-        self.resource_ensures = ensures;
+        self.contract_interface.resource_requires = requires;
+        self.contract_interface.resource_ensures = ensures;
         self
     }
 
     pub fn with_resource_constructors(mut self, constructors: Vec<CResourceSpec>) -> Self {
-        self.resource_constructors = constructors;
+        self.contract_interface.resource_constructors = constructors;
         self
     }
 
@@ -825,31 +980,33 @@ impl CFunction {
         claims: Vec<CFunctionContractClaim>,
         opaque_supported: bool,
     ) -> Self {
-        self.contract_requires = requires;
-        self.contract_requirement_sources =
-            ContractRequirementSources(vec![None; self.contract_requires.len()]);
-        self.contract_ensures = ensures;
-        self.contract_mutable = mutable;
-        self.contract_effect_claim_required = !self.contract_mutable.is_empty();
-        self.resource_derived_mutable_frame = false;
-        self.contract_claims = claims;
-        self.opaque_contract_supported = opaque_supported;
+        self.contract_interface.contract_requires = requires;
+        self.contract_interface.contract_requirement_sources =
+            ContractRequirementSources(vec![None; self.contract_interface.contract_requires.len()]);
+        self.contract_interface.contract_ensures = ensures;
+        self.contract_interface.contract_mutable = mutable;
+        self.contract_interface.contract_effect_claim_required =
+            !self.contract_interface.contract_mutable.is_empty();
+        self.contract_interface.resource_derived_mutable_frame = false;
+        self.contract_interface.contract_claims = claims;
+        self.contract_interface.opaque_contract_supported = opaque_supported;
         self
     }
 
     pub(crate) fn with_contract_requirement_sources(mut self, sources: Vec<Option<usize>>) -> Self {
         assert_eq!(
             sources.len(),
-            self.contract_requires.len(),
+            self.contract_interface.contract_requires.len(),
             "contract requirement source map must match lowered requirements"
         );
-        self.contract_requirement_sources = ContractRequirementSources(sources);
+        self.contract_interface.contract_requirement_sources = ContractRequirementSources(sources);
         self
     }
 
     #[cfg(test)]
     pub(crate) fn without_test_contract_requirement_sources(mut self) -> Self {
-        self.contract_requirement_sources = ContractRequirementSources::default();
+        self.contract_interface.contract_requirement_sources =
+            ContractRequirementSources::default();
         self
     }
 
@@ -859,8 +1016,8 @@ impl CFunction {
     /// used by the surface lowering; external kernel callers retain the
     /// default requirement that a nonempty frame have an Effect claim.
     pub(crate) fn with_resource_derived_mutable_frame(mut self) -> Self {
-        self.contract_effect_claim_required = false;
-        self.resource_derived_mutable_frame = true;
+        self.contract_interface.contract_effect_claim_required = false;
+        self.contract_interface.resource_derived_mutable_frame = true;
         self
     }
 
@@ -869,7 +1026,7 @@ impl CFunction {
         mut definitions: Vec<CCompositeResourceDefinition>,
     ) -> Self {
         definitions.sort_by(|left, right| left.name().cmp(right.name()));
-        self.composite_resource_definitions = definitions;
+        self.contract_interface.composite_resource_definitions = definitions;
         self
     }
 
@@ -877,36 +1034,37 @@ impl CFunction {
         &self,
         name: &str,
     ) -> Option<&CCompositeResourceDefinition> {
-        self.composite_resource_definitions
+        self.contract_interface
+            .composite_resource_definitions
             .binary_search_by(|definition| definition.name().cmp(name))
             .ok()
-            .map(|index| &self.composite_resource_definitions[index])
+            .map(|index| &self.contract_interface.composite_resource_definitions[index])
     }
 
     pub fn with_predicate_unfoldings(mut self, unfoldings: Vec<CPredicateUnfolding>) -> Self {
-        self.predicate_unfoldings = unfoldings;
+        self.contract_interface.predicate_unfoldings = unfoldings;
         self
     }
 
     pub fn return_type(&self) -> CType {
-        self.return_type
+        self.contract_interface.return_type()
     }
 
     pub fn with_return_pointee_constant(mut self, constant: bool) -> Self {
-        self.return_pointee_constant = constant;
+        self.contract_interface.return_pointee_constant = constant;
         self
     }
 
     pub fn return_pointee_is_constant(&self) -> bool {
-        self.return_pointee_constant
+        self.contract_interface.return_pointee_is_constant()
     }
 
     pub fn return_aggregate_layout(&self) -> Option<&CAggregateLayout> {
-        self.return_aggregate_layout.as_ref()
+        self.contract_interface.return_aggregate_layout()
     }
 
     pub fn with_return_aggregate_layout(mut self, layout: CAggregateLayout) -> Self {
-        self.return_aggregate_layout = Some(layout);
+        self.contract_interface.return_aggregate_layout = Some(layout);
         self
     }
 
@@ -924,7 +1082,11 @@ impl CFunction {
     }
 
     pub fn parameters(&self) -> &[CParameter] {
-        &self.parameters
+        self.contract_interface.parameters()
+    }
+
+    pub(crate) fn pop_parameter(&mut self) -> Option<CParameter> {
+        self.contract_interface.parameters.pop()
     }
 
     pub fn global_variables(&self) -> &[CGlobal] {
@@ -964,15 +1126,7 @@ impl CFunction {
     }
 
     pub(crate) fn function_pointer_type(&self) -> CType {
-        CType::FunctionPointer(CType::qualified_function_pointer_signature(
-            self.return_type,
-            self.return_pointee_is_constant(),
-            &self
-                .parameters
-                .iter()
-                .map(|parameter| (parameter.c_type(), parameter.pointee_is_constant()))
-                .collect::<Vec<_>>(),
-        ))
+        self.contract_interface.function_pointer_type()
     }
 
     pub fn body(&self) -> &CStatement {
@@ -984,62 +1138,61 @@ impl CFunction {
     }
 
     pub fn resource_requires(&self) -> &[CResourceSpec] {
-        &self.resource_requires
+        self.contract_interface.resource_requires()
     }
 
     pub fn resource_ensures(&self) -> &[CResourceSpec] {
-        &self.resource_ensures
+        self.contract_interface.resource_ensures()
     }
 
     pub fn resource_constructors(&self) -> &[CResourceSpec] {
-        &self.resource_constructors
+        self.contract_interface.resource_constructors()
     }
 
     pub fn contract_requires(&self) -> &[SpecProposition] {
-        &self.contract_requires
+        self.contract_interface.contract_requires()
     }
 
-    pub(crate) fn contract_requirement_sources(&self) -> &[Option<usize>] {
-        self.contract_requirement_sources.as_slice()
-    }
-
-    pub(crate) fn contract_requirement_source(&self, index: usize) -> Option<Option<usize>> {
-        self.contract_requirement_sources
-            .as_slice()
-            .get(index)
-            .copied()
+    pub(crate) fn pop_contract_requirement(&mut self) -> Option<SpecProposition> {
+        self.contract_interface.contract_requires.pop()
     }
 
     pub fn contract_ensures(&self) -> &[SpecProposition] {
-        &self.contract_ensures
+        self.contract_interface.contract_ensures()
     }
 
     pub fn contract_mutable(&self) -> &[CMemorySegment] {
-        &self.contract_mutable
+        self.contract_interface.contract_mutable()
     }
 
     pub(crate) fn contract_effect_claim_required(&self) -> bool {
-        self.contract_effect_claim_required
+        self.contract_interface.contract_effect_claim_required()
     }
 
     pub(crate) fn resource_derived_mutable_frame(&self) -> bool {
-        self.resource_derived_mutable_frame
+        self.contract_interface.resource_derived_mutable_frame()
     }
 
     pub fn contract_claims(&self) -> &[CFunctionContractClaim] {
-        &self.contract_claims
+        self.contract_interface.contract_claims()
     }
 
     pub fn opaque_contract_supported(&self) -> bool {
-        self.opaque_contract_supported
+        self.contract_interface.opaque_contract_supported()
     }
 
     pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
-        &self.composite_resource_definitions
+        self.contract_interface.composite_resource_definitions()
     }
 
     pub fn predicate_unfoldings(&self) -> &[CPredicateUnfolding] {
-        &self.predicate_unfoldings
+        self.contract_interface.predicate_unfoldings()
+    }
+
+    /// The body-independent contract carrier used by direct calls, callback
+    /// applications, refinement, and certification.
+    pub fn contract_interface(&self) -> &CFunctionContractInterface {
+        &self.contract_interface
     }
 }
 
@@ -1466,17 +1619,18 @@ impl CFunctionContract {
     const PREDICATE_PREFIX: &'static str = "__click_function_contract::";
 
     pub(crate) fn with_proof_parameters(mut self, parameters: Vec<CResourceSpec>) -> Self {
-        self.proof_parameters = parameters.into();
+        self.function.contract_interface = self
+            .function
+            .contract_interface
+            .clone()
+            .with_proof_parameters(parameters);
         self
     }
 
     pub fn new(name: impl Into<String>, function: CFunction) -> Option<Self> {
         let name = name.into();
-        (function.opaque_contract_supported() && !name.is_empty()).then_some(Self {
-            name,
-            function,
-            proof_parameters: Default::default(),
-        })
+        (function.opaque_contract_supported() && !name.is_empty())
+            .then_some(Self { name, function })
     }
 
     pub fn name(&self) -> &str {
@@ -1484,7 +1638,7 @@ impl CFunctionContract {
     }
 
     pub fn function_pointer_type(&self) -> CType {
-        self.function.function_pointer_type()
+        self.interface().function_pointer_type()
     }
 
     pub fn predicate_name(&self) -> String {
@@ -1504,28 +1658,17 @@ impl CFunctionContract {
     }
 
     pub(crate) fn proof_parameters(&self) -> &[CResourceSpec] {
-        &self.proof_parameters
+        self.interface().proof_parameters()
     }
 
     /// First-slice formation rule: a concrete target must expose exactly the
     /// same normalized interface. Behavioral refinement is intentionally a
     /// later rule; exact equality is restrictive but sound.
     pub(crate) fn exactly_matches(&self, function: &CFunction) -> bool {
-        self.proof_parameters.is_empty()
-            && self.function.return_type == function.return_type
-            && self.function.return_pointee_constant == function.return_pointee_constant
-            && self.function.return_aggregate_layout == function.return_aggregate_layout
-            && self.function.parameters == function.parameters
-            && self.function.resource_requires == function.resource_requires
-            && self.function.resource_ensures == function.resource_ensures
-            && self.function.contract_requires == function.contract_requires
-            && self.function.contract_ensures == function.contract_ensures
-            && self.function.contract_mutable == function.contract_mutable
-            && self.function.contract_effect_claim_required
-                == function.contract_effect_claim_required
-            && self.function.composite_resource_definitions
-                == function.composite_resource_definitions
-            && self.function.predicate_unfoldings == function.predicate_unfoldings
+        self.proof_parameters().is_empty()
+            && self
+                .interface()
+                .exactly_matches(function.contract_interface())
     }
 
     /// Checks the portion of a callback interface that behavioral refinement
@@ -1537,8 +1680,8 @@ impl CFunctionContract {
         &self,
         function: &CFunction,
     ) -> bool {
-        self.proof_parameters.is_empty()
-            && self.has_compatible_signature_and_composite_vocabulary(function)
+        self.interface()
+            .has_compatible_signature_and_resource_vocabulary(function.contract_interface())
     }
 
     /// The same interface check without the proof-parameter restriction.
@@ -1552,31 +1695,20 @@ impl CFunctionContract {
         &self,
         function: &CFunction,
     ) -> bool {
-        self.function.return_type == function.return_type
-            && self.function.return_pointee_constant == function.return_pointee_constant
-            && self.function.return_aggregate_layout == function.return_aggregate_layout
-            && self.function.parameters.len() == function.parameters.len()
-            && self
-                .function
-                .parameters
-                .iter()
-                .zip(&function.parameters)
-                .all(|(contract, implementation)| {
-                    contract.c_type == implementation.c_type
-                        && contract.aggregate_layout == implementation.aggregate_layout
-                        && contract.volatile == implementation.volatile
-                        && contract.pointee_volatile == implementation.pointee_volatile
-                        && contract.constant == implementation.constant
-                        && contract.pointee_constant == implementation.pointee_constant
-                })
-            && self.function.composite_resource_definitions
-                == function.composite_resource_definitions
+        self.interface()
+            .has_compatible_signature_and_composite_vocabulary(function.contract_interface())
     }
 
     /// Opaque predicate identities may be compared definitionally only when
     /// an explicit refinement proof names the definitions it unfolds.
     pub(crate) fn has_same_predicate_unfoldings(&self, function: &CFunction) -> bool {
-        self.function.predicate_unfoldings == function.predicate_unfoldings
+        self.interface()
+            .has_same_predicate_unfoldings(function.contract_interface())
+    }
+
+    /// The body-independent interface selected by this nominal contract.
+    pub fn interface(&self) -> &CFunctionContractInterface {
+        self.function.contract_interface()
     }
 }
 

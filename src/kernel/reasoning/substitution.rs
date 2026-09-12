@@ -3671,152 +3671,136 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CFunction {
-    CFunction {
-        program_entry: function.program_entry,
-        return_type: function.return_type,
-        return_pointee_constant: function.return_pointee_constant,
-        name: function.name.clone(),
-        inline_body: function.inline_body,
-        parameters: function.parameters.clone(),
-        body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
-        source_body: substitute_bitvector_variable_in_c_statement(function.source_body(), from, to),
-        return_aggregate_layout: function.return_aggregate_layout.clone(),
-        resource_requires: function
-            .resource_requires()
-            .iter()
-            .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
-            .collect(),
-        resource_ensures: function
-            .resource_ensures()
-            .iter()
-            .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
-            .collect(),
-        resource_constructors: function
-            .resource_constructors()
-            .iter()
-            .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
-            .collect(),
-        contract_requires: function
-            .contract_requires
-            .iter()
-            .map(|proposition| {
-                substitute_bitvector_variable_in_spec_proposition(proposition, from, to)
-            })
-            .collect(),
-        contract_requirement_sources: function.contract_requirement_sources.clone(),
-        contract_ensures: function
-            .contract_ensures
-            .iter()
-            .map(|proposition| {
-                substitute_bitvector_variable_in_spec_proposition(proposition, from, to)
-            })
-            .collect(),
-        contract_mutable: function
-            .contract_mutable
-            .iter()
-            .map(|segment| CMemorySegment {
-                base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
-                start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
-                end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
-                element_width: segment.element_width,
-                guard: segment.guard.as_ref().map(|guard| {
-                    substitute_bitvector_variable_in_spec_proposition(guard, from, to)
-                }),
-            })
-            .collect(),
-        contract_effect_claim_required: function.contract_effect_claim_required,
-        resource_derived_mutable_frame: function.resource_derived_mutable_frame,
-        contract_claims: function.contract_claims.clone(),
-        opaque_contract_supported: function.opaque_contract_supported,
-        composite_resource_definitions: function
-            .composite_resource_definitions
-            .iter()
-            .map(|definition| CCompositeResourceDefinition {
-                instance_schema: definition.instance_schema.clone(),
-                name: definition.name.clone(),
-                parameters: definition.parameters.clone(),
-                witnesses: definition.witnesses.clone(),
-                condition: definition.condition.as_ref().map(|condition| {
-                    substitute_bitvector_variable_in_spec_proposition(condition, from, to)
-                }),
-                matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
-                    field_index: body.field_index,
-                    algebraic_type: body.algebraic_type.clone(),
-                    arms: body
-                        .arms
-                        .iter()
-                        .map(|arm| CResourceMatchArm {
-                            children: arm
-                                .children
-                                .iter()
-                                .map(|child| CResourceChildSpec {
-                                    name: child.name.clone(),
-                                    binding: child.binding,
-                                    field_bindings: child.field_bindings.clone(),
-                                    arguments: child
-                                        .arguments
-                                        .iter()
-                                        .map(|argument| {
-                                            substitute_bitvector_variable_in_c_expression(
-                                                argument, from, to,
-                                            )
-                                        })
-                                        .collect(),
-                                })
-                                .collect(),
-                            variant: arm.variant.clone(),
-                            bindings: arm.bindings.clone(),
-                            binding_types: arm.binding_types.clone(),
-                            binding_variables: arm.binding_variables.clone(),
-                            contains: arm
-                                .contains
-                                .iter()
-                                .map(|resource| {
-                                    substitute_bitvector_variable_in_resource_spec(
-                                        resource, from, to,
-                                    )
-                                })
-                                .collect(),
-                            facts: arm
-                                .facts
-                                .iter()
-                                .map(|fact| {
-                                    substitute_bitvector_variable_in_spec_proposition(
-                                        fact, from, to,
-                                    )
-                                })
-                                .collect(),
-                        })
-                        .collect(),
-                }),
-                recursive: definition.recursive,
-                counted_population: definition.counted_population,
-                contains: definition
-                    .contains
+    let mut interface = function.contract_interface().clone();
+    interface.resource_requires = function
+        .resource_requires()
+        .iter()
+        .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+        .collect();
+    interface.resource_ensures = function
+        .resource_ensures()
+        .iter()
+        .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+        .collect();
+    interface.resource_constructors = function
+        .resource_constructors()
+        .iter()
+        .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+        .collect();
+    interface.contract_requires = function
+        .contract_requires()
+        .iter()
+        .map(|proposition| substitute_bitvector_variable_in_spec_proposition(proposition, from, to))
+        .collect();
+    interface.contract_ensures = function
+        .contract_ensures()
+        .iter()
+        .map(|proposition| substitute_bitvector_variable_in_spec_proposition(proposition, from, to))
+        .collect();
+    interface.contract_mutable = function
+        .contract_mutable()
+        .iter()
+        .map(|segment| CMemorySegment {
+            base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+            start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+            end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+            element_width: segment.element_width,
+            guard: segment
+                .guard
+                .as_ref()
+                .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
+        })
+        .collect();
+    interface.composite_resource_definitions = function
+        .composite_resource_definitions()
+        .iter()
+        .map(|definition| CCompositeResourceDefinition {
+            instance_schema: definition.instance_schema.clone(),
+            name: definition.name.clone(),
+            parameters: definition.parameters.clone(),
+            witnesses: definition.witnesses.clone(),
+            condition: definition.condition.as_ref().map(|condition| {
+                substitute_bitvector_variable_in_spec_proposition(condition, from, to)
+            }),
+            matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
+                field_index: body.field_index,
+                algebraic_type: body.algebraic_type.clone(),
+                arms: body
+                    .arms
                     .iter()
-                    .map(|resource| {
-                        substitute_bitvector_variable_in_resource_spec(resource, from, to)
+                    .map(|arm| CResourceMatchArm {
+                        children: arm
+                            .children
+                            .iter()
+                            .map(|child| CResourceChildSpec {
+                                name: child.name.clone(),
+                                binding: child.binding,
+                                field_bindings: child.field_bindings.clone(),
+                                arguments: child
+                                    .arguments
+                                    .iter()
+                                    .map(|argument| {
+                                        substitute_bitvector_variable_in_c_expression(
+                                            argument, from, to,
+                                        )
+                                    })
+                                    .collect(),
+                            })
+                            .collect(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: arm.binding_types.clone(),
+                        binding_variables: arm.binding_variables.clone(),
+                        contains: arm
+                            .contains
+                            .iter()
+                            .map(|resource| {
+                                substitute_bitvector_variable_in_resource_spec(resource, from, to)
+                            })
+                            .collect(),
+                        facts: arm
+                            .facts
+                            .iter()
+                            .map(|fact| {
+                                substitute_bitvector_variable_in_spec_proposition(fact, from, to)
+                            })
+                            .collect(),
                     })
                     .collect(),
-                facts: definition
-                    .facts
-                    .iter()
-                    .map(|fact| substitute_bitvector_variable_in_spec_proposition(fact, from, to))
-                    .collect(),
-            })
-            .collect(),
-        predicate_unfoldings: function
-            .predicate_unfoldings
-            .iter()
-            .map(|unfolding| CPredicateUnfolding {
-                predicate: substitute_bitvector_variable_in_spec_proposition(
-                    &unfolding.predicate,
-                    from,
-                    to,
-                ),
-                body: substitute_bitvector_variable_in_spec_proposition(&unfolding.body, from, to),
-            })
-            .collect(),
+            }),
+            recursive: definition.recursive,
+            counted_population: definition.counted_population,
+            contains: definition
+                .contains
+                .iter()
+                .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
+                .collect(),
+            facts: definition
+                .facts
+                .iter()
+                .map(|fact| substitute_bitvector_variable_in_spec_proposition(fact, from, to))
+                .collect(),
+        })
+        .collect();
+    interface.predicate_unfoldings = function
+        .predicate_unfoldings()
+        .iter()
+        .map(|unfolding| CPredicateUnfolding {
+            predicate: substitute_bitvector_variable_in_spec_proposition(
+                &unfolding.predicate,
+                from,
+                to,
+            ),
+            body: substitute_bitvector_variable_in_spec_proposition(&unfolding.body, from, to),
+        })
+        .collect();
+    CFunction {
+        program_entry: function.program_entry,
+        name: function.name.clone(),
+        inline_body: function.inline_body,
+        body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
+        source_body: substitute_bitvector_variable_in_c_statement(function.source_body(), from, to),
+        contract_interface: interface,
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
         static_variables: function.static_variables.clone(),
@@ -6678,149 +6662,136 @@ fn substitute_pointer_variable_in_c_function(
     from: Variable,
     to: &Pointer,
 ) -> CFunction {
-    CFunction {
-        program_entry: function.program_entry,
-        return_type: function.return_type,
-        return_pointee_constant: function.return_pointee_constant,
-        name: function.name.clone(),
-        inline_body: function.inline_body,
-        parameters: function.parameters.clone(),
-        body: substitute_pointer_variable_in_c_statement(function.body(), from, to),
-        source_body: substitute_pointer_variable_in_c_statement(function.source_body(), from, to),
-        return_aggregate_layout: function.return_aggregate_layout.clone(),
-        resource_requires: function
-            .resource_requires()
-            .iter()
-            .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
-            .collect(),
-        resource_ensures: function
-            .resource_ensures()
-            .iter()
-            .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
-            .collect(),
-        resource_constructors: function
-            .resource_constructors()
-            .iter()
-            .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
-            .collect(),
-        contract_requires: function
-            .contract_requires
-            .iter()
-            .map(|proposition| {
-                substitute_pointer_variable_in_spec_proposition(proposition, from, to)
-            })
-            .collect(),
-        contract_requirement_sources: function.contract_requirement_sources.clone(),
-        contract_ensures: function
-            .contract_ensures
-            .iter()
-            .map(|proposition| {
-                substitute_pointer_variable_in_spec_proposition(proposition, from, to)
-            })
-            .collect(),
-        contract_mutable: function
-            .contract_mutable
-            .iter()
-            .map(|segment| CMemorySegment {
-                base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
-                start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),
-                end: substitute_pointer_variable_in_c_expression(&segment.end, from, to),
-                element_width: segment.element_width,
-                guard: segment
-                    .guard
-                    .as_ref()
-                    .map(|guard| substitute_pointer_variable_in_spec_proposition(guard, from, to)),
-            })
-            .collect(),
-        contract_effect_claim_required: function.contract_effect_claim_required,
-        resource_derived_mutable_frame: function.resource_derived_mutable_frame,
-        contract_claims: function.contract_claims.clone(),
-        opaque_contract_supported: function.opaque_contract_supported,
-        composite_resource_definitions: function
-            .composite_resource_definitions
-            .iter()
-            .map(|definition| CCompositeResourceDefinition {
-                instance_schema: definition.instance_schema.clone(),
-                name: definition.name.clone(),
-                parameters: definition.parameters.clone(),
-                witnesses: definition.witnesses.clone(),
-                condition: definition.condition.as_ref().map(|condition| {
-                    substitute_pointer_variable_in_spec_proposition(condition, from, to)
-                }),
-                matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
-                    field_index: body.field_index,
-                    algebraic_type: body.algebraic_type.clone(),
-                    arms: body
-                        .arms
-                        .iter()
-                        .map(|arm| CResourceMatchArm {
-                            children: arm
-                                .children
-                                .iter()
-                                .map(|child| CResourceChildSpec {
-                                    name: child.name.clone(),
-                                    binding: child.binding,
-                                    field_bindings: child.field_bindings.clone(),
-                                    arguments: child
-                                        .arguments
-                                        .iter()
-                                        .map(|argument| {
-                                            substitute_pointer_variable_in_c_expression(
-                                                argument, from, to,
-                                            )
-                                        })
-                                        .collect(),
-                                })
-                                .collect(),
-                            variant: arm.variant.clone(),
-                            bindings: arm.bindings.clone(),
-                            binding_types: arm.binding_types.clone(),
-                            binding_variables: arm.binding_variables.clone(),
-                            contains: arm
-                                .contains
-                                .iter()
-                                .map(|resource| {
-                                    substitute_pointer_variable_in_resource_spec(resource, from, to)
-                                })
-                                .collect(),
-                            facts: arm
-                                .facts
-                                .iter()
-                                .map(|fact| {
-                                    substitute_pointer_variable_in_spec_proposition(fact, from, to)
-                                })
-                                .collect(),
-                        })
-                        .collect(),
-                }),
-                recursive: definition.recursive,
-                counted_population: definition.counted_population,
-                contains: definition
-                    .contains
+    let mut interface = function.contract_interface().clone();
+    interface.resource_requires = function
+        .resource_requires()
+        .iter()
+        .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
+        .collect();
+    interface.resource_ensures = function
+        .resource_ensures()
+        .iter()
+        .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
+        .collect();
+    interface.resource_constructors = function
+        .resource_constructors()
+        .iter()
+        .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
+        .collect();
+    interface.contract_requires = function
+        .contract_requires()
+        .iter()
+        .map(|proposition| substitute_pointer_variable_in_spec_proposition(proposition, from, to))
+        .collect();
+    interface.contract_ensures = function
+        .contract_ensures()
+        .iter()
+        .map(|proposition| substitute_pointer_variable_in_spec_proposition(proposition, from, to))
+        .collect();
+    interface.contract_mutable = function
+        .contract_mutable()
+        .iter()
+        .map(|segment| CMemorySegment {
+            base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
+            start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),
+            end: substitute_pointer_variable_in_c_expression(&segment.end, from, to),
+            element_width: segment.element_width,
+            guard: segment
+                .guard
+                .as_ref()
+                .map(|guard| substitute_pointer_variable_in_spec_proposition(guard, from, to)),
+        })
+        .collect();
+    interface.composite_resource_definitions = function
+        .composite_resource_definitions()
+        .iter()
+        .map(|definition| CCompositeResourceDefinition {
+            instance_schema: definition.instance_schema.clone(),
+            name: definition.name.clone(),
+            parameters: definition.parameters.clone(),
+            witnesses: definition.witnesses.clone(),
+            condition: definition.condition.as_ref().map(|condition| {
+                substitute_pointer_variable_in_spec_proposition(condition, from, to)
+            }),
+            matched: definition.matched.as_ref().map(|body| CResourceMatchBody {
+                field_index: body.field_index,
+                algebraic_type: body.algebraic_type.clone(),
+                arms: body
+                    .arms
                     .iter()
-                    .map(|resource| {
-                        substitute_pointer_variable_in_resource_spec(resource, from, to)
+                    .map(|arm| CResourceMatchArm {
+                        children: arm
+                            .children
+                            .iter()
+                            .map(|child| CResourceChildSpec {
+                                name: child.name.clone(),
+                                binding: child.binding,
+                                field_bindings: child.field_bindings.clone(),
+                                arguments: child
+                                    .arguments
+                                    .iter()
+                                    .map(|argument| {
+                                        substitute_pointer_variable_in_c_expression(
+                                            argument, from, to,
+                                        )
+                                    })
+                                    .collect(),
+                            })
+                            .collect(),
+                        variant: arm.variant.clone(),
+                        bindings: arm.bindings.clone(),
+                        binding_types: arm.binding_types.clone(),
+                        binding_variables: arm.binding_variables.clone(),
+                        contains: arm
+                            .contains
+                            .iter()
+                            .map(|resource| {
+                                substitute_pointer_variable_in_resource_spec(resource, from, to)
+                            })
+                            .collect(),
+                        facts: arm
+                            .facts
+                            .iter()
+                            .map(|fact| {
+                                substitute_pointer_variable_in_spec_proposition(fact, from, to)
+                            })
+                            .collect(),
                     })
                     .collect(),
-                facts: definition
-                    .facts
-                    .iter()
-                    .map(|fact| substitute_pointer_variable_in_spec_proposition(fact, from, to))
-                    .collect(),
-            })
-            .collect(),
-        predicate_unfoldings: function
-            .predicate_unfoldings
-            .iter()
-            .map(|unfolding| CPredicateUnfolding {
-                predicate: substitute_pointer_variable_in_spec_proposition(
-                    &unfolding.predicate,
-                    from,
-                    to,
-                ),
-                body: substitute_pointer_variable_in_spec_proposition(&unfolding.body, from, to),
-            })
-            .collect(),
+            }),
+            recursive: definition.recursive,
+            counted_population: definition.counted_population,
+            contains: definition
+                .contains
+                .iter()
+                .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
+                .collect(),
+            facts: definition
+                .facts
+                .iter()
+                .map(|fact| substitute_pointer_variable_in_spec_proposition(fact, from, to))
+                .collect(),
+        })
+        .collect();
+    interface.predicate_unfoldings = function
+        .predicate_unfoldings()
+        .iter()
+        .map(|unfolding| CPredicateUnfolding {
+            predicate: substitute_pointer_variable_in_spec_proposition(
+                &unfolding.predicate,
+                from,
+                to,
+            ),
+            body: substitute_pointer_variable_in_spec_proposition(&unfolding.body, from, to),
+        })
+        .collect();
+    CFunction {
+        program_entry: function.program_entry,
+        name: function.name.clone(),
+        inline_body: function.inline_body,
+        body: substitute_pointer_variable_in_c_statement(function.body(), from, to),
+        source_body: substitute_pointer_variable_in_c_statement(function.source_body(), from, to),
+        contract_interface: interface,
         global_variables: function.global_variables.clone(),
         global_arrays: function.global_arrays.clone(),
         static_variables: function.static_variables.clone(),

@@ -3,35 +3,41 @@
 use super::*;
 
 pub(super) fn same_interface(contract: &CFunctionContract, function: &CFunction) -> bool {
-    let normalized =
-        CFunctionContract::new(contract.name(), normalize(contract.template())).unwrap();
-    normalized.exactly_matches(&normalize(function))
+    // Proof binders are introduced by the named contract's explicit
+    // application syntax and are checked by the binder judgment.  The
+    // ordinary one-call refinement relation compares the shared behavioral
+    // interface after that separate check, just as the previous template
+    // comparison did.
+    let mut normalized_contract = normalize(contract.interface());
+    normalized_contract.proof_parameters = Default::default();
+    let normalized_function = normalize(function.contract_interface());
+    normalized_contract.exactly_matches(&normalized_function)
 }
 
-fn normalize(function: &CFunction) -> CFunction {
-    let mut function = function.clone();
+fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterface {
+    let mut interface = interface.clone();
     let mut names = Names::default();
-    for parameter in &mut function.parameters {
+    for parameter in &mut interface.parameters {
         names.bind(&mut parameter.name);
     }
-    for proposition in function
+    for proposition in interface
         .contract_requires
         .iter_mut()
-        .chain(&mut function.contract_ensures)
+        .chain(&mut interface.contract_ensures)
     {
         names.proposition(proposition);
     }
-    for resource in function
+    for resource in interface
         .resource_requires
         .iter_mut()
-        .chain(&mut function.resource_ensures)
+        .chain(&mut interface.resource_ensures)
     {
         names.resource_spec(resource);
     }
-    for segment in &mut function.contract_mutable {
+    for segment in &mut interface.contract_mutable {
         names.segment(segment);
     }
-    function
+    interface
 }
 
 #[cfg(test)]

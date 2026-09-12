@@ -5087,12 +5087,12 @@ pub(crate) fn prove_executed_contract_refinement(
     }
     let target = environment.get_function_contract(target_name)?;
     let mut function = rule.function.clone();
-    let callback = function.parameters.pop()?;
+    let callback = function.pop_parameter()?;
     if callback.c_type() != target.function_pointer_type() {
         return None;
     }
     let arguments = function
-        .parameters
+        .parameters()
         .iter()
         .map(|parameter| CExpression::Variable(parameter.name().to_string()))
         .collect();
@@ -5125,7 +5125,7 @@ pub(crate) fn prove_executed_contract_refinement(
                 CExpression::Variable(callback.name().to_string()),
             ))],
         };
-        if function.contract_requires.pop()? != source_requirement {
+        if function.pop_contract_requirement()? != source_requirement {
             return None;
         }
     }
@@ -5184,7 +5184,7 @@ pub fn c_project_function_signature(
     let function = project_function_interface(environment, name)?;
     Some((
         function
-            .parameters
+            .parameters()
             .iter()
             .map(|parameter| parameter.c_type())
             .collect(),
@@ -5222,7 +5222,7 @@ pub(crate) fn prove_executed_concrete_contract_refinement(
     project_function_interface(environment, callee_name)?;
     let function = rule.function.clone();
     let arguments = function
-        .parameters
+        .parameters()
         .iter()
         .map(|parameter| CExpression::Variable(parameter.name().to_string()))
         .collect();

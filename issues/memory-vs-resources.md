@@ -253,6 +253,55 @@ current issue findings, and dedicated instance-rename representation. This
 integration does not duplicate or revert the upstream whole-contract algorithm;
 the branch remains unmerged and unpushed for manager integration.
 
+## W2 handoff (2026-09-11)
+
+W2 started from the green pushed master checkpoint `1add3707` in the isolated
+`codex/mvr-w2` worktree. The body-independent `CFunctionContractInterface` now
+owns typed result/parameter metadata, named proof binders, pure pre/post
+clauses, W1-normalized resource terms with access/role/snapshot, checked effect
+metadata, source requirement provenance, composite definitions, and predicate
+unfoldings. `CFunction` retains the concrete/source bodies and storage while
+delegating its contract accessors to this carrier; named contracts expose the
+same carrier through `interface()`. Verified rules, external assumptions,
+callback applications, refinement, and certification keep their distinct
+evidence types while consuming the shared interface judgments.
+
+Ordinary and callback preparation now share interface-based argument coercion,
+resource transfer, result/return-resource evaluation, population transitions,
+effect lowering, ensure facts, and refinement views. External calls use that
+same checked application engine without being repackaged as verified-body
+evidence. Exact pointer facts, entry-selected borrow snapshots, exclusive
+instance identity/binder maps, role/coercion checks, bounded applicability,
+checked artifacts, pending obligations, and no-body-rerun behavior remain
+unchanged. The independent legacy contract field set and external-to-verified
+adapter path were removed; remaining `CFunction` accessors are compatibility
+views over the one interface, not another evaluator.
+
+Files changed: `src/kernel/primitives.rs`,
+`src/kernel/primitives/contracts.rs`, `src/kernel/functions.rs`,
+`src/kernel/functions/callback_contract_tests.rs`,
+`src/kernel/api/contract_interface_identity.rs`,
+`src/kernel/reasoning/substitution.rs`, `src/kernel/api.rs`,
+`src/kernel/termination.rs`, and `src/kernel/tests/heap_tests.rs`.
+The direct/callback agreement regression covers memory, token, composite, and
+exclusive-instance transitions. Existing wrong-callback, unverified-target,
+invalid-refinement, source-provenance, and checked-artifact rejection tests
+remain active. Existing deterministic four-size callback scaling covers
+growing interface sets (`1, 8, 32, 128`) and unrelated function frames
+(`0, 16, 64, 256`); no new global scan or body rerun was introduced.
+
+Focused callback/contract/resource/heap tests pass (`191/191`), as do
+`cargo check --all-targets`, `cargo fmt --check`, and `git diff --check`.
+The unfiltered `scripts/check.sh` gate passes: `2573` tests plus all `14`
+fixture/example checks (with only the repository's existing quarantined
+example skipped). No known blockers remain. The semantic confirmation for
+this chunk is that direct and named-callback transitions agree on
+memory/token/composite state and on instance identity/schema/arguments, while
+callback instance fields remain fresh symbolic post-state values rather than
+an invented preservation guarantee. This worktree is committed but
+intentionally not merged or pushed; the manager should integrate its coherent
+commit.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

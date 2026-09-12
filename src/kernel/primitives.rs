@@ -2106,43 +2106,58 @@ impl CAggregateLayout {
     }
 }
 
+/// The body-independent interface shared by every way Click can apply a
+/// function contract.
+///
+/// A [`CFunction`] keeps the implementation body and storage alongside this
+/// value, but all typed call parameters/result metadata, proof binders,
+/// logical clauses, normalized resource terms, effect information, and source
+/// provenance live here.  Keeping this carrier separate from the body is
+/// important for opaque calls: applying a checked summary must not implicitly
+/// execute (or even inspect) the concrete body.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunctionContractInterface {
+    pub(crate) return_type: CType,
+    pub(crate) return_pointee_constant: bool,
+    pub(crate) return_aggregate_layout: Option<CAggregateLayout>,
+    pub(crate) parameters: Vec<CParameter>,
+    /// Explicit resource-instance binders introduced by a named contract.
+    /// These are part of the application interface, not a body assumption.
+    pub(crate) proof_parameters: std::sync::Arc<[CResourceSpec]>,
+    pub(crate) resource_requires: Vec<CResourceSpec>,
+    pub(crate) resource_ensures: Vec<CResourceSpec>,
+    pub(crate) resource_constructors: Vec<CResourceSpec>,
+    pub(crate) contract_requires: Vec<SpecProposition>,
+    /// For each lowered contract requirement, the originating source
+    /// `requires` clause, or `None` for a generated definedness clause.
+    pub(super) contract_requirement_sources: ContractRequirementSources,
+    pub(crate) contract_ensures: Vec<SpecProposition>,
+    /// Checked effect information. Resource-derived frames deliberately share
+    /// this carrier with explicit `Effect` frames, while retaining their
+    /// distinct certification rule in `contract_effect_claim_required`.
+    pub(crate) contract_mutable: Vec<CMemorySegment>,
+    pub(crate) contract_effect_claim_required: bool,
+    pub(crate) resource_derived_mutable_frame: bool,
+    pub(crate) contract_claims: Vec<CFunctionContractClaim>,
+    pub(crate) opaque_contract_supported: bool,
+    pub(crate) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
+    /// Contract-local definitions for opaque Click predicate requirements.
+    /// Both sides are instantiated at the exact function entry state.
+    pub(crate) predicate_unfoldings: Vec<CPredicateUnfolding>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunction {
     pub(super) program_entry: bool,
-    pub(super) return_type: CType,
-    pub(super) return_pointee_constant: bool,
-    pub(super) return_aggregate_layout: Option<CAggregateLayout>,
     pub(super) name: String,
     /// Header-provided `static inline` or `static __always_inline` functions
     /// have a checked body but no
     /// Click contract. Calls to them execute that body at the call site
     /// instead of requiring an opaque verified-function rule.
     pub(super) inline_body: bool,
-    pub(super) parameters: Vec<CParameter>,
     pub(super) body: CStatement,
     pub(super) source_body: CStatement,
-    pub(super) resource_requires: Vec<CResourceSpec>,
-    pub(super) resource_ensures: Vec<CResourceSpec>,
-    pub(super) resource_constructors: Vec<CResourceSpec>,
-    pub(super) contract_requires: Vec<SpecProposition>,
-    /// For each lowered contract requirement, the originating source
-    /// `requires` clause, or `None` for a generated definedness clause.
-    pub(super) contract_requirement_sources: ContractRequirementSources,
-    pub(super) contract_ensures: Vec<SpecProposition>,
-    pub(super) contract_mutable: Vec<CMemorySegment>,
-    /// Whether the mutable contract frame requires an explicit Effect claim.
-    /// Resource-backed frames are inferred from consumed ownership and are
-    /// covered by the resource transition instead.
-    pub(super) contract_effect_claim_required: bool,
-    /// Whether the frame was inferred from owned resource transfer rather
-    /// than written as a function-level effect clause.
-    pub(super) resource_derived_mutable_frame: bool,
-    pub(super) contract_claims: Vec<CFunctionContractClaim>,
-    pub(super) opaque_contract_supported: bool,
-    pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
-    /// Contract-local definitions for opaque Click predicate requirements.
-    /// Both sides are instantiated at the exact function entry state.
-    pub(super) predicate_unfoldings: Vec<CPredicateUnfolding>,
+    pub(super) contract_interface: CFunctionContractInterface,
     pub(super) global_variables: Vec<CGlobal>,
     pub(super) global_arrays: Vec<CGlobalArray>,
     pub(super) static_variables: Vec<CStaticLocal>,
@@ -2392,7 +2407,6 @@ pub struct CVerifiedFunctionRule {
 pub struct CFunctionContract {
     pub(super) name: String,
     pub(super) function: CFunction,
-    pub(super) proof_parameters: std::sync::Arc<[CResourceSpec]>,
 }
 
 /// A contract supplied for a C function whose implementation is outside the

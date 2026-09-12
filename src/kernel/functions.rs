@@ -306,10 +306,10 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
-    if arguments.len() != function.parameters.len() {
+    if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
-                expected: function.parameters.len(),
+                expected: function.parameters().len(),
                 actual: arguments.len(),
             }),
             facts: Vec::new(),
@@ -498,10 +498,10 @@ pub(super) fn execute_c_function_verification_paths(
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
-    if arguments.len() != function.parameters.len() {
+    if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
-                expected: function.parameters.len(),
+                expected: function.parameters().len(),
                 actual: arguments.len(),
             }),
             facts: Vec::new(),
@@ -716,12 +716,20 @@ pub(super) fn execute_c_function_call_paths(
         }]);
     }
     if let Some(rule) = environment.get_external_function_rule(function.name()) {
-        let assumed_rule = CVerifiedFunctionRule {
-            function: rule.function.clone(),
-        };
-        return execute_verified_function_rule(
+        // External summaries use the same body-independent application
+        // interface as verified rules, but remain an assumption: do not
+        // repackage one as `CVerifiedFunctionRule`, whose type carries body
+        // safety evidence. Applying the shared rule engine does not execute
+        // or certify the external body.
+        let binder_application = selected_call_binder_application(&rule.function, environment);
+        return execute_verified_function_templates(
             caller_state,
-            &assumed_rule,
+            &[&rule.function],
+            None,
+            None,
+            binder_application
+                .as_ref()
+                .map(|application| (0, application)),
             arguments,
             assumptions,
             environment,
@@ -763,10 +771,10 @@ pub(super) fn execute_c_function_call_paths(
         }
     }
     budget.consume_function_call()?;
-    if arguments.len() != function.parameters.len() {
+    if arguments.len() != function.parameters().len() {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::WrongArity {
-                expected: function.parameters.len(),
+                expected: function.parameters().len(),
                 actual: arguments.len(),
             }),
             facts: Vec::new(),
@@ -1075,13 +1083,17 @@ fn execute_verified_function_templates(
         let mut first_failure = None;
         let mut selected_position = None;
         for (index, function) in functions.iter().enumerate() {
-            let interface = contract_interfaces
+            let contract_interface = contract_interfaces
+                .map(|contracts| contracts[index].interface())
+                .unwrap_or_else(|| function.contract_interface());
+            let interface_name = contract_interfaces
                 .map(|contracts| contracts[index].name())
                 .unwrap_or_else(|| function.name());
             let prepared = prepare_verified_function_call(
                 caller_state,
                 function,
-                interface,
+                interface_name,
+                contract_interface,
                 index,
                 arguments,
                 arguments_path.clone(),
@@ -1121,9 +1133,9 @@ fn execute_verified_function_templates(
         if selected_contract.is_none()
             && applicable.len() > 1
             && applicable.iter().any(|call| {
-                !call.function.resource_requires.is_empty()
-                    || !call.function.resource_ensures.is_empty()
-                    || !call.function.resource_constructors.is_empty()
+                !call.interface.resource_requires().is_empty()
+                    || !call.interface.resource_ensures().is_empty()
+                    || !call.interface.resource_constructors().is_empty()
                     || !call.mutable_ranges.is_empty()
             })
         {
@@ -1142,12 +1154,13 @@ fn execute_verified_function_templates(
         // not accidentally be evaluated against that interface's input ledger.
         let independent_guarantees_only = selected_contract.is_some()
             && applicable.iter().any(|call| {
-                !call.function.resource_requires.is_empty()
-                    || !call.function.resource_ensures.is_empty()
+                !call.interface.resource_requires().is_empty()
+                    || !call.interface.resource_ensures().is_empty()
             });
         let primary = applicable.remove(selected_position.unwrap_or(0));
         let PreparedVerifiedFunctionCall {
             function,
+            interface,
             argument_values,
             entry_state,
             entry_contract_state,
@@ -1178,17 +1191,17 @@ fn execute_verified_function_templates(
                 .into_certified(),
             );
         }
-        let result = symbolic_function_result(function, result_identity);
+        let result = symbolic_contract_result(interface, result_identity);
         let mut post_state = entry_state.clone().with_memory(memory);
-        if function.return_type() != CType::Void {
-            set_function_result(&mut post_state, function, result.clone());
+        if interface.return_type() != CType::Void {
+            set_contract_result(&mut post_state, interface, result.clone());
         }
         // A `produces` binder owns nothing at entry: the call creates the
         // instance under the identity the caller's `let` introduced. It is
         // built once, here, so the population transition and the returned
         // resources agree on its fresh fields.
         let mut produced_instances = BTreeMap::new();
-        for resource in function.resource_ensures() {
+        for resource in interface.resource_ensures() {
             let Some(identity) = resource.instance_identity() else {
                 continue;
             };
@@ -1279,10 +1292,11 @@ fn execute_verified_function_templates(
             "verified function rule application",
             "verified call population transition",
         );
-        let population_transition = match apply_counted_population_transitions(
+        let population_transition = match apply_counted_population_transitions_with_interface(
             caller_state,
             &mut transition_state,
             function,
+            interface,
             &argument_values,
             &effective_assumptions,
             true,
@@ -1332,7 +1346,7 @@ fn execute_verified_function_templates(
         post_state.resources = caller_resources_after_requirements.clone();
         // Returned ownership keeps its identity, not its old field values.
         // Only the ensures below relate fresh post-fields to the entry snapshot.
-        for resource in function.resource_ensures() {
+        for resource in interface.resource_ensures() {
             let Some(identity) = resource.instance_identity() else {
                 continue;
             };
@@ -1397,20 +1411,21 @@ fn execute_verified_function_templates(
             };
         }
         let output_resource_state =
-            with_contract_argument_views(&post_state, function, &argument_values);
+            with_contract_interface_argument_views(&post_state, interface, &argument_values);
         let entry_resource_state =
-            with_contract_argument_views(&entry_state, function, &argument_values);
+            with_contract_interface_argument_views(&entry_state, interface, &argument_values);
 
         let return_resource_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
             "verified call return resource evaluation",
         );
-        let return_resources = match evaluate_function_return_resources(
+        let return_resources = match evaluate_contract_return_resources(
             &caller_resources_after_requirements,
             &entry_resource_state,
             &output_resource_state,
-            function,
+            function.name(),
+            interface,
             &effective_assumptions,
             budget,
         )? {
@@ -1434,19 +1449,20 @@ fn execute_verified_function_templates(
         // successor; it is not an execution-path split.
         post_state.resources = return_resources.clone();
         let provisional_post_contract_state =
-            with_contract_argument_views(&post_state, function, &argument_values);
+            with_contract_interface_argument_views(&post_state, interface, &argument_values);
         let mut provisional_facts = facts.clone();
         let provisional_ensure_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
             "verified call provisional ensure lowering",
         );
-        add_verified_function_ensure_facts(
+        add_verified_function_ensure_facts_selected_with_interface(
             &mut provisional_facts,
             &obligations,
             &provisional_post_contract_state,
             &entry_contract_state,
-            function,
+            interface,
+            interface.contract_ensures().iter(),
             &effective_assumptions,
             budget,
         )?;
@@ -1483,19 +1499,20 @@ fn execute_verified_function_templates(
         facts.extend(allocation_effects);
         post_state.memory = memory;
         let post_contract_state =
-            with_contract_argument_views(&post_state, function, &argument_values);
+            with_contract_interface_argument_views(&post_state, interface, &argument_values);
 
         let ensure_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
             "verified call ensure lowering",
         );
-        add_verified_function_ensure_facts(
+        add_verified_function_ensure_facts_selected_with_interface(
             &mut facts,
             &obligations,
             &post_contract_state,
             &entry_contract_state,
-            function,
+            interface,
+            interface.contract_ensures().iter(),
             &effective_assumptions,
             budget,
         )?;
@@ -1510,22 +1527,22 @@ fn execute_verified_function_templates(
                 .entry_state
                 .clone()
                 .with_memory(post_state.memory.clone());
-            if additional.function.return_type() != CType::Void {
-                set_function_result(&mut additional_post, additional.function, result.clone());
+            if additional.interface.return_type() != CType::Void {
+                set_contract_result(&mut additional_post, additional.interface, result.clone());
             }
-            let additional_post = with_contract_argument_views(
+            let additional_post = with_contract_interface_argument_views(
                 &additional_post,
-                additional.function,
+                additional.interface,
                 &additional.argument_values,
             );
-            add_verified_function_ensure_facts_selected(
+            add_verified_function_ensure_facts_selected_with_interface(
                 &mut additional_facts,
                 &additional.obligations,
                 &additional_post,
                 &additional.entry_contract_state,
-                additional.function,
+                additional.interface,
                 additional
-                    .function
+                    .interface
                     .contract_ensures()
                     .iter()
                     .filter(|ensure| {
@@ -1562,6 +1579,10 @@ fn execute_verified_function_templates(
 
 struct PreparedVerifiedFunctionCall<'a> {
     function: &'a CFunction,
+    /// The body-independent interface used to prepare this application. It is
+    /// explicit even when it is the concrete function's own interface, so
+    /// callback and ordinary calls cannot silently grow separate evaluators.
+    interface: &'a CFunctionContractInterface,
     argument_values: Vec<CValue>,
     entry_state: CState,
     entry_contract_state: CState,
@@ -1578,7 +1599,8 @@ struct PreparedVerifiedFunctionCall<'a> {
 fn prepare_verified_function_call<'a>(
     caller_state: &CState,
     function: &'a CFunction,
-    interface: &str,
+    interface_name: &str,
+    contract_interface: &'a CFunctionContractInterface,
     candidate_ordinal: usize,
     source_arguments: &[CExpression],
     arguments_path: CArgumentsPath,
@@ -1588,7 +1610,9 @@ fn prepare_verified_function_call<'a>(
     budget: &mut ExecutionBudget,
     resource_application: Option<&ResourceCallApplication>,
 ) -> ExecutionResult<Result<PreparedVerifiedFunctionCall<'a>, CFunctionPath>> {
-    if function.contract_requirement_sources().len() != function.contract_requires().len() {
+    if contract_interface.contract_requirement_sources().len()
+        != contract_interface.contract_requires().len()
+    {
         return Ok(Err(CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                 "call requirement source map does not match the selected contract".to_string(),
@@ -1604,8 +1628,8 @@ fn prepare_verified_function_call<'a>(
         &arguments_path.facts,
         &arguments_path.obligations,
     );
-    let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
-        function,
+    let Some((argument_values, argument_obligations)) = coerce_c_contract_arguments(
+        contract_interface,
         &arguments_path.values,
         &arguments_path.obligations,
         &path_assumptions,
@@ -1649,10 +1673,11 @@ fn prepare_verified_function_call<'a>(
         "verified function rule application",
         "verified call resource transfer preparation",
         || {
-            prepare_function_resource_transfer(
+            prepare_contract_resource_transfer(
                 caller_state,
                 &entry_state,
-                function,
+                interface_name,
+                contract_interface,
                 &path_assumptions,
                 budget,
                 false,
@@ -1670,7 +1695,7 @@ fn prepare_verified_function_call<'a>(
     };
     entry_state.resources = transfer.callee_resources.clone();
     let entry_contract_state =
-        with_contract_argument_views(&entry_state, function, &argument_values);
+        with_contract_interface_argument_views(&entry_state, contract_interface, &argument_values);
 
     let mut obligations = argument_obligations;
     let mut facts = arguments_path.facts;
@@ -1680,7 +1705,9 @@ fn prepare_verified_function_call<'a>(
         "verified function rule application",
         "verified call requirement checking",
     );
-    for (requirement_ordinal, requirement) in function.contract_requires().iter().enumerate() {
+    for (requirement_ordinal, requirement) in
+        contract_interface.contract_requires().iter().enumerate()
+    {
         let requirement_assumptions =
             assumptions_with_path_context(&path_assumptions, &facts, &obligations);
         let requirement_assumptions =
@@ -1697,7 +1724,7 @@ fn prepare_verified_function_call<'a>(
                 .get_or_insert_with(|| {
                     std::sync::Arc::new(CallRequirementSite::for_requirement(
                         function.name(),
-                        interface,
+                        interface_name,
                         candidate_ordinal,
                         source_arguments,
                         &caller_state.memory,
@@ -1707,7 +1734,7 @@ fn prepare_verified_function_call<'a>(
             let source = std::sync::Arc::new(CallRequirementSource::new(
                 site,
                 requirement_ordinal,
-                function
+                contract_interface
                     .contract_requirement_source(requirement_ordinal)
                     .unwrap_or(None),
                 function
@@ -1886,7 +1913,7 @@ fn prepare_verified_function_call<'a>(
         "verified function rule application",
         "verified call mutable footprint lowering",
     );
-    for segment in function.contract_mutable() {
+    for segment in contract_interface.contract_mutable() {
         let element_width = segment.element_width();
         if segment.guard().is_some_and(|guard| {
             evaluate_guarded_contract_condition(
@@ -1963,6 +1990,7 @@ fn prepare_verified_function_call<'a>(
 
     Ok(Ok(PreparedVerifiedFunctionCall {
         function,
+        interface: contract_interface,
         argument_values,
         entry_state,
         entry_contract_state,
@@ -1988,7 +2016,7 @@ pub(super) fn execute_c_function_contracts_paths(
         .iter()
         .copied()
         .filter(|contract| {
-            contract.proof_parameters.is_empty() || selected == Some(contract.name())
+            contract.proof_parameters().is_empty() || selected == Some(contract.name())
         })
         .collect::<Vec<_>>();
     if contracts.is_empty() {
@@ -2012,14 +2040,14 @@ pub(super) fn execute_c_function_contracts_paths(
             .selected_call_resource_arguments
             .as_deref()
             .unwrap_or(&[]);
-        if arguments.len() != contract.proof_parameters.len() {
+        if arguments.len() != contract.proof_parameters().len() {
             return Ok(vec![resource_call_failure(
                 "resource contract proof argument arity mismatch",
             )]);
         }
         let mut bindings = BTreeMap::new();
         let mut actuals = BTreeSet::new();
-        for (parameter, argument) in contract.proof_parameters.iter().zip(arguments) {
+        for (parameter, argument) in contract.proof_parameters().iter().zip(arguments) {
             let Some(identity) = parameter.instance_identity() else {
                 return Ok(vec![resource_call_failure(
                     "resource proof parameter must be an exclusive instance",
@@ -2039,7 +2067,7 @@ pub(super) fn execute_c_function_contracts_paths(
             }
         }
         Some(ResourceCallApplication {
-            parameters: contract.proof_parameters.clone(),
+            parameters: contract.proof_parameters().to_vec().into(),
             bindings: std::sync::Arc::new(bindings),
         })
     } else {
@@ -2796,40 +2824,44 @@ fn function_refines_named_contract_in_case(
 ) -> ExecutionResult<bool> {
     let contract = &context.contract;
     let function = &context.function;
+    let contract_interface = contract.interface();
+    let function_interface = function.contract_interface();
     if !predicate_interfaces_are_explicitly_compatible(
-        contract.template(),
-        function,
+        contract_interface,
+        function_interface,
         unfolded_predicates,
     ) {
         return Ok(false);
     }
-    let mut propositions = contract
-        .template()
+    let mut propositions = contract_interface
         .contract_requires()
         .iter()
-        .chain(contract.template().contract_ensures())
-        .chain(function.contract_requires())
-        .chain(function.contract_ensures());
+        .chain(contract_interface.contract_ensures())
+        .chain(function_interface.contract_requires())
+        .chain(function_interface.contract_ensures());
     let state_independent = propositions
         .clone()
         .all(spec_proposition_is_state_independent);
     let supported_syntax = propositions.all(spec_proposition_supports_stateful_memory_refinement);
     let supported_stateful_memory = !state_independent
-        && !contract.template().resource_requires().is_empty()
-        && !contract.template().resource_ensures().is_empty()
-        && !contract.template().contract_mutable().is_empty()
+        && !contract_interface.resource_requires().is_empty()
+        && !contract_interface.resource_ensures().is_empty()
+        && !contract_interface.contract_mutable().is_empty()
         && supported_syntax;
     if !state_independent && !supported_stateful_memory {
         return Ok(false);
     }
 
-    let contract_frame = with_contract_argument_views(
+    let contract_frame = with_contract_interface_argument_views(
         &CState::new(),
-        contract.template(),
+        contract_interface,
         &context.argument_values,
     );
-    let function_frame =
-        with_contract_argument_views(&CState::new(), function, &context.argument_values);
+    let function_frame = with_contract_interface_argument_views(
+        &CState::new(),
+        function_interface,
+        &context.argument_values,
+    );
     // Resource arguments are written over the two parameter lists, which the
     // views above already bind, so the pairing is decided before either
     // contract's own requirements are assumed.
@@ -2865,7 +2897,7 @@ fn function_refines_named_contract_in_case(
     if !assume_contract_propositions(
         &contract_entry,
         &contract_entry,
-        contract.template().contract_requires(),
+        contract_interface.contract_requires(),
         &mut preconditions,
         budget,
     )? {
@@ -2875,7 +2907,7 @@ fn function_refines_named_contract_in_case(
     if !prove_contract_propositions(
         &function_entry,
         &function_entry,
-        function.contract_requires(),
+        function_interface.contract_requires(),
         &mut preconditions,
         budget,
     )? {
@@ -2888,8 +2920,8 @@ fn function_refines_named_contract_in_case(
         let memory_variable = Variable(budget.next_kernel_variable);
         budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
         let mutable_ranges = if explicit_case {
-            let Some(ranges) = evaluate_decided_contract_mutable_ranges(
-                function,
+            let Some(ranges) = evaluate_decided_contract_mutable_ranges_for_interface(
+                function_interface,
                 &function_entry,
                 &preconditions,
                 budget,
@@ -2899,8 +2931,8 @@ fn function_refines_named_contract_in_case(
             };
             ranges
         } else {
-            let Some(ranges) = evaluate_contract_mutable_ranges(
-                contract.template(),
+            let Some(ranges) = evaluate_contract_mutable_ranges_for_interface(
+                contract_interface,
                 &contract_entry,
                 &preconditions,
                 budget,
@@ -2917,7 +2949,7 @@ fn function_refines_named_contract_in_case(
             &preconditions,
         )
     };
-    let result = symbolic_function_result(function, context.result_variable);
+    let result = symbolic_contract_result(function_interface, context.result_variable);
     // The post states carry the post instances, so a guarantee written over
     // `t.model` reads the fields the call produced while `old(t.model)` still
     // reads the entry fields through the entry state passed alongside.
@@ -2935,9 +2967,9 @@ fn function_refines_named_contract_in_case(
     ) else {
         return Ok(false);
     };
-    if function.return_type() != CType::Void {
-        set_function_result(&mut contract_post, contract.template(), result.clone());
-        set_function_result(&mut function_post, function, result);
+    if function_interface.return_type() != CType::Void {
+        set_contract_result(&mut contract_post, contract_interface, result.clone());
+        set_contract_result(&mut function_post, function_interface, result);
     }
     if !compatible_resource_and_effect_interfaces(
         contract.template(),
@@ -2955,7 +2987,7 @@ fn function_refines_named_contract_in_case(
     if !assume_contract_propositions(
         &function_post,
         &function_entry,
-        function.contract_ensures(),
+        function_interface.contract_ensures(),
         &mut postconditions,
         budget,
     )? {
@@ -2964,7 +2996,7 @@ fn function_refines_named_contract_in_case(
     prove_contract_propositions(
         &contract_post,
         &contract_entry,
-        contract.template().contract_ensures(),
+        contract_interface.contract_ensures(),
         &mut postconditions,
         budget,
     )
@@ -2975,8 +3007,8 @@ fn function_refines_named_contract_in_case(
 /// unfolding tables need no proof action. Every entry present on only one side
 /// must otherwise have its predicate name explicitly opened by the proof.
 fn predicate_interfaces_are_explicitly_compatible(
-    contract: &CFunction,
-    function: &CFunction,
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     unfolded_predicates: &BTreeSet<String>,
 ) -> bool {
     let contract_unfoldings = contract
@@ -3072,8 +3104,24 @@ fn evaluate_contract_mutable_ranges(
     budget: &mut ExecutionBudget,
     require_unguarded: bool,
 ) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
-    let mut ranges = Vec::with_capacity(contract.contract_mutable().len());
-    for segment in contract.contract_mutable() {
+    evaluate_contract_mutable_ranges_for_interface(
+        contract.contract_interface(),
+        entry,
+        assumptions,
+        budget,
+        require_unguarded,
+    )
+}
+
+fn evaluate_contract_mutable_ranges_for_interface(
+    interface: &CFunctionContractInterface,
+    entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    require_unguarded: bool,
+) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
+    let mut ranges = Vec::with_capacity(interface.contract_mutable().len());
+    for segment in interface.contract_mutable() {
         if require_unguarded && segment.guard().is_some() {
             return Ok(None);
         }
@@ -3098,20 +3146,24 @@ fn evaluate_contract_mutable_ranges(
 /// decision below is route-restricted with the rest of package 10(b) so the
 /// branch cannot come back carrying a proof search, but its behaviour is
 /// unobserved by both fixture harnesses.
-fn evaluate_decided_contract_mutable_ranges(
-    function: &CFunction,
+fn evaluate_decided_contract_mutable_ranges_for_interface(
+    interface: &CFunctionContractInterface,
     entry: &CState,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
     let mut guard_assumptions = assumptions.clone();
-    let Some(guards) =
-        lower_refinement_mutable_guards(function, entry, &mut guard_assumptions, budget)?
+    let Some(guards) = lower_refinement_mutable_guards_for_interface(
+        interface,
+        entry,
+        &mut guard_assumptions,
+        budget,
+    )?
     else {
         return Ok(None);
     };
-    let mut ranges = Vec::with_capacity(function.contract_mutable().len());
-    for (segment, guard) in function.contract_mutable().iter().zip(guards) {
+    let mut ranges = Vec::with_capacity(interface.contract_mutable().len());
+    for (segment, guard) in interface.contract_mutable().iter().zip(guards) {
         if let Some(guard) = guard {
             // A refined mutable segment is included, dropped, or leaves the
             // whole footprint undecided. The decision uses the exact routes
@@ -3563,8 +3615,22 @@ fn lower_refinement_mutable_guards(
     assumptions: &mut PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<Vec<Option<Proposition>>>> {
-    let mut guards = Vec::with_capacity(function.contract_mutable().len());
-    for segment in function.contract_mutable() {
+    lower_refinement_mutable_guards_for_interface(
+        function.contract_interface(),
+        entry,
+        assumptions,
+        budget,
+    )
+}
+
+fn lower_refinement_mutable_guards_for_interface(
+    interface: &CFunctionContractInterface,
+    entry: &CState,
+    assumptions: &mut PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<Option<Proposition>>>> {
+    let mut guards = Vec::with_capacity(interface.contract_mutable().len());
+    for segment in interface.contract_mutable() {
         let Some(guard) = segment.guard() else {
             guards.push(None);
             continue;
@@ -5560,6 +5626,7 @@ fn modified_by_value_aggregate_parameter_with_current_ensure(
         .map(|parameter| parameter.name().to_string())
 }
 
+#[cfg(test)]
 fn add_verified_function_ensure_facts(
     facts: &mut Vec<ExecutionPureFact>,
     obligations: &[ProofObligation],
@@ -5569,24 +5636,24 @@ fn add_verified_function_ensure_facts(
     effective_assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<()> {
-    add_verified_function_ensure_facts_selected(
+    add_verified_function_ensure_facts_selected_with_interface(
         facts,
         obligations,
         post_contract_state,
         entry_contract_state,
-        function,
+        function.contract_interface(),
         function.contract_ensures().iter(),
         effective_assumptions,
         budget,
     )
 }
 
-fn add_verified_function_ensure_facts_selected<'a>(
+fn add_verified_function_ensure_facts_selected_with_interface<'a>(
     facts: &mut Vec<ExecutionPureFact>,
     obligations: &[ProofObligation],
     post_contract_state: &CState,
     entry_contract_state: &CState,
-    function: &'a CFunction,
+    interface: &CFunctionContractInterface,
     ensures: impl Iterator<Item = &'a SpecProposition>,
     effective_assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
@@ -5671,7 +5738,7 @@ fn add_verified_function_ensure_facts_selected<'a>(
         // Preserve the source identity of a named predicate ensure. The
         // expanded `ensure` above is the operational authority; this exact
         // registered pair is its definitional surface identity.
-        if let Some(unfolding) = function
+        if let Some(unfolding) = interface
             .predicate_unfoldings()
             .iter()
             .find(|unfolding| unfolding.body() == ensure)
@@ -6055,8 +6122,16 @@ fn apply_verified_heap_allocation_delta(
 }
 
 fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[CValue]) -> CState {
+    with_contract_interface_argument_views(state, function.contract_interface(), values)
+}
+
+fn with_contract_interface_argument_views(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    values: &[CValue],
+) -> CState {
     let mut state = state.clone();
-    for (parameter, value) in function.parameters().iter().zip(values) {
+    for (parameter, value) in interface.parameters().iter().zip(values) {
         if parameter.aggregate_layout().is_some() {
             // Aggregate parameters are already represented by the copied
             // address-backed object installed by argument binding. Keeping
@@ -6070,7 +6145,7 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         // caller's int32 `0`, but the callee parameter is a pointer.  Using
         // the raw caller value would overwrite the correctly coerced binding
         // and make pointer preconditions impossible to lower.
-        let value = coerce_c_function_argument_without_obligations(value, parameter)
+        let value = coerce_c_contract_argument_without_obligations(value, parameter)
             .expect("function arguments were type-checked before building contract views");
         let value = value
             .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
@@ -6108,7 +6183,11 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
 }
 
 fn set_function_result(state: &mut CState, function: &CFunction, value: CValue) {
-    if let Some(layout) = function.return_aggregate_layout()
+    set_contract_result(state, function.contract_interface(), value);
+}
+
+fn set_contract_result(state: &mut CState, interface: &CFunctionContractInterface, value: CValue) {
+    if let Some(layout) = interface.return_aggregate_layout()
         && let CValue::Pointer(pointer) = &value
     {
         state.memory = if matches!(pointer.block, PointerBlock::Symbolic(_)) {
@@ -6131,12 +6210,12 @@ fn set_function_result(state: &mut CState, function: &CFunction, value: CValue) 
     }
     state.locals.set_typed_with_all_qualifiers(
         "result".to_string(),
-        value.with_pointer_pointee_constant(function.return_pointee_is_constant()),
-        function.return_type(),
+        value.with_pointer_pointee_constant(interface.return_pointee_is_constant()),
+        interface.return_type(),
         false,
         false,
         false,
-        function.return_pointee_is_constant(),
+        interface.return_pointee_is_constant(),
     );
 }
 
@@ -6217,9 +6296,14 @@ pub(super) fn coerce_c_value_with_pointee_constant(
     )
 }
 
+#[cfg(test)]
 fn symbolic_function_result(function: &CFunction, variable: Variable) -> CValue {
-    symbolic_call_result(function.return_type(), variable)
-        .with_pointer_pointee_constant(function.return_pointee_is_constant())
+    symbolic_contract_result(function.contract_interface(), variable)
+}
+
+fn symbolic_contract_result(interface: &CFunctionContractInterface, variable: Variable) -> CValue {
+    symbolic_call_result(interface.return_type(), variable)
+        .with_pointer_pointee_constant(interface.return_pointee_is_constant())
 }
 
 pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
@@ -6820,6 +6904,13 @@ fn coerce_c_function_argument_without_obligations(
     value: &CValue,
     parameter: &CParameter,
 ) -> Option<CValue> {
+    coerce_c_contract_argument_without_obligations(value, parameter)
+}
+
+fn coerce_c_contract_argument_without_obligations(
+    value: &CValue,
+    parameter: &CParameter,
+) -> Option<CValue> {
     let mut obligations = Vec::new();
     let value = coerce_c_value_with_pointee_constant(
         value.clone(),
@@ -6837,12 +6928,26 @@ fn coerce_c_function_arguments(
     existing_obligations: &[ProofObligation],
     assumptions: &PureFactContext,
 ) -> Option<(Vec<CValue>, Vec<ProofObligation>)> {
-    if values.len() != function.parameters().len() {
+    coerce_c_contract_arguments(
+        function.contract_interface(),
+        values,
+        existing_obligations,
+        assumptions,
+    )
+}
+
+fn coerce_c_contract_arguments(
+    interface: &CFunctionContractInterface,
+    values: &[CValue],
+    existing_obligations: &[ProofObligation],
+    assumptions: &PureFactContext,
+) -> Option<(Vec<CValue>, Vec<ProofObligation>)> {
+    if values.len() != interface.parameters().len() {
         return None;
     }
     let mut obligations = existing_obligations.to_vec();
     let mut coerced = Vec::with_capacity(values.len());
-    for (parameter, value) in function.parameters().iter().zip(values) {
+    for (parameter, value) in interface.parameters().iter().zip(values) {
         if parameter.aggregate_layout().is_some() {
             coerced.push(value.clone());
         } else {
@@ -8149,16 +8254,36 @@ fn prepare_function_resource_transfer(
     budget: &mut ExecutionBudget,
     preserve_explicit_representation: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
+    prepare_contract_resource_transfer(
+        caller_state,
+        callee_state,
+        function.name(),
+        function.contract_interface(),
+        assumptions,
+        budget,
+        preserve_explicit_representation,
+    )
+}
+
+fn prepare_contract_resource_transfer(
+    caller_state: &CState,
+    callee_state: &CState,
+    _interface_name: &str,
+    interface: &CFunctionContractInterface,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    preserve_explicit_representation: bool,
+) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
     // In particular, preparing several pure callback interfaces must not
     // repeatedly enumerate the caller's unrelated resource frame.
-    if function.resource_requires().is_empty() && !preserve_explicit_representation {
+    if interface.resource_requires().is_empty() && !preserve_explicit_representation {
         return Ok(Ok(CFunctionResourceTransfer {
             callee_resources: ResourceContext::new(),
             caller_resources_after_requirements: caller_state.resources().clone(),
         }));
     }
     let preserve_explicit_representation = preserve_explicit_representation
-        && function
+        && interface
             .composite_resource_definitions()
             .iter()
             .any(CCompositeResourceDefinition::is_recursive);
@@ -8166,8 +8291,8 @@ fn prepare_function_resource_transfer(
         match super::assumptions::capture_implicit_reasoning_provenance(|| {
             evaluate_function_resource_context(
                 callee_state,
-                function.resource_requires(),
-                function.composite_resource_definitions(),
+                interface.resource_requires(),
+                interface.composite_resource_definitions(),
                 assumptions,
                 budget,
             )
@@ -8177,7 +8302,7 @@ fn prepare_function_resource_transfer(
         };
     let Some(canonical_resources) = expand_all_composite_resource_facts(
         &required_resources,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         callee_state.memory(),
         assumptions,
     ) else {
@@ -8187,14 +8312,14 @@ fn prepare_function_resource_transfer(
     };
     let canonical_resources = expand_decidable_composite_resource_frontier(
         &canonical_resources,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         callee_state.memory(),
         assumptions,
     );
     let population_body_resources = match evaluate_resource_population_body_resources(
         &required_resources,
         callee_state,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         assumptions,
         budget,
         false,
@@ -8254,7 +8379,7 @@ fn prepare_function_resource_transfer(
             if let Some(expanded) = expand_composite_resource_fact(
                 &singleton,
                 &composite,
-                function.composite_resource_definitions(),
+                interface.composite_resource_definitions(),
                 callee_state.memory(),
                 assumptions,
             ) {
@@ -8282,7 +8407,7 @@ fn prepare_function_resource_transfer(
         }
         if let CResource::Composite { name, arguments } | CResource::Token { name, arguments } =
             resource.resource()
-            && function
+            && interface
                 .composite_resource_definitions()
                 .iter()
                 .any(|definition| definition.is_counted_population() && definition.name() == name)
@@ -8303,7 +8428,7 @@ fn prepare_function_resource_transfer(
             let body = match evaluate_resource_population_body_resources(
                 &singleton,
                 callee_state,
-                function.composite_resource_definitions(),
+                interface.composite_resource_definitions(),
                 assumptions,
                 budget,
                 false,
@@ -8325,7 +8450,7 @@ fn prepare_function_resource_transfer(
         let Some(resources) = consume_resource_fact_definitionally(
             &return_resources,
             resource,
-            function.composite_resource_definitions(),
+            interface.composite_resource_definitions(),
             caller_state.memory(),
             assumptions,
         ) else {
@@ -8355,8 +8480,26 @@ pub(super) fn evaluate_function_return_resource_context(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    evaluate_contract_return_resource_context(
+        function.contract_interface(),
+        entry_state,
+        post_state,
+        count,
+        assumptions,
+        budget,
+    )
+}
+
+fn evaluate_contract_return_resource_context(
+    interface: &CFunctionContractInterface,
+    entry_state: &CState,
+    post_state: &CState,
+    count: usize,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
-    for resource in function.resource_ensures().iter().take(count) {
+    for resource in interface.resource_ensures().iter().take(count) {
         // Snapshot selection is carried by the normalized specification. A
         // named instance is always post-evaluated by lowering, so its
         // identity remains stable while its fields can be fresh.
@@ -8395,16 +8538,36 @@ fn evaluate_function_return_resources(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
-    let ensured_resources = match crate::instrumentation::measure_operation(
+    evaluate_contract_return_resources(
+        caller_resources_after_requirements,
+        entry_state,
+        post_state,
         function.name(),
+        function.contract_interface(),
+        assumptions,
+        budget,
+    )
+}
+
+fn evaluate_contract_return_resources(
+    caller_resources_after_requirements: &ResourceContext,
+    entry_state: &CState,
+    post_state: &CState,
+    interface_name: &str,
+    interface: &CFunctionContractInterface,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    let ensured_resources = match crate::instrumentation::measure_operation(
+        interface_name,
         "contract resource transition",
         "ensured resource lowering",
         || {
-            evaluate_function_return_resource_context(
-                function,
+            evaluate_contract_return_resource_context(
+                interface,
                 entry_state,
                 post_state,
-                function.resource_ensures().len(),
+                interface.resource_ensures().len(),
                 assumptions,
                 budget,
             )
@@ -8418,7 +8581,7 @@ fn evaluate_function_return_resources(
     // make a later valid mutation or free look as though a stale borrow were
     // still live.
     let newly_ensured_resources = crate::instrumentation::measure_operation(
-        function.name(),
+        interface_name,
         "contract resource transition",
         "ensured resource view deduplication",
         || {
@@ -8434,7 +8597,7 @@ fn evaluate_function_return_resources(
         },
     );
     let return_resources = match crate::instrumentation::measure_operation(
-        function.name(),
+        interface_name,
         "contract resource transition",
         "ensured resource composition",
         || {
@@ -8447,7 +8610,7 @@ fn evaluate_function_return_resources(
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
     };
     let Some(projected_cores_by_support) = crate::instrumentation::measure_operation(
-        function.name(),
+        interface_name,
         "contract resource transition",
         "ensured resource core projection",
         || {
@@ -8460,7 +8623,7 @@ fn evaluate_function_return_resources(
                     let singleton = ResourceContext::new().unchecked_with_fact(support.clone());
                     let expanded = expand_all_composite_resource_facts(
                         &singleton,
-                        function.composite_resource_definitions(),
+                        interface.composite_resource_definitions(),
                         post_state.memory(),
                         assumptions,
                     )?;
@@ -8747,6 +8910,30 @@ fn apply_counted_population_transitions(
     track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
+    apply_counted_population_transitions_with_interface(
+        caller_state,
+        post_state,
+        function,
+        function.contract_interface(),
+        argument_values,
+        assumptions,
+        reestablish_invariants,
+        track_ordinary_populations,
+        budget,
+    )
+}
+
+fn apply_counted_population_transitions_with_interface(
+    caller_state: &CState,
+    post_state: &mut CState,
+    function: &CFunction,
+    interface: &CFunctionContractInterface,
+    argument_values: &[CValue],
+    assumptions: &PureFactContext,
+    reestablish_invariants: bool,
+    track_ordinary_populations: bool,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
     let Some(mut entry_state) = bind_c_function_arguments(caller_state, function, argument_values)
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
@@ -8755,19 +8942,20 @@ fn apply_counted_population_transitions(
     entry_state.resource_bindings = post_state.resource_bindings.clone();
     let required = match evaluate_function_resource_context(
         &entry_state,
-        function.resource_requires(),
-        function.composite_resource_definitions(),
+        interface.resource_requires(),
+        interface.composite_resource_definitions(),
         assumptions,
         budget,
     )? {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
-    let post_contract_state = with_contract_argument_views(post_state, function, argument_values);
+    let post_contract_state =
+        with_contract_interface_argument_views(post_state, interface, argument_values);
     let ensured = match evaluate_function_resource_context(
         &post_contract_state,
-        function.resource_ensures(),
-        function.composite_resource_definitions(),
+        interface.resource_ensures(),
+        interface.composite_resource_definitions(),
         assumptions,
         budget,
     )? {
@@ -8776,21 +8964,21 @@ fn apply_counted_population_transitions(
     };
     let required_quantities = counted_population_quantities(
         &required,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         caller_state,
         assumptions,
         track_ordinary_populations,
     );
     let ensured_quantities = counted_population_quantities(
         &ensured,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         caller_state,
         assumptions,
         track_ordinary_populations,
     );
     let caller_quantities = counted_population_quantities(
         caller_state.resources(),
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         caller_state,
         assumptions,
         track_ordinary_populations,
@@ -8834,7 +9022,7 @@ fn apply_counted_population_transitions(
                 let finalized = match evaluate_resource_population_body_resources(
                     &singleton,
                     &entry_state,
-                    function.composite_resource_definitions(),
+                    interface.composite_resource_definitions(),
                     assumptions,
                     budget,
                     true,
@@ -8845,7 +9033,7 @@ fn apply_counted_population_transitions(
                 let activated = match evaluate_resource_population_body_resources(
                     &singleton,
                     post_state,
-                    function.composite_resource_definitions(),
+                    interface.composite_resource_definitions(),
                     assumptions,
                     budget,
                     true,
@@ -8965,7 +9153,7 @@ fn apply_counted_population_transitions(
                 let finalized = match evaluate_resource_population_body_resources(
                     &singleton,
                     &entry_state,
-                    function.composite_resource_definitions(),
+                    interface.composite_resource_definitions(),
                     assumptions,
                     budget,
                     true,
@@ -8996,7 +9184,7 @@ fn apply_counted_population_transitions(
                 let activated = match evaluate_resource_population_body_resources(
                     &singleton,
                     post_state,
-                    function.composite_resource_definitions(),
+                    interface.composite_resource_definitions(),
                     assumptions,
                     budget,
                     true,
@@ -9098,19 +9286,21 @@ fn apply_counted_population_transitions(
     // the post-contract snapshot. The transition changes the logical count;
     // a body fact relating that count to C memory is therefore a genuine
     // verification condition, not an automatically assumed consequence.
-    let post_contract_state = with_contract_argument_views(post_state, function, argument_values);
+    let post_contract_state =
+        with_contract_interface_argument_views(post_state, interface, argument_values);
     let mut active_populations = Vec::new();
     for population in post_contract_state.counted_populations() {
         if population_quantity_is_zero(&population.count, assumptions) {
             continue;
         }
-        let population_body = function
-            .composite_resource_definitions()
-            .iter()
-            .find(|definition| {
-                definition.name() == population.name
-                    && definition_has_population_wide_body(definition, true)
-            });
+        let population_body =
+            interface
+                .composite_resource_definitions()
+                .iter()
+                .find(|definition| {
+                    definition.name() == population.name
+                        && definition_has_population_wide_body(definition, true)
+                });
         let Some(population_body) = population_body else {
             continue;
         };
@@ -9137,7 +9327,7 @@ fn apply_counted_population_transitions(
     let active_populations = ResourceContext::new().unchecked_with_facts(active_populations);
     let Some(population_facts) = evaluate_resource_population_fact_propositions(
         &active_populations,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         &post_contract_state,
         &PureFactContext::new(),
         true,
@@ -9201,10 +9391,11 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
         "contract resource transition",
         "contract resource transfer preparation",
         || {
-            prepare_function_resource_transfer(
+            prepare_contract_resource_transfer(
                 caller_state,
                 &callee_state,
-                function,
+                function.name(),
+                function.contract_interface(),
                 assumptions,
                 budget,
                 true,

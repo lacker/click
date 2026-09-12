@@ -1162,7 +1162,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
         operator: CComparisonOperator::NotEqual,
         right: SpecExpression::Value(CValue::pointer(Pointer::null())),
     };
-    function.contract_mutable = vec![
+    function.contract_interface.contract_mutable = vec![
         CMemorySegment::new(c_int32_literal(7), c_int32_literal(0), c_int32_literal(1))
             .with_guard(active),
     ];

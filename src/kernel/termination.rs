@@ -1923,7 +1923,7 @@ pub fn c_verified_function_termination_rules(
                             "a recursive component cannot mix numeric and structural measures",
                         ));
                     };
-                    let parameter = function.parameters.get(index).ok_or_else(|| {
+                    let parameter = function.parameters().get(index).ok_or_else(|| {
                         error(format!(
                             "termination parameter index is invalid for `{name}`"
                         ))
@@ -1997,7 +1997,7 @@ pub fn c_verified_function_termination_rules(
                     )?;
                 } else {
                     let index = parameter_indices[name];
-                    let measure = &function.parameters[index].name;
+                    let measure = &function.parameters()[index].name;
                     reject_address_escaped_measure(name, measure, &function.source_body)?;
                     recursion_paths(
                         &function.source_body,

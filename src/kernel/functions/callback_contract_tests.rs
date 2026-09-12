@@ -97,6 +97,204 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
     }
 }
 
+fn direct_and_callback_resource_transition(
+    function: &CFunction,
+    state: &CState,
+    contract: &CFunctionContract,
+    environment: &CExecutionEnvironment,
+) -> (CState, CState) {
+    let direct_outcome = CFunctionOutcome::Return {
+        value: CValue::Void,
+        state: state.clone(),
+    };
+    let (direct_outcome, direct_obligations) = apply_c_function_contract_resource_transition(
+        state,
+        function,
+        &[],
+        direct_outcome,
+        &PureFactContext::new(),
+    )
+    .expect("direct resource transition should check");
+    assert!(direct_obligations.is_empty());
+    let CFunctionOutcome::Return {
+        value: direct_value,
+        state: direct_state,
+    } = direct_outcome
+    else {
+        panic!("direct resource transition did not return");
+    };
+    assert_eq!(direct_value, CValue::Void);
+
+    let paths = execute_c_function_contracts_paths(
+        state,
+        &[contract],
+        &[],
+        &PureFactContext::new(),
+        environment,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("callback resource transition should check");
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].obligations.is_empty());
+    let CFunctionOutcome::Return {
+        value: callback_value,
+        state: callback_state,
+    } = &paths[0].outcome
+    else {
+        panic!("callback resource transition did not return");
+    };
+    assert_eq!(callback_value, &CValue::Void);
+    assert_eq!(direct_state.memory(), callback_state.memory());
+    assert_eq!(
+        direct_state.counted_populations().collect::<Vec<_>>(),
+        callback_state.counted_populations().collect::<Vec<_>>()
+    );
+    (direct_state, callback_state.clone())
+}
+
+#[test]
+fn direct_and_named_callback_resource_interfaces_agree_across_families() {
+    let memory_pointer = Pointer {
+        block: "parity-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory_spec = CResourceSpec::owned_memory(CMemorySegment::new(
+        c_pointer_value(memory_pointer.clone()),
+        c_int32_literal(0),
+        c_int32_literal(1),
+    ));
+    let memory_function = c_function(CType::Void, "parity_memory", vec![], CStatement::Skip)
+        .with_resource_summary(vec![memory_spec.clone()], vec![memory_spec]);
+    let memory_state = CState::new()
+        .with_memory(CMemory::new().with_block(memory_pointer.block.clone(), 4))
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_memory(CMemoryRange::new(
+                memory_pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+        ));
+    let memory_contract = CFunctionContract::new("ParityMemory", memory_function.clone()).unwrap();
+    let (direct, callback) = direct_and_callback_resource_transition(
+        &memory_function,
+        &memory_state,
+        &memory_contract,
+        &CExecutionEnvironment::new(),
+    );
+    assert_eq!(direct.resources(), callback.resources());
+
+    let token_spec = CResourceSpec::token(
+        CResourceAccessMode::Own,
+        "parity_token".into(),
+        vec![c_int32_literal(7)],
+        vec![CType::Int32],
+    );
+    let token_function = c_function(CType::Void, "parity_token", vec![], CStatement::Skip)
+        .with_resource_summary(vec![token_spec.clone()], vec![token_spec]);
+    let token_state =
+        CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_token("parity_token".into(), vec![int32(7)]),
+        ));
+    let token_contract = CFunctionContract::new("ParityToken", token_function.clone()).unwrap();
+    let (direct, callback) = direct_and_callback_resource_transition(
+        &token_function,
+        &token_state,
+        &token_contract,
+        &CExecutionEnvironment::new(),
+    );
+    assert_eq!(direct.resources(), callback.resources());
+
+    let composite_spec = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "parity_composite".into(),
+        vec![c_int32_literal(11)],
+        vec![CType::Int32],
+    );
+    let composite_function = c_function(CType::Void, "parity_composite", vec![], CStatement::Skip)
+        .with_resource_summary(vec![composite_spec.clone()], vec![composite_spec])
+        .with_composite_resource_definitions(vec![CCompositeResourceDefinition::new(
+            "parity_composite",
+            vec![c_parameter("value", CType::Int32)],
+            None,
+            true,
+            vec![],
+            vec![],
+        )]);
+    let composite_state =
+        CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_composite("parity_composite".into(), vec![int32(11)]),
+        ));
+    let composite_contract =
+        CFunctionContract::new("ParityComposite", composite_function.clone()).unwrap();
+    let (direct, callback) = direct_and_callback_resource_transition(
+        &composite_function,
+        &composite_state,
+        &composite_contract,
+        &CExecutionEnvironment::new(),
+    );
+    assert_eq!(direct.resources(), callback.resources());
+
+    let schema =
+        ResourceFieldSchema::new(vec![("value".into(), ResourceFieldType::C(CType::Int32))])
+            .unwrap();
+    let identity = Variable(700);
+    let instance_resource = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "parity_instance".into(),
+        vec![c_int32_literal(13)],
+        vec![CType::Int32],
+    );
+    let instance_spec = CResourceSpec::instance(
+        identity,
+        "item".into(),
+        schema.clone(),
+        instance_resource,
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    let instance = ResourceInstance::new(
+        identity,
+        "parity_instance".into(),
+        vec![int32(13).into()].into(),
+        schema.clone(),
+        vec![int32(3).into()].into(),
+    )
+    .unwrap();
+    let instance_function = c_function(CType::Void, "parity_instance", vec![], CStatement::Skip)
+        .with_resource_summary(vec![instance_spec.clone()], vec![instance_spec.clone()]);
+    let instance_state = CState::new().with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own(CResource::Instance(instance))),
+    );
+    let instance_contract = CFunctionContract::new("ParityInstance", instance_function.clone())
+        .unwrap()
+        .with_proof_parameters(vec![instance_spec]);
+    let instance_environment = CExecutionEnvironment::new()
+        .with_selected_call_contract("ParityInstance")
+        .with_selected_call_resource_arguments(vec![identity]);
+    let (direct, callback) = direct_and_callback_resource_transition(
+        &instance_function,
+        &instance_state,
+        &instance_contract,
+        &instance_environment,
+    );
+    let direct_instance = direct
+        .owned_resource_instance(identity)
+        .expect("direct transition must retain instance identity");
+    let callback_instance = callback
+        .owned_resource_instance(identity)
+        .expect("callback transition must retain instance identity");
+    assert_eq!(direct_instance.identity(), callback_instance.identity());
+    assert_eq!(direct_instance.name(), callback_instance.name());
+    assert_eq!(direct_instance.arguments(), callback_instance.arguments());
+    assert_eq!(direct_instance.schema(), callback_instance.schema());
+    assert_eq!(
+        direct_instance.fields().len(),
+        callback_instance.fields().len()
+    );
+}
+
 #[test]
 fn executed_refinement_checks_the_exact_call_and_source_premises() {
     check_executed_refinement_shape(CType::Void, false);
