@@ -135,6 +135,71 @@ fn parity_fixed_multidimensional_array_call_requirement_expands_and_deletion_rej
     );
 }
 
+fn assert_quantified_range_call_requirement_expands_and_deletion_rejects(
+    fixture: &str,
+    have_prefix: &str,
+) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("quantified-range mdtest should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources)
+        .expect("quantified-range call requirement should verify");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &c_sources,
+        "range_probe",
+        CProofClaim::Grouped,
+    )
+    .expect("quantified-range call requirement should expand");
+    let have_start = expanded.find(have_prefix).unwrap_or_else(|| {
+        panic!("expanded proof should retain quantified-range Have `{have_prefix}`: {expanded}")
+    });
+    let step_start = expanded[have_start..]
+        .find("step();")
+        .map(|offset| have_start + offset)
+        .expect("the retained quantified-range Have should precede the call step");
+    assert!(have_start < step_start, "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("expanded quantified-range proof should cold reverify");
+
+    let mut without_have = expanded.clone();
+    without_have.replace_range(have_start..step_start, "");
+    let error = verify_c0_sources(&without_have, &c_sources)
+        .expect_err("deleting the retained quantified-range Have must reject the call");
+    assert!(
+        error.unresolved_requirement().is_some(),
+        "deleted quantified-range Have should expose the structured call requirement: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn forall_loadable_range_call_requirement_expands_and_deletion_rejects() {
+    assert_quantified_range_call_requirement_expands_and_deletion_rejects(
+        "mdtests/forall_loadable_range.md",
+        "have forall (k: int32) {",
+    );
+}
+
+#[test]
+fn exists_loadable_range_call_requirement_expands_and_deletion_rejects() {
+    assert_quantified_range_call_requirement_expands_and_deletion_rejects(
+        "mdtests/exists_loadable_range.md",
+        "have exists (len: int32) {",
+    );
+}
+
 #[test]
 fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

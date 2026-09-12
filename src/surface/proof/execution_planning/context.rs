@@ -733,9 +733,10 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
     Planning,
 }
 
-/// The source-backed retry currently admits only a pure condition/logical
-/// proposition tree. Every other kernel proposition shape remains on the
-/// compatibility route until its source transport is defined.
+/// The source-backed retry admits pure condition/logical trees and the
+/// deliberately narrow quantified external-byte-range slice. Other
+/// stateful propositions remain on the compatibility route until their
+/// snapshot transport is defined.
 pub(in crate::surface) fn source_backed_requirement_is_supported(
     proposition: &Proposition,
     source_requirement_ordinal: Option<usize>,
@@ -745,12 +746,20 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     if source_requirement_ordinal.is_none() {
         return Ok(false);
     }
+    // The range fixtures are deliberately a separate stateful slice: the
+    // source clause is a top-level int32 quantifier whose body names an
+    // external argument range.  Predicate-backed dynamic strings and other
+    // memory requirements remain on their existing compatibility route.
+    let quantified_external_range = matches!(
+        proposition,
+        Proposition::ForAll { .. } | Proposition::Exists { .. }
+    ) && !source_requirement_is_state_independent;
     // The ordinary source-backed path is restricted to state-independent
     // propositions.  Static-array preconditions are the one deliberately
     // audited exception: their indexed loads are read at the call frontier,
     // so they may be retried only when every load variable is registered from
     // that exact snapshot and names static storage below.
-    let static_snapshot = if source_requirement_is_state_independent {
+    let static_snapshot = if source_requirement_is_state_independent || quantified_external_range {
         None
     } else {
         let Some(source_snapshot) = source_snapshot else {
@@ -767,6 +776,8 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     let mut work = vec![Work::Proposition(proposition)];
     let mut visited = 0;
     let mut saw_static_load = false;
+    let mut saw_external_range = false;
+    let mut saw_add_definedness_guard = false;
     while let Some(item) = work.pop() {
         visited += 1;
         crate::instrumentation::record_deterministic_work(1);
@@ -791,7 +802,17 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
             | Work::Proposition(Proposition::Exists { body, .. }) => {
                 work.push(Work::Proposition(body));
             }
+            Work::Proposition(Proposition::CMemoryLoadable { base, bytes, .. })
+                if quantified_external_range
+                    && matches!(base.block, crate::kernel::PointerBlock::ExternalArgument) =>
+            {
+                saw_external_range = true;
+                work.push(Work::Bitvector(bytes));
+            }
             Work::Proposition(_) => return Ok(false),
+            Work::Condition(ConditionTerm::Bitvector32SignedAddOverflows(_, _)) => {
+                saw_add_definedness_guard = true;
+            }
             Work::Condition(
                 ConditionTerm::Bitvector32SignedLessThan(left, right)
                 | ConditionTerm::Bitvector32SignedLessEqual(left, right)
@@ -807,7 +828,6 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
                 | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
                 | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
                 | ConditionTerm::Bitvector64Equal(left, right)
-                | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
                 | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
                 | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
                 | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
@@ -875,6 +895,9 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
             }
             Work::Bitvector(_) => return Ok(false),
         }
+    }
+    if quantified_external_range {
+        return Ok(saw_external_range && !saw_static_load && !saw_add_definedness_guard);
     }
     Ok(static_snapshot.is_none() || saw_static_load)
 }
@@ -1100,6 +1123,74 @@ mod tests {
             )
             .unwrap(),
             "a load registered in the old epoch must not cross an equal-content snapshot"
+        );
+    }
+
+    #[test]
+    fn quantified_external_range_capability_is_frontier_exact() {
+        let memory = crate::kernel::CMemory::new();
+        let pointer = crate::kernel::Pointer {
+            block: crate::kernel::PointerBlock::ExternalArgument,
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        };
+        let range = Proposition::CMemoryLoadable {
+            memory: crate::kernel::CMemory::new(),
+            base: pointer,
+            bytes: Bitvector32Term::Constant(1),
+        };
+        let quantified = Proposition::ForAll {
+            var: Variable(3_100_000),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Implies(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Constant(true),
+                    true,
+                )),
+                Box::new(range.clone()),
+            )),
+        };
+        assert!(
+            source_backed_requirement_is_supported(&quantified, Some(0), false, None,).unwrap()
+        );
+        assert!(!source_backed_requirement_is_supported(&range, Some(0), false, None,).unwrap());
+
+        let guarded = Proposition::Exists {
+            name: "len".to_string(),
+            var: Variable(3_100_001),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(Bitvector32Term::Variable(Variable(3_100_001))),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                    false,
+                )),
+                Box::new(quantified.clone()),
+            )),
+        };
+        assert!(!source_backed_requirement_is_supported(&guarded, Some(0), false, None,).unwrap());
+
+        let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
+            "need_cells",
+            "need_cells",
+            0,
+            &[],
+            &memory,
+        ));
+        let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
+            site,
+            0,
+            Some(0),
+            false,
+            None,
+        ));
+        let obligation =
+            ProofObligation::verification_condition(quantified).with_call_requirement_site(source);
+        assert!(source_backed_requirement_should_intercept(&obligation, &memory).unwrap());
+        let different_epoch = memory.clone().with_block("local:later", 4);
+        assert!(
+            !source_backed_requirement_should_intercept(&obligation, &different_epoch,).unwrap()
         );
     }
 }

@@ -1442,6 +1442,11 @@ impl<'a> Proof<'a> {
             return self.try_implication_simp_closure(&surface_antecedent, introduced_surfaces);
         }
         match (surface_goal, goal) {
+            (ClickProposition::Exists { name, .. }, goal @ Proposition::Exists { .. })
+                if quantified_external_range_goal(goal) =>
+            {
+                self.try_structural_exists_simp_closure(name, introduced_surfaces)
+            }
             (ClickProposition::ForAll { .. }, Proposition::ForAll { .. }) => {
                 self.try_structural_forall_simp_closure(surface_goal, introduced_surfaces)
             }
@@ -1460,6 +1465,47 @@ impl<'a> Proof<'a> {
 
     // These helpers preserve the dispatcher's search order and checked steps;
     // their stack storage is needed only for the selected connective.
+    #[inline(never)]
+    fn try_structural_exists_simp_closure(
+        &self,
+        name: &str,
+        introduced_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let mut candidates = Vec::new();
+        for argument in context.arguments {
+            if matches!(argument, CExpression::Value(CValue::Int32(_))) {
+                candidates.push(ContractExpression::CFragment(argument.clone()));
+            }
+        }
+        // The range-loadability source slice has no witness in its call
+        // arguments, so zero is the deterministic fallback.  It is tried
+        // after call arguments to keep this operation useful for other
+        // source-backed existential requirements without searching ambient
+        // facts.
+        candidates.push(ContractExpression::CFragment(CExpression::Value(
+            CValue::Int32(Bitvector32Term::Constant(0)),
+        )));
+        for value in candidates {
+            check_verification_deadline()?;
+            let witness = ProofWitness {
+                name: name.to_string(),
+                value,
+            };
+            let Some(introduced) =
+                attempt::candidate_outcome(self.apply_step(ProofStep::Witness(witness)))?
+            else {
+                continue;
+            };
+            if let Some(closed) = introduced.try_simp_closure_with_surfaces(introduced_surfaces)? {
+                return Ok(Some(closed));
+            }
+        }
+        Ok(None)
+    }
+
     #[inline(never)]
     fn try_structural_forall_simp_closure(
         &self,
@@ -4346,6 +4392,50 @@ impl<'a> Proof<'a> {
         // with the step's diagnostic.
         apply(self).map(Some)
     }
+}
+
+/// The existential witness closer is reserved for the source-backed range
+/// slice.  In particular, a generated overflow guard (as in `cstr_readable`)
+/// remains on the dynamic snapshot-transport route.  The worklist is bounded
+/// because this predicate is part of smart closure dispatch.
+fn quantified_external_range_goal(goal: &Proposition) -> bool {
+    const MAX_NODES: usize = 4096;
+    let mut work = vec![goal];
+    let mut visited = 0usize;
+    let mut saw_range = false;
+    while let Some(current) = work.pop() {
+        visited = visited.saturating_add(1);
+        crate::instrumentation::record_deterministic_work(1);
+        if check_verification_deadline().is_err() {
+            return false;
+        }
+        if visited > MAX_NODES {
+            return false;
+        }
+        match current {
+            Proposition::CMemoryLoadable { base, .. }
+                if matches!(base.block, crate::kernel::PointerBlock::ExternalArgument) =>
+            {
+                saw_range = true;
+            }
+            Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(_, _), _) => {
+                return false;
+            }
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                work.push(right);
+                work.push(left);
+            }
+            Proposition::Not(body)
+            | Proposition::ForAll { body, .. }
+            | Proposition::Exists { body, .. } => work.push(body),
+            Proposition::CMemoryLoadable { .. } => return false,
+            Proposition::ConditionIs(_, _) => {}
+            _ => return false,
+        }
+    }
+    saw_range
 }
 
 /// Collect conjunction leaves for a retained Have without allowing a deeply
