@@ -16,6 +16,7 @@ use super::super::{
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 const SIGNED_MIN: i64 = i32::MIN as i64;
 const SIGNED_MAX: i64 = i32::MAX as i64;
@@ -931,14 +932,76 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
     *expected == aligned
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TaggedAddress {
+#[derive(Clone, Debug)]
+enum TaggedTag<'a> {
+    Constant(u64),
+    Source(&'a Bitvector32Term),
+    Add(Arc<TaggedTag<'a>>, &'a Bitvector32Term),
+    Subtract(Arc<TaggedTag<'a>>, &'a Bitvector32Term),
+    BitwiseAnd(Arc<TaggedTag<'a>>, u64),
+    BitwiseOr(Arc<TaggedTag<'a>>, u64),
+}
+
+#[derive(Clone, Debug)]
+struct TaggedAddress<'a> {
     pointer: Pointer,
-    tag: Bitvector32Term,
+    tag: Arc<TaggedTag<'a>>,
     /// The tag's constant value, when it is known.  Keeping this alongside
     /// the term is important: a symbolic tag chain must not be recursively
     /// re-evaluated every time another address operation extends it.
     tag_constant: Option<u64>,
+}
+
+/// Compare compact tag expressions without materializing their nested
+/// bitvector syntax.  Shared tag prefixes are discharged by pointer identity;
+/// distinct source leaves use the bounded iterative term comparator.
+fn tagged_tag_equal<'a>(left: &Arc<TaggedTag<'a>>, right: &Arc<TaggedTag<'a>>) -> bool {
+    let mut pending = vec![(Arc::clone(left), Arc::clone(right))];
+    while let Some((left, right)) = pending.pop() {
+        if Arc::ptr_eq(&left, &right) {
+            continue;
+        }
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return false;
+        }
+        match (&*left, &*right) {
+            (TaggedTag::Constant(left), TaggedTag::Constant(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (TaggedTag::Source(left), TaggedTag::Source(right)) => {
+                if !bitvector_equal(left, right) {
+                    return false;
+                }
+            }
+            (TaggedTag::Add(left_tag, left_term), TaggedTag::Add(right_tag, right_term))
+            | (
+                TaggedTag::Subtract(left_tag, left_term),
+                TaggedTag::Subtract(right_tag, right_term),
+            ) => {
+                if !bitvector_equal(left_term, right_term) {
+                    return false;
+                }
+                pending.push((Arc::clone(left_tag), Arc::clone(right_tag)));
+            }
+            (
+                TaggedTag::BitwiseAnd(left_tag, left_mask),
+                TaggedTag::BitwiseAnd(right_tag, right_mask),
+            )
+            | (
+                TaggedTag::BitwiseOr(left_tag, left_mask),
+                TaggedTag::BitwiseOr(right_tag, right_mask),
+            ) => {
+                if left_mask != right_mask {
+                    return false;
+                }
+                pending.push((Arc::clone(left_tag), Arc::clone(right_tag)));
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn bounded_uint64_constants(roots: &[&Bitvector32Term]) -> HashMap<usize, Option<u64>> {
@@ -1144,20 +1207,39 @@ fn pointer_identity_hash(pointer: &Pointer) -> Option<u64> {
 /// hash is only an index: a collision still goes through the bounded,
 /// iterative pointer comparison before evidence is accepted.
 struct AlignmentIndex<'a> {
-    by_hash: HashMap<u64, Vec<(&'a Pointer, u64)>>,
+    by_hash: HashMap<u64, Vec<AlignmentEntry<'a>>>,
+}
+
+struct AlignmentEntry<'a> {
+    pointer: &'a Pointer,
+    max_alignment: u64,
 }
 
 impl<'a> AlignmentIndex<'a> {
     fn new(alignments: &'a [(&'a Pointer, u64)]) -> Option<Self> {
-        let mut by_hash: HashMap<u64, Vec<(&'a Pointer, u64)>> = HashMap::new();
+        let mut by_hash: HashMap<u64, Vec<AlignmentEntry<'a>>> = HashMap::new();
         for (pointer, alignment) in alignments {
             if crate::instrumentation::deadline_exceeded_with_work(1) {
                 return None;
             }
-            by_hash
-                .entry(pointer_identity_hash(pointer)?)
-                .or_default()
-                .push((*pointer, *alignment));
+            let candidates = by_hash.entry(pointer_identity_hash(pointer)?).or_default();
+            let mut matched = false;
+            for candidate in candidates.iter_mut() {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return None;
+                }
+                if pointer_equal(pointer, candidate.pointer) {
+                    candidate.max_alignment = candidate.max_alignment.max(*alignment);
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                candidates.push(AlignmentEntry {
+                    pointer,
+                    max_alignment: *alignment,
+                });
+            }
         }
         Some(Self { by_hash })
     }
@@ -1167,8 +1249,11 @@ impl<'a> AlignmentIndex<'a> {
             return false;
         };
         self.by_hash.get(&hash).is_some_and(|candidates| {
-            candidates.iter().any(|(candidate, alignment)| {
-                *alignment >= required && pointer_equal(pointer, candidate)
+            candidates.iter().any(|candidate| {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return false;
+                }
+                candidate.max_alignment >= required && pointer_equal(pointer, candidate.pointer)
             })
         })
     }
@@ -1245,15 +1330,18 @@ fn constant_value(term: &Bitvector32Term, constants: &HashMap<usize, Option<u64>
         .flatten()
 }
 
-fn add_tag(
-    form: TaggedAddress,
-    right: Bitvector32Term,
+fn add_tag<'a>(
+    form: TaggedAddress<'a>,
+    right: &'a Bitvector32Term,
     right_constant: Option<u64>,
-) -> TaggedAddress {
+) -> TaggedAddress<'a> {
     if form.tag_constant == Some(0) {
         TaggedAddress {
             pointer: form.pointer,
-            tag: right,
+            tag: right_constant.map_or_else(
+                || Arc::new(TaggedTag::Source(right)),
+                |value| Arc::new(TaggedTag::Constant(value)),
+            ),
             tag_constant: right_constant,
         }
     } else if right_constant == Some(0) {
@@ -1261,7 +1349,10 @@ fn add_tag(
     } else {
         TaggedAddress {
             pointer: form.pointer,
-            tag: Bitvector32Term::uint64_add(form.tag, right),
+            tag: form.tag_constant.zip(right_constant).map_or_else(
+                || Arc::new(TaggedTag::Add(form.tag, right)),
+                |(left, right)| Arc::new(TaggedTag::Constant(left.wrapping_add(right))),
+            ),
             tag_constant: form
                 .tag_constant
                 .zip(right_constant)
@@ -1270,11 +1361,11 @@ fn add_tag(
     }
 }
 
-fn tagged_form(
-    term: &Bitvector32Term,
-    relation: (&Bitvector32Term, &Bitvector32Term),
+fn tagged_form<'a>(
+    term: &'a Bitvector32Term,
+    relation: (&'a Bitvector32Term, &'a Bitvector32Term),
     alignments: &AlignmentIndex<'_>,
-) -> Option<TaggedAddress> {
+) -> Option<TaggedAddress<'a>> {
     let identities = bounded_term_hashes(&[term, relation.0, relation.1])?;
     let constants = bounded_uint64_constants(&[term, relation.0, relation.1]);
     if constants.is_empty() {
@@ -1315,12 +1406,12 @@ fn tagged_form(
         },
     }
 
-    fn store(
+    fn store<'a>(
         identity: usize,
-        result: Option<TaggedAddress>,
+        result: Option<TaggedAddress<'a>>,
         active: &mut HashSet<usize>,
-        results: &mut HashMap<usize, Option<TaggedAddress>>,
-        values: &mut Vec<Option<TaggedAddress>>,
+        results: &mut HashMap<usize, Option<TaggedAddress<'a>>>,
+        values: &mut Vec<Option<TaggedAddress<'a>>>,
     ) {
         active.remove(&identity);
         values.push(result.clone());
@@ -1330,7 +1421,7 @@ fn tagged_form(
     let mut tasks = vec![Task::Visit(term)];
     let mut values = Vec::new();
     let mut active = HashSet::new();
-    let mut results: HashMap<usize, Option<TaggedAddress>> = HashMap::new();
+    let mut results: HashMap<usize, Option<TaggedAddress<'a>>> = HashMap::new();
     while let Some(task) = tasks.pop() {
         match task {
             Task::Visit(current) => {
@@ -1349,7 +1440,7 @@ fn tagged_form(
                         identity,
                         Some(TaggedAddress {
                             pointer: pointer.as_ref().clone(),
-                            tag: Bitvector32Term::UInt64Constant(0),
+                            tag: Arc::new(TaggedTag::Constant(0)),
                             tag_constant: Some(0),
                         }),
                         &mut active,
@@ -1442,11 +1533,7 @@ fn tagged_form(
                 if let Some(form) = left_form {
                     store(
                         term as *const _ as usize,
-                        Some(add_tag(
-                            form,
-                            right.clone(),
-                            constant_value(right, &constants),
-                        )),
+                        Some(add_tag(form, right, constant_value(right, &constants))),
                         &mut active,
                         &mut results,
                         &mut values,
@@ -1464,8 +1551,7 @@ fn tagged_form(
                 let right_form = values.pop().flatten();
                 store(
                     term as *const _ as usize,
-                    right_form
-                        .map(|form| add_tag(form, left.clone(), constant_value(left, &constants))),
+                    right_form.map(|form| add_tag(form, left, constant_value(left, &constants))),
                     &mut active,
                     &mut results,
                     &mut values,
@@ -1475,13 +1561,20 @@ fn tagged_form(
                 let left_form = values.pop().flatten();
                 store(
                     term as *const _ as usize,
-                    left_form.map(|form| TaggedAddress {
-                        pointer: form.pointer,
-                        tag: Bitvector32Term::uint64_subtract(form.tag, right.clone()),
-                        tag_constant: form
-                            .tag_constant
-                            .zip(constant_value(right, &constants))
-                            .map(|(left, right)| left.wrapping_sub(right)),
+                    left_form.map(|form| {
+                        let right_constant = constant_value(right, &constants);
+                        let tag = form.tag_constant.zip(right_constant).map_or_else(
+                            || Arc::new(TaggedTag::Subtract(form.tag, right)),
+                            |(left, right)| Arc::new(TaggedTag::Constant(left.wrapping_sub(right))),
+                        );
+                        TaggedAddress {
+                            pointer: form.pointer,
+                            tag,
+                            tag_constant: form
+                                .tag_constant
+                                .zip(right_constant)
+                                .map(|(left, right)| left.wrapping_sub(right)),
+                        }
                     }),
                     &mut active,
                     &mut results,
@@ -1497,14 +1590,15 @@ fn tagged_form(
                 store(
                     term as *const _ as usize,
                     form.and_then(|form| {
+                        let tag = form.tag_constant.map_or_else(
+                            || Arc::new(TaggedTag::BitwiseAnd(form.tag, mask)),
+                            |value| Arc::new(TaggedTag::Constant(value & mask)),
+                        );
                         alignments
                             .supports(&form.pointer, alignment)
                             .then_some(TaggedAddress {
                                 pointer: form.pointer,
-                                tag: Bitvector32Term::uint64_bitwise_and(
-                                    form.tag,
-                                    Bitvector32Term::UInt64Constant(mask),
-                                ),
+                                tag,
                                 tag_constant: form.tag_constant.map(|tag| tag & mask),
                             })
                     }),
@@ -1522,13 +1616,14 @@ fn tagged_form(
                 store(
                     term as *const _ as usize,
                     form.and_then(|form| {
+                        let tag = form.tag_constant.map_or_else(
+                            || Arc::new(TaggedTag::BitwiseOr(form.tag, constant)),
+                            |value| Arc::new(TaggedTag::Constant(value | constant)),
+                        );
                         (constant == 0 || alignments.supports(&form.pointer, alignment)).then_some(
                             TaggedAddress {
                                 pointer: form.pointer,
-                                tag: Bitvector32Term::uint64_bitwise_or(
-                                    form.tag,
-                                    Bitvector32Term::UInt64Constant(constant),
-                                ),
+                                tag,
                                 tag_constant: form.tag_constant.map(|tag| tag | constant),
                             },
                         )
@@ -1600,7 +1695,7 @@ fn pointer_word_equality(
     let equal = match (goal_left_form, goal_right_form) {
         (Some(goal_left), Some(goal_right)) => {
             pointer_equal(&goal_left.pointer, &goal_right.pointer)
-                && bitvector_equal(&goal_left.tag, &goal_right.tag)
+                && tagged_tag_equal(&goal_left.tag, &goal_right.tag)
         }
         _ => false,
     };
@@ -1703,6 +1798,25 @@ mod tests {
 
     fn add(left: PointerOffsetTerm, right: PointerOffsetTerm) -> PointerOffsetTerm {
         PointerOffsetTerm::Add(Box::new(left), Box::new(right))
+    }
+
+    fn tagged_tag_nodes(root: &Arc<TaggedTag<'_>>) -> usize {
+        let mut pending = vec![Arc::clone(root)];
+        let mut seen = HashSet::new();
+        while let Some(tag) = pending.pop() {
+            let identity = Arc::as_ptr(&tag) as usize;
+            if !seen.insert(identity) {
+                continue;
+            }
+            match &*tag {
+                TaggedTag::Add(child, _)
+                | TaggedTag::Subtract(child, _)
+                | TaggedTag::BitwiseAnd(child, _)
+                | TaggedTag::BitwiseOr(child, _) => pending.push(Arc::clone(child)),
+                TaggedTag::Constant(_) | TaggedTag::Source(_) => {}
+            }
+        }
+        seen.len()
     }
 
     fn scaled(value: Bitvector32Term) -> PointerOffsetTerm {
@@ -2159,18 +2273,25 @@ mod tests {
             ),
             true,
         );
+        let mut deep_word = word.clone();
+        for _ in 0..64 {
+            deep_word = Bitvector32Term::uint64_add(deep_word, Bitvector32Term::UInt64Constant(0));
+        }
         let goal = Proposition::ConditionIs(
             ConditionTerm::uint64_equal(
-                Bitvector32Term::uint64_bitwise_or(word, Bitvector32Term::UInt64Constant(2)),
+                Bitvector32Term::uint64_bitwise_or(deep_word, Bitvector32Term::UInt64Constant(2)),
                 Bitvector32Term::uint64_add(address, Bitvector32Term::UInt64Constant(3)),
             ),
             true,
         );
+        let low_alignment =
+            Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer.clone(), 2), true);
         let alignment = Proposition::ConditionIs(ConditionTerm::pointer_aligned(pointer, 8), true);
         let mut previous = None;
         for size in [1, 4, 16, 64, 256, 1024] {
             let mut premises = vec![relation.clone()];
-            premises.extend((0..size).map(|_| alignment.clone()));
+            premises.extend((1..size).map(|_| low_alignment.clone()));
+            premises.push(alignment.clone());
             let certificate = SpecialArithmeticCertificate {
                 nodes: vec![SpecialArithmeticNode::PointerWordEquality {
                     relation: 0,
@@ -2442,6 +2563,32 @@ mod tests {
                 assert!(work <= previous * 4);
             }
             previous = Some(work);
+        }
+    }
+
+    #[test]
+    fn tagged_word_tag_arena_stays_linear_for_deep_symbolic_chains() {
+        let alignments = AlignmentIndex::new(&[]).expect("empty alignment index");
+        let mut previous = 0;
+        for depth in [4, 16, 64, 256, 1024] {
+            let address =
+                Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0))));
+            let variable = Bitvector32Term::Variable(crate::kernel::Variable(294));
+            let mut tagged = address;
+            for index in 0..depth {
+                tagged = Bitvector32Term::UInt64Add(
+                    Box::new(tagged),
+                    Box::new(Bitvector32Term::Variable(crate::kernel::Variable(
+                        300 + index,
+                    ))),
+                );
+            }
+            let form = tagged_form(&variable, (&variable, &tagged), &alignments)
+                .expect("the relation should provide a tagged form");
+            let nodes = tagged_tag_nodes(&form.tag);
+            assert_eq!(nodes, depth as usize);
+            assert!(nodes >= previous);
+            previous = nodes;
         }
     }
 
