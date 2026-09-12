@@ -599,6 +599,21 @@ enough to become the first regression of the package that fixes them.
     names clause 1 when clause 2 failed; `ensures sub.model != Empty` on a
     produced instance reports "could not apply checked contract resource
     effect" instead of an unproved claim.
+59. **Soundness hole 3: a `do ... while` exports no guard-false exit.**
+    Found by T8 while reducing gap 55 (c): `do { if (i == 3) break; i = 0; }
+    while (i > 0); return i;` with `ensures result == 3` and an omitted
+    `preserve` verifies although the C returns 0 whenever `n != 3`, and
+    `mdtests/c_do_while.md`'s `do_while_invariant` verifies `ensures result
+    == 99`. `execute_c_while_exit_paths` sets `initial_may_exit = false`
+    for `do_while`, so the guard-false exit comes only from the kernel body
+    walk (unused when the surface proved preservation) or from a
+    final-exit candidate, which the planner records only when the back
+    edge fails to close. T8 prototyped the two-line fix and reverted it
+    because the exposed exit state is head-relative and needs A25's exit
+    export; assigned to A25 as P1. T8 fixed gap 55 (a) and (b) (a
+    preservation path's own steps across sibling split arms); the examples
+    audit is 500 of 555 with only the two known failures, and its default
+    ten-minute limit no longer covers the corpus (297 of 555).
 
 ## Design decisions
 
@@ -923,6 +938,8 @@ appears to need one reports the need instead of adding it.
   `plug_rb_from_ctx_rb`, and the frame-level fixup case theorems (167
   theorems, audit 447 of 447). A26 dispatched; A25 and T8 in progress; C3
   resumes after A25 and A26.
+- 2026-09-12: T8 (6426b3d4) is on master; soundness hole 3 (gap 59) handed
+  to A25. A25 and A26 in progress.
 
 ## Work packages
 
