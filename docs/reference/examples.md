@@ -545,6 +545,11 @@ sequence:
   `mdtests/rotation_model_rejects_reused_child.md`, and
   `mdtests/rotation_model_rejects_swapped_order.md`, with
   `mdtests/rotation_model_preserved.md` as their passing sibling.
+  `tree_contains` also relates the C test `root == target` to the model's
+  identity payload; `mdtests/model_identity_pointer_payload.md` is the minimal
+  form of that bridge, `mdtests/model_identity_pointer_payload_rejects_other_cell.md`
+  its negative, and `mdtests/match_bindings_in_branch_arm.md` pins that a
+  match arm's payload bindings stay in scope inside a nested `branch` arm.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads, runtime-sized allocation,
   malloc-copy-free growth, and a resource-neutral in-capacity push shared by

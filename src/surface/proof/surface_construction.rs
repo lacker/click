@@ -1924,6 +1924,9 @@ pub(super) fn construct_smart_have_plan(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
+    // `have.proposition` with the enclosing proof's lexical bindings
+    // materialized, which is the form this plan must lower.
+    goal_surface: &ClickProposition,
     claim_label: &str,
     tactic_index: usize,
     unfolded_predicates: &[String],
@@ -1962,6 +1965,7 @@ pub(super) fn construct_smart_have_plan(
         predicate_environment,
         click_function_environment,
         have,
+        goal_surface,
         &evidence,
         unfolded_predicates,
     )?;
@@ -1978,6 +1982,9 @@ pub(super) fn surface_smart_have_proof(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
+    // `have.proposition` with the enclosing proof's lexical bindings
+    // materialized, which is the form this plan must lower.
+    goal_surface: &ClickProposition,
     plan: &SimpEvidence,
     unfolded_predicates: &[String],
 ) -> Result<SourceProof, ClickError> {
@@ -2169,7 +2176,7 @@ pub(super) fn surface_smart_have_proof(
             arguments,
             predicate_environment,
             click_function_environment,
-            &have.proposition,
+            goal_surface,
             plan,
             unfolded_predicates,
         )?
@@ -2296,6 +2303,9 @@ pub(super) fn surface_smart_have_certificate(
         predicate_environment,
         click_function_environment,
         have,
+        // These synthesized loop-summary `have`s are built here from
+        // contract text, so they name no proof-local lexical binding.
+        &have.proposition,
         plan,
         unfolded_predicates,
     )?;

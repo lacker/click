@@ -723,9 +723,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     offset: rewrite_offset(&pointer.offset, left, right),
                 };
                 Proposition::ConditionIs(
-                    ConditionTerm::PointerEqual(
-                        Box::new(rewrite_pointer(goal_left)),
-                        Box::new(rewrite_pointer(goal_right)),
+                    ConditionTerm::pointer_equal(
+                        rewrite_pointer(goal_left),
+                        rewrite_pointer(goal_right),
                     ),
                     *expected,
                 )
@@ -882,9 +882,15 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 ConditionTerm::PointerEqual(goal_left, goal_right),
                 expected,
             ) => Proposition::ConditionIs(
-                ConditionTerm::PointerEqual(
-                    Box::new(rewrite_pointer(goal_left)),
-                    Box::new(rewrite_pointer(goal_right)),
+                // Replacing one side can land both pointers in the same
+                // block, and a same-block pointer equality is carried
+                // everywhere else as the equality of its offsets. Rebuild
+                // through the canonicalizing constructor so the rewritten
+                // goal is the term an ordinary lowering would produce and a
+                // later `assumption` or `normalize() using` can see it.
+                ConditionTerm::pointer_equal(
+                    rewrite_pointer(goal_left),
+                    rewrite_pointer(goal_right),
                 ),
                 *expected,
             ),
@@ -1477,9 +1483,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                         block: pointer.block.clone(),
                         offset: rewrite_offset_term(&pointer.offset, left, right),
                     };
-                    ConditionTerm::PointerEqual(
-                        Box::new(rewrite_pointer(goal_left)),
-                        Box::new(rewrite_pointer(goal_right)),
+                    ConditionTerm::pointer_equal(
+                        rewrite_pointer(goal_left),
+                        rewrite_pointer(goal_right),
                     )
                 }
                 _ => {

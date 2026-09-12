@@ -1387,8 +1387,13 @@ impl<'a> Proof<'a> {
             &execution.presentation.expansion,
             context.constants.proof_site.as_ref(),
         );
-        let smart_certificate =
-            check_mid_execution_have(have, &mut execution, &tactic_context, &mut facts)?;
+        let smart_certificate = check_mid_execution_have(
+            have,
+            &mut execution,
+            &tactic_context,
+            &mut facts,
+            &self.state.locals().values,
+        )?;
         if capture_this_tactic {
             // The tactic's expansion is the law's own surface certificate.
             let expansion = ProofCertificateBuilder {

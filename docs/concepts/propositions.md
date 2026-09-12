@@ -80,6 +80,27 @@ These forms are useful because Click can lower the body under the fact that
 `k` is in the range. That matters for memory safety: a read such as `p[k]` is
 safe only when Click knows `k` is within a loadable range.
 
+## Model payloads
+
+A resource model can carry C values as constructor payloads, including
+pointers. Those payloads are ordinary values of their C type, so a proposition
+may mix them freely with C expressions:
+
+<!-- verified-example: mdtests/model_identity_pointer_payload.md -->
+```click
+have p == identity by { simp(); }
+```
+
+Here `identity` is the `struct cell*` payload a proof `match` bound, and `p` is
+a C parameter. The resource states `fact p == identity` in that arm, which is
+what makes the address the C compares and the identity the model records the
+same pointer. Pointer payloads stay pointers: nothing converts them to
+integers, and they carry no ownership of their own.
+
+The payload bindings a proof `match` introduces stay in scope for the whole
+arm, including inside a `branch` arm, a proof-level `if` arm, and the body of
+a `have` — see `mdtests/match_bindings_in_branch_arm.md`.
+
 ## Old values
 
 `old(expr)` means the value of `expr` in the function-entry state:
