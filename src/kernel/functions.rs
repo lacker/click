@@ -9530,19 +9530,24 @@ fn evaluate_contract_return_resources(
                 .collect::<Vec<_>>()
         },
     );
-    let return_resources = match crate::instrumentation::measure_operation(
-        interface_name,
-        "contract resource transition",
-        "ensured resource composition",
-        || {
-            caller_resources_after_requirements
-                .clone()
-                .try_compose_with_facts_delaying_normalization(newly_ensured_resources, assumptions)
-        },
-    ) {
-        Ok(resources) => resources,
-        Err(error) => return Ok(Err(resource_context_runtime_error(error))),
-    };
+    let (return_resources, inserted_ensured_occurrences) =
+        match crate::instrumentation::measure_operation(
+            interface_name,
+            "contract resource transition",
+            "ensured resource composition",
+            || {
+                caller_resources_after_requirements
+                    .clone()
+                    .try_compose_with_facts_delaying_normalization_with_occurrences(
+                        newly_ensured_resources,
+                        assumptions,
+                    )
+            },
+        ) {
+            Ok(resources) => resources,
+            Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+        };
+    let mut source_ranks = BTreeMap::<CResourceFact, usize>::new();
     let Some(projected_cores_by_support) = crate::instrumentation::measure_operation(
         interface_name,
         "contract resource transition",
@@ -9554,6 +9559,12 @@ fn evaluate_contract_return_resources(
                 .iter()
                 .filter(|support| support.is_own())
                 .map(|support| {
+                    let source_rank = source_ranks.entry(support.clone()).or_default();
+                    let support_occurrence = ensured_resources
+                        .owned_occurrences_for_fact(support)
+                        .get(*source_rank)
+                        .copied()?;
+                    *source_rank += 1;
                     let singleton = ResourceContext::new().unchecked_with_fact(support.clone());
                     let expanded = expand_all_composite_resource_facts(
                         &singleton,
@@ -9576,7 +9587,7 @@ fn evaluate_contract_return_resources(
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect::<Vec<_>>();
-                    Some((support.clone(), expansion, projected))
+                    Some((support.clone(), support_occurrence, expansion, projected))
                 })
                 .collect::<Option<Vec<_>>>()
         },
@@ -9590,13 +9601,40 @@ fn evaluate_contract_return_resources(
     // certified ownership, not independent persistent caller capabilities.
     // Record their exact support so consuming that ownership removes only
     // its projections through the reverse index.
-    let mut return_resources = return_resources;
-    for (support, expansion, projected) in projected_cores_by_support {
-        let Some((support_occurrence, _)) =
-            return_resources.latest_owned_occurrence_for_fact(&support)
+    let mut destination_occurrences = std::collections::BTreeMap::<
+        CResourceFact,
+        Vec<crate::kernel::primitives::ResourceOccurrenceId>,
+    >::new();
+    for (fact, occurrence) in inserted_ensured_occurrences {
+        destination_occurrences
+            .entry(fact)
+            .or_default()
+            .push(occurrence);
+    }
+    let mut destination_source_ranks = std::collections::BTreeMap::<CResourceFact, usize>::new();
+    let mut destination_by_source_occurrence = std::collections::BTreeMap::new();
+    for (support, source_occurrence, _, _) in &projected_cores_by_support {
+        let rank = destination_source_ranks.entry(support.clone()).or_default();
+        let Some(destination_occurrence) = destination_occurrences
+            .get(support)
+            .and_then(|occurrences| occurrences.get(*rank))
+            .copied()
         else {
             return Ok(Err(CRuntimeError::FunctionContract(format!(
-                "ensured resource support is ambiguous after call: {support:?}"
+                "ensured resource support was not preserved after call: {support:?}"
+            ))));
+        };
+        *rank += 1;
+        destination_by_source_occurrence.insert(*source_occurrence, destination_occurrence);
+    }
+    let mut return_resources = return_resources;
+    for (support, source_occurrence, expansion, projected) in projected_cores_by_support {
+        let Some(support_occurrence) = destination_by_source_occurrence
+            .get(&source_occurrence)
+            .copied()
+        else {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "ensured resource support was not preserved after call: {support:?}"
             ))));
         };
         return_resources = return_resources
@@ -11550,17 +11588,21 @@ pub(super) fn expand_all_composite_resource_facts(
         .facts()
         .iter()
         .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
-        .filter_map(|support| {
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .flat_map(|support| {
             context
-                .cached_supported_expansion(support)
-                .map(|expansion| (support.clone(), expansion.to_vec()))
+                .cached_supported_expansions(&support)
+                .into_iter()
+                .map(move |(occurrence, expansion)| (support.clone(), occurrence, expansion))
         })
         .collect::<Vec<_>>();
-    for (support, expansion) in supports {
+    for (support, support_occurrence, expansion) in supports {
         if expansion.as_slice() == [support.clone()] {
             continue;
         }
-        cached = cached.without_exact_representation(&support)?;
+        cached = cached.without_exact_representation_for_occurrence(support_occurrence)?;
         let missing = expansion
             .into_iter()
             .filter(|fact| {

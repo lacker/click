@@ -2376,6 +2376,19 @@ fn resource_equality_and_exchange_preserve_support_occurrence_identity() {
         .clone()
         .unchecked_with_supported_facts_from_entry(1, &authority, [view]);
 
+    let independently_allocated_same_topology = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts_from_entry(
+            0,
+            &authority,
+            [CResourceFact::view_token("derived".to_string(), Vec::new())],
+        );
+    assert_eq!(
+        left, independently_allocated_same_topology,
+        "context equality compares support topology, while provenance checks use opaque occurrences"
+    );
+
     assert_ne!(
         left, right,
         "swapping equal support occurrences changes authority"
@@ -2500,6 +2513,106 @@ fn normalization_preserves_support_through_unrelated_merge() {
             .map(|(_, support)| support),
         Some(&authority),
         "an unrelated normalization must not detach an observation",
+    );
+}
+
+#[test]
+fn duplicate_authority_occurrences_survive_normalization_in_order() {
+    let authority = CResourceFact::own(CResource::Instance(field_instance(
+        900,
+        resource_index_variable(&resource_index_type("Marker", vec![]), 1),
+        0,
+    )));
+    let first_view = CResourceFact::view_token("first_view".to_string(), Vec::new());
+    let second_view = CResourceFact::view_token("second_view".to_string(), Vec::new());
+    let base = Pointer {
+        block: "unrelated".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let first_range = CResourceFact::own_memory(memory_range(base.clone(), 0, 1));
+    let second_range = CResourceFact::own_memory(memory_range(base, 1, 2));
+    let context = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts_from_entry(0, &authority, [first_view.clone()])
+        .unchecked_with_supported_facts_from_entry(1, &authority, [second_view.clone()])
+        .unchecked_with_fact(first_range.clone())
+        .unchecked_with_fact(second_range)
+        .normalized_around_facts(&[first_range], &PureFactContext::new());
+
+    let occurrences = context.owned_occurrences_for_fact(&authority);
+    assert_eq!(occurrences.len(), 2);
+    assert_eq!(
+        context
+            .directly_supporting_owned_entry(&first_view, &PureFactContext::new())
+            .map(|(occurrence, _)| occurrence),
+        Some(occurrences[0])
+    );
+    assert_eq!(
+        context
+            .directly_supporting_owned_entry(&second_view, &PureFactContext::new())
+            .map(|(occurrence, _)| occurrence),
+        Some(occurrences[1])
+    );
+
+    let after_first = context
+        .without_exact_representation_for_occurrence(occurrences[0])
+        .expect("the first duplicate authority should be removable");
+    assert!(!after_first.contains_exact_representation(&first_view));
+    assert!(after_first.contains_exact_representation(&second_view));
+    let remaining_occurrence = after_first.owned_occurrences_for_fact(&authority)[0];
+    let after_second = after_first
+        .without_exact_representation_for_occurrence(remaining_occurrence)
+        .expect("the second duplicate authority should be removable");
+    assert!(!after_second.contains_exact_representation(&second_view));
+}
+
+#[test]
+fn duplicate_cached_authorities_rekey_after_remove_and_reinsert() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let first_expansion = vec![CResourceFact::own_token("first".to_string(), Vec::new())];
+    let second_expansion = vec![CResourceFact::own_token("second".to_string(), Vec::new())];
+    let context = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_fact(authority.clone());
+    let occurrences = context.owned_occurrences_for_fact(&authority);
+    let context = context
+        .with_cached_supported_expansion_for_occurrence(occurrences[0], &authority, first_expansion)
+        .with_cached_supported_expansion_for_occurrence(
+            occurrences[1],
+            &authority,
+            second_expansion.clone(),
+        );
+    let context = context
+        .without_exact_representation_for_occurrence(occurrences[0])
+        .expect("the first cached authority should be removable");
+    assert_eq!(
+        context
+            .storage
+            .expansions_by_support_entry
+            .get(&(authority.clone(), 0))
+            .map(|expansion| expansion.as_slice()),
+        Some(second_expansion.as_slice())
+    );
+
+    let context = context.unchecked_with_fact(authority.clone());
+    let reinserted = context.owned_occurrences_for_fact(&authority)[1];
+    let context = context.with_cached_supported_expansion_for_occurrence(
+        reinserted,
+        &authority,
+        vec![CResourceFact::own_token(
+            "reinserted".to_string(),
+            Vec::new(),
+        )],
+    );
+    assert_eq!(context.cached_supported_expansions(&authority).len(), 2);
+    assert_eq!(
+        context
+            .storage
+            .expansions_by_support_entry
+            .get(&(authority.clone(), 0))
+            .map(|expansion| expansion.as_slice()),
+        Some(second_expansion.as_slice())
     );
 }
 

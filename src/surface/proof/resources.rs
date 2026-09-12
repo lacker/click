@@ -2631,6 +2631,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         })?;
         let mut closing_view = false;
         let mut folded_representation_already_present = false;
+        let mut folded_authority_occurrence = None;
         if closure == ResourceBodyClosure::Initialize {
             let CFunctionOutcome::Return { value, state } = &mut outcome else {
                 unreachable!("the return outcome was checked above");
@@ -2983,10 +2984,10 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &post_state,
                 &value,
             )?;
-            let resources = post_state
+            let (resources, inserted_occurrence) = post_state
                 .resources()
                 .clone()
-                .try_compose_with_fact(abstract_resource.clone(), &assumptions)
+                .try_compose_with_fact_with_occurrence(abstract_resource.clone(), &assumptions)
                 .map_err(|error| {
                     ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` produced {}",
@@ -2994,6 +2995,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                         describe_resource_context_validity_error(error, parameters, arguments)
                     ))
                 })?;
+            folded_authority_occurrence = inserted_occurrence;
             post_state = post_state.with_resource_context(resources);
         }
         if closure == ResourceBodyClosure::Initialize && !lowered_contained.is_empty() {
@@ -3005,15 +3007,18 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &value,
             )?;
             let assumptions = pure_facts.assumptions();
-            let Some((authority_occurrence, authority)) = post_state
-                .resources()
-                .latest_owned_occurrence_for_fact(&abstract_resource)
-            else {
+            let Some(authority_occurrence) = folded_authority_occurrence.or_else(|| {
+                post_state
+                    .resources()
+                    .unique_owned_occurrence_for_fact(&abstract_resource)
+                    .map(|(occurrence, _)| occurrence)
+            }) else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `fold({})` lost its folded authority",
+                    "`{claim_label}` path {path_index}: `fold({})` has an ambiguous folded authority",
                     describe_resource_clause(resource)
                 )));
             };
+            let authority = &abstract_resource;
             let projections = lowered_contained
                 .iter()
                 .filter_map(|fact| fact.core_with_assumptions(assumptions))
