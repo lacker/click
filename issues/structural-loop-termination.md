@@ -34,7 +34,11 @@ recreate a previously consumed context layer must fail.
 ## Acceptance criteria
 
 - A loop may declare a guarded directly recursive composite resource as a
-  structural decreases measure.
+  structural decreases measure. Spelling decided 2026-09-11 in
+  [recursive-structure-models.md](recursive-structure-models.md) (D6): a
+  loop or contract binder named without a keyword, `decreases sub;`, and
+  the function-level `decreases resource list(node)` becomes
+  `decreases list(node)`. Implementation is that issue's package A4.
 - Every continuing back edge identifies a direct contained child witness in
   the exact resource definition, and the kernel checks the ancestry evidence.
 - The rule composes with loop invariants and resource transformations needed
