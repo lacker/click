@@ -383,6 +383,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         global_array_shapes,
         qualified_objects,
     ) = parse_c_layouts(click_source, sources)?;
+    let resource_struct_layouts = struct_layouts.clone();
     let file = parser::parse_with_layouts_and_aggregate_objects(
         click_source,
         struct_layouts,
@@ -402,7 +403,8 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         &click_function_definitions,
         &combined_algebraic_type_definitions(&file)?,
     );
-    let resource_environment = ResourceEnvironment::new(&resource_definitions);
+    let resource_environment =
+        ResourceEnvironment::with_struct_layouts(&resource_definitions, &resource_struct_layouts);
     let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
     let mut function_environment = build_function_environment(
         &parsed_sources,
@@ -1091,7 +1093,7 @@ fn verify_c0_sources_with_context(
     let _session = initial_function_environment
         .is_none()
         .then(crate::kernel::VerificationSession::enter);
-    let (file, parsed_sources, selected_functions) = {
+    let (file, parsed_sources, selected_functions, resource_struct_layouts) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let (
             struct_layouts,
@@ -1101,6 +1103,7 @@ fn verify_c0_sources_with_context(
             global_array_shapes,
             qualified_objects,
         ) = parse_c_layouts(click_source, c_sources)?;
+        let resource_struct_layouts = struct_layouts.clone();
         let file = parser::parse_with_layouts_and_aggregate_objects(
             click_source,
             struct_layouts,
@@ -1162,7 +1165,12 @@ fn verify_c0_sources_with_context(
             }
         };
         check_verification_deadline()?;
-        (file, parsed_sources, selected_functions)
+        (
+            file,
+            parsed_sources,
+            selected_functions,
+            resource_struct_layouts,
+        )
     };
     check_verification_deadline()?;
     let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
@@ -1196,7 +1204,10 @@ fn verify_c0_sources_with_context(
             &click_function_definitions,
             &combined_algebraic_type_definitions(&file)?,
         );
-        let resource_environment = ResourceEnvironment::new(&resource_definitions);
+        let resource_environment = ResourceEnvironment::with_struct_layouts(
+            &resource_definitions,
+            &resource_struct_layouts,
+        );
         // Frame evidence may look through composite definitions to decide
         // that a call's mutable ranges or a store's written cell cannot
         // touch a loaded pointer inside a composite's footprint. Definitions
@@ -4242,11 +4253,13 @@ pub(in crate::surface) fn composite_resource_definitions(
             definition,
             predicate_environment,
             click_function_environment,
+            resource_environment.struct_layouts(),
         )?;
         let facts = lower_composite_resource_facts(
             definition,
             predicate_environment,
             click_function_environment,
+            resource_environment.struct_layouts(),
         )?;
         let witnesses = body
             .witnesses()
@@ -4325,6 +4338,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                     click_function_environment,
                     &bindings,
                     &integer_binding_variables,
+                    resource_environment.struct_layouts(),
                 )?;
                 let binding_types = algebraic_type
                     .variants

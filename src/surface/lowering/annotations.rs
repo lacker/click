@@ -267,6 +267,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
     definition: &ResourceDefinition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<Option<SpecProposition>, ClickError> {
     let Some(condition) = definition
         .composite_body()
@@ -296,8 +297,9 @@ pub(in crate::surface) fn lower_composite_resource_condition(
                 ))
             })
             .collect(),
-        parameter_pointer_element_widths: click_parameter_pointer_element_widths(
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths_with_layouts(
             definition.parameters(),
+            struct_layouts,
         ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
@@ -331,6 +333,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
     definition: &ResourceDefinition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<Vec<SpecProposition>, ClickError> {
     lower_composite_resource_facts_with_bindings(
         definition,
@@ -338,6 +341,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         click_function_environment,
         &[],
         &BTreeMap::new(),
+        struct_layouts,
     )
 }
 
@@ -347,6 +351,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
     click_function_environment: &ClickFunctionEnvironment,
     bindings: &[(String, ClickType)],
     integer_binding_variables: &BTreeMap<String, crate::kernel::Variable>,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<Vec<SpecProposition>, ClickError> {
     let body = definition
         .composite_body()
@@ -372,8 +377,9 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
                 ))
             })
             .collect(),
-        parameter_pointer_element_widths: click_parameter_pointer_element_widths(
+        parameter_pointer_element_widths: click_parameter_pointer_element_widths_with_layouts(
             definition.parameters(),
+            struct_layouts,
         ),
         quantified_values: BTreeMap::new(),
         algebraic_variables: BTreeMap::new(),
@@ -1532,8 +1538,9 @@ pub(in crate::surface) fn parameter_pointer_element_widths(
 /// Widths which remain knowable for Click-defined resource parameters. Such
 /// parameters retain array element types, while a struct-pointer parameter's
 /// layout is unavailable outside the C translation unit.
-pub(in crate::surface) fn click_parameter_pointer_element_widths(
+pub(in crate::surface) fn click_parameter_pointer_element_widths_with_layouts(
     parameters: &[FunctionParameter],
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> BTreeMap<String, u32> {
     parameters
         .iter()
@@ -1543,6 +1550,12 @@ pub(in crate::surface) fn click_parameter_pointer_element_widths(
                 .c_type()
                 .and_then(click_array_element_type)
                 .map(|element| (parameter.name().to_string(), element.byte_width()))
+                .or_else(|| {
+                    parameter
+                        .struct_name()
+                        .and_then(|name| struct_layouts.get(name))
+                        .map(|layout| (parameter.name().to_string(), layout.size_bytes()))
+                })
         })
         .collect()
 }

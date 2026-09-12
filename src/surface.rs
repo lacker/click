@@ -4391,20 +4391,36 @@ impl ClickFunctionEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ResourceEnvironment {
     definitions: BTreeMap<String, ResourceDefinition>,
+    /// C layouts are file-local, but resource bodies are shared by every
+    /// function in that file. Retain them so struct-pointer arithmetic in a
+    /// composite body keeps its physical element width.
+    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
 }
 
 impl ResourceEnvironment {
     fn new(definitions: &[ResourceDefinition]) -> Self {
+        Self::with_struct_layouts(definitions, &BTreeMap::new())
+    }
+
+    fn with_struct_layouts(
+        definitions: &[ResourceDefinition],
+        struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    ) -> Self {
         Self {
             definitions: definitions
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
+            struct_layouts: struct_layouts.clone(),
         }
     }
 
     fn get(&self, name: &str) -> Option<&ResourceDefinition> {
         self.definitions.get(name)
+    }
+
+    fn struct_layouts(&self) -> &BTreeMap<String, syntax::C0StructLayout> {
+        &self.struct_layouts
     }
 }
 

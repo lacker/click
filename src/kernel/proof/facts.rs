@@ -44,7 +44,7 @@ pub(crate) struct ProofFacts {
     /// comparison cost; a goal-local rewrite search walks only atoms named by
     /// the goal and their buckets.
     bitvector_equalities_by_atom:
-        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
+        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
     /// Exact algebraic equalities keyed by their root terms.  Goal-local
     /// constructor disequality rewrites need the variable-to-constructor
     /// premise without scanning unrelated proposition facts.
@@ -273,27 +273,31 @@ impl ProofFacts {
                 let mut conjuncts = Vec::new();
                 collect_owned_atomic_conjuncts(fact, &mut conjuncts);
                 for conjunct in conjuncts {
-                    by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                    let conjunct = Arc::new(conjunct);
+                    by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, conjunct.as_ref());
                     by_integer_condition_alpha =
-                        index_integer_condition_fact(by_integer_condition_alpha, &conjunct);
+                        index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                     bitvector_equalities_by_atom =
                         index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
-                    algebraic_equalities_by_term =
-                        index_algebraic_equality_fact(algebraic_equalities_by_term, &conjunct);
-                    exact = exact.with_value(conjunct);
+                    algebraic_equalities_by_term = index_algebraic_equality_fact(
+                        algebraic_equalities_by_term,
+                        conjunct.as_ref(),
+                    );
+                    exact = exact.with_value(conjunct.as_ref().clone());
                 }
             }
-            by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
+            let fact = Arc::new(fact.clone());
+            by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
             by_integer_condition_alpha =
-                index_integer_condition_fact(by_integer_condition_alpha, fact);
+                index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
             bitvector_equalities_by_atom =
-                index_bitvector_equality_fact(bitvector_equalities_by_atom, fact);
+                index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
             algebraic_equalities_by_term =
-                index_algebraic_equality_fact(algebraic_equalities_by_term, fact);
-            exact = exact.with_value(fact.clone());
-            assumptions = assumptions.assume_proposition(fact.clone());
+                index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
+            exact = exact.with_value(fact.as_ref().clone());
+            assumptions = assumptions.assume_proposition(fact.as_ref().clone());
             implicit_transport_assumptions =
-                index_implicit_transport_context(implicit_transport_assumptions, fact);
+                index_implicit_transport_context(implicit_transport_assumptions, fact.as_ref());
         }
         Self {
             ordered,
@@ -376,37 +380,41 @@ impl ProofFacts {
             let mut conjuncts = Vec::new();
             collect_owned_atomic_conjuncts(&fact, &mut conjuncts);
             for conjunct in conjuncts {
-                by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                let conjunct = Arc::new(conjunct);
+                by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, conjunct.as_ref());
                 by_integer_condition_alpha =
-                    index_integer_condition_fact(by_integer_condition_alpha, &conjunct);
+                    index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                 bitvector_equalities_by_atom =
                     index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
                 algebraic_equalities_by_term =
-                    index_algebraic_equality_fact(algebraic_equalities_by_term, &conjunct);
-                exact = exact.with_value(conjunct);
+                    index_algebraic_equality_fact(algebraic_equalities_by_term, conjunct.as_ref());
+                exact = exact.with_value(conjunct.as_ref().clone());
             }
         }
-        by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
+        let fact = Arc::new(fact);
+        by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
         by_integer_condition_alpha =
-            index_integer_condition_fact(by_integer_condition_alpha, &fact);
+            index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
         bitvector_equalities_by_atom =
             index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
         algebraic_equalities_by_term =
-            index_algebraic_equality_fact(algebraic_equalities_by_term, &fact);
-        exact = exact.with_value(fact.clone());
+            index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
+        exact = exact.with_value(fact.as_ref().clone());
         let mut ordered = self.ordered.clone();
-        ordered.push(fact.clone());
-        let implicit_transport_assumptions =
-            index_implicit_transport_context(self.implicit_transport_assumptions.clone(), &fact);
+        ordered.push(fact.as_ref().clone());
+        let implicit_transport_assumptions = index_implicit_transport_context(
+            self.implicit_transport_assumptions.clone(),
+            fact.as_ref(),
+        );
         let mut reserved_variables = self.reserved_variables.clone();
-        for variable in crate::kernel::proposition_variables(&fact) {
+        for variable in crate::kernel::proposition_variables(fact.as_ref()) {
             reserved_variables = reserved_variables.with_value(variable);
         }
         Self {
             ordered,
             reserved_variables,
             prioritized: self.prioritized.clone(),
-            top_level_exact: self.top_level_exact.with_value(fact.clone()),
+            top_level_exact: self.top_level_exact.with_value(fact.as_ref().clone()),
             exact,
             proper_conjuncts,
             by_snapshot_blind,
@@ -417,9 +425,12 @@ impl ProofFacts {
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             rewritten_load_evidence: self.rewritten_load_evidence.clone(),
             implications_by_consequent,
-            assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
+            assumptions: self
+                .assumptions
+                .clone()
+                .assume_proposition(fact.as_ref().clone()),
             implicit_transport_assumptions,
-            by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
+            by_predicate: index_predicate_fact(self.by_predicate.clone(), fact.as_ref()),
         }
     }
 
@@ -904,8 +915,14 @@ impl ProofFacts {
         // Keep deduplication logarithmic and deterministic instead of using
         // Vec::contains, whose repeated structural comparisons are quadratic
         // in a matching bucket.
-        let mut candidates = BTreeSet::new();
-        candidates.extend(self.load_equalities_mentioning(proposition));
+        let mut candidates = Vec::new();
+        let mut candidate_ids = BTreeSet::new();
+        for candidate in self.indexed_load_equalities_mentioning(proposition) {
+            let id = Arc::as_ptr(&candidate) as usize;
+            if candidate_ids.insert(id) {
+                candidates.push(candidate);
+            }
+        }
         if let Proposition::ConditionIs(condition, _) = proposition {
             let finite: Vec<_> = match condition {
                 ConditionTerm::Float32(CFloatCondition::Comparison { left, right, .. }) => {
@@ -935,11 +952,16 @@ impl ProofFacts {
                     _ => continue,
                 };
                 if let Some(candidate) = self.matching_fact_across_effects(&classification, &[]) {
-                    candidates.insert(candidate);
+                    // Classification facts are not stored in the bitvector
+                    // relation index, so they cannot share its identity.
+                    candidates.push(Arc::new(candidate));
                 }
             }
         }
-        candidates.into_iter().collect()
+        candidates
+            .into_iter()
+            .map(|candidate| candidate.as_ref().clone())
+            .collect()
     }
 
     /// Returns exact algebraic equalities attached to terms occurring in
@@ -965,6 +987,19 @@ impl ProofFacts {
     /// pointer-offset equalities between scaled offsets, for the pointer side
     /// of the load-variable chain bridge.
     fn load_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
+        self.indexed_load_equalities_mentioning(proposition)
+            .into_iter()
+            .map(|fact| fact.as_ref().clone())
+            .collect()
+    }
+
+    /// The same query retaining the compact identity of each indexed fact.
+    /// One fact may occur in both operand buckets; pointer identity removes
+    /// that duplicate without recursively comparing proposition payloads.
+    fn indexed_load_equalities_mentioning(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Arc<Proposition>> {
         let mut atoms = BTreeSet::new();
         collect_proposition_bitvector_atoms(proposition, &mut atoms);
         let mut equalities = Vec::new();
@@ -1142,10 +1177,10 @@ fn index_integer_condition_fact(
 }
 
 fn index_bitvector_equality_fact(
-    mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
-    fact: &Proposition,
-) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>> {
-    let (left, right) = match fact {
+    mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
+    fact: &Arc<Proposition>,
+) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>> {
+    let (left, right) = match fact.as_ref() {
         Proposition::ConditionIs(
             ConditionTerm::Bitvector32Equal(left, right)
             | ConditionTerm::Bitvector64Equal(left, right),
@@ -1179,7 +1214,7 @@ fn index_bitvector_equality_fact(
             continue;
         };
         let mut bucket = index.get(&key).cloned().unwrap_or_default();
-        if !bucket.iter().any(|candidate| candidate == fact) {
+        if !bucket.iter().any(|candidate| Arc::ptr_eq(candidate, fact)) {
             bucket.push(fact.clone());
             index = index.with_inserted(key, bucket);
         }

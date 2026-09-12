@@ -251,6 +251,7 @@ impl<'a> Proof<'a> {
                     &RecordedSnapshots::new(),
                     context.predicate_environment,
                     context.click_function_environment,
+                    BTreeMap::new(),
                 )
             }
             ProofContext::FixedState(context) => {
@@ -271,6 +272,7 @@ impl<'a> Proof<'a> {
                     context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
+                    crate::surface::lowering::parameter_pointer_element_widths(context.parameters),
                 )
             }
             ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
@@ -294,6 +296,7 @@ impl<'a> Proof<'a> {
                     view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
+                    crate::surface::lowering::parameter_pointer_element_widths(view.parameters),
                 )
             }
             ProofContext::Execution(context) => {
@@ -323,6 +326,9 @@ impl<'a> Proof<'a> {
                     &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
+                    crate::surface::lowering::parameter_pointer_element_widths(
+                        context.parsed_function.parameters(),
+                    ),
                 )
             }
         }
@@ -345,6 +351,7 @@ impl<'a> Proof<'a> {
         recorded_snapshots: &RecordedSnapshots,
         predicate_environment: &PredicateEnvironment,
         click_function_environment: &ClickFunctionEnvironment,
+        parameter_pointer_element_widths: BTreeMap<String, u32>,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let definition = click_function_environment
             .get(&application.name)
@@ -413,9 +420,7 @@ impl<'a> Proof<'a> {
                 predicate_environment,
                 click_function_environment,
                 &BTreeSet::from([application.name.clone()]),
-                crate::surface::lowering::click_parameter_pointer_element_widths(
-                    definition.parameters(),
-                ),
+                parameter_pointer_element_widths.clone(),
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -515,9 +520,7 @@ impl<'a> Proof<'a> {
                         predicate_environment,
                         click_function_environment,
                         &opaque_calls,
-                        crate::surface::lowering::click_parameter_pointer_element_widths(
-                            definition.parameters(),
-                        ),
+                        parameter_pointer_element_widths,
                     )
                     .map_err(|message| {
                         self.step_error(format!(
