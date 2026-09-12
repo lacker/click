@@ -5173,7 +5173,7 @@ impl<'a> Proof<'a> {
                         ) else {
                             return Err(error);
                         };
-                        if let Some(surface) = admit_candidate(registry_surface)? {
+                        if let Some(surface) = admit_candidate(registry_surface.proposition)? {
                             surface
                         } else {
                             let Some(synthesized) = synthesize_candidate() else {
@@ -5490,12 +5490,21 @@ fn source_backed_refusal(
 /// carrier's callee, interface, source ordinal, argument expressions, and
 /// frontier memory identity all have to agree before a source form is
 /// admitted to the retained-have retry.
+struct SourceBackedCallSurface {
+    arguments: Vec<CExpression>,
+    source_proposition: ClickProposition,
+    proposition: ClickProposition,
+}
+
+/// Validate the carrier against the current concrete call before any source
+/// declaration is consulted.  The returned owned call is deliberately small:
+/// the statement splitter does not expose borrowed argument storage.
 fn source_backed_call_requirement_surface(
     requirement: &UnresolvedRequirement,
     step: &ProofStep,
     execution: &ExecutionProofState,
     context: &ExecutionProofContext<'_>,
-) -> Option<ClickProposition> {
+) -> Option<SourceBackedCallSurface> {
     let source = requirement.call_site.as_ref()?;
     let source_ordinal = source.source_requirement_ordinal?;
     let site = source.site.as_ref();
@@ -5578,22 +5587,19 @@ fn source_backed_call_requirement_surface(
         return None;
     }
 
+    let use_named_interface = matches!(step, ProofStep::StepContract(_))
+        || site.interface.as_ref() != site.callee.as_str()
+        || ordinary_source.is_none();
+
     // Ordinary C calls use the file-scoped registry keyed by the carrier's
     // callee. Named callback and StepContract interfaces instead resolve by
     // their interface name. Both paths index directly by the checked source
     // ordinal; resources, generated clauses, and out-of-range entries fail
     // closed without consulting ambient/project facts.
-    let use_named_interface = matches!(step, ProofStep::StepContract(_))
-        || site.interface.as_ref() != site.callee.as_str()
-        // An indirect callback may carry the selected interface as both its
-        // callee and interface name even though the C statement names only
-        // the function-pointer variable. In that case the ordinary registry
-        // has no entry, so resolve the exact named definition instead.
-        || ordinary_source.is_none();
     let (source_parameter_names, source_proposition) = if use_named_interface {
         let definition = context
             .predicate_environment
-            .contract_definition(site.interface.as_ref());
+            .contract_definition(source.interface.as_ref());
         let definition = definition?;
         let requirement = definition.function_block().requires().get(source_ordinal)?;
         (
@@ -5638,7 +5644,82 @@ fn source_backed_call_requirement_surface(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    substitute_click_proposition(&source_proposition, &substitutions).ok()
+    let proposition = substitute_click_proposition(&source_proposition, &substitutions).ok()?;
+    Some(SourceBackedCallSurface {
+        arguments,
+        source_proposition,
+        proposition,
+    })
+}
+
+pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
+    requirement: &UnresolvedRequirement,
+    step: &ProofStep,
+    execution: &ExecutionProofState,
+    context: &ExecutionProofContext<'_>,
+) -> Option<(String, CallerRequirementSelection)> {
+    let source = requirement.call_site.as_ref()?;
+    if !matches!(step, ProofStep::Step | ProofStep::StepCall(_))
+        || source.interface.as_ref() != source.callee.as_str()
+    {
+        return None;
+    }
+    let resolved = source_backed_call_requirement_surface(requirement, step, execution, context)?;
+    let ClickProposition::PredicateCall { arguments, .. } = &resolved.source_proposition else {
+        return None;
+    };
+    let callee = context
+        .function_environment
+        .get_function(source.callee.as_ref())?;
+    if callee.parameters().len() != resolved.arguments.len() {
+        return None;
+    }
+    let selected = arguments
+        .iter()
+        .enumerate()
+        .filter_map(|(predicate_argument_slot, argument)| {
+            let ContractExpression::CFragment(CExpression::Variable(callee_name)) = argument else {
+                return None;
+            };
+            let callee_slot = callee
+                .parameters()
+                .iter()
+                .position(|parameter| parameter.name() == callee_name)?;
+            let CExpression::Variable(caller_name) = &resolved.arguments[callee_slot] else {
+                return None;
+            };
+            let caller_slot = context
+                .parsed_function
+                .parameters()
+                .iter()
+                .position(|parameter| parameter.name() == caller_name)?;
+            Some((predicate_argument_slot, caller_slot))
+        })
+        .collect::<Vec<_>>();
+    let [(predicate_argument_slot, caller_parameter_slot)] = selected.as_slice() else {
+        return None;
+    };
+    let ClickProposition::PredicateCall {
+        name: predicate_name,
+        arguments: substituted_arguments,
+    } = resolved.proposition
+    else {
+        return None;
+    };
+    let entry_state = context.constants.function_entry_state.as_ref()?;
+    let owner = context.constants.caller_source_owner.as_ref()?;
+    let selection = context
+        .constants
+        .caller_requirement_index
+        .lookup_unique_caller_requirement(
+            owner,
+            &predicate_name,
+            *predicate_argument_slot,
+            *caller_parameter_slot,
+            &substituted_arguments,
+            crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory()),
+        )?;
+    Some((predicate_name, selection))
 }
 
 fn requirement_uses_planning_compatibility(
