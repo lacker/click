@@ -5197,6 +5197,18 @@ pub struct PureFactContext {
         PointerOffsetTerm,
         crate::persistent::PersistentMap<(PointerBlock, bool), ConditionTerm>,
     >,
+    /// Exact equalities between two pointers of *different* blocks, indexed
+    /// under each side and carrying the fact that states them. An equality
+    /// inside one block is a `PointerOffsetEqual` that never reaches this
+    /// index (`ConditionTerm::pointer_equal`), so an entry here always says
+    /// that two block spellings name one address. Derived incrementally from
+    /// `condition_facts`, like every other index above, so asking what one
+    /// pointer is proved equal to is a keyed lookup rather than a scan of
+    /// every pointer comparison the path happens to hold.
+    pub(super) pointer_block_aliases: crate::persistent::PersistentMap<
+        Pointer,
+        crate::persistent::PersistentMap<Pointer, ConditionTerm>,
+    >,
     /// Addresses of the first elements of two separated memory ranges of
     /// one block, keyed by the unordered pair and carrying the separation
     /// facts that state it. Mirrors `memory_separation_facts` and

@@ -1,7 +1,9 @@
 # an rbtree ascent whose guard is a conjunction
 
-This is the ascent of [`rb_ascending_walk_to_root.md`](rb_ascending_walk_to_root.md)
-with the short-circuit guard `rb_next` climbs with. Every iteration consumes
+This is the ascent of [`rb_ascending_walk_to_root.md`](rb_ascending_walk_to_root.md),
+kept on the parameter-keyed shapes `rb_at(p, parent)` and
+`ctx_at(child, parent, root)` because the guard is what it isolates, with the
+short-circuit guard `rb_next` climbs with. Every iteration consumes
 one frame — unfold the frame, take the C step that moves the cursor up, fold
 the node the frame owned into a larger subtree — and the measure is the
 context, `decreases c;`. What is new is the guard: it leaves the loop by two

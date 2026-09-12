@@ -642,6 +642,34 @@ names no cell: `mdtests/guard_after_sibling_write_rejects_unknown_payload.md`.
 A read through a folded instance still refuses when the arm is not selected at
 all; nothing here grants ownership, which only an explicit `unfold` produces.
 
+The ownership an arm introduces through a binding respects proved equality of
+that binding, exactly as declared resource identity respects proved equality of
+its arguments. A binding is a proof name: at an arbitrary frontier it is a
+fresh symbolic pointer, and no C statement is written through it. When an
+*exact* pointer equality identifies it with another pointer — the local an
+ascending walk reassigns, a parameter, a witness — the arm's clauses are
+instantiated at that pointer, so the cells the arm owns, the facts it states,
+its child resources' arguments, and the body a later `fold` requires all land
+on the address the program names. Without it a walk that has proved `identity
+== parent` still reads through the parameter's block while the frame owns the
+binding's, and the read is refused with `missing resource fact views
+symbolic-pointer:…` with ownership of that very cell one provable equality
+away. The reduction is `mdtests/binding_cell_read_through_equal_local.md` and
+the whole-loop case is `mdtests/rb_ascending_walk_to_root.md`, whose every
+iteration reads its frame through the C local the loop reassigns.
+
+Exactness is the whole of the soundness argument. Only an assumed
+`PointerEqual` fact counts, read from the index that files those facts under
+each side, so a disequality, a disjunction, or an equality some heuristic could
+derive changes nothing
+(`mdtests/binding_cell_read_rejects_an_unproved_equality.md`). Two spellings of
+one address are exchanged and nothing else: an equality between two offsets of
+one block never becomes a `PointerEqual` in the first place, so the arm's
+clauses keep the offsets they state and a read at any other offset is still
+refused (`mdtests/binding_cell_read_rejects_an_unowned_offset.md`). The lookup
+is keyed by the pointer and takes one hop, so a binding costs one indexed
+query and no equality graph is walked.
+
 If a fact reads mutable memory, the composite body must contain an owned memory
 resource covering that memory. This is what makes the fact stable while the
 resource is folded:

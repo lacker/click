@@ -141,6 +141,24 @@ requires separate(memory(dst[0..n]), memory(src[0..n]));
 This is intentionally C-like. C functions can be called with aliased pointers
 unless their contract rules that out.
 
+Ownership is located by the address it names, not by the spelling that
+introduced it. A memory resource is held at a pointer, and two pointers an
+*exact* equality proves equal are one address, so where a proof has introduced
+ownership through a name the C program does not use — the pointer payload of a
+matched resource arm is the case that matters, since it is a fresh symbolic
+pointer at any frontier — the arm's clauses are instantiated at the equal
+pointer instead. The read, the write, the cell's load identity, the child
+resources' arguments, and the body a later `fold` requires then all name the
+one address under the program's own spelling. Only an assumed pointer equality
+between two blocks does this, read from the index those facts are filed in: a
+disequality or a disjunction is not an alias, an equality inside one block is a
+`PointerOffsetEqual` that cannot exchange a block at all, and the exchange
+never moves an offset. See
+[resources](resources.md) for the rule as it appears at `unfold` and `fold`,
+`mdtests/binding_cell_read_through_equal_local.md` for the reduction with its
+two negatives, and `mdtests/rb_ascending_walk_to_root.md` for the ascending
+walk that needs it once per iteration.
+
 ## Loadable ranges
 
 Use `loadable` to prove memory safety:

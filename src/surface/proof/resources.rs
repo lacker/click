@@ -663,10 +663,24 @@ fn project_selected_instance_arm_cells(
     let Some(body) = arm.composite_body() else {
         return state;
     };
+    // A pointer payload an exact equality identifies with an older pointer
+    // denotes that pointer, exactly as the kernel instantiates the arm's
+    // ownership and facts (`arm_binding_program_spelling`). Naming is atomic
+    // across producers, so the cell this projection names must be the cell
+    // the arm owns, at the one spelling.
+    let bindings = selected
+        .bindings
+        .iter()
+        .map(|binding| match binding.as_c_value() {
+            Some(value) => crate::kernel::arm_binding_program_spelling(value, assumptions)
+                .map_or_else(|| binding.clone(), AlgebraicValue::C),
+            None => binding.clone(),
+        })
+        .collect::<Vec<_>>();
     let Ok(substitutions) = resource_value_substitutions_for_parameters(
         arm.name(),
         instance.arguments(),
-        &selected.bindings,
+        &bindings,
         arm.parameters(),
     ) else {
         return state;

@@ -1745,6 +1745,55 @@ impl PureFactContext {
         };
     }
 
+    /// Files or withdraws one exact cross-block pointer equality under both
+    /// of its sides. Only a *true* equality says two spellings are one
+    /// address; a false one is not an alias and never enters the index, which
+    /// also makes withdrawal a no-op for the fact values that were never
+    /// filed.
+    fn adjust_pointer_block_alias(&mut self, condition: &ConditionTerm, value: bool, insert: bool) {
+        let ConditionTerm::PointerEqual(left, right) = condition else {
+            return;
+        };
+        if !value || left.block == right.block {
+            return;
+        }
+        for (key, alias) in [
+            (left.as_ref(), right.as_ref()),
+            (right.as_ref(), left.as_ref()),
+        ] {
+            let aliases = self
+                .pointer_block_aliases
+                .get(key)
+                .cloned()
+                .unwrap_or_default();
+            let aliases = if insert {
+                aliases.with_inserted(alias.clone(), condition.clone())
+            } else {
+                aliases.without_key(alias)
+            };
+            self.pointer_block_aliases = if aliases.is_empty() {
+                self.pointer_block_aliases.without_key(key)
+            } else {
+                self.pointer_block_aliases
+                    .with_inserted(key.clone(), aliases)
+            };
+        }
+    }
+
+    /// The pointers an exact fact proves equal to this one, in the index's
+    /// own order. One hop: an alias of an alias is not reported, so the
+    /// answer is bounded by the equalities stated about this pointer and no
+    /// query walks an equality graph.
+    pub(crate) fn exact_pointer_aliases(
+        &self,
+        pointer: &Pointer,
+    ) -> impl Iterator<Item = &Pointer> {
+        self.pointer_block_aliases
+            .get(pointer)
+            .into_iter()
+            .flat_map(|aliases| aliases.iter().map(|(alias, _)| alias))
+    }
+
     pub(super) fn rebuild_null_pointer_offsets(&mut self) {
         self.null_pointer_offsets = crate::persistent::PersistentMap::default();
         let facts = self
@@ -3025,6 +3074,7 @@ impl PureFactContext {
             self.adjust_algebraic_predicate_fact(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
             self.adjust_null_pointer_offset(&condition, old, false);
+            self.adjust_pointer_block_alias(&condition, old, false);
             self.content_fingerprint ^= Self::fingerprint(1, &(condition.clone(), old));
         }
         self.adjust_stated_proposition_index(
@@ -3034,6 +3084,7 @@ impl PureFactContext {
         self.adjust_algebraic_predicate_fact(&condition, value, true);
         self.adjust_signed_order_bound(&condition, value, true);
         self.adjust_null_pointer_offset(&condition, value, true);
+        self.adjust_pointer_block_alias(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self

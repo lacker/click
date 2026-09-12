@@ -10688,6 +10688,74 @@ pub(in crate::kernel) fn child_composite_definition<'a>(
         .ok_or("resource match child has no registered definition")
 }
 
+/// The order that decides which of two equal spellings an arm is instantiated
+/// at. A block the program allocated or was handed is preferred over a
+/// symbolic one, and two symbolic blocks are ordered by their identities,
+/// which are minted in creation order: a binding introduced at the current
+/// frontier is newer than the havocked local or parameter a proof equates it
+/// with. The order is total and the choice is always the smaller element, so
+/// two spellings collapse to the same one whichever side the query starts
+/// from, and a spelling the program already uses is never traded away for a
+/// proof name.
+fn pointer_spelling_rank(pointer: &Pointer) -> (bool, &Pointer) {
+    (matches!(pointer.block, PointerBlock::Symbolic(_)), pointer)
+}
+
+/// The spelling a matched arm's pointer binding denotes.
+///
+/// A binding introduced by a proof `match` is a fresh symbolic pointer: it
+/// names the node the model says the arm holds, and no C statement is written
+/// through it. When an exact pointer equality identifies it with an older
+/// pointer -- the local an ascending walk reassigns, a parameter, a witness --
+/// the two are one address, and the program reads and writes that address
+/// under its own spelling. Instantiating the arm's clauses at the binding's
+/// symbolic spelling therefore owns, names, and requires cells the C can never
+/// reach: the read is refused with `missing resource fact views
+/// symbolic-pointer:...` while ownership of that very cell is held one
+/// provable equality away.
+///
+/// Declared resource identity already respects proved equality of a
+/// resource's arguments -- ownership of `list(node->next)` is ownership of
+/// `list(tail)` once `node->next == tail` is proved. This is that rule for the
+/// ownership a matched arm introduces *through a binding*: the arm's clauses
+/// are instantiated at a provably equal pointer, so the body they state is the
+/// same body, and every cell, fact, and child argument in it lands on the
+/// address the program names. A fold requires the body at the same spelling,
+/// which is what lets a walk hand its instance back.
+///
+/// Soundness rests on the equality being exact and on it being a genuine
+/// cross-block one. `exact_pointer_aliases` reads the index of assumed
+/// `PointerEqual` facts: never a derived, heuristic, or disjunctive
+/// conclusion, and never a `!=`. An equality between two offsets of one block
+/// is not a `PointerEqual` at all -- `ConditionTerm::pointer_equal` folds it
+/// to a `PointerOffsetEqual` -- so an entry can only ever exchange two
+/// spellings of one address, at the offset the fact states and no other. Which
+/// equal spelling is chosen changes nothing logically, since they are all the
+/// same address; `pointer_spelling_rank` fixes it so that the choice is
+/// deterministic, directed at the older spelling, and stable in the
+/// certificate. Boundedness: one keyed lookup per pointer binding, one hop, no
+/// transitive closure and no fact-set scan.
+pub(crate) fn arm_binding_program_spelling(
+    value: &CValue,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    let CValue::Pointer(value_pointer) = value else {
+        return None;
+    };
+    let pointer = value_pointer.pointer();
+    if !matches!(pointer.block, PointerBlock::Symbolic(_)) {
+        return None;
+    }
+    crate::instrumentation::record_deterministic_work(1);
+    let spelling = assumptions
+        .exact_pointer_aliases(pointer)
+        .filter(|alias| pointer_spelling_rank(alias) < pointer_spelling_rank(pointer))
+        .min_by_key(|alias| pointer_spelling_rank(alias))?;
+    let mut aliased = value_pointer.clone();
+    aliased.replace_pointer(spelling.clone());
+    Some(CValue::Pointer(aliased))
+}
+
 pub(crate) fn rewrite_resource_instance_selecting_children(
     state: &CState,
     instance: &ResourceInstance,
@@ -10756,7 +10824,13 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             match (binding_type, binding_variable, value) {
                 (AlgebraicValueType::C(_), None, AlgebraicValue::C(value)) => {
                     let ty = value.c_type();
-                    evaluation.locals.set_typed(name.clone(), value.clone(), ty);
+                    // A pointer payload an exact equality identifies with a C
+                    // pointer denotes that pointer, so the arm's cells are
+                    // owned, named, and required at the spelling the C
+                    // statements read (see `arm_binding_program_spelling`).
+                    let value = arm_binding_program_spelling(value, assumptions)
+                        .unwrap_or_else(|| value.clone());
+                    evaluation.locals.set_typed(name.clone(), value, ty);
                 }
                 (AlgebraicValueType::Integer, Some(variable), AlgebraicValue::Integer(value)) => {
                     if integer_bindings.insert(*variable, value.clone()).is_some() {
