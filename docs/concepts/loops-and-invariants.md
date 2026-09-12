@@ -554,6 +554,22 @@ The back edge publishes the same way, so a descent that unfolds a child under
 a guard hands the next iteration the model fact that guard established. The
 rule itself is in [resources](resources.md).
 
+Refutation also runs where the body stands, not only at the head. A child the
+body unfolded is often decided by a fact the body establishes afterwards — the
+C local the next statement reads — so the case split a proof `match` issues,
+and the `unfold` that opens a matched instance, both read the premises at that
+frontier. A body that decrements and then asks whether it may step down again
+closes the child's dead arm by `contradiction` on the child's model, and the
+arm the `unfold` opened is published so the structural measure can still see
+that the binder holds the child this path descended into
+(`mdtests/loop_body_refutes_an_unfolded_child.md`).
+
+A whole loop may also sit inside one proof `match` arm, which is how a fixup
+that decides its cursor's constructor once at entry is written. The arm's
+constructor equation is a premise of the path, not a different entry state:
+the loop's entry projection, the checked body, and contract certification all
+see the contract's own entry (`mdtests/rb_ascending_walk_in_entry_match.md`).
+
 An invariant that fixes a pure function's value at the binder's model refutes
 arms too, and it is the invariant a model keyed by its own payload needs: the
 arms speak about their bindings, while the guard speaks about a C local, and
@@ -641,6 +657,47 @@ or `step()` per statement. In a proof-level `if`, `step()` enters a C
 branch from an exact condition fact; `step()`, `step()`,
 and `step()` provide contextual branch reasoning. Initialization
 is non-executing because its program point is already the first loop entry.
+
+### What a `preserve` script accepts
+
+A preservation script is the ordinary execution grammar: `step()` and the
+other linear execution tactics, `have`, the resource operations, a proof-level
+`if`, a proof `match` on a model, an `open` scope, and `branch` on the C `if`
+at the frontier. The two conditional forms differ in where their arms go. A
+proof `if` and a proof `match` never join: each arm runs its own complete
+iteration to the loop rule, so each closes the invariants and satisfies the
+measure on its own. `branch` joins its arms at the statement after the C `if`,
+which is the cheaper spelling when they do rejoin — a body whose `if` only
+chooses which link to write — and refuses when they cannot, because an arm
+`break`s or `continue`s out of the join.
+
+<!-- verified-example: mdtests/loop_preserve_branch_tactic.md -->
+```click
+preserve by {
+    branch {
+        ensuring {
+            fact t >= 0;
+            fact t <= 100;
+        }
+        then { step(); }
+        else { step(); }
+    }
+    step();
+    close_invariants();
+}
+```
+
+A `branch` whose guard the path has already decided — the arm of a proof
+`match` the body is in settles it — takes its one feasible arm and certifies
+as that single path. It is the C `if` consumed on this path, not a case the
+preservation leaf split at, so it charges the leaf's path no case
+(`mdtests/loop_preserve_branch_tactic.md` has both shapes; the same C written
+with bare `step()`s instead is
+`mdtests/loop_decreases_strict_descendant.md`).
+
+A tactic outside that grammar is refused by name rather than interpreted, and
+so is a path that stops anywhere but the body's end, a `continue`, or a
+`break`.
 
 A `preserve` script ends by discharging the whole invariant bundle at the loop's
 back edge. `close_invariants()` is the surface tactic for that step. It is

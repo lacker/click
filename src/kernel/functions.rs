@@ -10801,9 +10801,23 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let mut algebraic_bindings = BTreeMap::new();
     let mut integer_bindings = BTreeMap::new();
     let mut constructor_fields = Vec::new();
+    // D7 in reverse, at the point of the fold or unfold and against the
+    // premises standing there. A loop body that has moved its cursor knows
+    // what a child it unfolded earlier is only now, and the arm this rewrite
+    // needs is the one those premises leave (A26, gap 57b). The work is this
+    // one instance's own arms.
+    let instance_refutations = if definition.matched.is_some() {
+        refuted_instance_arm_model_facts_for_instance(instance, definitions, state, assumptions)
+    } else {
+        Vec::new()
+    };
     let selected = if definition.matched.is_some() {
+        let selection_assumptions = instance_refutations
+            .iter()
+            .cloned()
+            .fold(assumptions.clone(), PureFactContext::assume_proposition);
         let (arm, constructor) =
-            selected_instance_match_arm(instance, definition, definitions, assumptions)?;
+            selected_instance_match_arm(instance, definition, definitions, &selection_assumptions)?;
         let AlgebraicTermNode::Constructor { fields, .. } = constructor.node else {
             unreachable!()
         };
@@ -11152,6 +11166,11 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         facts.push(proposition);
     }
     if unfold {
+        // The arm this unfold opened is the one the premises standing here
+        // leave, so the model fact that forced it is published with the
+        // body's own facts: the path, and every later step, then names the
+        // constructor this rewrite used.
+        facts.extend(instance_refutations);
         // A child instance is born here, so this is where the premises the
         // proof already carries first say something about its model: a guard
         // that refutes one of the child's arms (D7 in reverse) publishes the

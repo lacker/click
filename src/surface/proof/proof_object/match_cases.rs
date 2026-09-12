@@ -227,6 +227,7 @@ impl<'a> Proof<'a> {
                 self.facts(),
                 &value,
                 context.function_environment,
+                context.function.composite_resource_definitions(),
                 first,
                 65_536,
             )

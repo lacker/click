@@ -2005,7 +2005,11 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             .as_deref()
             .cloned()
             .ok_or("match requires execution state")?;
-        let facts = branch.state.facts.with_fact(case.clone());
+        // The arm's premises are the partition's own root facts plus this
+        // case, not the branch's: the partition may carry the model facts
+        // this frontier's premises force on the scrutinee's instance, and
+        // those hold on every arm (A26, gap 57b).
+        let facts = partition.root_facts().with_fact(case.clone());
         if !execution
             .core
             .record_proof_case_arm(partition, index, facts.clone())

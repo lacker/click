@@ -120,6 +120,22 @@ The constructor equation is an entry assumption of the whole function only when
 the `match` ran before any C step. At a later frontier it holds on that arm's
 path from the split onwards.
 
+Either way it is a premise of the path, not a different entry state, so a
+whole proof may sit inside one arm — including a ranked loop, which is the
+shape the Linux insert fixup has: one `match` on the cursor's model at entry
+and a `while` loop inside it. Contract certification discharges the arm's case
+premise against the contract's own context and reuses the checked body as it
+does for a flat proof
+(`mdtests/rb_ascending_walk_in_entry_match.md`).
+
+The split also reads what the premises standing at that frontier force on the
+scrutinee's instance. A path fact that refutes an arm's own fact says the
+model is not that constructor, so the arm closes by `contradiction` on the
+model; when refutation leaves one field-free arm, the split hands the path
+that constructor. See [resources](resources.md) for the rule and
+`mdtests/loop_body_refutes_an_unfolded_child.md` for a body that decides an
+unfolded child this way.
+
 ## Naming a call result
 
 C often uses a call's result without ever storing it: `if (f(x))` and

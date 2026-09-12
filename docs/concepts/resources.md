@@ -575,7 +575,15 @@ that exact model is read once. The conclusions are published
 where an instance enters the premises -- at contract lowering, at a loop head,
 at a loop back edge, at a loop exit, at the `unfold` that produces a child, and
 between the conjuncts of a short-circuit guard, where the truth of the earlier
-conjuncts is what refutes an arm. A loop exit reads the invariants together with the failed guard, which
+conjuncts is what refutes an arm -- and, for the instance a case split is
+about, at the frontier that split is taken from: the case split a proof
+`match` issues and the `unfold` that opens a matched instance both read the
+premises standing there. That is where a loop body learns what a child it
+unfolded earlier is, since the guard that decides it is a fact of the body and
+not of the head (`mdtests/loop_body_refutes_an_unfolded_child.md`). An
+`unfold` also states the model fact that chose the arm it opened, so the rest
+of the path -- including the back edge's structural descent -- names that
+constructor. A loop exit reads the invariants together with the failed guard, which
 is how an ascending walk learns that the frame it is left holding is the top
 one: `parent == 0` refutes every arm that states `fact parent != 0`. The
 regressions are `mdtests/resource_refuted_arm_model_fact.md` for both

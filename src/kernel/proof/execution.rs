@@ -1512,6 +1512,15 @@ impl CheckedProofCasePartition {
     pub(crate) fn case_fact(&self, index: usize) -> Option<&Proposition> {
         self.case_facts.get(index)
     }
+
+    /// The facts this partition was issued against. An arm's premises are
+    /// these plus that arm's case fact, so a caller entering an arm builds
+    /// the arm's context from here rather than from its own branch: the
+    /// partition may carry model facts the frontier's premises force on the
+    /// scrutinee's instance (A26, gap 57b), and those belong to every arm.
+    pub(crate) fn root_facts(&self) -> &ProofFacts {
+        &self.root_facts
+    }
     pub(crate) fn check(
         root_facts: &ProofFacts,
         then_fact: Proposition,
@@ -4710,6 +4719,7 @@ impl ExecutionProofCore {
         facts: &ProofFacts,
         value: &crate::kernel::AlgebraicTerm,
         environment: &crate::kernel::CExecutionEnvironment,
+        definitions: &[crate::kernel::CCompositeResourceDefinition],
         first_variable: u64,
         stride: u64,
     ) -> Option<(
@@ -4721,6 +4731,14 @@ impl ExecutionProofCore {
         if stride == 0 {
             return None;
         }
+        // D7 in reverse, at the frontier the cases are taken from. A path
+        // fact that refutes an arm's own fact says the folded instance's
+        // model is not that constructor, and the body of a loop learns that
+        // about a child it unfolded earlier only here: the `unfold` ran
+        // before the cursor moved, and the loop head spoke about the frame
+        // above (A26, gap 57b). The refutation is scoped to the scrutinee's
+        // own instance, so the cost is that one instance's arms.
+        let facts = &self.model_arm_refutations_for(facts, value, definitions);
         let reserved = self.initial_match_reserved_variables();
         let issued = self.next_kernel_variable;
         let environment_variables =
@@ -4768,6 +4786,55 @@ impl ExecutionProofCore {
             bindings,
             next,
         ))
+    }
+
+    /// `facts` together with the model facts this frontier's premises force
+    /// on the instance whose model is `value`.
+    ///
+    /// This is [`crate::kernel::refuted_instance_arm_model_facts`] applied at
+    /// one frontier rather than at contract lowering, a loop head, a back
+    /// edge, or an `unfold`. Only the instance the case split is about is
+    /// visited, and only when its model is still a symbolic variable, so the
+    /// work is that instance's own arms and nothing else. Nothing is
+    /// concluded that the refutation rule would not publish at those sites.
+    fn model_arm_refutations_for(
+        &self,
+        facts: &ProofFacts,
+        value: &crate::kernel::AlgebraicTerm,
+        definitions: &[crate::kernel::CCompositeResourceDefinition],
+    ) -> ProofFacts {
+        let crate::kernel::AlgebraicTermNode::Variable(variable) = value.node else {
+            return facts.clone();
+        };
+        if definitions.is_empty() {
+            return facts.clone();
+        }
+        let state: &crate::kernel::CState = &self.state;
+        let assumptions = facts.assumptions();
+        let mut extended = facts.clone();
+        for fact in state.resources().facts() {
+            let crate::kernel::CResource::Instance(instance) = fact.resource() else {
+                continue;
+            };
+            if !instance.fields().iter().any(|field| {
+                matches!(
+                    field,
+                    crate::kernel::AlgebraicValue::Algebraic(model)
+                        if model.node == crate::kernel::AlgebraicTermNode::Variable(variable)
+                )
+            }) {
+                continue;
+            }
+            for published in crate::kernel::functions::refuted_instance_arm_model_facts_for_instance(
+                instance,
+                definitions,
+                state,
+                assumptions,
+            ) {
+                extended = extended.with_fact(published);
+            }
+        }
+        extended
     }
 
     /// Forks the per-path evidence traces the way a post-execution case
@@ -5528,6 +5595,7 @@ mod tests {
                     &root,
                     &value,
                     &crate::kernel::CExecutionEnvironment::new(),
+                    &[],
                     4_000_000,
                     65_536,
                 )
@@ -5571,6 +5639,7 @@ mod tests {
                     &root,
                     &value,
                     &crate::kernel::CExecutionEnvironment::new(),
+                    &[],
                     4_000_000,
                     65_536,
                 )
@@ -5593,6 +5662,7 @@ mod tests {
                 &root,
                 &value,
                 &crate::kernel::CExecutionEnvironment::new(),
+                &[],
                 4_000_000,
                 65_536,
             )
@@ -5645,20 +5715,20 @@ mod tests {
         )]);
         let env = crate::kernel::CExecutionEnvironment::new();
         let (partition, fields, next) = core
-            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], 4_000_000, 65_536)
             .unwrap();
         assert!(fields.iter().flatten().all(|(var, _)| var.0 > occupied.0));
         let facts = root.with_fact(partition.case_fact(0).unwrap().clone());
         let (_, later, _) = core
-            .algebraic_case_partition(&facts, &value, &env, next, 65_536)
+            .algebraic_case_partition(&facts, &value, &env, &[], next, 65_536)
             .unwrap();
         assert!(later.iter().flatten().all(|(var, _)| var.0 >= next));
         assert!(
-            core.algebraic_case_partition(&root, &value, &env, u64::MAX, 1)
+            core.algebraic_case_partition(&root, &value, &env, &[], u64::MAX, 1)
                 .is_none()
         );
         assert!(
-            core.algebraic_case_partition(&root, &value, &env, 0, 0)
+            core.algebraic_case_partition(&root, &value, &env, &[], 0, 0)
                 .is_none()
         );
     }
@@ -5676,14 +5746,14 @@ mod tests {
         let root = ProofFacts::default();
         let env = crate::kernel::CExecutionEnvironment::new();
         let (_, fields, _) = core
-            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], 4_000_000, 65_536)
             .expect("a loop-body frontier issues its partition");
         assert!(fields.iter().flatten().all(|(var, _)| *var != occupied));
 
         let mut issued = core.clone();
         issued.next_kernel_variable = 4_200_000;
         let (_, fields, _) = issued
-            .algebraic_case_partition(&root, &value, &env, 4_000_000, 65_536)
+            .algebraic_case_partition(&root, &value, &env, &[], 4_000_000, 65_536)
             .expect("a partition skips the issued range");
         assert!(fields.iter().flatten().all(|(var, _)| var.0 >= 4_200_000));
     }
@@ -5711,6 +5781,7 @@ mod tests {
                 &ProofFacts::default(),
                 &value,
                 &environment,
+                &[],
                 4_000_000,
                 65_536,
             )
@@ -5736,7 +5807,7 @@ mod tests {
             let mut next = 4_000_000;
             for _ in 0..size {
                 let (partition, fields, successor) = core
-                    .algebraic_case_partition(&facts, &value, &environment, next, 65_536)
+                    .algebraic_case_partition(&facts, &value, &environment, &[], next, 65_536)
                     .unwrap();
                 assert_eq!(fields.iter().map(Vec::len).sum::<usize>(), 2);
                 facts = facts.with_fact(partition.case_fact(0).unwrap().clone());

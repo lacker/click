@@ -2833,10 +2833,21 @@ pub(super) fn proof_contains_frontier_loop(proof: &SourceProof) -> bool {
         .is_some_and(|tactics| tactics.iter().any(tactic_contains_frontier_loop))
 }
 
+/// Whether a loop appears anywhere a checked execution can reach it.
+///
+/// Every proof form that carries nested tactics is walked, because the entry
+/// projection this answers for is the one the whole claim starts from: a
+/// ranked loop inside a proof `match` arm needs the same entry read authority
+/// as one written flat (A26, gap 56). Missing a nesting form leaves the
+/// checked execution starting at a state the contract cannot be rebased onto.
 fn tactic_contains_frontier_loop(tactic: &ProofTactic) -> bool {
     match tactic {
         ProofTactic::Loop(_) => true,
         ProofTactic::Have(have) => proof_contains_frontier_loop(&have.proof),
+        ProofTactic::Open(open) => open.tactics.iter().any(tactic_contains_frontier_loop),
+        ProofTactic::CloseInvariantsBy(tactics) => {
+            tactics.iter().any(tactic_contains_frontier_loop)
+        }
         ProofTactic::If(proof_if) => proof_if
             .then_tactics
             .iter()
@@ -2847,6 +2858,23 @@ fn tactic_contains_frontier_loop(tactic: &ProofTactic) -> bool {
             .iter()
             .chain(&proof_branch.else_tactics)
             .any(tactic_contains_frontier_loop),
+        ProofTactic::Both(both) => both
+            .left_tactics
+            .iter()
+            .chain(&both.right_tactics)
+            .any(tactic_contains_frontier_loop),
+        ProofTactic::Cases(cases) => cases
+            .left_tactics
+            .iter()
+            .chain(&cases.right_tactics)
+            .any(tactic_contains_frontier_loop),
+        ProofTactic::Match(proof_match) => proof_match
+            .arms
+            .iter()
+            .any(|arm| arm.tactics.iter().any(tactic_contains_frontier_loop)),
+        ProofTactic::StructuralInduct { arms, .. } => arms
+            .iter()
+            .any(|arm| arm.tactics.iter().any(tactic_contains_frontier_loop)),
         _ => false,
     }
 }

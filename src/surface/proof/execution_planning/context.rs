@@ -477,17 +477,31 @@ pub(in crate::surface::proof) fn certificate_leaf_for_case_path(
         for tactic in tactics {
             match tactic {
                 ProofTactic::If(proof_if) => {
-                    offsets.push(selected.len());
-                    let choice = case_path.get(*next_case).ok_or_else(|| {
-                        ClickError::new(format!(
-                            "`{claim_label}` surface certificate has more branches than its validation path"
-                        ))
-                    })?;
-                    if choice.condition != proof_if.condition || choice.match_arm.is_some() {
+                    // A `branch` whose guard the path already decided is
+                    // certified as a proof `if` with one empty arm: it is the
+                    // C `if` consumed on this one path, not a case the
+                    // validation path split at. Keep it whole and charge no
+                    // case (A26, gap 57a); without this a `branch` in a
+                    // `preserve` arm is refused as a certificate that
+                    // disagrees with its validation path.
+                    let matched_case = case_path.get(*next_case).filter(|choice| {
+                        choice.match_arm.is_none() && choice.condition == proof_if.condition
+                    });
+                    let Some(choice) = matched_case else {
+                        if proof_if.then_tactics.is_empty() || proof_if.else_tactics.is_empty() {
+                            selected.push(tactic.clone());
+                            continue;
+                        }
+                        if case_path.get(*next_case).is_none() {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` surface certificate has more branches than its validation path"
+                            )));
+                        }
                         return Err(ClickError::new(format!(
                             "`{claim_label}` surface certificate branch condition does not match its validation path"
                         )));
-                    }
+                    };
+                    offsets.push(selected.len());
                     *next_case += 1;
                     select(
                         claim_label,
