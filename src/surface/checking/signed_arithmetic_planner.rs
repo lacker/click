@@ -236,6 +236,7 @@ fn affine_difference(
             constant += coefficient * BigInt::from(*value as i32);
         } else {
             let atom = SignedArithmeticAtom::from_term(term)?;
+            charge_map_update_work(terms.len(), &atom, &coefficient)?;
             let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
             if updated.is_zero() {
                 terms.remove(&atom);
@@ -270,6 +271,7 @@ fn decomposed_affine_difference(
             }
             _ => {
                 let atom = SignedArithmeticAtom::from_term(term)?;
+                charge_map_update_work(terms.len(), &atom, &coefficient)?;
                 let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
                 if updated.is_zero() {
                     terms.remove(&atom);
@@ -488,9 +490,11 @@ fn add_affine_claims(
     {
         return None;
     }
+    charge_claim_comparison(left)?;
+    charge_claim_comparison(right)?;
     let mut terms = left.terms.clone();
     for (atom, coefficient) in &right.terms {
-        charge_work(coefficient.bits() as usize + 1)?;
+        charge_map_update_work(terms.len(), atom, coefficient)?;
         let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
         if updated.is_zero() {
             terms.remove(atom);
@@ -507,12 +511,30 @@ fn add_affine_claims(
 }
 
 fn charge_claim_comparison(claim: &SignedArithmeticClaim) -> Option<()> {
+    let logarithmic = (usize::BITS - claim.terms.len().saturating_add(1).leading_zeros()) as usize;
     let mut units = claim.terms.len().saturating_add(1);
     units = units.saturating_add(claim.constant.bits() as usize + 1);
-    for coefficient in claim.terms.values() {
-        units = units.saturating_add(coefficient.bits() as usize + 1);
+    for (atom, coefficient) in &claim.terms {
+        units = units.saturating_add(
+            atom.work()
+                .saturating_add(coefficient.bits() as usize + 1)
+                .saturating_mul(logarithmic.max(1)),
+        );
     }
     charge_work(units)
+}
+
+fn charge_map_update_work(
+    map_len: usize,
+    atom: &SignedArithmeticAtom,
+    coefficient: &BigInt,
+) -> Option<()> {
+    let logarithmic = (usize::BITS - map_len.saturating_add(1).leading_zeros()) as usize;
+    charge_work(
+        atom.work()
+            .saturating_add(coefficient.bits() as usize + 1)
+            .saturating_mul(logarithmic.max(1)),
+    )
 }
 
 fn equality_direction(source: &SignedArithmeticClaim, reverse: bool) -> SignedArithmeticClaim {
