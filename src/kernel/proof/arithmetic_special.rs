@@ -1486,7 +1486,7 @@ fn add_tag<'a>(
         TaggedAddress {
             pointer: form.pointer,
             tag: right_constant.map_or_else(
-                || Arc::new(TaggedTag::Source(right)),
+                || masked_source_tag(right),
                 |value| Arc::new(TaggedTag::Constant(value)),
             ),
             tag_constant: right_constant,
@@ -1508,20 +1508,91 @@ fn add_tag<'a>(
     }
 }
 
+fn masked_source_tag<'a>(term: &'a Bitvector32Term) -> Arc<TaggedTag<'a>> {
+    if let Some((source, mask)) = masked_source(term) {
+        Arc::new(TaggedTag::BitwiseAnd(
+            Arc::new(TaggedTag::Source(source)),
+            mask,
+        ))
+    } else {
+        Arc::new(TaggedTag::Source(term))
+    }
+}
+
+fn masked_source(term: &Bitvector32Term) -> Option<(&Bitvector32Term, u64)> {
+    let Bitvector32Term::UInt64BitwiseAnd(left, right) = term else {
+        return None;
+    };
+    match (&**left, &**right) {
+        (source, Bitvector32Term::UInt64Constant(mask))
+            if !matches!(source, Bitvector32Term::UInt64Constant(_)) =>
+        {
+            Some((source, *mask))
+        }
+        (Bitvector32Term::UInt64Constant(mask), source)
+            if !matches!(source, Bitvector32Term::UInt64Constant(_)) =>
+        {
+            Some((source, *mask))
+        }
+        _ => None,
+    }
+}
+
+fn pointer_or_masked_tag<'a>(
+    left: &'a Bitvector32Term,
+    right: &'a Bitvector32Term,
+) -> Option<(&'a Pointer, &'a Bitvector32Term, u64)> {
+    let (pointer, tag) = match (left, right) {
+        (Bitvector32Term::PointerAddress(pointer), tag)
+        | (tag, Bitvector32Term::PointerAddress(pointer)) => (pointer.as_ref(), tag),
+        _ => return None,
+    };
+    let (_, mask) = masked_source(tag)?;
+    let alignment = mask
+        .checked_add(1)
+        .filter(|value| value.is_power_of_two())?;
+    Some((pointer, tag, alignment))
+}
+
 fn tagged_form<'a>(
     term: &'a Bitvector32Term,
     relation: (&'a Bitvector32Term, &'a Bitvector32Term),
     alignments: &AlignmentIndex<'_>,
 ) -> Option<TaggedAddress<'a>> {
-    let identities = bounded_term_hashes(&[term, relation.0, relation.1])?;
-    let constants = bounded_uint64_constants(&[term, relation.0, relation.1]);
+    tagged_form_inner(term, Some(relation), alignments)
+}
+
+fn tagged_form_from_alignment<'a>(
+    term: &'a Bitvector32Term,
+    alignments: &AlignmentIndex<'_>,
+) -> Option<TaggedAddress<'a>> {
+    tagged_form_inner(term, None, alignments)
+}
+
+fn tagged_form_inner<'a>(
+    term: &'a Bitvector32Term,
+    relation: Option<(&'a Bitvector32Term, &'a Bitvector32Term)>,
+    alignments: &AlignmentIndex<'_>,
+) -> Option<TaggedAddress<'a>> {
+    let identities = if let Some((left, right)) = relation {
+        bounded_term_hashes(&[term, left, right])?
+    } else {
+        bounded_term_hashes(&[term])?
+    };
+    let constants = if let Some((left, right)) = relation {
+        bounded_uint64_constants(&[term, left, right])
+    } else {
+        bounded_uint64_constants(&[term])
+    };
     if constants.is_empty() {
         return None;
     }
-    let relation_keys = (
-        *identities.get(&(relation.0 as *const _ as usize))?,
-        *identities.get(&(relation.1 as *const _ as usize))?,
-    );
+    let relation_keys = relation.map(|(left, right)| {
+        (
+            identities.get(&(left as *const _ as usize)).copied(),
+            identities.get(&(right as *const _ as usize)).copied(),
+        )
+    });
     enum Task<'a> {
         Visit(&'a Bitvector32Term),
         FinishAdd {
@@ -1546,6 +1617,12 @@ fn tagged_form<'a>(
         FinishOr {
             term: &'a Bitvector32Term,
             constant: u64,
+            alignment: u64,
+        },
+        FinishPointerOr {
+            term: &'a Bitvector32Term,
+            pointer: &'a Pointer,
+            tag: &'a Bitvector32Term,
             alignment: u64,
         },
         FinishRelation {
@@ -1635,6 +1712,16 @@ fn tagged_form<'a>(
                         tasks.push(Task::Visit(inner));
                     }
                     Bitvector32Term::UInt64BitwiseOr(left, right) => {
+                        if let Some((pointer, tag, alignment)) = pointer_or_masked_tag(left, right)
+                        {
+                            tasks.push(Task::FinishPointerOr {
+                                term: current,
+                                pointer,
+                                tag,
+                                alignment,
+                            });
+                            continue;
+                        }
                         let (inner, constant) = match (
                             constant_value(left, &constants),
                             constant_value(right, &constants),
@@ -1660,17 +1747,21 @@ fn tagged_form<'a>(
                         });
                         tasks.push(Task::Visit(inner));
                     }
-                    _ if identities.get(&identity) == Some(&relation_keys.0)
-                        && bitvector_equal(current, relation.0) =>
+                    _ if relation_keys
+                        .is_some_and(|(left, _)| left == identities.get(&identity).copied())
+                        && relation.is_some_and(|(left, _)| bitvector_equal(current, left)) =>
                     {
+                        let (_, right) = relation.expect("relation key is present");
                         tasks.push(Task::FinishRelation { term: current });
-                        tasks.push(Task::Visit(relation.1));
+                        tasks.push(Task::Visit(right));
                     }
-                    _ if identities.get(&identity) == Some(&relation_keys.1)
-                        && bitvector_equal(current, relation.1) =>
+                    _ if relation_keys
+                        .is_some_and(|(_, right)| right == identities.get(&identity).copied())
+                        && relation.is_some_and(|(_, right)| bitvector_equal(current, right)) =>
                     {
+                        let (left, _) = relation.expect("relation key is present");
                         tasks.push(Task::FinishRelation { term: current });
-                        tasks.push(Task::Visit(relation.0));
+                        tasks.push(Task::Visit(left));
                     }
                     _ => store(identity, None, &mut active, &mut results, &mut values),
                 }
@@ -1737,16 +1828,40 @@ fn tagged_form<'a>(
                 store(
                     term as *const _ as usize,
                     form.and_then(|form| {
-                        let tag = form.tag_constant.map_or_else(
-                            || Arc::new(TaggedTag::BitwiseAnd(form.tag, mask)),
-                            |value| Arc::new(TaggedTag::Constant(value & mask)),
-                        );
+                        // A symbolic tag may itself be an explicitly masked
+                        // source term.  Disjoint masks establish a zero tag
+                        // locally; this is the bounded normal-form rule used
+                        // for the rbtree parent-word shape, not a context
+                        // search or alternate derivation.
+                        let tag = if let Some(value) = form.tag_constant {
+                            Arc::new(TaggedTag::Constant(value & mask))
+                        } else if let TaggedTag::BitwiseAnd(_, source_mask) = form.tag.as_ref()
+                            && source_mask & mask == 0
+                        {
+                            Arc::new(TaggedTag::Constant(0))
+                        } else if let TaggedTag::Source(source) = form.tag.as_ref()
+                            && let Bitvector32Term::UInt64BitwiseAnd(left, right) = source
+                            && let Some(source_mask) = constant_value(left, &constants)
+                                .or_else(|| constant_value(right, &constants))
+                        {
+                            if source_mask & mask == 0 {
+                                Arc::new(TaggedTag::Constant(0))
+                            } else {
+                                Arc::new(TaggedTag::BitwiseAnd(form.tag, mask))
+                            }
+                        } else {
+                            Arc::new(TaggedTag::BitwiseAnd(form.tag, mask))
+                        };
+                        let tag_constant = match tag.as_ref() {
+                            TaggedTag::Constant(value) => Some(*value),
+                            _ => None,
+                        };
                         alignments
                             .supports(form.pointer.as_ref(), alignment)
                             .then_some(TaggedAddress {
                                 pointer: form.pointer,
                                 tag,
-                                tag_constant: form.tag_constant.map(|tag| tag & mask),
+                                tag_constant,
                             })
                     }),
                     &mut active,
@@ -1774,6 +1889,26 @@ fn tagged_form<'a>(
                                 tag_constant: form.tag_constant.map(|tag| tag | constant),
                             })
                     }),
+                    &mut active,
+                    &mut results,
+                    &mut values,
+                );
+            }
+            Task::FinishPointerOr {
+                term,
+                pointer,
+                tag,
+                alignment,
+            } => {
+                store(
+                    term as *const _ as usize,
+                    alignments
+                        .supports(pointer, alignment)
+                        .then(|| TaggedAddress {
+                            pointer: Arc::new(pointer.clone()),
+                            tag: masked_source_tag(tag),
+                            tag_constant: None,
+                        }),
                     &mut active,
                     &mut results,
                     &mut values,
@@ -1866,28 +2001,7 @@ fn pointer_word_equality(
     if structural {
         return true;
     }
-    // The general citing fallback is only for normalizing a tagged word back
-    // to an address. Direct word-to-word claims stay on the stricter tagged
-    // normal-form path above (and must reject a wrong tag mask).
-    if !matches!(&**goal_left, Bitvector32Term::PointerAddress(_))
-        && !matches!(&**goal_right, Bitvector32Term::PointerAddress(_))
-    {
-        return false;
-    }
-    // A recorded word may contain a symbolic tag expression (for example the
-    // rbtree `word == address(parent) + (word & 1)` shape) that is outside the
-    // compact normal-form recognizer above. Reuse the bounded citing decider,
-    // while requiring it to cite the exact word relation.
-    let mut context = crate::kernel::PureFactContext::new();
-    context = context.assume_proposition(relation.clone());
-    for premise in alignment_premises {
-        context = context.assume_proposition((*premise).clone());
-    }
-    let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
-    context.decide_pointer_word_equality_citing(left, right, &mut used) == Some(*expected)
-        && used.complete
-        && used.premises.iter().any(|premise| premise == relation)
-        && !alignment_premises.is_empty()
+    false
 }
 
 fn pointer_word_from_alignment(alignment_premises: &[&Proposition], result: &Proposition) -> bool {
@@ -1898,7 +2012,6 @@ fn pointer_word_from_alignment(alignment_premises: &[&Proposition], result: &Pro
     if !charge_bitvector(left) || !charge_bitvector(right) {
         return false;
     }
-    let mut context = crate::kernel::PureFactContext::new();
     for premise in alignment_premises {
         let Proposition::ConditionIs(condition, true) = premise else {
             return false;
@@ -1906,12 +2019,39 @@ fn pointer_word_from_alignment(alignment_premises: &[&Proposition], result: &Pro
         if checked_pointer_alignment(condition).is_none() {
             return false;
         }
-        context = context.assume_proposition((*premise).clone());
     }
-    let mut used = crate::kernel::eval::pointer_tags::UsedFacts::new();
-    context.decide_pointer_word_equality_citing(left, right, &mut used) == Some(*expected)
-        && used.complete
-        && !alignment_premises.is_empty()
+    let alignments = alignment_premises
+        .iter()
+        .map(|premise| {
+            let Proposition::ConditionIs(condition, true) = premise else {
+                unreachable!("alignment premises were checked above");
+            };
+            checked_pointer_alignment(condition).expect("alignment premises were checked above")
+        })
+        .collect::<Vec<_>>();
+    let alignment_index = AlignmentIndex::new(&alignments);
+    let Some(alignment_index) = alignment_index else {
+        return false;
+    };
+    let left_form = tagged_form_from_alignment(left, &alignment_index);
+    let right_form = tagged_form_from_alignment(right, &alignment_index);
+    let Some(left_form) = left_form else {
+        return false;
+    };
+    let Some(right_form) = right_form else {
+        return false;
+    };
+    let equal = pointer_equal(left_form.pointer.as_ref(), right_form.pointer.as_ref())
+        && tagged_tag_equal(&left_form.tag, &right_form.tag);
+    if *expected {
+        equal
+    } else {
+        pointer_equal(left_form.pointer.as_ref(), right_form.pointer.as_ref())
+            && matches!(
+                (left_form.tag_constant, right_form.tag_constant),
+                (Some(left), Some(right)) if left != right
+            )
+    }
 }
 
 fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
@@ -1992,6 +2132,16 @@ mod tests {
 
     fn add(left: PointerOffsetTerm, right: PointerOffsetTerm) -> PointerOffsetTerm {
         PointerOffsetTerm::Add(Box::new(left), Box::new(right))
+    }
+
+    #[test]
+    fn special_checker_does_not_delegate_tagged_words_to_context_reasoning() {
+        let source = include_str!("arithmetic_special.rs");
+        let legacy_decider = ["decide_pointer_word_", "equality_citing"].concat();
+        assert!(
+            !source.contains(&legacy_decider),
+            "special certificate checking must remain local and explicit"
+        );
     }
 
     fn tagged_tag_nodes(root: &Arc<TaggedTag<'_>>) -> usize {
@@ -2486,6 +2636,66 @@ mod tests {
         .check(&direct, &[direct.clone(), direct_alignment.clone()])
         .unwrap();
 
+        // The parent-word consumer masks off the low two tag bits.  The
+        // masked symbolic tag is discharged by the local disjoint-mask rule;
+        // no ambient pointer-word decision procedure is needed.
+        let masked_parent_word = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_and(
+                    word.clone(),
+                    Bitvector32Term::UInt64Constant(!3),
+                ),
+                direct_address.clone(),
+            ),
+            true,
+        );
+        let parent_alignment = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(pointer(PointerOffsetTerm::Constant(0)), 4),
+            true,
+        );
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                relation: 0,
+                alignments: vec![1],
+                result: masked_parent_word.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(
+            &masked_parent_word,
+            &[direct.clone(), parent_alignment.clone()],
+        )
+        .unwrap();
+
+        let set_parent_word = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_bitwise_or(
+                    Bitvector32Term::uint64_bitwise_and(
+                        word.clone(),
+                        Bitvector32Term::UInt64Constant(1),
+                    ),
+                    direct_address.clone(),
+                ),
+                Bitvector32Term::uint64_add(
+                    direct_address.clone(),
+                    Bitvector32Term::uint64_bitwise_and(
+                        word.clone(),
+                        Bitvector32Term::UInt64Constant(1),
+                    ),
+                ),
+            ),
+            true,
+        );
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                alignments: vec![0],
+                result: set_parent_word.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&set_parent_word, std::slice::from_ref(&parent_alignment))
+        .unwrap();
+
         let wrong_mask = Proposition::ConditionIs(
             ConditionTerm::uint64_equal(
                 word.clone(),
@@ -2560,6 +2770,26 @@ mod tests {
         }
         .check(&goal, std::slice::from_ref(&alignment))
         .unwrap();
+
+        let unrelated = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::Variable(crate::kernel::Variable(901)),
+                Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0)))),
+            ),
+            true,
+        );
+        assert!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordFromAlignment {
+                    alignments: vec![0],
+                    result: unrelated.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&unrelated, std::slice::from_ref(&alignment))
+            .is_err(),
+            "alignment evidence cannot establish an unrelated symbolic word"
+        );
 
         for alignments in [vec![], vec![0, 0], vec![1], vec![2]] {
             assert!(
