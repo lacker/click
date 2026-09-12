@@ -504,7 +504,9 @@ neither. Click does not split the contract into cases to find out which arm the
 caller meant. Selection also grants nothing but reading: ownership of the arm's
 cells, and its contained child resources, still come only from an explicit
 `unfold`. A loop head selects an arm the same way, with its invariants playing
-the part the requirements play in a contract.
+the part the requirements play in a contract; the frontiers that decide an arm
+are listed under [Where a matched instance's arms are
+decided](#where-a-matched-instances-arms-are-decided) below.
 
 Requirements that select no arm may still have refuted some, and the arms they
 leave can agree about a cell. What every possible arm owns is then published,
@@ -571,24 +573,57 @@ arm standing.
 
 This is a decision, not a search: each held instance's arms are visited once,
 each arm's own clauses are evaluated once, and each predicate premise about
-that exact model is read once. The conclusions are published
-where an instance enters the premises -- at contract lowering, at a loop head,
-at a loop back edge, at a loop exit, at the `unfold` that produces a child, and
-between the conjuncts of a short-circuit guard, where the truth of the earlier
-conjuncts is what refutes an arm -- and, for the instance a case split is
-about, at the frontier that split is taken from: the case split a proof
-`match` issues and the `unfold` that opens a matched instance both read the
-premises standing there. That is where a loop body learns what a child it
-unfolded earlier is, since the guard that decides it is a fact of the body and
-not of the head (`mdtests/loop_body_refutes_an_unfolded_child.md`). An
-`unfold` also states the model fact that chose the arm it opened, so the rest
-of the path -- including the back edge's structural descent -- names that
-constructor. A loop exit reads the invariants together with the failed guard, which
-is how an ascending walk learns that the frame it is left holding is the top
-one: `parent == 0` refutes every arm that states `fact parent != 0`. The
-regressions are `mdtests/resource_refuted_arm_model_fact.md` for both
+that exact model is read once.
+
+### Where a matched instance's arms are decided
+
+Selection, refutation, the cells the surviving arms agree on, and the naming of
+the cells an `unfold` exposes are one mechanism with one implementation. It
+runs at the frontiers a proof passes through, and nowhere else. There are
+eight, and every one of them decides the same way from its own premises:
+
+| Frontier | Premises it decides from |
+| --- | --- |
+| contract entry lowering | the section's `requires`, and the entry resources |
+| contract return | the contract's resources at the returned state |
+| loop head | the loop's invariants, over the head's fresh models |
+| loop back edge | the invariants, the body's effects, and the body's path facts |
+| loop exit | the invariants together with the failed guard, or a `break`'s facts |
+| guard conjunct | the conjuncts of a short-circuit guard already known true |
+| `unfold` | the premises standing at the `unfold`, for the instance it opens and for each child it produces |
+| frontier case split | the premises standing at the split, for the instance the split is about |
+
+The order inside one publication is the decision's own: refutation first,
+because a refuted arm is evidence selection reads, then the read authority and
+the arm's facts under the premises refutation just established. That is why a
+guard conjunct that rules out an ascending frame's `Top` arm can read the cell
+its two surviving arms agree on, and why an `unfold` whose arm was decided only
+by refuting the others names that arm's cells exactly as an arm decided by a
+`requires` does. A requirement of any shape refutes at contract entry exactly
+as an invariant of that shape refutes at a loop head.
+
+Each frontier consumes what it can use. A loop body learns what a child it
+unfolded earlier is at the case split, since the guard that decides it is a
+fact of the body and not of the head
+(`mdtests/loop_body_refutes_an_unfolded_child.md`). An `unfold` also states the
+model fact that chose the arm it opened, so the rest of the path -- including
+the back edge's structural descent -- names that constructor. A loop exit is
+how an ascending walk learns that the frame it is left holding is the top one:
+`parent == 0` refutes every arm that states `fact parent != 0`. Contract return
+publishes read authority alone, because the returned context's models are
+decided at the caller's own next frontier.
+
+While a section's clauses are still being evaluated one at a time, the cells
+the premises already decide are published so each clause can be addressed; the
+section's own publication is taken once, on the finished state. Re-deciding
+every arm of every held instance per clause would cost the arms of the section
+rather than the arms of the frontier.
+
+The regressions are `mdtests/resource_refuted_arm_model_fact.md` for both
 directions, `mdtests/loop_head_refuted_arm_closes_the_match.md` for the loop
-head and `mdtests/loop_ascending_walk_to_root.md` for the exit, and
+head and `mdtests/loop_ascending_walk_to_root.md` for the exit,
+`mdtests/arm_publication_sites.md` for the same refutation stated at each of
+the eight frontiers, and
 [`examples/modeled-binary-tree`](https://github.com/lacker/click/tree/master/examples/modeled-binary-tree)
 is the verified walk that needs both.
 

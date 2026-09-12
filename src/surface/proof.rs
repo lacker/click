@@ -2579,9 +2579,12 @@ pub(super) fn initial_claim_context_with_caller_owner(
             ))
         })?;
     }
-    // D7's other half: the arm the requirements select for a folded matched
-    // instance publishes its own facts, not only its cells. Published last, on
-    // the finished entry state, so the same entry state reaches the checked
+    // Contract entry lowering is one of the eight frontiers that decide a
+    // matched instance's arms, and it consumes the same publication as the
+    // other seven: the arms the requirements refute, and the facts of the arm
+    // they leave. A requirement of any shape refutes here exactly as an
+    // invariant of that shape refutes at a loop head. Published last, on the
+    // finished entry state, so the same entry state reaches the checked
     // execution and the contract's certification; an earlier publication would
     // feed the resource projection and the two would no longer agree.
     let composite_definitions = crate::surface::verification::composite_resource_definitions(
@@ -2589,12 +2592,17 @@ pub(super) fn initial_claim_context_with_caller_owner(
         predicate_environment,
         click_function_environment,
     )?;
-    for fact in crate::kernel::selected_instance_arm_binding_free_facts(
+    let publication = crate::kernel::publish_instance_arms(
         state.resources(),
         &composite_definitions,
         &state,
         &assumptions_from_propositions(&requirement_pure_facts),
-    ) {
+    );
+    for fact in publication
+        .model_facts
+        .into_iter()
+        .chain(publication.arm_facts)
+    {
         if !requirement_pure_facts.contains(&fact) {
             requirement_pure_facts.push(fact);
             entry_fact_origins.push(EntryFactOrigin::Derived);

@@ -508,16 +508,17 @@ pub(in crate::surface) fn folded_matched_instance_note(
                 AlgebraicValue::Algebraic(model) => Some((name.as_str(), model)),
                 _ => None,
             })
-            .find(|(_, model)| {
-                crate::kernel::select_resource_model_arm(model, assumptions).is_none()
-            })
-            .map(|(name, model)| {
-                let possible =
-                    crate::kernel::possible_resource_model_arm_variants(model, assumptions)
-                        .iter()
-                        .map(|variant| format!("{}::{variant}", model.algebraic_type.name))
-                        .collect::<Vec<_>>();
-                (name, possible)
+            .find_map(|(name, model)| {
+                let possible = match crate::kernel::decide_resource_model_arm(model, assumptions) {
+                    crate::kernel::ResourceModelArmDecision::Selected(_) => return None,
+                    crate::kernel::ResourceModelArmDecision::Possible(possible) => possible,
+                    crate::kernel::ResourceModelArmDecision::Open => Vec::new(),
+                };
+                let possible = possible
+                    .iter()
+                    .map(|variant| format!("{}::{variant}", model.algebraic_type.name))
+                    .collect::<Vec<_>>();
+                Some((name, possible))
             })
     }
     let Some((instance, field, possible)) = state

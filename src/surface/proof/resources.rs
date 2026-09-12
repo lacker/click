@@ -321,13 +321,14 @@ fn materialize_folded_composite_resource_memory(
 /// The match arm one section's premises select for a held resource instance,
 /// as a resource definition whose body is that arm's own.
 ///
-/// This is the contract-lowering and loop-head half of decision D7. The
-/// decision itself is the kernel's [`crate::kernel::select_resource_model_arm`]:
-/// a constructor premise, an existential witness, or disequalities that leave
-/// one variant. When the premises leave several arms possible, what every one
-/// of them owns is projected instead; see [`common_possible_instance_arm`].
-/// When they leave the model open the instance stays folded, and a read through
-/// it fails with the note `folded_matched_instance_note` adds.
+/// This is the surface side of decision D7, and it asks the same question the
+/// kernel's [`crate::kernel::publish_instance_arms`] asks: the decision itself
+/// is [`crate::kernel::decide_resource_model_arm`]. `Selected` projects that
+/// arm's cells; `Possible` projects what every surviving arm owns, which is
+/// [`common_possible_instance_arm`], the clause-level reading of the very
+/// intersection the kernel's read authority takes over evaluated ranges;
+/// `Open` leaves the instance folded, and a read through it fails with the
+/// note `folded_matched_instance_note` adds.
 ///
 /// The returned definition is the arm scope `resource_match_arm_scopes` builds:
 /// its `contains` holds only the arm's own memory clauses, so projecting it
@@ -360,8 +361,8 @@ pub(in crate::surface) fn selected_resource_instance_arm(
         |name| resource_environment.get(name),
     )
     .ok()?;
-    match crate::kernel::select_resource_model_arm(model, assumptions) {
-        Some(selection) => {
+    match crate::kernel::decide_resource_model_arm(model, assumptions) {
+        crate::kernel::ResourceModelArmDecision::Selected(selection) => {
             let arm = scopes
                 .into_iter()
                 .find(|(variant, _, _)| variant == selection.variant())
@@ -382,14 +383,13 @@ pub(in crate::surface) fn selected_resource_instance_arm(
         }
         // No single arm: what every arm the premises leave possible owns is
         // still readable, and that is what this projects.
-        None => common_possible_instance_arm(
-            scopes,
-            &crate::kernel::possible_resource_model_arm_variants(model, assumptions),
-        )
-        .map(|arm| SelectedInstanceArm {
-            arm,
-            bindings: Vec::new(),
-        }),
+        crate::kernel::ResourceModelArmDecision::Possible(possible) => {
+            common_possible_instance_arm(scopes, &possible).map(|arm| SelectedInstanceArm {
+                arm,
+                bindings: Vec::new(),
+            })
+        }
+        crate::kernel::ResourceModelArmDecision::Open => None,
     }
 }
 
@@ -403,8 +403,10 @@ pub(in crate::surface) struct SelectedInstanceArm {
 
 /// The arm scope holding exactly the memory clauses every possible arm owns.
 ///
-/// This is decision D7 extended from the arm a section's premises select to the
-/// arms they leave possible (gap 39). `requires c.model != Context::Top` on a
+/// Not a decision of its own: it is handed the variants
+/// [`crate::kernel::decide_resource_model_arm`] left possible and projects the
+/// clauses they agree on, exactly as the kernel's read authority intersects
+/// the ranges those clauses evaluate to. `requires c.model != Context::Top` on a
 /// three-constructor frame decides nothing, but the `Left` and `Right` arms it
 /// leaves both own `parent->rb_right`, so that cell is readable however the
 /// model turns out.

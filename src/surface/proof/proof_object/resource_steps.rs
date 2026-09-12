@@ -162,9 +162,19 @@ impl<'a> Proof<'a> {
             selected_children.as_deref(),
         )
         .map_err(|message| self.step_error(message))?;
+        let mut facts = self.facts().clone();
+        for fact in &added {
+            facts = facts.with_kernel_checked_fact(fact.clone());
+        }
         // The unfold exposed this arm's cells; name them in the snapshot so
         // the body's facts and the C's own reads of those cells share one
         // load identity. See `materialize_unfolded_instance_arm_cells`.
+        //
+        // The naming is decided under the premises the rewrite itself
+        // published, not under the ones standing before it: an `unfold` whose
+        // arm was decided only by refuting the others names that arm's cells
+        // exactly as an arm decided by a `requires` does. That is one arm
+        // publication per frontier, consumed whole.
         let after = if unfold {
             crate::surface::proof::resources::materialize_unfolded_instance_arm_cells(
                 context.resource_environment,
@@ -173,15 +183,11 @@ impl<'a> Proof<'a> {
                 context.arguments,
                 after,
                 instance,
-                self.facts().assumptions(),
+                facts.assumptions(),
             )
         } else {
             after
         };
-        let mut facts = self.facts().clone();
-        for fact in &added {
-            facts = facts.with_kernel_checked_fact(fact.clone());
-        }
         let updated_branch = if let Some(goal) = outcome {
             execution
                 .core

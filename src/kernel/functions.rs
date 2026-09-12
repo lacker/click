@@ -9496,7 +9496,7 @@ fn evaluate_contract_return_resource_context(
             .resources()
             .clone()
             .unchecked_with_facts(context.facts().iter().cloned());
-        let views = selected_instance_arm_views(
+        let views = instance_arm_views(
             &supply,
             interface.composite_resource_definitions(),
             state,
@@ -10807,7 +10807,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     // needs is the one those premises leave (A26, gap 57b). The work is this
     // one instance's own arms.
     let instance_refutations = if definition.matched.is_some() {
-        refuted_instance_arm_model_facts_for_instance(instance, definitions, state, assumptions)
+        instance_arm_model_facts(instance, definitions, state, assumptions)
     } else {
         Vec::new()
     };
@@ -11178,7 +11178,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         // `left.model != Empty` from `root->left != 0`, and the walk that
         // stops learns `left.model == Empty` from `root->left == 0`.
         for child in &introduced_children {
-            facts.extend(refuted_instance_arm_model_facts_for_instance(
+            facts.extend(instance_arm_model_facts(
                 child,
                 definitions,
                 &next,
@@ -11366,31 +11366,53 @@ impl ResourceModelArmSelection {
     }
 }
 
-/// The one arm-selection decision in Click: premises plus constructor
-/// exhaustiveness against one matched model value.
+/// What one frontier's premises say about a matched resource model: the arm
+/// they select, the arms they leave possible, or nothing.
 ///
-/// Contract lowering asks it for a `requires`-selected arm; a loop head asks
-/// the same question with its invariants playing the part of the requirements,
-/// and a fold or unfold asks it through [`selected_instance_match_arm`], which
-/// needs the stronger `Constructor` answer because it binds the arm's fields.
+/// `Possible` carries two or more variants, so a caller never has to ask a
+/// second question to tell "one arm" from "several": `Selected` is the answer
+/// that grants an arm's own cells and facts, `Possible` the answer that grants
+/// only what every survivor agrees on, and `Open` the answer that grants
+/// nothing and keeps the instance folded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceModelArmDecision {
+    Selected(ResourceModelArmSelection),
+    Possible(Vec<String>),
+    Open,
+}
+
+/// The one arm decision in Click: premises plus constructor exhaustiveness
+/// against one matched model value.
 ///
-/// Selection is decided, never searched: a constructor premise answers
+/// Every frontier that decides a matched instance's arms reaches this
+/// function, through [`publish_instance_arms`] for a whole context or through
+/// [`select_resource_model_arm`] for one model. Contract lowering asks it for
+/// a `requires`-selected arm; a loop head asks the same question with its
+/// invariants playing the part of the requirements, and a fold or unfold asks
+/// it through [`selected_instance_match_arm`], which needs the stronger
+/// `Constructor` answer because it binds the arm's fields.
+///
+/// The answer is decided, never searched: a constructor premise answers
 /// outright, an existential premise witnesses one variant, and disequalities
-/// against field-free constructors rule variants out until one is left. Any
-/// other state of evidence is `None` — the caller keeps the model folded
-/// rather than proving by cases.
+/// against field-free constructors rule variants out. One variant left is
+/// `Selected`; two or more, with at least one ruled out, is `Possible`; any
+/// other state of evidence is `Open`. A context that has ruled out every
+/// declared variant is inconsistent and not this decision's business to
+/// exploit, so it is `Open` too.
 ///
 /// Cost is the number of premises about this exact value plus the declared
 /// variants of its type. Unrelated premises are never visited.
-pub fn select_resource_model_arm(
+pub fn decide_resource_model_arm(
     model: &AlgebraicTerm,
     assumptions: &PureFactContext,
-) -> Option<ResourceModelArmSelection> {
+) -> ResourceModelArmDecision {
     if let Some(constructor) = assumptions.known_algebraic_constructor(model) {
-        return Some(ResourceModelArmSelection::Constructor(constructor));
+        return ResourceModelArmDecision::Selected(ResourceModelArmSelection::Constructor(
+            constructor,
+        ));
     }
     let AlgebraicTermNode::Variable(variable) = &model.node else {
-        return None;
+        return ResourceModelArmDecision::Open;
     };
     let declared = model
         .algebraic_type
@@ -11399,7 +11421,7 @@ pub fn select_resource_model_arm(
         .map(|variant| variant.name.as_str())
         .collect::<BTreeSet<_>>();
     if declared.is_empty() {
-        return None;
+        return ResourceModelArmDecision::Open;
     }
     let mut witnessed = BTreeMap::new();
     let mut excluded = BTreeMap::new();
@@ -11420,24 +11442,52 @@ pub fn select_resource_model_arm(
     // to be inconsistent, which is not this decision's business to exploit.
     // Cite what decided the arm, so an expansion of the selected arm names the
     // premises a reader would look for.
-    let selected = if let [(variant, premise)] = witnessed.iter().collect::<Vec<_>>().as_slice() {
+    if let [(variant, premise)] = witnessed.iter().collect::<Vec<_>>().as_slice() {
         super::assumptions::record_reasoning_provenance(assumptions, premise);
-        **variant
-    } else if witnessed.is_empty() {
-        let excluded_variants = excluded.keys().copied().collect::<BTreeSet<_>>();
-        let mut remaining = declared.difference(&excluded_variants);
-        let first = *remaining.next()?;
-        if remaining.next().is_some() {
-            return None;
-        }
-        for premise in excluded.values() {
-            super::assumptions::record_reasoning_provenance(assumptions, premise);
-        }
-        first
-    } else {
-        return None;
+        return ResourceModelArmDecision::Selected(ResourceModelArmSelection::Variant(
+            (**variant).to_owned(),
+        ));
+    }
+    if !witnessed.is_empty() {
+        return ResourceModelArmDecision::Open;
+    }
+    let excluded_variants = excluded.keys().copied().collect::<BTreeSet<_>>();
+    let possible = declared
+        .difference(&excluded_variants)
+        .copied()
+        .collect::<Vec<_>>();
+    let decision = match possible.as_slice() {
+        [] => return ResourceModelArmDecision::Open,
+        [only] => ResourceModelArmDecision::Selected(ResourceModelArmSelection::Variant(
+            (*only).to_owned(),
+        )),
+        _ if excluded.is_empty() => return ResourceModelArmDecision::Open,
+        several => ResourceModelArmDecision::Possible(
+            several
+                .iter()
+                .map(|variant| (*variant).to_owned())
+                .collect(),
+        ),
     };
-    Some(ResourceModelArmSelection::Variant(selected.to_string()))
+    for premise in excluded.values() {
+        super::assumptions::record_reasoning_provenance(assumptions, premise);
+    }
+    decision
+}
+
+/// The arm one frontier's premises select, when they select exactly one.
+///
+/// A thin reading of [`decide_resource_model_arm`]: the callers that can only
+/// act on a decided arm — a fold, an unfold, a termination measure — ask this
+/// one instead of matching the three-way answer.
+pub fn select_resource_model_arm(
+    model: &AlgebraicTerm,
+    assumptions: &PureFactContext,
+) -> Option<ResourceModelArmSelection> {
+    match decide_resource_model_arm(model, assumptions) {
+        ResourceModelArmDecision::Selected(selection) => Some(selection),
+        ResourceModelArmDecision::Possible(_) | ResourceModelArmDecision::Open => None,
+    }
 }
 
 fn instance_body_evaluation(
@@ -13812,7 +13862,7 @@ fn resource_clause_section_supply(
     // A matched instance supplies the cells of the arm this section's
     // premises select, and nothing when they select none (D7). The arm stays
     // folded either way: only its read authority is published here.
-    let mut views = selected_instance_arm_views(&base, definitions, state, assumptions);
+    let mut views = instance_arm_views(&base, definitions, state, assumptions);
     let Some(expanded) =
         expand_all_composite_resource_facts(&base, definitions, state.memory(), assumptions)
     else {
@@ -13830,9 +13880,99 @@ fn resource_clause_section_supply(
     base.unchecked_with_facts(views)
 }
 
-/// The read authority every folded matched instance of `context` publishes
-/// for the arm this context's premises select.
-pub(super) fn selected_instance_arm_views(
+/// What one frontier's premises decide about the folded matched instances a
+/// context holds: the single publication point of decision D7.
+///
+/// `model_facts` are the negative `model != Variant` conclusions of every
+/// refuted field-free arm, plus the positive `model == Variant` when
+/// refutation leaves exactly one field-free arm. `views` are the cells the
+/// decided arm owns, or the cells every surviving arm agrees on. `arm_facts`
+/// are the decided arm's own facts that name no constructor binding.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ArmPublication {
+    pub model_facts: Vec<Proposition>,
+    pub views: Vec<CResourceFact>,
+    pub arm_facts: Vec<Proposition>,
+}
+
+/// Decides the arms of every folded matched instance `context` holds, from the
+/// premises in `assumptions` plus the arms' own binding-free facts.
+///
+/// This is decision D7, and it is decided in exactly one place. Every frontier
+/// a proof passes through — contract entry lowering, contract return, a loop
+/// head, a loop back edge, a loop exit, a guard conjunct, an `unfold`, a
+/// frontier case split — calls this with its own premises and consumes the
+/// same publication, so a refutation that fires at one of them fires at all of
+/// them. `docs/concepts/resources.md` lists the sites; wiring a mechanism to
+/// one site alone is what this function exists to prevent.
+///
+/// The order inside is the decision's own: refutation first, because a refuted
+/// arm is evidence the selection reads, then read authority and the arm's own
+/// facts under the premises refutation just established. That is why a guard
+/// conjunct that rules out an ascending frame's `Top` arm can read the cell
+/// its two surviving arms agree on.
+///
+/// Bounded exactly as its parts are: one pass over the instances this context
+/// holds, and per instance one evaluation of its own body and one of each of
+/// its own arms. Nothing project-wide or path-wide is scanned.
+pub(crate) fn publish_instance_arms(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> ArmPublication {
+    if definitions.is_empty() {
+        return ArmPublication::default();
+    }
+    let instances = context
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.resource() {
+            CResource::Instance(instance) => Some(instance),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut published = ArmPublication::default();
+    for instance in &instances {
+        published.model_facts.extend(instance_arm_model_facts(
+            instance,
+            definitions,
+            state,
+            assumptions,
+        ));
+    }
+    let decided = published
+        .model_facts
+        .iter()
+        .cloned()
+        .fold(assumptions.clone(), PureFactContext::assume_proposition);
+    for instance in &instances {
+        published.views.extend(instance_arm_read_authority(
+            instance,
+            definitions,
+            state,
+            &decided,
+        ));
+        published.arm_facts.extend(decided_instance_arm_facts(
+            instance,
+            definitions,
+            state,
+            &decided,
+        ));
+    }
+    published
+}
+
+/// The read-authority half of [`publish_instance_arms`], for the point inside
+/// a frontier where a section's own clauses are being evaluated one at a time.
+///
+/// A frontier's publication is taken once, on the finished state, and it is
+/// what decides models there. While a section is still being evaluated its
+/// clauses need only to be addressable, so this publishes the cells the
+/// premises already decide and re-decides nothing: refuting every arm of every
+/// held instance again per clause would cost the arms of the section rather
+/// than the arms of the frontier.
+fn instance_arm_views(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
@@ -13848,17 +13988,15 @@ pub(super) fn selected_instance_arm_views(
             CResource::Instance(instance) => Some(instance),
             _ => None,
         })
-        .flat_map(|instance| {
-            selected_instance_arm_read_authority(instance, definitions, state, assumptions)
-        })
+        .flat_map(|instance| instance_arm_read_authority(instance, definitions, state, assumptions))
         .collect()
 }
 
-/// The cells owned by the match arm this context's premises select for
+/// The cells owned by the match arm this frontier's premises select for
 /// `instance`, or by every arm they leave possible, as views.
 ///
-/// This is the kernel half of decision D7. The decision is
-/// [`select_resource_model_arm`]; what it selects is published as read
+/// This is the read-authority half of decision D7. The decision is
+/// [`decide_resource_model_arm`]; what it decides is published as read
 /// authority only, so a contract clause or requirement may read a cell a
 /// folded matched instance owns exactly as it may read one a folded
 /// `if`-bodied composite owns. Ownership is untouched: only an explicit
@@ -13877,7 +14015,7 @@ pub(super) fn selected_instance_arm_views(
 /// arm's clauses. An instance whose model carries no variant evidence at all,
 /// or whose arms name a constructor binding in a memory clause, publishes
 /// nothing.
-fn selected_instance_arm_read_authority(
+fn instance_arm_read_authority(
     instance: &ResourceInstance,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
@@ -13895,9 +14033,10 @@ fn selected_instance_arm_read_authority(
     let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
         return Vec::new();
     };
-    let variants = match select_resource_model_arm(model, assumptions) {
-        Some(selection) => vec![selection.variant().to_owned()],
-        None => possible_resource_model_arm_variants(model, assumptions),
+    let variants = match decide_resource_model_arm(model, assumptions) {
+        ResourceModelArmDecision::Selected(selection) => vec![selection.variant().to_owned()],
+        ResourceModelArmDecision::Possible(variants) => variants,
+        ResourceModelArmDecision::Open => Vec::new(),
     };
     if variants.is_empty() {
         return Vec::new();
@@ -13965,66 +14104,6 @@ fn instance_arm_memory_views(
     )
 }
 
-/// The variants a context's premises leave possible for a matched model whose
-/// arm they do not decide.
-///
-/// This is the other side of [`select_resource_model_arm`] and reads the same
-/// evidence index: premises that rule a field-free constructor out, keyed by
-/// the exact value they describe. Selection answers when one variant is left;
-/// this answers with the two or more that are, so read authority the survivors
-/// agree on can still be published.
-///
-/// A witnessed variant, a model that already carries a constructor, and an
-/// unrefuted model are all selection's business, not this one: they answer
-/// empty. So does a context that has excluded every declared variant, which is
-/// inconsistent and not this decision's business to exploit.
-///
-/// Cost is the premises about this exact value plus the declared variants of
-/// its type.
-pub(crate) fn possible_resource_model_arm_variants(
-    model: &AlgebraicTerm,
-    assumptions: &PureFactContext,
-) -> Vec<String> {
-    let AlgebraicTermNode::Variable(variable) = &model.node else {
-        return Vec::new();
-    };
-    let declared = model
-        .algebraic_type
-        .variants
-        .iter()
-        .map(|variant| variant.name.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut excluded = BTreeSet::new();
-    let mut premises = Vec::new();
-    for (premise, evidence) in assumptions.algebraic_variant_evidence(*variable) {
-        if !declared.contains(evidence.variant.as_str()) {
-            continue;
-        }
-        match evidence.kind {
-            AlgebraicVariantEvidenceKind::Witnessed => return Vec::new(),
-            AlgebraicVariantEvidenceKind::Excluded => {
-                if excluded.insert(evidence.variant.as_str()) {
-                    premises.push(premise);
-                }
-            }
-        }
-    }
-    if excluded.is_empty() {
-        return Vec::new();
-    }
-    let possible = declared
-        .difference(&excluded)
-        .map(|variant| (*variant).to_owned())
-        .collect::<Vec<_>>();
-    if possible.len() < 2 {
-        return Vec::new();
-    }
-    for premise in premises {
-        super::assumptions::record_reasoning_provenance(assumptions, premise);
-    }
-    possible
-}
-
 /// The negation of one already-lowered body fact, in the shape the exact
 /// checkers decide.
 ///
@@ -14071,30 +14150,12 @@ fn refutation_of_body_fact(proposition: &Proposition) -> Option<Proposition> {
 /// once, each arm's own clauses are evaluated once, and the refutation is the
 /// exact-fact check. An instance whose model already carries a constructor is
 /// skipped. Nothing outside the instances held and their own arms is visited.
-pub(crate) fn refuted_instance_arm_model_facts(
-    context: &ResourceContext,
-    definitions: &[CCompositeResourceDefinition],
-    state: &CState,
-    assumptions: &PureFactContext,
-) -> Vec<Proposition> {
-    if definitions.is_empty() {
-        return Vec::new();
-    }
-    context
-        .facts()
-        .iter()
-        .filter_map(|fact| match fact.resource() {
-            CResource::Instance(instance) => Some(instance),
-            _ => None,
-        })
-        .flat_map(|instance| {
-            refuted_instance_arm_model_facts_for_instance(instance, definitions, state, assumptions)
-        })
-        .collect()
-}
-
-/// [`refuted_instance_arm_model_facts`] for one held instance.
-pub(in crate::kernel) fn refuted_instance_arm_model_facts_for_instance(
+///
+/// [`publish_instance_arms`] calls this for every instance a frontier's
+/// context holds; the two frontiers that are about one instance — the `unfold`
+/// that opens it and the case split that eliminates its constructor — call it
+/// directly for that instance alone.
+pub(in crate::kernel) fn instance_arm_model_facts(
     instance: &ResourceInstance,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
@@ -14564,70 +14625,55 @@ fn arm_binding_free_facts(
         .collect()
 }
 
-/// The facts of the arm a context's premises select for each folded matched
-/// instance it holds, restricted to the facts that name no constructor
-/// binding.
+/// The facts of the arm a frontier's premises decide for one folded matched
+/// instance, restricted to the facts that name no constructor binding.
 ///
-/// This is the other half of decision D7 at contract lowering: A1 published
-/// the selected arm's cells as read authority, and this publishes what that
-/// arm says about them. `consumes t: tree_at(root); requires t.model !=
-/// HeapTree::Empty;` selects the `Node` arm, whose `fact p != 0` is then an
-/// entry premise, so a walk that starts with `if (root == 0)` decides the
-/// guard instead of needing an infeasible `branch`.
+/// This is the last part of decision D7: the read authority says which cells
+/// the arm owns, and this says what the arm states about them. `consumes t:
+/// tree_at(root); requires t.model != HeapTree::Empty;` selects the `Node`
+/// arm, whose `fact p != 0` is then an entry premise, so a walk that starts
+/// with `if (root == 0)` decides the guard instead of needing an infeasible
+/// `branch`.
 ///
 /// A fact naming a binding stays unpublished: the binding is an unknown of the
-/// arm, and only an `unfold` or a proof `match` names it. Cost is the selected
-/// arm's own clauses per instance held.
-pub(crate) fn selected_instance_arm_binding_free_facts(
-    context: &ResourceContext,
+/// arm, and only an `unfold` or a proof `match` names it. Cost is the decided
+/// arm's own clauses.
+fn decided_instance_arm_facts(
+    instance: &ResourceInstance,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Vec<Proposition> {
-    if definitions.is_empty() {
-        return Vec::new();
-    }
-    context
-        .facts()
+    let Some(definition) = definitions
         .iter()
-        .filter_map(|fact| match fact.resource() {
-            CResource::Instance(instance) => Some(instance),
-            _ => None,
-        })
-        .flat_map(|instance| {
-            let Some(definition) = definitions
-                .iter()
-                .find(|definition| definition.name() == instance.name())
-            else {
-                return Vec::new();
-            };
-            let Some(body) = definition.matched.as_ref() else {
-                return Vec::new();
-            };
-            let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index)
-            else {
-                return Vec::new();
-            };
-            let Some(selection) = select_resource_model_arm(model, assumptions) else {
-                return Vec::new();
-            };
-            let Some(arm) = body
-                .arms
-                .iter()
-                .find(|arm| arm.variant == selection.variant())
-            else {
-                return Vec::new();
-            };
-            let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
-                return Vec::new();
-            };
-            let evaluation_assumptions = assumptions
-                .clone()
-                .allow_symbolic_contract_loads()
-                .prefer_symbolic_external_loads();
-            arm_binding_free_facts(&evaluation, arm, &evaluation_assumptions)
-        })
-        .collect()
+        .find(|definition| definition.name() == instance.name())
+    else {
+        return Vec::new();
+    };
+    let Some(body) = definition.matched.as_ref() else {
+        return Vec::new();
+    };
+    let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
+        return Vec::new();
+    };
+    let Some(selection) = select_resource_model_arm(model, assumptions) else {
+        return Vec::new();
+    };
+    let Some(arm) = body
+        .arms
+        .iter()
+        .find(|arm| arm.variant == selection.variant())
+    else {
+        return Vec::new();
+    };
+    let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
+        return Vec::new();
+    };
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    arm_binding_free_facts(&evaluation, arm, &evaluation_assumptions)
 }
 
 /// Whether a resource body fact is a comparison of C expressions in which one

@@ -4916,24 +4916,26 @@ fn resource_model_possible_arms_are_the_unrefuted_ones() {
 
     // Nothing refuted is selection's business, not this decision's: an
     // unconstrained model publishes no common authority at all.
-    assert!(
-        possible_resource_model_arm_variants(&model, &PureFactContext::new()).is_empty(),
+    assert_eq!(
+        decide_resource_model_arm(&model, &PureFactContext::new()),
+        ResourceModelArmDecision::Open,
         "an unrefuted model has no refuted arm to reason from"
     );
 
     // One exclusion of three leaves exactly the two arms that must agree.
     let excluded = PureFactContext::new().assume_proposition(exclusion(&empty));
     assert_eq!(
-        possible_resource_model_arm_variants(&model, &excluded),
-        vec!["Filled".to_string(), "Reserved".to_string()]
+        decide_resource_model_arm(&model, &excluded),
+        ResourceModelArmDecision::Possible(vec!["Filled".to_string(), "Reserved".to_string()])
     );
 
     // Two exclusions leave one arm, which selection answers for.
     let decided = excluded.assume_proposition(exclusion(&reserved));
-    assert!(possible_resource_model_arm_variants(&model, &decided).is_empty());
     assert_eq!(
-        select_resource_model_arm(&model, &decided),
-        Some(ResourceModelArmSelection::Variant("Filled".to_string()))
+        decide_resource_model_arm(&model, &decided),
+        ResourceModelArmDecision::Selected(ResourceModelArmSelection::Variant(
+            "Filled".to_string()
+        ))
     );
 }
 

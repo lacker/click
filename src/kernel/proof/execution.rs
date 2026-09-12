@@ -4791,7 +4791,7 @@ impl ExecutionProofCore {
     /// `facts` together with the model facts this frontier's premises force
     /// on the instance whose model is `value`.
     ///
-    /// This is [`crate::kernel::refuted_instance_arm_model_facts`] applied at
+    /// This is [`crate::kernel::publish_instance_arms`]' refutation applied at
     /// one frontier rather than at contract lowering, a loop head, a back
     /// edge, or an `unfold`. Only the instance the case split is about is
     /// visited, and only when its model is still a symbolic variable, so the
@@ -4825,7 +4825,7 @@ impl ExecutionProofCore {
             }) {
                 continue;
             }
-            for published in crate::kernel::functions::refuted_instance_arm_model_facts_for_instance(
+            for published in crate::kernel::functions::instance_arm_model_facts(
                 instance,
                 definitions,
                 state,

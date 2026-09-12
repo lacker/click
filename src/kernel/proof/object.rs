@@ -1296,12 +1296,14 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         // guard `root->left != 0` exactly here, which is what lets the next
         // iteration's invariant select the arm its measure and its `unfold`
         // need.
-        for fact in crate::kernel::refuted_instance_arm_model_facts(
+        for fact in crate::kernel::publish_instance_arms(
             back_edge_state.resources(),
             definitions,
             &back_edge_state,
             facts.assumptions(),
-        ) {
+        )
+        .model_facts
+        {
             facts = facts.with_fact(fact);
         }
         let mut obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(

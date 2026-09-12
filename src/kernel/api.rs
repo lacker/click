@@ -410,12 +410,15 @@ fn c_loop_preservation_contexts_with_mode(
             // `parent != 0` against the `Top` arm's `fact parent == 0`, which
             // is what lets its proof `match` close that arm by contradiction
             // instead of unfolding a frame it does not hold.
-            pure_facts.extend(crate::kernel::refuted_instance_arm_model_facts(
-                top_state.resources(),
-                definitions,
-                &top_state,
-                &context_assumptions,
-            ));
+            pure_facts.extend(
+                crate::kernel::publish_instance_arms(
+                    top_state.resources(),
+                    definitions,
+                    &top_state,
+                    &context_assumptions,
+                )
+                .model_facts,
+            );
             pure_facts.sort();
             pure_facts.dedup();
             contexts.push(CLoopPreservationContext {

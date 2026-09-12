@@ -2538,12 +2538,14 @@ fn execute_c_while_exit_paths(
                 // loop close those arms by contradiction instead of
                 // unfolding a frame whose cells the arm does not describe.
                 let exit_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
-                for fact in crate::kernel::refuted_instance_arm_model_facts(
+                for fact in crate::kernel::publish_instance_arms(
                     top_state.resources(),
                     &composite_resource_definitions,
                     &top_state,
                     &exit_assumptions,
-                ) {
+                )
+                .model_facts
+                {
                     facts.push(ExecutionPureFact::new(fact));
                 }
                 exits.push((facts, obligations));
@@ -3508,12 +3510,13 @@ fn with_selected_arm_views(
         return Ok(state.clone());
     };
     let head_assumptions = assumptions_with_path_context(assumptions, facts, obligations);
-    let views = crate::kernel::functions::selected_instance_arm_views(
+    let views = crate::kernel::publish_instance_arms(
         state.resources(),
         definitions,
         state,
         &head_assumptions,
-    );
+    )
+    .views;
     if views.is_empty() {
         return Ok(state.clone());
     }
@@ -4786,19 +4789,13 @@ fn with_guard_prefix_arm_views(
     obligations: &[ProofObligation],
 ) -> CState {
     let prefix_assumptions = assumptions_with_path_context(assumptions, facts, obligations);
-    let refuted = crate::kernel::refuted_instance_arm_model_facts(
+    let views = crate::kernel::publish_instance_arms(
         state.resources(),
         definitions,
         state,
         &prefix_assumptions,
-    );
-    let view_assumptions = assumptions_with_propositions(&prefix_assumptions, &refuted);
-    let views = crate::kernel::functions::selected_instance_arm_views(
-        state.resources(),
-        definitions,
-        state,
-        &view_assumptions,
-    );
+    )
+    .views;
     if views.is_empty() {
         return state.clone();
     }
