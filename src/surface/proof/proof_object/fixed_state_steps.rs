@@ -37,6 +37,45 @@ fn outcome_case_region<'a>(
     next
 }
 
+fn descend_outcome_case(
+    nodes: &[OutcomeCase<'_>],
+    node: &OutcomeCase<'_>,
+    lowered: &Proposition,
+    value: bool,
+    authority: &ProofFacts,
+    query: &ProofFacts,
+    facts: &mut Vec<Proposition>,
+    provenance: OutcomeProvenance,
+    fact: Option<Proposition>,
+    lower: &impl Fn(&ClickProposition, &[Proposition]) -> Result<Proposition, ClickError>,
+    emit: &mut impl FnMut(&[Proposition], OutcomeProvenance),
+) -> Result<OutcomeEvidenceFork, ClickError> {
+    let mut child = provenance;
+    child.branch_decisions.push(ExecutionBranchDecision {
+        condition: node.condition.clone(),
+        value,
+    });
+    child
+        .surface_propositions
+        .record_lowering(node.condition, lowered)?;
+    let old_len = facts.len();
+    if let Some(fact) = fact {
+        facts.push(fact);
+    }
+    let result = partition_outcome_cases(
+        nodes,
+        node.arms[usize::from(!value)],
+        authority,
+        query,
+        facts,
+        child,
+        lower,
+        emit,
+    );
+    facts.truncate(old_len);
+    result
+}
+
 fn partition_outcome_cases(
     nodes: &[OutcomeCase<'_>],
     next: Option<usize>,
@@ -64,35 +103,10 @@ fn partition_outcome_cases(
     } else {
         None
     };
-    let mut descend =
-        |value: bool, authority: &ProofFacts, query: &ProofFacts, fact: Option<Proposition>| {
-            let mut child = provenance.clone();
-            child.branch_decisions.push(ExecutionBranchDecision {
-                condition: node.condition.clone(),
-                value,
-            });
-            child
-                .surface_propositions
-                .record_lowering(node.condition, &lowered)?;
-            let old_len = facts.len();
-            if let Some(fact) = fact {
-                facts.push(fact);
-            }
-            let result = partition_outcome_cases(
-                nodes,
-                node.arms[usize::from(!value)],
-                authority,
-                query,
-                facts,
-                child,
-                lower,
-                emit,
-            );
-            facts.truncate(old_len);
-            result
-        };
     if let Some(value) = known {
-        return descend(value, authority, query, None);
+        return descend_outcome_case(
+            nodes, node, &lowered, value, authority, query, facts, provenance, None, lower, emit,
+        );
     }
     let partition = CheckedProofCasePartition::check(authority, positive.clone(), negative.clone())
         .ok_or_else(|| {
@@ -104,17 +118,31 @@ fn partition_outcome_cases(
         authority.with_kernel_checked_fact(positive.clone()),
         authority.with_kernel_checked_fact(negative.clone()),
     ];
-    let then_arm = descend(
+    let then_arm = descend_outcome_case(
+        nodes,
+        node,
+        &lowered,
         true,
         &arm_facts[0],
         &query.with_kernel_checked_fact(positive.clone()),
+        facts,
+        provenance.clone(),
         Some(positive),
+        lower,
+        emit,
     )?;
-    let else_arm = descend(
+    let else_arm = descend_outcome_case(
+        nodes,
+        node,
+        &lowered,
         false,
         &arm_facts[1],
         &query.with_kernel_checked_fact(negative.clone()),
+        facts,
+        provenance,
         Some(negative),
+        lower,
+        emit,
     )?;
     if matches!(
         (&then_arm, &else_arm),

@@ -720,7 +720,22 @@ impl<'a> TermRewrite<'a> {
                 Box::new(self.rewrite_spec_proposition(right)?),
             ),
             SpecProposition::Not(body) => {
-                SpecProposition::Not(Box::new(self.rewrite_spec_proposition(body)?))
+                // Keep a deeply nested unary chain out of the recursive
+                // proposition walker.  Besides making this common shape
+                // stack-safe, charge each skipped node exactly as the
+                // recursive form did.
+                let mut not_count = 1;
+                let mut inner = body.as_ref();
+                while let SpecProposition::Not(next) = inner {
+                    self.spec_visit()?;
+                    not_count += 1;
+                    inner = next.as_ref();
+                }
+                let mut rewritten = self.rewrite_spec_proposition(inner)?;
+                for _ in 0..not_count {
+                    rewritten = SpecProposition::Not(Box::new(rewritten));
+                }
+                rewritten
             }
             SpecProposition::Implies(left, right) => SpecProposition::Implies(
                 Box::new(self.rewrite_spec_proposition(left)?),
