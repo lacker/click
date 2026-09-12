@@ -91,7 +91,7 @@ impl<'a> Proof<'a> {
             });
         }
 
-        let transition = match &step {
+        let mut transition = match &step {
             ProofStep::Induct {
                 parameter,
                 hypothesis,
@@ -144,6 +144,16 @@ impl<'a> Proof<'a> {
                     .step_error("this proof step has not yet migrated to the checked `Proof` API"))
             }
         }?;
+
+        // A rewrite or transport changes the cited proposition's snapshot
+        // context. Do not let a source-epoch projection survive that
+        // boundary and accidentally make a later citation look current.
+        if matches!(
+            step,
+            ProofStep::Rewrite(_) | ProofStep::TransportUsing { .. }
+        ) {
+            transition.clear_chosen_projection();
+        }
 
         Ok(Self {
             site: self.site.clone(),
