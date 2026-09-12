@@ -2171,6 +2171,20 @@ pub(super) fn initial_claim_context(
         claim_label,
     )?;
     state = population_state;
+    // Keep an authority-only snapshot before folded composite cells or
+    // observable body facts are materialized.  Those conveniences are valid
+    // for lowering the proof's later pure context, but they must not help the
+    // entry resource evaluator bootstrap a load that the clause set does not
+    // supply.
+    let entry_authority_state = state.clone();
+    let entry_loadability_facts = explicit_entry_loadability_facts(
+        function_block,
+        parsed_function,
+        &arguments,
+        &entry_authority_state,
+        predicate_environment,
+        click_function_environment,
+    )?;
     state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
@@ -2379,6 +2393,20 @@ pub(super) fn initial_claim_context(
             requirement_pure_facts.insert(0, kernel);
         }
     }
+    // Resource projection can legitimately publish loadability observations
+    // for proof planning, but those observations are not entry assumptions.
+    // Rebuild the evaluator's pure context from the non-loadability facts and
+    // the explicit loadability requirements captured before projection.
+    let mut entry_pure_facts = requirement_pure_facts
+        .iter()
+        .filter(|fact| !proposition_contains_memory_loadable(fact))
+        .cloned()
+        .collect::<Vec<_>>();
+    for fact in entry_loadability_facts {
+        if !entry_pure_facts.contains(&fact) {
+            entry_pure_facts.push(fact);
+        }
+    }
     // Resource terms are first built provisionally so dependent arguments can
     // retain their symbolic loads.  The kernel then evaluates the complete
     // clause section against its explicit supplies and the pure requirements;
@@ -2393,9 +2421,11 @@ pub(super) fn initial_claim_context(
         click_function_environment,
         state,
         &arguments,
-        &requirement_pure_facts,
+        &entry_pure_facts,
         include_owned_composite_cores,
         claim_label,
+        &entry_authority_state.resources().clone(),
+        &entry_authority_state.memory().clone(),
     )?;
     for requirement in function_block.requires() {
         let Requirement::Resource(resource) = requirement.inner() else {
@@ -2427,6 +2457,62 @@ pub(super) fn initial_claim_context(
     ))
 }
 
+fn proposition_contains_memory_loadable(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::CMemoryLoadable { .. } => true,
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            proposition_contains_memory_loadable(left)
+                || proposition_contains_memory_loadable(right)
+        }
+        Proposition::Not(proposition)
+        | Proposition::ForAll {
+            body: proposition, ..
+        }
+        | Proposition::Exists {
+            body: proposition, ..
+        } => proposition_contains_memory_loadable(proposition),
+        _ => false,
+    }
+}
+
+fn explicit_entry_loadability_facts(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<Proposition>, ClickError> {
+    let mut facts = Vec::new();
+    for requirement in function_block.requires() {
+        let explicit = matches!(
+            requirement.inner(),
+            Requirement::LoadableSegment { .. }
+                | Requirement::Proposition(ClickProposition::Loadable { .. })
+        );
+        if !explicit {
+            continue;
+        }
+        let lowered = crate::surface::lowering::requirement_propositions_with_assumptions(
+            std::slice::from_ref(requirement),
+            parsed_function.parameters(),
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+            &PureFactContext::new(),
+        )?;
+        for fact in lowered {
+            if matches!(fact, Proposition::CMemoryLoadable { .. }) && !facts.contains(&fact) {
+                facts.push(fact);
+            }
+        }
+    }
+    Ok(facts)
+}
+
 /// Evaluates entry resource clauses once, after all pure requirements have
 /// been lowered.  Surface entry setup needs a provisional resource context in
 /// order to materialize folded composite cells, but that context is not
@@ -2445,6 +2531,8 @@ fn evaluate_entry_resource_context(
     pure_facts: &[Proposition],
     include_owned_composite_cores: bool,
     claim_label: &str,
+    entry_resources: &ResourceContext,
+    entry_memory: &CMemory,
 ) -> Result<CState, ClickError> {
     let (resource_specs, _) = crate::surface::verification::function_resource_summary(
         function_block,
@@ -2461,14 +2549,24 @@ fn evaluate_entry_resource_context(
     // function body (named contracts deliberately have none).
     let values =
         crate::surface::lowering::parameter_values(parsed_function.parameters(), arguments)?;
-    let instance_facts = state
-        .resources()
+    let explicit_entry_facts = entry_resources
         .facts()
         .iter()
-        .filter(|fact| matches!(fact.resource(), CResource::Instance(_)))
+        // Direct memory clauses are explicit entry authority too.  They are
+        // safe to expose before evaluation: unlike composite facts, they do
+        // not acquire any cells from a resource body.  In particular, a
+        // quantity such as `pool->capacity of pool_slot(pool)` may read the
+        // explicitly owned `object(pool)` clause before its containing
+        // composite is evaluated.
+        .filter(|fact| {
+            matches!(
+                fact.resource(),
+                CResource::Instance(_) | CResource::Memory(_)
+            )
+        })
         .cloned()
         .collect::<Vec<_>>();
-    // A function assumes its pure preconditions at entry.  A loadability
+    // A function assumes its explicit pure preconditions at entry.  A loadability
     // precondition is therefore a checked read capability for evaluating a
     // dependent resource argument, but it is never ownership or body
     // authority.  Keep a read view for each concrete loadability atom,
@@ -2479,21 +2577,48 @@ fn evaluate_entry_resource_context(
             let Proposition::CMemoryLoadable { base, bytes, .. } = fact else {
                 return None;
             };
-            bytes.as_const().map(|bytes| {
-                CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+            let range = match bytes {
+                Bitvector32Term::Multiply(left, right)
+                    if **right == Bitvector32Term::Constant(CType::Int32.byte_width()) =>
+                {
+                    CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        left.as_ref().clone(),
+                    )
+                }
+                Bitvector32Term::Multiply(left, right)
+                    if **left == Bitvector32Term::Constant(CType::Int32.byte_width()) =>
+                {
+                    CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        right.as_ref().clone(),
+                    )
+                }
+                Bitvector32Term::Constant(bytes) if bytes % CType::Int32.byte_width() == 0 => {
+                    CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+                    )
+                }
+                _ => CMemoryRange::new_with_element_width(
                     base.clone(),
                     Bitvector32Term::Constant(0),
-                    Bitvector32Term::Constant(bytes),
+                    bytes.clone(),
                     1,
-                ))
-            })
+                ),
+            };
+            Some(CResourceFact::view_memory(range))
         })
         .collect::<Vec<_>>();
     let mut evaluation_state = state.clone().with_resource_context(
         ResourceContext::new()
-            .unchecked_with_facts(instance_facts)
+            .unchecked_with_facts(explicit_entry_facts)
             .unchecked_with_facts(precondition_read_facts),
     );
+    evaluation_state = evaluation_state.with_memory(entry_memory.clone());
     for parameter in parsed_function.parameters() {
         if let Some(value) = values.get(parameter.name()) {
             evaluation_state = evaluation_state.with_local(parameter.name(), value.clone());
@@ -2547,7 +2672,7 @@ fn evaluate_entry_resource_context(
                     function_block.requires(),
                     parsed_function.parameters(),
                     arguments,
-                    &evaluation_state,
+                    &state,
                     &assumptions,
                 )
             {

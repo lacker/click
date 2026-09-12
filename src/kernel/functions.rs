@@ -150,6 +150,64 @@ mod pointee_const_return_tests {
     }
 }
 use std::collections::VecDeque;
+
+// Resource-clause evaluation reports the exact checked resource that a
+// failed expression tried to read.  The section worklist below captures that
+// fact while each clause runs, allowing only clauses that depend on a newly
+// supplied fact to be retried.
+thread_local! {
+    static RESOURCE_DEPENDENCY_CAPTURE: std::cell::RefCell<Option<Vec<CResourceFact>>> =
+        const { std::cell::RefCell::new(None) };
+    #[cfg(test)]
+    static RESOURCE_CLAUSE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(crate) fn record_resource_dependency(resource: CResourceFact) {
+    RESOURCE_DEPENDENCY_CAPTURE.with(|capture| {
+        let mut captured = capture.borrow_mut();
+        let Some(dependencies) = captured.as_mut() else {
+            return;
+        };
+        if !dependencies.contains(&resource) {
+            dependencies.push(resource);
+        }
+    });
+}
+
+fn capture_resource_dependencies<T>(operation: impl FnOnce() -> T) -> (T, Vec<CResourceFact>) {
+    RESOURCE_DEPENDENCY_CAPTURE.with(|capture| {
+        let previous = capture.replace(Some(Vec::new()));
+        let result = operation();
+        let captured = capture.replace(previous).unwrap_or_default();
+        // Resource expression evaluation can call another checked contract
+        // boundary.  Preserve nested missing-resource observations in the
+        // enclosing clause's capture instead of dropping them when the inner
+        // capture is restored.
+        if let Some(active) = capture.borrow_mut().as_mut() {
+            for dependency in &captured {
+                if !active.contains(dependency) {
+                    active.push(dependency.clone());
+                }
+            }
+        }
+        (result, captured)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn measure_resource_clause_attempts<T>(operation: impl FnOnce() -> T) -> (T, usize) {
+    RESOURCE_CLAUSE_ATTEMPTS.with(|attempts| {
+        let previous = attempts.replace(0);
+        let result = operation();
+        let measured = attempts.replace(previous);
+        (result, measured)
+    })
+}
+
+#[cfg(test)]
+fn record_resource_clause_attempt() {
+    RESOURCE_CLAUSE_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
+}
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CFunctionResourceTransfer {
     callee_resources: ResourceContext,
@@ -12078,13 +12136,11 @@ fn evaluate_function_resource_context_with_normalization(
 ///
 /// A base load in one clause may read a cell any other clause of the same
 /// section owns or views, including a cell inside a folded composite, exactly
-/// as a `requires` clause may. The first pass walks the clauses in order with
-/// the incremental authority each one adds, so a section that already
-/// evaluated in order costs precisely what it did before and produces the
-/// identical context. Only when that pass leaves clauses unevaluated is the
-/// evaluated part expanded through its composite definitions, exposing the
-/// cells a folded composite holds as read authority, and the remaining clauses
-/// retried against it.
+/// as a `requires` clause may. The first pass walks the clauses in source
+/// order. If it leaves clauses unevaluated, the successful portion is expanded
+/// once and the missing-resource edges recorded by each failed clause drive an
+/// indexed event queue. A newly supplied memory fact therefore wakes only its
+/// dependent clauses; no fixed-point round rescans all pending clauses.
 ///
 /// Each clause contributes its resource exactly once: a clause that evaluates
 /// is never revisited, and the caller composes the results once, in source
@@ -12103,8 +12159,9 @@ fn evaluate_resource_clauses_against_whole_section(
 ) -> ExecutionResult<Result<Vec<CResourceFact>, CRuntimeError>> {
     let mut evaluated: Vec<Option<CResourceFact>> = vec![None; resources.len()];
     let mut supplied: Vec<CResourceFact> = Vec::new();
-    let mut pending: Vec<usize> = Vec::new();
-    let mut failures: BTreeMap<usize, CRuntimeError> = BTreeMap::new();
+    let mut failures: Vec<Option<CRuntimeError>> = vec![None; resources.len()];
+    let mut dependencies: Vec<Vec<CResourceFact>> = vec![Vec::new(); resources.len()];
+    let mut waiters = BTreeMap::<ResourceClauseDependencyKey, BTreeSet<usize>>::new();
     for (index, resource) in resources.iter().enumerate() {
         let evaluation_state = state.clone().with_resource_context(
             state
@@ -12112,87 +12169,113 @@ fn evaluate_resource_clauses_against_whole_section(
                 .clone()
                 .unchecked_with_facts(supplied.iter().cloned()),
         );
-        match evaluate_function_resource_spec(&evaluation_state, resource, assumptions, budget)? {
+        let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            &evaluation_state,
+            resource,
+            assumptions,
+            budget,
+        )?;
+        match outcome {
             Ok(resource) => {
                 supplied.push(resource.clone());
                 evaluated[index] = Some(resource);
             }
             Err(error) => {
-                failures.insert(index, error);
-                pending.push(index);
+                failures[index] = Some(error);
+                resource_clause_register_waiters(index, missing, &mut dependencies, &mut waiters);
             }
         }
     }
-    while !pending.is_empty() {
-        // Treat pending clauses as a worklist rather than a fixed-point
-        // batch.  Rebuild the supplied read view after each successful
-        // clause, so a dependency chain can flow through the same pass; a
-        // batch snapshot would force one full retry per depth.  The stack
-        // order also keeps the usual reverse-written dependent clauses close
-        // to the clause that supplies their first cell.
-        let mut progressed = false;
-        let mut still_pending = Vec::new();
-        let pending_count = pending.len();
-        let mut section_supply =
-            resource_clause_section_supply(state, &supplied, definitions, assumptions);
-        while let Some(index) = pending.pop() {
-            let evaluation_state = state.clone().with_resource_context(section_supply.clone());
-            match evaluate_function_resource_spec(
-                &evaluation_state,
-                &resources[index],
-                assumptions,
-                budget,
-            )? {
-                Ok(resource) => {
-                    section_supply = resource_clause_supply_with_fact(
-                        section_supply,
-                        resource.clone(),
-                        definitions,
-                        state.memory(),
+    let mut section_supply =
+        resource_clause_section_supply(state, &supplied, definitions, assumptions);
+    let mut pending = VecDeque::new();
+    let mut queued = vec![false; resources.len()];
+    for index in 0..resources.len() {
+        if evaluated[index].is_none()
+            && dependencies[index]
+                .iter()
+                .any(|dependency| section_supply.satisfies_fact(dependency, assumptions))
+        {
+            queued[index] = true;
+            pending.push_back(index);
+        }
+    }
+    while let Some(index) = pending.pop_front() {
+        queued[index] = false;
+        if evaluated[index].is_some() {
+            continue;
+        }
+        resource_clause_unregister_waiters(index, &mut dependencies, &mut waiters);
+        let evaluation_state = state.clone().with_resource_context(section_supply.clone());
+        let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            &evaluation_state,
+            &resources[index],
+            assumptions,
+            budget,
+        )?;
+        match outcome {
+            Ok(resource) => {
+                let (next_supply, newly_supplied) = resource_clause_supply_with_fact(
+                    section_supply,
+                    resource.clone(),
+                    definitions,
+                    state.memory(),
+                    assumptions,
+                );
+                section_supply = next_supply;
+                supplied.push(resource.clone());
+                evaluated[index] = Some(resource);
+                failures[index] = None;
+                for fact in newly_supplied {
+                    resource_clause_enqueue_waiters(
+                        &fact,
                         assumptions,
+                        &evaluated,
+                        &mut queued,
+                        &mut pending,
+                        &dependencies,
+                        &waiters,
                     );
-                    supplied.push(resource.clone());
-                    evaluated[index] = Some(resource);
-                    failures.remove(&index);
-                    progressed = true;
-                }
-                Err(error) => {
-                    failures.insert(index, error);
-                    still_pending.push(index);
                 }
             }
-        }
-        pending = still_pending;
-        if !progressed || pending.len() == pending_count {
-            break;
+            Err(error) => {
+                failures[index] = Some(error);
+                resource_clause_register_waiters(index, missing, &mut dependencies, &mut waiters);
+            }
         }
     }
     // A clause refused for its own shape is reported at its own position: no
     // other clause's authority was ever going to repair it, so naming a pair
     // would send the user to a clause that is fine.
-    let refused = pending
+    let unresolved = evaluated
+        .iter()
+        .enumerate()
+        .filter_map(|(index, resource)| resource.is_none().then_some(index))
+        .collect::<Vec<_>>();
+    let refused = unresolved
         .iter()
         .copied()
         .filter(|index| {
-            failures
-                .get(index)
-                .is_none_or(|error| !resource_clause_failure_awaits_supply(error))
+            let error = failures[*index].as_ref();
+            let awaits = !dependencies[*index].is_empty()
+                || error.is_some_and(resource_clause_failure_awaits_supply);
+            !awaits
         })
         .min_by_key(|index| resource_clause_position(resources, *index));
     if let Some(index) = refused.or_else(|| {
-        pending
+        unresolved
             .iter()
             .copied()
             .min_by_key(|index| resource_clause_position(resources, *index))
     }) {
-        let error = failures
-            .remove(&index)
+        let error = failures[index]
+            .take()
             .unwrap_or_else(|| CRuntimeError::FunctionContract("unevaluated".to_string()));
         let cycle = refused
             .is_none()
             .then(|| {
                 let source_index = resource_clause_position(resources, index).0;
-                pending
+                unresolved
                     .iter()
                     .copied()
                     .filter(|other| {
@@ -12211,6 +12294,108 @@ fn evaluate_resource_clauses_against_whole_section(
         }));
     }
     Ok(Ok(evaluated.into_iter().flatten().collect()))
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ResourceClauseDependencyKey {
+    Fact(CResourceFact),
+    MemoryBase(Pointer),
+    MemoryBlock(PointerBlock),
+}
+
+fn resource_clause_dependency_keys(dependency: &CResourceFact) -> Vec<ResourceClauseDependencyKey> {
+    let mut keys = vec![ResourceClauseDependencyKey::Fact(dependency.clone())];
+    if let Some(range) = dependency.memory_range() {
+        keys.push(ResourceClauseDependencyKey::MemoryBase(
+            range.base().clone(),
+        ));
+        keys.push(ResourceClauseDependencyKey::MemoryBlock(
+            range.base().block.clone(),
+        ));
+    }
+    keys
+}
+
+fn resource_clause_register_waiters(
+    index: usize,
+    missing: Vec<CResourceFact>,
+    dependencies: &mut [Vec<CResourceFact>],
+    waiters: &mut BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+) {
+    let mut unique = Vec::new();
+    for dependency in missing {
+        if unique.contains(&dependency) {
+            continue;
+        }
+        unique.push(dependency.clone());
+        for key in resource_clause_dependency_keys(&dependency) {
+            waiters.entry(key).or_default().insert(index);
+        }
+    }
+    dependencies[index] = unique;
+}
+
+fn resource_clause_unregister_waiters(
+    index: usize,
+    dependencies: &mut [Vec<CResourceFact>],
+    waiters: &mut BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+) {
+    let previous = std::mem::take(&mut dependencies[index]);
+    for dependency in previous {
+        for key in resource_clause_dependency_keys(&dependency) {
+            let mut remove_key = false;
+            if let Some(indices) = waiters.get_mut(&key) {
+                indices.remove(&index);
+                remove_key = indices.is_empty();
+            }
+            if remove_key {
+                waiters.remove(&key);
+            }
+        }
+    }
+}
+
+fn resource_clause_enqueue_waiters(
+    supplied: &CResourceFact,
+    assumptions: &PureFactContext,
+    evaluated: &[Option<CResourceFact>],
+    queued: &mut [bool],
+    pending: &mut VecDeque<usize>,
+    dependencies: &[Vec<CResourceFact>],
+    waiters: &BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+) {
+    let mut candidates = BTreeSet::new();
+    for key in resource_clause_dependency_keys(supplied) {
+        if let Some(indices) = waiters.get(&key) {
+            candidates.extend(indices.iter().copied());
+        }
+    }
+    let available = ResourceContext::new().unchecked_with_fact(supplied.clone());
+    for index in candidates {
+        if evaluated[index].is_none()
+            && !queued[index]
+            && dependencies[index]
+                .iter()
+                .any(|dependency| available.satisfies_fact(dependency, assumptions))
+        {
+            queued[index] = true;
+            pending.push_back(index);
+        }
+    }
+}
+
+fn evaluate_resource_clause_with_dependencies(
+    state: &CState,
+    resource: &CResourceSpec,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<(Result<CResourceFact, CRuntimeError>, Vec<CResourceFact>)> {
+    #[cfg(test)]
+    record_resource_clause_attempt();
+    let (result, dependencies) = capture_resource_dependencies(|| {
+        evaluate_function_resource_spec(state, resource, assumptions, budget)
+    });
+    result.map(|result| (result, dependencies))
 }
 
 /// The read authority a section's already-evaluated clauses supply to the
@@ -12358,10 +12543,14 @@ fn resource_clause_supply_with_fact(
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
     assumptions: &PureFactContext,
-) -> ResourceContext {
-    supply = supply.unchecked_with_fact(fact.clone());
+) -> (ResourceContext, Vec<CResourceFact>) {
+    let mut added = Vec::new();
+    if !supply.facts().contains(&fact) {
+        supply = supply.unchecked_with_fact(fact.clone());
+        added.push(fact.clone());
+    }
     if definitions.is_empty() || !matches!(fact.resource(), CResource::Composite { .. }) {
-        return supply;
+        return (supply, added);
     }
     let mut pending = VecDeque::from([fact]);
     let mut seen = BTreeSet::new();
@@ -12382,14 +12571,18 @@ fn resource_clause_supply_with_fact(
         for child in children {
             match child.resource() {
                 CResource::Memory(range) => {
-                    supply = supply.unchecked_with_fact(CResourceFact::view_memory(range.clone()));
+                    let view = CResourceFact::view_memory(range.clone());
+                    if !supply.facts().contains(&view) {
+                        supply = supply.unchecked_with_fact(view.clone());
+                        added.push(view);
+                    }
                 }
                 CResource::Composite { .. } => pending.push_back(child),
                 CResource::Token { .. } | CResource::Instance(_) => {}
             }
         }
     }
-    supply
+    (supply, added)
 }
 
 /// Names which resource clause of a contract section could not be addressed.

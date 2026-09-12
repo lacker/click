@@ -4511,10 +4511,9 @@ fn expanded_resource_clause_diagnostics_keep_source_positions() {
     assert!(message.contains("resource clauses 1 and 2 cannot be evaluated in any order"));
 }
 
-/// A reverse-written dependency chain is retried through an incremental
-/// worklist.  Its deterministic work should grow with the explicit dependency
-/// nodes and edges, not with unrelated ambient resources or an unbounded
-/// fixed-point search.
+/// An adversarially ordered dependency chain is retried through an indexed
+/// event worklist.  Its deterministic work should grow with the explicit
+/// dependency nodes and edges, not with repeated whole-section scans.
 #[test]
 fn dependent_resource_clause_work_scales_with_dependency_nodes() {
     let pointer = |index: usize| Pointer {
@@ -4537,8 +4536,11 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
                 memory.store(pair[0].clone(), CValue::pointer(pair[1].clone()))
             });
             let state = CState::new().with_memory(memory);
-            let clauses = (0..size)
-                .rev()
+            // Clause 0 is the only initially readable provider.  Put it last
+            // so every other clause first records a missing edge; an event
+            // queue must then retry exactly the newly unblocked successor.
+            let clauses = (1..size)
+                .chain(std::iter::once(0))
                 .map(|index| {
                     let base = if index == 0 {
                         c_pointer_value(pointers[index].clone())
@@ -4554,21 +4556,29 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
                     })
                 })
                 .collect::<Vec<_>>();
-            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
-                crate::kernel::functions::evaluate_function_resource_context(
-                    &state,
-                    &clauses,
-                    &[],
-                    &PureFactContext::new(),
-                    &mut ExecutionBudget::default(),
-                )
-            });
+            let ((result, work), attempts) =
+                crate::kernel::measure_resource_clause_attempts(|| {
+                    crate::instrumentation::measure_deterministic_work(|| {
+                        crate::kernel::functions::evaluate_function_resource_context(
+                            &state,
+                            &clauses,
+                            &[],
+                            &PureFactContext::new(),
+                            &mut ExecutionBudget::default(),
+                        )
+                    })
+                });
             let result = result.unwrap();
             assert!(
                 result.is_ok(),
                 "the dependency chain should evaluate: {result:?}"
             );
-            (size, work)
+            assert_eq!(
+                attempts,
+                size * 2 - 1,
+                "each blocked clause should be retried once after its provider: size={size}"
+            );
+            (size, work, attempts)
         })
         .collect::<Vec<_>>();
     assert!(

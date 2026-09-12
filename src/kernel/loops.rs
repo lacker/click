@@ -3111,6 +3111,9 @@ fn evaluate_loop_effect_segment_value_with_facts(
             "{label} produced undefined behavior: {undefined_behavior:?}"
         ))),
         CExpressionOutcome::RuntimeError(error) => {
+            if let CRuntimeError::MissingResource { resource } = &error {
+                crate::kernel::functions::record_resource_dependency(resource.clone());
+            }
             Ok(Err(format!("{label} produced runtime error: {error:?}")))
         }
     }
