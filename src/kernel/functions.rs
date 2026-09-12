@@ -1630,7 +1630,7 @@ fn execute_verified_function_applications(
             Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation) => continue,
         };
         facts.extend(allocation_effects);
-        post_state.memory = memory;
+        post_state.set_memory(memory);
         let post_contract_state =
             with_contract_interface_argument_views(&post_state, interface, &argument_values);
 
@@ -1690,7 +1690,7 @@ fn execute_verified_function_applications(
         }
 
         let mut return_state = caller_state.clone();
-        return_state.memory = post_state.memory;
+        return_state.set_memory(post_state.memory.clone());
         return_state.resources = return_resources;
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
@@ -7001,7 +7001,7 @@ fn set_contract_result(state: &mut CState, interface: &CFunctionContractInterfac
     if let Some(layout) = interface.return_aggregate_layout()
         && let CValue::Pointer(pointer) = &value
     {
-        state.memory = if matches!(pointer.block, PointerBlock::Symbolic(_)) {
+        state.set_memory(if matches!(pointer.block, PointerBlock::Symbolic(_)) {
             state
                 .memory
                 .clone()
@@ -7011,7 +7011,7 @@ fn set_contract_result(state: &mut CState, interface: &CFunctionContractInterfac
                 .memory
                 .clone()
                 .with_block(pointer.block.clone(), layout.size_bytes())
-        };
+        });
         state.locals.set_aggregate_object_at(
             "result".to_string(),
             layout.clone(),
@@ -7045,11 +7045,18 @@ fn materialize_aggregate_return(
     let source = pointer.pointer().clone();
     let frame = state.next_local_frame;
     let destination = CMemory::frame_local_pointer(frame, "__return");
-    state.memory = state
-        .memory
-        .clone()
-        .with_block(destination.block.clone(), layout.size_bytes());
-    state.memory = copy_aggregate_fields(state.memory.clone(), &source, &destination, layout);
+    state.set_memory(
+        state
+            .memory
+            .clone()
+            .with_block(destination.block.clone(), layout.size_bytes()),
+    );
+    state.set_memory(copy_aggregate_fields(
+        state.memory.clone(),
+        &source,
+        &destination,
+        layout,
+    ));
     state.next_local_frame = frame.saturating_add(1);
     Some(CValue::typed_pointer(destination, function.return_type()))
 }
@@ -7672,11 +7679,18 @@ pub(super) fn bind_c_function_arguments(
             // loads. Declaring the destination first would make an unknown
             // external field load depend on the callee's fresh block and
             // prevent entry facts from relating it to the caller's value.
-            callee_state.memory =
-                copy_aggregate_fields(callee_state.memory, &source, &slot, layout);
-            callee_state.memory = callee_state
-                .memory
-                .with_block(slot.block.clone(), layout.size_bytes());
+            callee_state.set_memory(copy_aggregate_fields(
+                callee_state.memory.clone(),
+                &source,
+                &slot,
+                layout,
+            ));
+            callee_state.set_memory(
+                callee_state
+                    .memory
+                    .clone()
+                    .with_block(slot.block.clone(), layout.size_bytes()),
+            );
             callee_state.locals.set_aggregate_object_at(
                 parameter.name().to_string(),
                 layout.clone(),
@@ -7690,10 +7704,13 @@ pub(super) fn bind_c_function_arguments(
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
             register_block_alignment(&slot.block, parameter.c_type().abi_alignment());
-            callee_state.memory = callee_state
-                .memory
-                .with_block(slot.block.clone(), value.byte_width())
-                .store(slot.clone(), value.clone());
+            callee_state.set_memory(
+                callee_state
+                    .memory
+                    .clone()
+                    .with_block(slot.block.clone(), value.byte_width())
+                    .store(slot.clone(), value.clone()),
+            );
             callee_state.locals.set_typed_qualified_with_all_qualifiers(
                 parameter.name().to_string(),
                 value,
@@ -7758,11 +7775,18 @@ fn bind_c_contract_arguments(
             let source = pointer.pointer().clone();
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
             register_block_alignment(&slot.block, layout.alignment_bytes());
-            callee_state.memory =
-                copy_aggregate_fields(callee_state.memory, &source, &slot, layout);
-            callee_state.memory = callee_state
-                .memory
-                .with_block(slot.block.clone(), layout.size_bytes());
+            callee_state.set_memory(copy_aggregate_fields(
+                callee_state.memory.clone(),
+                &source,
+                &slot,
+                layout,
+            ));
+            callee_state.set_memory(
+                callee_state
+                    .memory
+                    .clone()
+                    .with_block(slot.block.clone(), layout.size_bytes()),
+            );
             callee_state.locals.set_aggregate_object_at(
                 parameter.name().to_string(),
                 layout.clone(),
@@ -7953,17 +7977,20 @@ fn initialize_c_function_globals_owned(
         let slot =
             CMemory::string_literal_pointer(function.name(), literal.name(), literal.bytes());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state
-                .memory
-                .with_read_only_block(slot.block.clone(), literal.bytes().len() as u32);
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_read_only_block(slot.block.clone(), literal.bytes().len() as u32),
+            );
             for (offset, byte) in literal.bytes().iter().copied().enumerate() {
-                state.memory = state.memory.store(
+                state.set_memory(state.memory.clone().store(
                     Pointer {
                         block: slot.block.clone(),
                         offset: PointerOffsetTerm::Constant(offset as i64),
                     },
                     uint8(u32::from(byte)),
-                );
+                ));
             }
         }
         state.locals.set_array_object_at(
@@ -7993,17 +8020,24 @@ fn initialize_c_function_globals_owned(
         let slot = CMemory::global_pointer(global.kernel_name());
         register_block_alignment(&slot.block, global.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 global.c_type().byte_width(),
                 global.is_constant(),
-            );
+            ));
             if initialize_missing_storage || global.is_constant() {
-                state.memory = state
-                    .memory
-                    .store(slot.clone(), global.initial_value().clone());
+                state.set_memory(
+                    state
+                        .memory
+                        .clone()
+                        .store(slot.clone(), global.initial_value().clone()),
+                );
             } else {
-                state.memory = materialize_symbolic_cell(state.memory, &slot, global.c_type());
+                state.set_memory(materialize_symbolic_cell(
+                    state.memory.clone(),
+                    &slot,
+                    global.c_type(),
+                ));
             }
         } else if !initialize_missing_storage
             && !global.is_constant()
@@ -8016,7 +8050,11 @@ fn initialize_c_function_globals_owned(
             // Resource setup may declare a pointer's storage before the
             // global binding is installed. Replace an untyped placeholder
             // with the authoritative typed symbolic pointer cell.
-            state.memory = materialize_symbolic_cell(state.memory, &slot, global.c_type());
+            state.set_memory(materialize_symbolic_cell(
+                state.memory.clone(),
+                &slot,
+                global.c_type(),
+            ));
         }
         state.locals.set_global_with_all_qualifiers(
             global.kernel_name().to_string(),
@@ -8047,29 +8085,31 @@ fn initialize_c_function_globals_owned(
             .checked_mul(global_array.element_type().byte_width())
             .expect("validated C global array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 bytes,
                 global_array.is_constant(),
-            );
+            ));
             if initialize_missing_storage || global_array.is_constant() {
                 for (index, value) in global_array.initial_values().iter().enumerate() {
-                    state.memory = state.memory.store(
-                        slot.offset_by_bytes(
-                            u32::try_from(index)
-                                .expect("validated C global array length")
-                                .saturating_mul(global_array.element_type().byte_width()),
+                    state.set_memory(
+                        state.memory.clone().store(
+                            slot.offset_by_bytes(
+                                u32::try_from(index)
+                                    .expect("validated C global array length")
+                                    .saturating_mul(global_array.element_type().byte_width()),
+                            ),
+                            value.clone(),
                         ),
-                        value.clone(),
                     );
                 }
             } else {
-                state.memory = materialize_symbolic_array(
-                    state.memory,
+                state.set_memory(materialize_symbolic_array(
+                    state.memory.clone(),
                     &slot,
                     global_array.element_type(),
                     global_array.length(),
-                );
+                ));
             }
         }
         state.locals.set_array_object_at_with_constant(
@@ -8095,25 +8135,28 @@ fn initialize_c_function_globals_owned(
         let slot = CMemory::global_pointer(global_aggregate.kernel_name());
         register_block_alignment(&slot.block, global_aggregate.layout().alignment_bytes());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 global_aggregate.layout().size_bytes(),
                 global_aggregate.is_constant(),
-            );
+            ));
             if initialize_missing_storage || global_aggregate.is_constant() {
-                state.memory =
-                    zero_aggregate_fields(state.memory.clone(), &slot, global_aggregate.layout());
-                state.memory = initialize_aggregate_fields(
+                state.set_memory(zero_aggregate_fields(
+                    state.memory.clone(),
+                    &slot,
+                    global_aggregate.layout(),
+                ));
+                state.set_memory(initialize_aggregate_fields(
                     state.memory.clone(),
                     &slot,
                     global_aggregate.initializers(),
-                );
+                ));
             } else {
-                state.memory = materialize_symbolic_aggregate_fields(
-                    state.memory,
+                state.set_memory(materialize_symbolic_aggregate_fields(
+                    state.memory.clone(),
                     &slot,
                     global_aggregate.layout(),
-                );
+                ));
             }
         }
         state.locals.set_aggregate_object_at_with_constant(
@@ -8144,30 +8187,30 @@ fn initialize_c_function_globals_owned(
             .checked_mul(global_aggregate_array.layout().size_bytes())
             .expect("validated C global aggregate array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 bytes,
                 global_aggregate_array.is_constant(),
-            );
+            ));
             if initialize_missing_storage || global_aggregate_array.is_constant() {
-                state.memory = zero_aggregate_array_fields(
+                state.set_memory(zero_aggregate_array_fields(
                     state.memory.clone(),
                     &slot,
                     global_aggregate_array.layout(),
                     global_aggregate_array.length(),
-                );
-                state.memory = initialize_aggregate_fields(
+                ));
+                state.set_memory(initialize_aggregate_fields(
                     state.memory.clone(),
                     &slot,
                     global_aggregate_array.initializers(),
-                );
+                ));
             } else {
-                state.memory = materialize_symbolic_aggregate_array(
-                    state.memory,
+                state.set_memory(materialize_symbolic_aggregate_array(
+                    state.memory.clone(),
                     &slot,
                     global_aggregate_array.layout(),
                     global_aggregate_array.length(),
-                );
+                ));
             }
         }
         state.locals.set_array_object_at_with_constant(
@@ -8195,26 +8238,32 @@ fn initialize_c_function_globals_owned(
         let slot = CMemory::static_pointer(function.name(), static_local.kernel_name());
         register_block_alignment(&slot.block, static_local.c_type().abi_alignment());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 static_local.c_type().byte_width(),
                 static_local.is_constant(),
-            );
+            ));
             // A qualified resource can materialize the cell before this
             // function's storage declaration is installed. Adding block
             // metadata must not overwrite that existing value.
             if (initialize_missing_storage || static_local.is_constant())
                 && state.memory.known_value(&slot).is_none()
             {
-                state.memory = state
-                    .memory
-                    .store(slot.clone(), static_local.initial_value().clone());
+                state.set_memory(
+                    state
+                        .memory
+                        .clone()
+                        .store(slot.clone(), static_local.initial_value().clone()),
+                );
             } else if !initialize_missing_storage
                 && !static_local.is_constant()
                 && state.memory.known_value(&slot).is_none()
             {
-                state.memory =
-                    materialize_symbolic_cell(state.memory, &slot, static_local.c_type());
+                state.set_memory(materialize_symbolic_cell(
+                    state.memory.clone(),
+                    &slot,
+                    static_local.c_type(),
+                ));
             }
         } else if !initialize_missing_storage
             && !static_local.is_constant()
@@ -8224,7 +8273,11 @@ fn initialize_c_function_globals_owned(
                 .known_value(&slot)
                 .is_some_and(|value| symbolic_pointer_placeholder(&value, &slot))
         {
-            state.memory = materialize_symbolic_cell(state.memory, &slot, static_local.c_type());
+            state.set_memory(materialize_symbolic_cell(
+                state.memory.clone(),
+                &slot,
+                static_local.c_type(),
+            ));
         }
         state.locals.set_global_with_all_qualifiers(
             static_local.kernel_name().to_string(),
@@ -8261,29 +8314,31 @@ fn initialize_c_function_globals_owned(
             .checked_mul(static_array.element_type().byte_width())
             .expect("validated C static local array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 bytes,
                 static_array.is_constant(),
-            );
+            ));
             if initialize_missing_storage || static_array.is_constant() {
                 for (index, value) in static_array.initial_values().iter().enumerate() {
-                    state.memory = state.memory.store(
-                        slot.offset_by_bytes(
-                            u32::try_from(index)
-                                .expect("validated C static local array length")
-                                .saturating_mul(static_array.element_type().byte_width()),
+                    state.set_memory(
+                        state.memory.clone().store(
+                            slot.offset_by_bytes(
+                                u32::try_from(index)
+                                    .expect("validated C static local array length")
+                                    .saturating_mul(static_array.element_type().byte_width()),
+                            ),
+                            value.clone(),
                         ),
-                        value.clone(),
                     );
                 }
             } else {
-                state.memory = materialize_symbolic_array(
-                    state.memory,
+                state.set_memory(materialize_symbolic_array(
+                    state.memory.clone(),
                     &slot,
                     static_array.element_type(),
                     static_array.length(),
-                );
+                ));
             }
         }
         state.locals.set_array_object_at_with_constant(
@@ -8309,25 +8364,28 @@ fn initialize_c_function_globals_owned(
         let slot = CMemory::static_pointer(function.name(), static_aggregate.kernel_name());
         register_block_alignment(&slot.block, static_aggregate.layout().alignment_bytes());
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.clone().with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 static_aggregate.layout().size_bytes(),
                 static_aggregate.is_constant(),
-            );
+            ));
             if initialize_missing_storage || static_aggregate.is_constant() {
-                state.memory =
-                    zero_aggregate_fields(state.memory.clone(), &slot, static_aggregate.layout());
-                state.memory = initialize_aggregate_fields(
+                state.set_memory(zero_aggregate_fields(
+                    state.memory.clone(),
+                    &slot,
+                    static_aggregate.layout(),
+                ));
+                state.set_memory(initialize_aggregate_fields(
                     state.memory.clone(),
                     &slot,
                     static_aggregate.initializers(),
-                );
+                ));
             } else {
-                state.memory = materialize_symbolic_aggregate_fields(
-                    state.memory,
+                state.set_memory(materialize_symbolic_aggregate_fields(
+                    state.memory.clone(),
                     &slot,
                     static_aggregate.layout(),
-                );
+                ));
             }
         }
         state.locals.set_aggregate_object_at_with_constant(
@@ -8358,30 +8416,30 @@ fn initialize_c_function_globals_owned(
             .checked_mul(static_aggregate_array.layout().size_bytes())
             .expect("validated C static aggregate array size");
         if !state.memory.has_block(&slot.block) {
-            state.memory = state.memory.with_block_or_read_only(
+            state.set_memory(state.memory.clone().with_block_or_read_only(
                 slot.block.clone(),
                 bytes,
                 static_aggregate_array.is_constant(),
-            );
+            ));
             if initialize_missing_storage || static_aggregate_array.is_constant() {
-                state.memory = zero_aggregate_array_fields(
+                state.set_memory(zero_aggregate_array_fields(
                     state.memory.clone(),
                     &slot,
                     static_aggregate_array.layout(),
                     static_aggregate_array.length(),
-                );
-                state.memory = initialize_aggregate_fields(
+                ));
+                state.set_memory(initialize_aggregate_fields(
                     state.memory.clone(),
                     &slot,
                     static_aggregate_array.initializers(),
-                );
+                ));
             } else {
-                state.memory = materialize_symbolic_aggregate_array(
-                    state.memory,
+                state.set_memory(materialize_symbolic_aggregate_array(
+                    state.memory.clone(),
                     &slot,
                     static_aggregate_array.layout(),
                     static_aggregate_array.length(),
-                );
+                ));
             }
         }
         state.locals.set_array_object_at_with_constant(
@@ -12451,7 +12509,7 @@ pub(super) fn function_return_resources_definitionally_established(
     };
     let exit_memory = function_exit_memory(caller_state, return_state, value, function);
     let mut claim_return_state = return_state.clone();
-    claim_return_state.memory = exit_memory.clone();
+    claim_return_state.set_memory(exit_memory.clone());
     let definitions = function.composite_resource_definitions();
     let Some(post_resources) = expand_all_composite_resource_facts(
         claim_return_state.resources(),
@@ -14908,7 +14966,7 @@ fn function_outcome_from_body_with_resource_transfer(
     }
 
     let mut return_state = caller_state.clone();
-    return_state.memory = state.memory;
+    return_state.set_memory(state.memory.clone());
     return_state.resources = return_resources;
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
@@ -15136,7 +15194,7 @@ pub(super) fn function_outcome_from_body(
             };
 
             let mut caller_state = caller_state.clone();
-            caller_state.memory = state.memory;
+            caller_state.set_memory(state.memory.clone());
             if function.has_inline_body() {
                 // Inline bodies execute with a parameter-only local
                 // environment, so pointer stores into caller locals cannot

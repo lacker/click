@@ -1078,10 +1078,11 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         state
             .resources()
             .clone()
-            .unchecked_with_supported_facts_from_occurrence(
+            .unchecked_with_supported_facts_from_occurrence_with_memory(
                 support_entry,
                 support,
                 viewed_contained_resources,
+                fact_state.memory(),
             )
     } else {
         state

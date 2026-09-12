@@ -5019,3 +5019,115 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
     .expect("the symbolic provider should wake the concrete pending clause");
     assert_eq!(result.facts().len(), 3);
 }
+
+#[test]
+fn observed_memory_projection_is_invalidated_by_overlap_but_not_disjoint_store() {
+    let support = CResourceFact::own_composite("memory_support".to_string(), Vec::new());
+    let observed_range = CMemoryRange::new(
+        Pointer {
+            block: "observed-block".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let base = CMemory::new().with_block("observed-block", 32);
+    let resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let support_occurrence = *resources
+        .storage
+        .index
+        .exact
+        .get(&support)
+        .expect("support entry")
+        .iter()
+        .next()
+        .and_then(|entry| resources.storage.occurrence_by_entry.get(entry))
+        .expect("support occurrence");
+    let resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+        support_occurrence,
+        &support,
+        [CResourceFact::view_memory(observed_range.clone())],
+        &base,
+    );
+    let state = CState::new()
+        .with_memory(base.clone())
+        .with_resource_context(resources);
+    let disjoint = state.clone().with_memory(base.clone().store(
+        Pointer {
+            block: "observed-block".into(),
+            offset: PointerOffsetTerm::Constant(16),
+        },
+        int32(1),
+    ));
+    assert!(
+        disjoint
+            .resources()
+            .contains_exact_representation(&CResourceFact::view_memory(observed_range.clone()))
+    );
+    let overlapping = disjoint
+        .clone()
+        .with_memory(disjoint.memory().clone().store(
+            Pointer {
+                block: "observed-block".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            int32(2),
+        ));
+    assert!(
+        !overlapping
+            .resources()
+            .contains_exact_representation(&CResourceFact::view_memory(observed_range))
+    );
+    assert!(
+        overlapping
+            .resources()
+            .contains_exact_representation(&support)
+    );
+}
+
+#[test]
+fn observed_wide_footprint_and_unknown_loop_barrier_are_invalidated() {
+    let support = CResourceFact::own_composite("wide_support".to_string(), Vec::new());
+    let range = CMemoryRange::new_with_element_width(
+        Pointer {
+            block: "wide-block".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(20_000),
+        1,
+    );
+    let memory = CMemory::new().with_block("wide-block", 20_000);
+    let resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let entry = *resources
+        .storage
+        .index
+        .exact
+        .get(&support)
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap();
+    let occurrence = resources.occurrence(entry);
+    let resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+        occurrence,
+        &support,
+        [CResourceFact::view_memory(range.clone())],
+        &memory,
+    );
+    let state = CState::new()
+        .with_memory(memory)
+        .with_resource_context(resources);
+    let barrier =
+        state
+            .memory()
+            .clone()
+            .with_loop_memory_havoc(Variable(81), &BTreeSet::new(), None);
+    let after = state.with_memory(barrier);
+    assert!(
+        !after
+            .resources()
+            .contains_exact_representation(&CResourceFact::view_memory(range))
+    );
+    assert!(after.resources().contains_exact_representation(&support));
+}

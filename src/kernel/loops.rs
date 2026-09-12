@@ -489,8 +489,8 @@ pub(super) fn execute_c_call_assign_paths(
                             obligations: path.obligations,
                         };
                     };
-                    state.memory = match copy_aggregate_fields_checked(
-                        state.memory,
+                    let next_memory = match copy_aggregate_fields_checked(
+                        state.memory.clone(),
                         pointer.pointer(),
                         &slot,
                         layout,
@@ -504,6 +504,7 @@ pub(super) fn execute_c_call_assign_paths(
                             };
                         }
                     };
+                    state.set_memory(next_memory);
                     return CStatementExecutionPath {
                         outcome: CStatementOutcome::Normal(state),
                         facts: path.facts,
@@ -3742,11 +3743,12 @@ pub(super) fn havoc_loop_modified_locals(
             .filter(|name| state.locals.get(name).is_some())
             .filter_map(|name| state.locals.slot(name).map(|slot| slot.block.clone()))
             .collect();
-        state.memory = state.memory.with_loop_memory_havoc(
+        let havoced_memory = state.memory.clone().with_loop_memory_havoc(
             variables.next(),
             &preserved_blocks,
             mutable_ranges,
         );
+        state.set_memory(havoced_memory);
     }
     state
 }

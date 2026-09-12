@@ -486,7 +486,7 @@ impl CheckedResourceRewrite {
             .ok_or("the rewritten composite definition is not registered on the function")?;
 
         let mut concrete_after = after_state.clone();
-        concrete_after.memory = before_state.memory.clone();
+        concrete_after.set_memory(before_state.memory.clone());
         concrete_after.resources = before_state.resources.clone();
         concrete_after.counted_populations = before_state.counted_populations.clone();
         if concrete_after != *before_state
@@ -1009,7 +1009,7 @@ impl CheckedResourceObservation {
             .ok_or("the observed composite definition is not registered on the function")?;
 
         let mut concrete_after = after_state.clone();
-        concrete_after.memory = before_state.memory.clone();
+        concrete_after.set_memory(before_state.memory.clone());
         concrete_after.resources = before_state.resources.clone();
         if concrete_after != *before_state
             || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(

@@ -2580,8 +2580,19 @@ impl CState {
     }
 
     pub fn with_memory(mut self, memory: CMemory) -> Self {
-        self.memory = memory;
+        self.set_memory(memory);
         self
+    }
+
+    /// Replace memory through the single checked-state transition hook.
+    /// Keeping this beside `with_memory` prevents evaluator paths that already
+    /// own a mutable state from bypassing resource-observation invalidation.
+    pub(crate) fn set_memory(&mut self, memory: CMemory) {
+        self.resources = self
+            .resources
+            .clone()
+            .invalidate_memory_support(&self.memory, &memory);
+        self.memory = memory;
     }
 
     pub fn with_resource_context(mut self, resources: ResourceContext) -> Self {
