@@ -46,6 +46,7 @@ pub(in crate::surface) enum EntryFactOrigin {
 
 /// Bounded source leaf retained after a checked `choose` projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub(in crate::surface) struct ProjectionSourceToken {
     pub(in crate::surface) source_id: RequirementSourceId,
     pub(in crate::surface) connective_path: Vec<usize>,
@@ -54,6 +55,7 @@ pub(in crate::surface) struct ProjectionSourceToken {
 /// Shallow lookup key for a direct caller predicate argument.  Exact
 /// propositions and expressions remain validation payloads, never map keys.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[allow(dead_code)]
 pub(in crate::surface) struct CallerRequirementKey {
     pub(in crate::surface) predicate_name: String,
     pub(in crate::surface) predicate_argument_slot: usize,
@@ -61,6 +63,7 @@ pub(in crate::surface) struct CallerRequirementKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub(in crate::surface) struct CallerRequirementRecord {
     pub(in crate::surface) source_id: RequirementSourceId,
     pub(in crate::surface) source_proposition: ClickProposition,
@@ -72,6 +75,7 @@ pub(in crate::surface) struct CallerRequirementRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub(in crate::surface) struct CallerRequirementSelection {
     pub(in crate::surface) source_id: RequirementSourceId,
     pub(in crate::surface) principal_fact_index: usize,

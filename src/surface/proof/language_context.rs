@@ -99,9 +99,11 @@ pub(in crate::surface::proof) struct ExecutionProofConstants {
     pub(in crate::surface::proof) execution_start_facts: Arc<Vec<Proposition>>,
     /// Construction-time provenance aligned exactly with
     /// `execution_start_facts`. It is presentation metadata only.
+    #[allow(dead_code)]
     pub(in crate::surface::proof) entry_fact_origins: Arc<Vec<EntryFactOrigin>>,
     /// Exact ordinary caller whose entry requirement identities populate the
     /// proof-local index. Missing ownership makes source selection fail closed.
+    #[allow(dead_code)]
     pub(in crate::surface::proof) caller_source_owner: Option<CallerSourceOwnerId>,
     pub(in crate::surface::proof) function_entry_state: Option<CState>,
     /// Immutable file-scoped lookup for exact ordinary callee source
