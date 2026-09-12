@@ -1449,17 +1449,18 @@ fn condition_fact_refutes(fact: &Proposition, other: &Proposition) -> bool {
 /// positionally — so the common prefix keeps its order and the disjunction is
 /// appended after it.
 fn join_loop_exit_paths(
-    mut exits: Vec<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>,
+    mut exits: Vec<LoopExitFacts>,
 ) -> Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)> {
     if exits.len() <= 1 {
-        return exits.pop();
+        let exit = exits.pop()?;
+        return Some((exit.stated, exit.obligations));
     }
-    let (first_facts, first_obligations) = exits[0].clone();
+    let (first_facts, first_obligations) = (exits[0].stated.clone(), exits[0].obligations.clone());
     let shared = first_facts
         .iter()
         .filter(|fact| {
-            exits[1..].iter().all(|(facts, _)| {
-                facts
+            exits[1..].iter().all(|exit| {
+                exit.stated
                     .iter()
                     .any(|other| other.proposition() == fact.proposition())
             })
@@ -1468,15 +1469,15 @@ fn join_loop_exit_paths(
         .collect::<Vec<_>>();
     let own_facts = exits
         .iter()
-        .map(|(facts, _)| {
-            facts
+        .map(|exit| {
+            exit.disjunct
                 .iter()
-                .filter(|fact| {
+                .filter(|proposition| {
                     !shared
                         .iter()
-                        .any(|common| common.proposition() == fact.proposition())
+                        .any(|common| common.proposition() == *proposition)
                 })
-                .map(|fact| fact.proposition().clone())
+                .cloned()
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -1524,8 +1525,8 @@ fn join_loop_exit_paths(
         facts.push(ExecutionPureFact::new(disjunction));
     }
     let mut obligations = first_obligations;
-    for (_, path_obligations) in exits.drain(1..) {
-        for obligation in path_obligations {
+    for exit in exits.drain(1..) {
+        for obligation in exit.obligations {
             if !obligations.contains(&obligation) {
                 obligations.push(obligation);
             }
@@ -1534,29 +1535,81 @@ fn join_loop_exit_paths(
     Some((facts, obligations))
 }
 
+/// One exit's contribution to a loop's join.
+///
+/// `stated` is what that path actually holds, and the join's common prefix is
+/// the intersection of those — the loop rule's consumers read the exported
+/// invariant facts there, so it keeps the names the head stated them under.
+/// `disjunct` is the same path restated about the successor the join builds:
+/// with no abstraction it is exactly `stated`, and when a component was
+/// abstracted it is that path's own description of the fresh names instead of
+/// names the loop left behind.
+struct LoopExitFacts {
+    stated: Vec<ExecutionPureFact>,
+    disjunct: Vec<Proposition>,
+    obligations: Vec<ProofObligation>,
+}
+
+impl LoopExitFacts {
+    /// An exit whose state the join did not have to abstract: it describes the
+    /// successor in the names it already used.
+    fn unabstracted(facts: Vec<ExecutionPureFact>, obligations: Vec<ProofObligation>) -> Self {
+        Self {
+            disjunct: facts
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect(),
+            stated: facts,
+            obligations,
+        }
+    }
+}
+
 /// Joins every way out of one loop into the single successor path the
 /// enclosing frontier continues from.
 ///
 /// The guard-false exits stand at the loop's head state; a `break` exit
 /// stands where that path left the body. A loop has one successor, so the
-/// rule can only export their join when they agree on that state: the facts
-/// are then joined by [`join_loop_exit_paths`], which keeps what every exit
-/// states and disjoins what each states alone. Exits that reach different
-/// states are refused here, naming the components that differ — dropping one
-/// of them, or picking one state for all, would export an exit the C never
-/// reaches that way.
-fn join_loop_exits_at_one_state(
+/// exits that reach one state are joined by [`join_loop_exit_paths`], which
+/// keeps what every exit states and disjoins what each states alone.
+///
+/// Exits that reach *different* states are described the way the loop head
+/// describes an arbitrary visit (D5), by
+/// [`abstract_loop_exit_states`]: the loop's declared binders are rebound at
+/// each exit by family and argument equality, whatever the body called them;
+/// every component the exits disagree about — a binder's model, a local, a
+/// cell one exit wrote differently — becomes one fresh name; and each exit
+/// contributes, as its own disjunct, the equations pinning those fresh names
+/// to what that exit actually reached. Each disjunct is exactly what its path
+/// established about the successor, so the join is the standard weakening and
+/// nothing is assumed of an exit that did not state it. A component no binder
+/// can describe is still refused by name; dropping an exit, or picking one
+/// exit's state for all of them, would export an exit the C never reaches
+/// that way.
+fn join_loop_exits(
+    head: &CLoopHead,
+    binders: &[CLoopBinder],
     exits: Vec<(CState, Vec<ExecutionPureFact>, Vec<ProofObligation>)>,
+    assumptions: &PureFactContext,
+    variables: &mut KernelVariableGenerator,
 ) -> Option<CStatementExecutionPath> {
     let exit_state = exits.first()?.0.clone();
-    let mismatch = exits
-        .iter()
-        .skip(1)
-        .find_map(|(state, _, _)| loop_exit_state_difference(&exit_state, state));
+    let states = exits.iter().map(|(state, _, _)| state).collect::<Vec<_>>();
+    let unchanged = || vec![LoopExitRestatement::default(); exits.len()];
+    let (exit_state, restatements, mismatch) =
+        if states[1..].iter().all(|other| **other == exit_state) {
+            (exit_state, unchanged(), None)
+        } else {
+            match abstract_loop_exit_states(head, binders, &states, assumptions, variables) {
+                Ok((state, restatements)) => (state, restatements, None),
+                Err(mismatch) => (exit_state, unchanged(), Some(mismatch)),
+            }
+        };
     let (facts, mut obligations) = join_loop_exit_paths(
         exits
             .into_iter()
-            .map(|(_, facts, obligations)| (facts, obligations))
+            .zip(restatements)
+            .map(|((_, facts, obligations), restatement)| restatement.restate(facts, obligations))
             .collect(),
     )?;
     if let Some(mismatch) = mismatch {
@@ -1572,6 +1625,601 @@ fn join_loop_exits_at_one_state(
         facts,
         obligations,
     })
+}
+
+/// The one post-loop state several exits join into, and the equations each
+/// exit owes about it.
+///
+/// This is decision D5 applied at the exits, exactly as the loop head and the
+/// back edge apply it. Every exit first rebinds the loop's declared binders by
+/// family and argument equality, so a body that refolded its instance under
+/// another name still hands the loop back the resource the header declared.
+/// Then, component by component, the exits' agreement is kept and their
+/// disagreement is replaced by a fresh symbolic name:
+///
+/// - a declared binder's arguments and fields (the loop head havocs the same
+///   fields, for the same reason: an exit's model is whatever its own path
+///   established, and the successor holds only the disjunction of those);
+/// - the locals the exits disagree on, with the local's stack cell resynced;
+/// - a memory cell the exits wrote differently, which is a cell folded into a
+///   declared binder — the loop body owns nothing else — and which a proof
+///   after the loop therefore reads back through that binder's model.
+///
+/// The returned restatement is per exit: it pins every fresh name to the value
+/// that exit reached, so the caller's disjunction says exactly "the successor
+/// is what one of these exits reached" and never more, and it renames the
+/// exit's own bare symbolic values to those fresh names so the disjunct speaks
+/// about the successor rather than about a value the loop left behind.
+///
+/// Refusals are named, never silent: an exit that holds no instance for a
+/// declared binder, a cell the exits disagree about when the loop declares no
+/// binder to describe it, and any disagreement outside these components
+/// (allocation lifetimes, block shapes, ownership beyond the binders) refuse
+/// with the component that differs.
+///
+/// Cost is the loop's own binders, the locals the exits disagree on, and the
+/// cells they disagree on; no unrelated project-wide or path-wide state is
+/// scanned, and a component every exit agrees on is compared once and kept.
+fn abstract_loop_exit_states(
+    head: &CLoopHead,
+    binders: &[CLoopBinder],
+    states: &[&CState],
+    assumptions: &PureFactContext,
+    variables: &mut KernelVariableGenerator,
+) -> Result<(CState, Vec<LoopExitRestatement>), String> {
+    let mut rebound = Vec::with_capacity(states.len());
+    for (index, state) in states.iter().enumerate() {
+        match c_loop_state_with_loop_binders_rebound(&head.top, state, binders, assumptions) {
+            Ok(state) => rebound.push(state),
+            Err(failure) => {
+                return Err(format!("at loop exit {}, {failure}", index + 1));
+            }
+        }
+    }
+    let mut successor = rebound[0].clone();
+    let mut restatements = vec![LoopExitRestatement::default(); rebound.len()];
+    abstract_loop_exit_binders(
+        &mut successor,
+        &rebound,
+        binders,
+        &mut restatements,
+        variables,
+    )?;
+    let locals = abstract_loop_exit_locals(&mut successor, &rebound, &mut restatements, variables)?;
+    let resynced = locals
+        .iter()
+        .filter_map(|(name, _)| successor.locals.slot(name).cloned())
+        .collect::<BTreeSet<_>>();
+    // A cell the exits wrote differently is described through a binder's
+    // model, so a cell the loop declared as plain memory of its own has no
+    // such description. Those ranges are what the head handed the body
+    // besides its binders.
+    let declared_memory = if binders.is_empty() {
+        Vec::new()
+    } else {
+        loop_declared_memory_ranges(&head.body)
+    };
+    let cells = abstract_loop_exit_memory(
+        &mut successor,
+        &rebound,
+        &resynced,
+        binders.is_empty(),
+        &declared_memory,
+        assumptions,
+        &mut restatements,
+        variables,
+    )?;
+    // Everything the rule knows how to describe has now been made common. A
+    // state that still differs differs in something this rule does not model,
+    // so it is refused under its own name rather than abstracted blindly.
+    if let Some(mismatch) = rebound.iter().find_map(|state| {
+        loop_exit_residual_difference(&successor, state, &locals, &cells, binders)
+    }) {
+        return Err(mismatch);
+    }
+    Ok((successor, restatements))
+}
+
+/// What one loop exit owes about the successor the join exports.
+///
+/// `equations` pin the successor's fresh names to the values this exit
+/// reached. `renamings` say which bare symbolic value this exit held for a
+/// name the successor now calls something else: a guard-false exit stands at
+/// the loop head, where every local the body writes is one fresh variable, so
+/// `i <= 0` there is a fact about a variable that no longer names anything
+/// after the loop. Rewriting this exit's own facts through its own equation is
+/// the weakening that turns such a fact into one about the local a proof after
+/// the loop can name, and it is valid exactly because the equation holds on
+/// this path — which is why it is applied only to this exit's disjunct.
+#[derive(Clone, Debug, Default)]
+struct LoopExitRestatement {
+    equations: Vec<Proposition>,
+    renamings: Vec<(Variable, Bitvector32Term)>,
+}
+
+impl LoopExitRestatement {
+    /// Records that this exit's `held` value became the successor's `fresh`
+    /// one.
+    fn pin(&mut self, fresh: &CValue, held: &CValue) {
+        // The C comparison form, not a raw term equality: a proof after the
+        // loop spells this disjunct as `x == <value>`, and `cases` needs the
+        // exported fact to be exactly what that spelling lowers to.
+        self.equations.push(
+            c_value_comparison_proposition(fresh, CComparisonOperator::Equal, held).unwrap_or_else(
+                || Proposition::Equal(Term::CValue(fresh.clone()), Term::CValue(held.clone())),
+            ),
+        );
+        if let (Some(Bitvector32Term::Variable(from)), Some(to)) =
+            (scalar_bitvector(held), scalar_bitvector(fresh))
+        {
+            self.renamings.push((*from, to.clone()));
+        }
+    }
+
+    /// Records that this exit's `held` resource argument or field became the
+    /// successor's `fresh` one.
+    fn pin_resource_value(&mut self, fresh: &AlgebraicValue, held: &AlgebraicValue) {
+        if let (AlgebraicValue::C(fresh), AlgebraicValue::C(held)) = (fresh, held) {
+            self.pin(fresh, held);
+            return;
+        }
+        self.equations.push(Proposition::Equal(
+            resource_value_term(fresh),
+            resource_value_term(held),
+        ));
+    }
+
+    /// This exit's contribution to the join: what it states, and the same
+    /// path restated about the successor's fresh names for its disjunct.
+    ///
+    /// The restated reading never replaces what the path stated — the loop
+    /// rule's consumers read the exported invariant facts under the names the
+    /// head stated them — but the disjunct is built from the restated reading
+    /// alone, because a name the loop left behind is one no proof after the
+    /// loop can spell, and a `cases` over the exported disjunction has to
+    /// spell it.
+    fn restate(
+        self,
+        facts: Vec<ExecutionPureFact>,
+        obligations: Vec<ProofObligation>,
+    ) -> LoopExitFacts {
+        if self.renamings.is_empty() && self.equations.is_empty() {
+            return LoopExitFacts::unabstracted(facts, obligations);
+        }
+        let rename = |proposition: &Proposition| {
+            self.renamings
+                .iter()
+                .fold(proposition.clone(), |proposition, (from, to)| {
+                    substitute_bitvector_variable_in_proposition(&proposition, *from, to)
+                })
+        };
+        let mut disjunct = facts
+            .iter()
+            .map(|fact| rename(fact.proposition()))
+            .collect::<Vec<_>>();
+        for equation in &self.equations {
+            // An equation the renaming covers is dropped: every fact this exit
+            // stated about the renamed value was restated about the
+            // successor's name above, so keeping it would state nothing.
+            let renamed = rename(equation);
+            if equation_states_nothing(&renamed) {
+                continue;
+            }
+            disjunct.push(renamed);
+        }
+        LoopExitFacts {
+            stated: facts,
+            disjunct,
+            obligations,
+        }
+    }
+}
+
+/// Whether a pinning equation has become vacuous, which is what a renaming
+/// that already covered it leaves behind.
+fn equation_states_nothing(equation: &Proposition) -> bool {
+    match equation {
+        Proposition::Equal(left, right) => left == right,
+        Proposition::ConditionIs(condition, value) => {
+            PureFactContext::decide_intrinsically(condition) == Some(*value)
+        }
+        _ => false,
+    }
+}
+
+/// The scalar term a C value carries, for the one-variable renaming above.
+fn scalar_bitvector(value: &CValue) -> Option<&Bitvector32Term> {
+    match value {
+        CValue::Bool(term)
+        | CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => Some(term),
+        CValue::Void | CValue::Pointer(_) => None,
+    }
+}
+
+/// Gives each declared loop binder the arguments and fields every exit agrees
+/// on, and one fresh name wherever they disagree.
+fn abstract_loop_exit_binders(
+    successor: &mut CState,
+    exits: &[CState],
+    binders: &[CLoopBinder],
+    restatements: &mut [LoopExitRestatement],
+    variables: &mut KernelVariableGenerator,
+) -> Result<(), String> {
+    for binder in binders {
+        let mut instances = Vec::with_capacity(exits.len());
+        for (index, state) in exits.iter().enumerate() {
+            let Some(instance) = state.resources().owned_instance(binder.identity) else {
+                return Err(format!(
+                    "at loop exit {}, loop binder `{}` holds no instance",
+                    index + 1,
+                    binder.name
+                ));
+            };
+            instances.push(instance.clone());
+        }
+        let base = instances[0].clone();
+        if instances[1..]
+            .iter()
+            .any(|instance| instance.name != base.name || instance.schema != base.schema)
+        {
+            return Err(format!(
+                "the exits hold different resources for loop binder `{}`",
+                binder.name
+            ));
+        }
+        let arguments = joined_resource_values(
+            &base.arguments,
+            instances.iter().map(|instance| &instance.arguments),
+            restatements,
+            variables,
+        )?;
+        let fields = joined_resource_values(
+            &base.fields,
+            instances.iter().map(|instance| &instance.fields),
+            restatements,
+            variables,
+        )?;
+        if arguments == base.arguments && fields == base.fields {
+            continue;
+        }
+        let Some(joined) = ResourceInstance::new(
+            binder.identity,
+            base.name.clone(),
+            arguments,
+            base.schema.clone(),
+            fields,
+        ) else {
+            return Err(format!(
+                "loop binder `{}` names an instance whose fields do not match its schema",
+                binder.name
+            ));
+        };
+        let Some(resources) = successor.resources().clone().without_fact_incrementally(
+            &CResourceFact::own(CResource::Instance(base)),
+            &PureFactContext::new(),
+        ) else {
+            return Err(format!(
+                "loop binder `{}` could not be rebound at the loop's exit",
+                binder.name
+            ));
+        };
+        *successor = successor.clone().with_resource_context(
+            resources.unchecked_with_fact(CResourceFact::own(CResource::Instance(joined))),
+        );
+    }
+    Ok(())
+}
+
+/// One resource argument or field vector, position by position: the common
+/// value where every exit agrees, a fresh name plus one equation per exit
+/// where they do not.
+fn joined_resource_values<'a>(
+    base: &ResourceArguments,
+    exits: impl Iterator<Item = &'a ResourceArguments> + Clone,
+    restatements: &mut [LoopExitRestatement],
+    variables: &mut KernelVariableGenerator,
+) -> Result<ResourceArguments, String> {
+    let mut joined = base.to_vec();
+    for (position, value) in joined.iter_mut().enumerate() {
+        let mut held = Vec::with_capacity(restatements.len());
+        for exit in exits.clone() {
+            let Some(value) = exit.get(position) else {
+                return Err("the exits hold resource instances of different widths".to_string());
+            };
+            held.push(value.clone());
+        }
+        if held.iter().all(|other| other == value) {
+            continue;
+        }
+        let fresh = fresh_resource_value_like(value, variables);
+        for (restatement, held) in restatements.iter_mut().zip(held) {
+            restatement.pin_resource_value(&fresh, &held);
+        }
+        *value = fresh;
+    }
+    Ok(joined.into())
+}
+
+/// A fresh symbolic value of the same sort as `value`.
+fn fresh_resource_value_like(
+    value: &AlgebraicValue,
+    variables: &mut KernelVariableGenerator,
+) -> AlgebraicValue {
+    let variable = variables.next();
+    match value {
+        AlgebraicValue::Integer(_) => AlgebraicValue::Integer(IntegerTerm::Variable(variable)),
+        AlgebraicValue::C(value) => {
+            AlgebraicValue::C(symbolic_call_result(value.c_type(), variable))
+        }
+        AlgebraicValue::Algebraic(term) => AlgebraicValue::Algebraic(AlgebraicTerm {
+            algebraic_type: term.algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(variable),
+        }),
+    }
+}
+
+/// One resource argument or field as the term an equation is written over.
+fn resource_value_term(value: &AlgebraicValue) -> Term {
+    match value {
+        AlgebraicValue::Integer(term) => Term::Integer(term.clone()),
+        AlgebraicValue::C(value) => Term::CValue(value.clone()),
+        AlgebraicValue::Algebraic(term) => Term::Algebraic(term.clone()),
+    }
+}
+
+/// Havocs the locals the exits disagree on, keeping the rest, and reports
+/// which ones it abstracted.
+fn abstract_loop_exit_locals(
+    successor: &mut CState,
+    exits: &[CState],
+    restatements: &mut [LoopExitRestatement],
+    variables: &mut KernelVariableGenerator,
+) -> Result<Vec<(String, CType)>, String> {
+    let mut abstracted = Vec::new();
+    let names = successor
+        .locals()
+        .object_values()
+        .map(|(name, _)| name.to_string())
+        .collect::<Vec<_>>();
+    for name in names {
+        let mut held = Vec::with_capacity(exits.len());
+        for state in exits {
+            let Some(value) = state.locals().get(&name) else {
+                return Err(format!("local `{name}` is not bound by every exit"));
+            };
+            held.push(value.clone());
+        }
+        if held[1..].iter().all(|value| *value == held[0]) {
+            continue;
+        }
+        let Some(c_type) = successor.local_object_type(&name) else {
+            return Err(format!("local `{name}` has no scalar type here"));
+        };
+        let Some(fresh) = fresh_loop_local_value(c_type, variables) else {
+            return Err(format!("local `{name}` has no abstract value of its type"));
+        };
+        for (restatement, held) in restatements.iter_mut().zip(held) {
+            restatement.pin(&fresh, &held);
+        }
+        sync_stack_local(successor, &name, &fresh);
+        successor.locals.set_typed(name.clone(), fresh, c_type);
+        abstracted.push((name, c_type));
+    }
+    Ok(abstracted)
+}
+
+/// Havocs the cells the exits wrote differently, keeping the rest.
+///
+/// The loop body owns exactly what the loop header declared, so a cell one
+/// exit left holding a different value is a cell inside a declared binder: the
+/// binder's model is what a proof after the loop reads it back through, and
+/// the disjunction relates the two. A loop that declares no binder has nothing
+/// to read such a cell through, so the disagreement is refused by name.
+fn abstract_loop_exit_memory(
+    successor: &mut CState,
+    exits: &[CState],
+    resynced: &BTreeSet<Pointer>,
+    no_binders: bool,
+    declared_memory: &[CMemoryRange],
+    assumptions: &PureFactContext,
+    restatements: &mut [LoopExitRestatement],
+    variables: &mut KernelVariableGenerator,
+) -> Result<BTreeSet<Pointer>, String> {
+    let mut memory = successor.memory().clone();
+    if exits.iter().any(|state| state.memory().heap != memory.heap) {
+        return Err("heap allocation lifetimes".to_string());
+    }
+    let pointers = memory
+        .cells
+        .keys()
+        .filter(|pointer| !resynced.contains(*pointer))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut dropped = Vec::new();
+    let mut havoced = Vec::new();
+    for pointer in pointers {
+        let mut held = Vec::with_capacity(exits.len());
+        for state in exits {
+            match state.memory().cells.get(&pointer) {
+                Some(value) => held.push(value.clone()),
+                // A cell one exit does not hold is authority the successor
+                // cannot have; dropping it only makes a later read fail.
+                None => {
+                    dropped.push(pointer.clone());
+                    break;
+                }
+            }
+        }
+        if held.len() != exits.len() {
+            continue;
+        }
+        if held[1..].iter().all(|value| *value == held[0]) {
+            continue;
+        }
+        if no_binders || !assumptions.ranges_proven_disjoint_from_pointer(declared_memory, &pointer)
+        {
+            return Err(format!(
+                "the cell in `{}` that the exits write differently is owned by no loop binder",
+                pointer.block
+            ));
+        }
+        let Some(fresh) = fresh_loop_local_value(held[0].c_type(), variables) else {
+            return Err(format!(
+                "the cell in `{}` has no abstract value of its type",
+                pointer.block
+            ));
+        };
+        for (restatement, held) in restatements.iter_mut().zip(held) {
+            restatement.pin(&fresh, &held);
+        }
+        havoced.push((pointer, fresh));
+    }
+    let mut abstracted = BTreeSet::new();
+    if !dropped.is_empty() || !havoced.is_empty() {
+        let cells = std::sync::Arc::make_mut(&mut memory.cells);
+        for pointer in dropped {
+            cells.remove(&pointer);
+            abstracted.insert(pointer);
+        }
+        for (pointer, value) in havoced {
+            cells.insert(pointer.clone(), value);
+            abstracted.insert(pointer);
+        }
+        *successor = successor.clone().with_memory(memory);
+    }
+    Ok(abstracted)
+}
+
+/// The memory ranges a loop's own header declared, rather than folded into one
+/// of its binders.
+fn loop_declared_memory_ranges(body_state: &CState) -> Vec<CMemoryRange> {
+    body_state
+        .resources()
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact {
+            CResourceFact::Own(CResource::Memory(range), _) => Some(range.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The abstract value a loop havoc gives a local of this type, if it has one.
+fn fresh_loop_local_value(
+    c_type: CType,
+    variables: &mut KernelVariableGenerator,
+) -> Option<CValue> {
+    Some(match c_type {
+        CType::Void => return None,
+        CType::Bool => CValue::Bool(Bitvector32Term::Variable(variables.next())),
+        CType::Int16 => int16(Bitvector32Term::Variable(variables.next())),
+        CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
+        CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
+        CType::UInt16 => uint16(Bitvector32Term::Variable(variables.next())),
+        CType::UInt32 => uint32(Bitvector32Term::Variable(variables.next())),
+        CType::Int64 => CValue::Int64(Bitvector32Term::Variable(variables.next())),
+        CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variables.next())),
+        CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variables.next())),
+        CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variables.next())),
+        CType::VoidPointer
+        | CType::Int16Pointer
+        | CType::UInt16Pointer
+        | CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::UInt32Pointer
+        | CType::Int64Pointer
+        | CType::UInt64Pointer
+        | CType::Int16PointerPointer
+        | CType::UInt16PointerPointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer
+        | CType::UInt32PointerPointer
+        | CType::Int64PointerPointer
+        | CType::UInt64PointerPointer
+        | CType::Float32Pointer
+        | CType::Float64Pointer
+        | CType::Float32PointerPointer
+        | CType::Float64PointerPointer => {
+            CValue::typed_pointer(Pointer::symbolic(variables.next()), c_type)
+        }
+        CType::FunctionPointer(_) => {
+            CValue::typed_pointer(Pointer::symbolic_function(variables.next()), c_type)
+        }
+        CType::Int32Array(_)
+        | CType::UInt8Array(_)
+        | CType::Int16Array(_)
+        | CType::UInt16Array(_)
+        | CType::UInt32Array(_)
+        | CType::Int64Array(_)
+        | CType::UInt64Array(_)
+        | CType::Float32Array(_)
+        | CType::Float64Array(_) => return None,
+    })
+}
+
+/// What an abstracted successor and one exit still disagree about once the
+/// components the abstraction deliberately replaced are put back.
+///
+/// The successor is reconstructed at this exit: its binder instances, its
+/// havocked locals, and its havocked cells are restored to the values this
+/// exit reached. Anything still different is a component the rule did not
+/// model — an allocation lifetime, a block shape, ownership beyond the
+/// binders — and the join refuses under that name rather than exporting a
+/// state no exit stands in.
+fn loop_exit_residual_difference(
+    successor: &CState,
+    exit: &CState,
+    locals: &[(String, CType)],
+    cells: &BTreeSet<Pointer>,
+    binders: &[CLoopBinder],
+) -> Option<String> {
+    let mut witness = successor.clone();
+    for binder in binders {
+        let Some(joined) = witness.resources().owned_instance(binder.identity).cloned() else {
+            continue;
+        };
+        let Some(held) = exit.resources().owned_instance(binder.identity).cloned() else {
+            continue;
+        };
+        let Some(resources) = witness.resources().clone().without_fact_incrementally(
+            &CResourceFact::own(CResource::Instance(joined)),
+            &PureFactContext::new(),
+        ) else {
+            continue;
+        };
+        witness = witness.with_resource_context(
+            resources.unchecked_with_fact(CResourceFact::own(CResource::Instance(held))),
+        );
+    }
+    for (name, c_type) in locals {
+        let value = exit.locals().get(name)?.clone();
+        sync_stack_local(&mut witness, name, &value);
+        witness.locals.set_typed(name.clone(), value, *c_type);
+    }
+    if !cells.is_empty() {
+        let mut memory = witness.memory().clone();
+        let restored = std::sync::Arc::make_mut(&mut memory.cells);
+        for pointer in cells {
+            match exit.memory().cells.get(pointer) {
+                Some(value) => {
+                    restored.insert(pointer.clone(), value.clone());
+                }
+                None => {
+                    restored.remove(pointer);
+                }
+            }
+        }
+        witness = witness.with_memory(memory);
+    }
+    loop_exit_state_difference(&witness, exit)
 }
 
 /// What two loop exit states disagree about, named for a refusal.
@@ -1659,6 +2307,9 @@ fn execute_c_while_exit_paths(
         )?
     };
     let top_state = head.top.clone();
+    // The loop's declared binders, for the exit join: D5 names them at the
+    // head, at the back edge, and at every exit by the same rule.
+    let binders = c_loop_binders(resource_specs);
     // The guard and the invariants are read with the selected arm's cells
     // published (D7); the loop's exit outcome stays `top_state`, so that read
     // authority never leaves the head.
@@ -1729,6 +2380,7 @@ fn execute_c_while_exit_paths(
     };
     let mut paths = Vec::new();
     paths.append(&mut final_exit_paths);
+    let mut candidate_exit_entries = Vec::new();
     if initial_may_continue {
         for candidate in final_exit_candidates {
             let candidate_assumptions =
@@ -1770,14 +2422,22 @@ fn execute_c_while_exit_paths(
                     });
                     continue;
                 }
-                exits.push((facts, obligations));
+                exits.push(LoopExitFacts::unabstracted(facts, obligations));
             }
             if let Some((facts, obligations)) = join_loop_exit_paths(exits) {
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::Normal(head.restored_exit_state(candidate.state())),
+                // A candidate is one more way out, not a second successor:
+                // it joins the guard-false and `break` exits below on the
+                // same terms. Exporting it as its own path would give the
+                // loop statement several successors, and for a `do ... while`
+                // — whose only guard-false exit is this one, since its guard
+                // is read after the body — it is the exit, so dropping it
+                // exported no exit state at all and made every post-loop
+                // claim vacuous.
+                candidate_exit_entries.push((
+                    head.restored_exit_state(candidate.state()),
                     facts,
                     obligations,
-                });
+                ));
             }
         }
     }
@@ -1828,6 +2488,7 @@ fn execute_c_while_exit_paths(
                 loop_check_obligations.clone(),
             )
         })
+        .chain(candidate_exit_entries)
         .collect::<Vec<_>>();
     if initial_may_exit {
         for (invariant_facts, invariant_obligations) in invariant_contexts {
@@ -1897,11 +2558,13 @@ fn execute_c_while_exit_paths(
                 .map(|(facts, obligations)| (top_state.clone(), facts, obligations))
                 .chain(break_exit_entries.iter().cloned())
                 .collect::<Vec<_>>();
-            if let Some(path) = join_loop_exits_at_one_state(exits) {
+            if let Some(path) = join_loop_exits(&head, &binders, exits, assumptions, variables) {
                 paths.push(path);
             }
         }
-    } else if let Some(path) = join_loop_exits_at_one_state(break_exit_entries) {
+    } else if let Some(path) =
+        join_loop_exits(&head, &binders, break_exit_entries, assumptions, variables)
+    {
         // A guard that cannot be false, `while (true)`, has no guard-false
         // exit: the successor is the join of the `break` exits alone.
         paths.push(path);

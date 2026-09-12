@@ -21,9 +21,10 @@ successor is the join of the two `break` exits alone, and the post-loop claim
 reads their disjunction.
 
 A `break` path whose state differs from the loop's other exits — one that
-assigns or stores before leaving — has no common successor with them and is
-refused by name; see
-[`loop_body_break_exit_state_rejected.md`](loop_body_break_exit_state_rejected.md).
+assigns or stores before leaving — is described through the loop's binders and
+one fresh name per component the exits disagree about, with the disjunction of
+what each exit said about them; see
+[`loop_body_break_exit_joined_state.md`](loop_body_break_exit_joined_state.md).
 
 ```c filename=break_once.c
 int32 break_once(int32 n) {

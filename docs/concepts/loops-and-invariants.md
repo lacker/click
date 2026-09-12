@@ -254,13 +254,73 @@ rule on its own. A `branch` is the joining form and has nothing to join when
 one arm leaves the loop, so it refuses and names the proof-level spelling
 (`mdtests/loop_body_break_in_branch_arm_rejected.md`).
 
-The exits joined into one successor must reach one state. A `break` that
-assigns or stores before leaving reaches a different state than the
-guard-false exit, and the rule refuses, naming what differs
-(`mdtests/loop_body_break_exit_state_rejected.md`), rather than choosing one
-state for both or dropping a path. Describing the state a loop exits in, the
-way `branch ensuring` describes the state two arms join in, is not something
-this language can say yet.
+### `do ... while`
+
+A `do ... while` reads its guard after the body, so the state a body path ends
+in *is* its guard-false exit; there is no exit at the head. That state is
+always one of the loop's exits, and it joins the `break` exits into the single
+successor exactly as a `while` loop's guard-false exit does
+(`mdtests/do_while_break_exit_join.md`). Without it the loop exported no exit
+at all and every claim after it held vacuously, which is why both
+`mdtests/do_while_break_exit_vacuous_rejected.md` and
+`mdtests/do_while_no_exit_state_rejected.md` are negatives.
+
+### Exits that reach different states
+
+A `break` that assigns or stores before leaving stands at a different state
+than the guard-false exit and than the other `break`s. The loop still has one
+successor, and it is described the way the loop head describes an arbitrary
+visit — the rule of [modeled instances in
+loops](#modeled-instances-in-loops), applied at the exits:
+
+- the loop's declared binders are bound again at each exit by family and
+  argument equality, whatever the body called them, and a binder no exit can
+  hand back is a refusal naming that binder and that exit
+  (`mdtests/loop_break_exit_missing_binder_rejected.md`);
+- every component the exits disagree about becomes one fresh name — a binder's
+  model or arguments, a local, a cell one exit wrote differently;
+- each exit contributes, as its own disjunct, what it established about those
+  fresh names, so the successor states exactly "this is what one of the exits
+  reached" and nothing more.
+
+A cell the exits wrote differently is a cell folded into one of the declared
+binders, since the body owns nothing else, and a proof after the loop reads it
+back through that binder's model. A loop that declares no binder has nothing to
+read such a cell through, and the difference is refused naming the cell
+(`mdtests/loop_break_exit_unowned_cell_rejected.md`).
+
+What every exit states survives the join as an ordinary fact, so a claim that
+does not distinguish the exits needs nothing special
+(`mdtests/loop_break_exit_refold_join.md`). A claim that does distinguish them
+is read off the exported disjunction with `cases`:
+
+<!-- verified-example: mdtests/loop_break_exit_binder_model_join.md -->
+```click
+have c.color == Color::Red or c.color == Color::Black by {
+    cases((flag == 0 and c.color == Color::Red and p->shade == 0) or (c.color == Color::Black and p->shade == 1)) {
+        simp();
+    } {
+        simp();
+    }
+}
+```
+
+That is a `while (true)` whose two `break`s paint the node a different colour
+and refold the binder before leaving: the model of `c` and the byte in
+`p->shade` are both fresh in the successor, and the disjunction is what ties
+them back to the two ways out. A local the exits disagree on works the same way
+(`mdtests/loop_body_break_exit_joined_state.md`), and a claim only one exit
+supports still fails
+(`mdtests/loop_body_break_exit_joined_state_rejected.md`).
+
+A guard-false exit stands at the loop head, where the locals the body writes
+are fresh names of their own. Its own facts are therefore restated about the
+successor's names before they are disjoined — valid because that exit's own
+disjunct is the equation saying the two are the same value — so the disjunction
+speaks in names a proof after the loop can spell. A `break` exit's facts about
+the *head's* values are left as they are; they are true, but a proof after the
+loop cannot name what they are about, so a `cases` over such a disjunction is
+out of reach.
 
 ## Memory loops
 

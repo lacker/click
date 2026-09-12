@@ -1145,7 +1145,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             // The body must return to the head it started from, which carries
             // the loop's own resource context when the loop declares one.
             let join_assumptions = assumptions_from_propositions(&join_facts);
-            if crate::kernel::c_loop_state_with_loop_binders_rebound(
+            let back_edge_fails = crate::kernel::c_loop_state_with_loop_binders_rebound(
                 preservation.state(),
                 &checked_execution.core.state,
                 preservation.binders(),
@@ -1163,8 +1163,13 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                     environment.function.composite_resource_definitions(),
                 )
             })
-            .is_err()
-            {
+            .is_err();
+            // A `do ... while` reads its guard after the body, so the state a
+            // body path ends in is the loop's only guard-false exit. Recording
+            // it only when the back edge fails to close exported no exit at
+            // all for a body that does close it, and every claim after the
+            // loop was then vacuous.
+            if do_while || back_edge_fails {
                 let candidate = CLoopFinalExitCandidate::new(
                     (*checked_execution.core.state).clone(),
                     checked.facts().to_vec(),

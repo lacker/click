@@ -4,6 +4,15 @@
 that first execution, `continue` goes to the condition and `break` exits the
 loop.
 
+The guard is read after the body, so the state a body path ends in *is* the
+loop's guard-false exit; there is no separate exit at the head. `do_while_invariant`
+is where that shows: the loop head is an arbitrary visit, so `i` there is
+abstract and only the invariant says anything about it, and the postcondition
+`result == 1` is read off the invariant at the value the body's increment
+produced. The invariant is written `i + 1 == 1` rather than `i == 0` because a
+proof after the loop reads the exported invariant facts in the terms the head
+stated them.
+
 ```c filename=do_while_count.c
 int32 do_while_count() {
     int32 i = 0;
@@ -74,8 +83,9 @@ int32 do_while_invariant(int32 i) {
     ensures result == 1;
 } by {
     loop {
-        invariant i >= 0 and i < 2147483647;
+        invariant i + 1 == 1;
     }
+    step();
     simp();
 }
 
