@@ -1074,6 +1074,31 @@ fn special_arithmetic_certificate_round_trips_and_rejects_bad_premises() {
 }
 
 #[test]
+fn float_reflexive_smart_expansion_has_one_finite_premise_and_rechecks() {
+    let source = r#"
+        theorem finite_float_reflexive(value: float) {
+            requires isfinite(value);
+            ensures value == value by { simp(); }
+        }
+    "#;
+    let verified = verify_click_theorems(source).expect("finite float reflexivity should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("float reflexivity should expand");
+    assert!(
+        expanded.contains("arithmetic_certificate special"),
+        "{expanded}"
+    );
+    assert_eq!(expanded.matches("premise ").count(), 1, "{expanded}");
+    let rechecked = source.replace("by { simp(); }", &expanded);
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_click_theorems(&rechecked)
+    });
+    result.expect("expanded float reflexivity should recheck");
+    assert_eq!(planning, 0, "explicit special recheck must not plan");
+}
+
+#[test]
 fn signed_arithmetic_smart_planner_expands_to_structural_certificate() {
     let source = r#"
         theorem signed_smart_double(n: int32) {

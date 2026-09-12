@@ -967,17 +967,16 @@ impl ProofFacts {
                     ),
                     _ => continue,
                 };
-                if let Some(candidate) = self
-                    .matching_indexed_finite_classification(&classification)
-                    .or_else(|| {
-                        self.matching_fact_across_effects(&classification, &[])
-                            .map(Arc::new)
-                    })
+                if let Some(candidate) =
+                    self.matching_indexed_finite_classification(&classification)
                 {
                     // Classification facts are not stored in the bitvector
                     // relation index; the dedicated index preserves their
                     // identity across both operands.
-                    candidates.push(candidate);
+                    let id = Arc::as_ptr(&candidate) as usize;
+                    if candidate_ids.insert(id) {
+                        candidates.push(candidate);
+                    }
                 }
             }
         }
