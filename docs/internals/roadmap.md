@@ -11,9 +11,10 @@ feature backlog.
 ## Complete the P1 work
 
 Work through the open P1 issues in dependency order. P1 means required before
-launch, not a prescribed order within the list. Choose the next task by what
-unblocks the rbtree proof, and close an issue only when its fix, regression
-coverage, and documentation land.
+launch, not a prescribed order within the list. Choose the next task by its
+dependencies and what it unblocks. P1 includes the explicitly selected
+stable-views and basic-C++ architecture milestones alongside the rbtree work.
+Close an issue only when its fix, regression coverage, and documentation land.
 
 Keep verifier correctness and tooling stability ahead of feature work. A
 soundness bug or broken verification, expansion, or diagnostic boundary is a
@@ -54,7 +55,9 @@ result:
 ## After launch
 
 The P2 list records deferred work. Broader C coverage, additional targets,
-concurrency, other library demos, and future program languages such as C++ and
-Rust do not add launch prerequisites. Revisit their order after the rbtree
-launch. Promote work only when it becomes a launch blocker under the existing
-issue-priority and tooling-stability rules.
+concurrency, other library demos, C++ beyond its selected basic slice, and Rust
+remain later work. The
+[supporting more languages design](https://github.com/lacker/click/blob/master/design/supporting-more-languages.md)
+records the language sequence and longer-term architecture. Revisit deferred
+work after the rbtree launch; the issue list remains authoritative for explicit
+priority decisions and tooling blockers.

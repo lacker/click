@@ -1,9 +1,9 @@
 # Borrow semantics investigation probes
 
 Synthetic, standalone probes for the
-[resource/borrowing investigation](../borrow-semantics-investigation.md).
+[supporting more languages design](../supporting-more-languages.md).
 These are synthetic examples, not a supported Rust/C++ verification path.
-The original language probes explore later frontend support; the two C
+The language probes inform frontend planning; the two C
 contract-migration probes also support the P1 `fix-views` investigation. The
 Rust rejection probes are intentionally invalid programs; successful
 reproduction requires their compilation to fail.

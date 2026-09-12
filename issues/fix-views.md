@@ -30,7 +30,10 @@ different contracts; the probes below demonstrate two such migrations.
 This is P1 by explicit user direction: fix the core view semantics before
 launch, using the small concurrency and borrowing checks below to assess the
 design. The launch remains P1 -> minimum viable rbtree -> public launch.
-Production concurrent C and Rust frontends remain later work.
+Production concurrent C and Rust frontends remain later work. The separate
+P1 [basic C++ issue](basic-cpp-support.md) exercises these resource rules in a
+small additional-language frontend; the broader design lives in
+[Supporting more languages](../design/supporting-more-languages.md).
 
 ## Evidence from the current implementation
 
@@ -264,27 +267,19 @@ held in the other context. [Iris, frame-preserving updates](https://iris-project
 Exercise an exclusive parent loan with a shared child and an exclusive child.
 The latter must suspend conflicting parent reads as well as writes. Include
 a borrow returned into a caller-owned field and recovery of that field's
-updated value. Rust additionally needs access-origin rules: C pointer equality
-can justify alias access, but must not erase Rust reference provenance.
-Do not equate borrow lifetime with MIR `StorageDead`; the
-[existing probes](../design/borrow-probes/README.md) already distinguish them.
-
-C++ needs the same distinction between source types and proof authority. The
-existing `alias_and_cleanup.cpp` probe writes through `int&` and reads the
-new value through an aliased `const int&`. Do not automatically translate
-every C/C++ const-qualified pointer or reference into a stable view; its
-contract must justify that borrow. Existing C++ aliasing can still use
-ownership-based contracts. Destruction and storage reuse must respect an
-actual outstanding borrow even when the address does not change.
+updated value. Keep access-origin checks, source reference types, object
+lifetime, and loan expiration distinct. The compiler evidence and detailed
+C++/Rust interpretation now live in
+[Supporting more languages](../design/supporting-more-languages.md#borrowing-complications-to-revisit-for-rust).
+The existing probes remain regression inputs for this issue's model.
 
 Use one mutex-like protocol as a check on abstraction. Its shared handle
 grants the right to acquire a guard; protected memory is owned by the invariant
 until acquired, and returned on release. Two handles must not project raw
-payload views or duplicate payload ownership. Rust `Mutex` exposes protected
-data through guards. `Cell`/`UnsafeCell` need different sharing rules and do
-not supply thread-safe access merely by permitting interior mutation.
-[Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html),
-[UnsafeCell](https://doc.rust-lang.org/std/cell/struct.UnsafeCell.html)
+payload views or duplicate payload ownership. A thread-local mutable cell
+needs a different sharing protocol; allowing interior mutation does not
+itself justify cross-thread access. Language/library interpretation is
+recorded in the shared design document.
 
 Copyability alone must not authorize moving an abstract view to another
 thread. Its sharing interpretation must justify that transfer; test a

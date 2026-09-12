@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (13)
+## P1: before launch (14)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -52,7 +52,9 @@ P1 is the work that has to land before that claim can be made. The list is a
 dependency marker, not a prescribed implementation order. An unsound rule is
 P1 whatever it is about: the claim is worthless if the verifier accepts false
 contracts, so soundness bugs come first even when rbtree does not exercise
-them. A gap that only a different program would hit is P2.
+them. A gap that only a different program would hit is normally P2. The
+explicitly selected stable-views and basic-C++ milestones are also P1: they
+check the architecture before launch while rbtree remains the key demo.
 
 Soundness and kernel shape:
 
@@ -63,11 +65,12 @@ Soundness and kernel shape:
 - [Make `arithmetic` smart and expand it to `arithmetic_certificate`](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-C import and execution:
+Program import and execution:
 
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Widen the struct model](struct-model.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
+- [Add basic C++ verification with references and scoped cleanup](basic-cpp-support.md)
 
 Specification and proof:
 

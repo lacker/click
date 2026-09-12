@@ -24,6 +24,7 @@ name differ, user-facing documentation uses the Surface Click name.
 ## Project direction
 
 - [Rbtree launch roadmap](roadmap.md)
+- [Supporting more languages: C++ first, Rust next](https://github.com/lacker/click/blob/master/design/supporting-more-languages.md)
 
 The roadmap is to complete P1, verify rbtree, and launch publicly with rbtree
 as the key demo. It describes intended work, not accepted syntax or a stability
