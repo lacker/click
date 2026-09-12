@@ -1042,6 +1042,38 @@ checkpoint, not a complete W5 claim; callback/table mutation and richer
 composite prerequisite-footprint work remain for D. No C source, syntax,
 budget, quarantine, or unrelated semantics changed.
 
+#### W5 checkpoint D handoff (2026-09-12)
+
+Checkpoint D first reran the existing R3 callback reductions on the approved C
+head: the views, owned-footprint, cell-separated, unseparated-rejection, table,
+and contract-mismatch fixtures all passed. The smallest permitted callback
+body mutation was then reduced without changing an existing C fixture. The
+first callback stores through its owned `node->left` footprint; the later
+`copy` and `rotate` callbacks remain checked, and an unrelated framed token is
+consumed and returned. This is covered by
+`mdtests/rb_augment_callbacks_helper_mutates_body.md`.
+
+Two negative reductions establish selective retirement. Replacing
+`augment->copy` with the known `dummy_rotate` pointer through a checked helper
+allows the unaffected `rotate` callback but rejects the subsequent `Copy` call
+because the newly loaded pointer has no `Copy` fact. Consuming the folded
+`callback_suite` between callback calls likewise retires its old callback
+predicates. These cases are covered by
+`mdtests/rb_augment_callbacks_helper_rejects_changed_cell.md` and
+`mdtests/rb_augment_callbacks_helper_consumes_suite.md`.
+
+No stale callback authorization was reproduced: callback lookup already keys
+the requirement by the current loaded function-pointer value, and checked
+table-cell ownership/memory transitions retire the old predicate. Therefore no
+FactProvenance sidecar, unconditional callback-fact retention list, or other
+representation change was added. Existing deterministic callback scaling
+tests continue to cover selected-call work versus unrelated functions/facts;
+no new hot-path index was introduced. Richer composite prerequisite-load
+footprints were not required by this callback reduction and remain outside
+this checkpoint. This is a green partial D checkpoint, not a complete W5
+claim. No existing C source, syntax, budget, quarantine, or unrelated
+semantics changed.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.
