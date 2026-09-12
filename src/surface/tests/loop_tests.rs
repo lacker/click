@@ -96,6 +96,32 @@ fn expanded_loop_phase_proofs_are_certificates() {
     }
 }
 
+#[test]
+fn nested_conjunction_extraction_precedes_explicit_arithmetic_certificate() {
+    let (click, sources) = loop_fixture("arithmetic_conjunction_provenance");
+    let sources = borrowed_sources(&sources);
+    let expanded = expand_c0_claim_source(&click, &sources, "drain", CProofClaim::Grouped)
+        .expect("nested conjunction provenance should expand");
+    assert!(expanded.contains("extract(n >= 0);"), "{expanded}");
+    assert!(
+        expanded.contains("arithmetic_certificate signed_int32"),
+        "{expanded}"
+    );
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_c0_sources(&expanded, &sources)
+    });
+    result.expect("expanded extraction and certificate should recheck");
+    assert_eq!(planning, 0, "cold certificate recheck must not plan");
+
+    let tampered_sibling = expanded.replacen(
+        "n >= 0 and (n <= 2147483647 and n == n)",
+        "n != 0 and (n <= 2147483647 and n == n)",
+        1,
+    );
+    verify_c0_sources(&tampered_sibling, &sources)
+        .expect_err("a tampered sibling of the extracted conjunction must fail");
+}
+
 /// Reads one mdtest fixture's Click source and its C sources.
 fn loop_fixture(filename: &str) -> (String, Vec<(String, String)>) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
