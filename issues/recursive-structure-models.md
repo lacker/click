@@ -225,6 +225,34 @@ enough to become the first regression of the package that fixes them.
     `parent->rb_left == 0` and `old != 0`, or from the sibling being a
     separately owned node, the exact condition check does not derive
     `parent->rb_left != old`. Package A11.
+19. **Folding the D3 frame fails on `fact parent->left == child`.** Found by
+    package A9 on the scaffold's descent: with `ctx_at(child)` exactly as
+    `mdtests/resource_arm_binding_struct_base.md` declares it, `let frame =
+    fold(ctx_at(root->left), { model: Context::Left(root, v, r, ctx.model) },
+    { sibling: rt, up: ctx });` fails with `fold requires the instance body
+    facts for the proposed fields`; bisecting the arm shows the one blocker
+    is `fact parent->left == child`, even though the clause instantiates to
+    `root->left == root->left`. Package A12.
+20. **A pointer-typed model payload is not a memory base for ownership at
+    fold.** Found by package A9: folding the frame after the cursor moves,
+    with `parent` bound to the `HeapTree::Node` identity binding, fails
+    with `fold requires ownership of the complete instance body` while the
+    pointer equality between the binding and the cell's owner is an
+    available premise; substituting a C local moves it past ownership to
+    gap 19. A6 fixed payloads in propositions, not in ownership lookup.
+    Package A12.
+21. **Smaller scaffold-walk blockers from A9**, all pre-existing: `have
+    p->left == root by simp;` does not lower ("0 paths") when `p` is a
+    pointer local aliasing `root`; the selected arm's `fact p != 0` is not
+    published at contract lowering (A1 published cells only, D7 says facts
+    too), so `tree_leftmost`'s `if (root == 0)` needs a `branch` whose then
+    arm unfolds and is infeasible; `old(t.model)` in a loop invariant fails
+    with "resource instance `t` is not owned at this snapshot" once `t` was
+    unfolded and refolded before the loop, while the same `old(t.model)`
+    works in a `have`; a loop binder under a fresh name fails with the bare
+    "could not lower entry invariants: Paths"; match-arm bindings are out
+    of scope in loop clauses; and `observe` cannot name a fielded binder.
+    Package A12 owns the first four; the last two are not scheduled.
 
 ## Design decisions
 
@@ -435,6 +463,10 @@ appears to need one reports the need instead of adding it.
   `Top` and `Left` frames of `__rb_change_child`; b0cfc0e6) is on master
   with a confirming full gate. A11 dispatched for gap 18. A9 and T5 are in
   progress.
+- 2026-09-12: A9 (proof `match` at loop-body frontiers and after C steps,
+  `is_recursive` unified) is green and rebasing; the scaffold walks it was
+  to deliver are blocked by gaps 19 to 21, now package A12, which
+  dispatches when A9 lands.
 
 ## Work packages
 
@@ -598,6 +630,22 @@ null-ness reductions, a negative with neither pointer known non-null, the
 separation case, and the `Right` arm added to
 `mdtests/rb_ctx_change_child_one_contract.md` so one contract covers all
 three frames. Depends on A10; C3 and C5 depend on it.
+
+**A12. Unblock the scaffold walks (gaps 19, 20, 21) and deliver B1's core.**
+Scope: fix the fold body-fact check for a clause that instantiates to a
+reflexive equality through a struct-pointer binding (gap 19); let a
+pointer-typed payload binding resolve ownership at fold when it is
+provably equal to the owner (gap 20); lower a `have` over an aliasing
+pointer local; publish the selected arm's facts at contract lowering as
+D7 states; make `old(name.field)` in a loop invariant read the function
+entry instance regardless of intervening unfold/refold; and name the
+refusal for a fresh loop binder. Acceptance is B1's core: the unchanged
+`tree_leftmost` and `tree_rightmost` verified and audited on
+`examples/modeled-binary-tree` with `Context`, `ctx_at(child, parent)`,
+`plug`, loop binders, a loop-body `match`, and `decreases sub;`, plus the
+ascending and rotate-then-ascend fixtures and the two context negatives
+A4 and A9 could not land. Depends on A9. B1 then only adds the README and
+docs.
 
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
