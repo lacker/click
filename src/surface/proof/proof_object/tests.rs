@@ -3731,6 +3731,233 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
 }
 
 #[test]
+fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existential() {
+    let click_file = crate::surface::parse(
+        r#"
+            contract int32 Need(int32 x) {
+                requires x == 0;
+                ensures result == 0;
+            }
+            int32 caller(int32 (*callback)(int32), int32 x) {
+                requires Need(callback);
+                ensures result == 0;
+            }
+        "#,
+    )
+    .expect("test contract should parse");
+    let function_block = click_file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == "caller")
+        .expect("caller contract should exist");
+    let predicate_environment =
+        PredicateEnvironment::new(&[]).with_contracts(click_file.contract_definitions());
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let parsed_function = syntax::parse_function(
+        "int32 caller(int32 (*callback)(int32), int32 x) { int32 y; y = callback(x); return y; }",
+    )
+    .expect("test caller should parse");
+    let function = parsed_function.to_kernel_function();
+    let callback = syntax::parse_function("int32 callback(int32 x) { return 0; }")
+        .expect("test callback should parse")
+        .to_kernel_function()
+        .with_contract(vec![], vec![], vec![], vec![], true);
+    let callback_contract = CFunctionContract::new("Need", callback)
+        .expect("callback contract should be representable");
+    let function_environment =
+        CExecutionEnvironment::new().with_function_contract(callback_contract);
+    let resource_environment = ResourceEnvironment::new(&[]);
+    let (state, arguments, pure_facts, _) = initial_claim_context(
+        function_block,
+        &parsed_function,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        "registry mismatch retry",
+    )
+    .expect("production-shaped caller context should initialize");
+    let synthesized_surface = ClickProposition::Exists {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "k".into(),
+        body: Box::new(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("k".into())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable("x".into())),
+        }),
+    };
+    let requirement = lower_fixed_state_proposition_with_assumptions(
+        &synthesized_surface,
+        &PureFactContext::new(),
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the existential requirement should lower");
+    assert!(matches!(&requirement, Proposition::Exists { .. }));
+    let synthesized = synthesize_surface_proposition(
+        &requirement,
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+    )
+    .expect("the scalar existential should synthesize");
+    assert!(matches!(synthesized, ClickProposition::Exists { .. }));
+    let actual_surface = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Variable("x".into())),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let actual_requirement = lower_fixed_state_proposition_with_assumptions(
+        &actual_surface,
+        &PureFactContext::new(),
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the named contract requirement should lower");
+
+    let registry = std::sync::Arc::new(
+        FunctionSourceRegistry::from_function_blocks(
+            &crate::surface::validation::combined_external_function_blocks(&click_file)
+                .expect("standard function contracts should load"),
+        )
+        .expect("source registry should build"),
+    );
+    let root = Proof::for_execution_frontier(
+        "registry mismatch retry",
+        0,
+        ExecutionProofState::at_entry(
+            state,
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        [pure_facts, vec![requirement.clone(), actual_requirement]].concat(),
+        ExecutionProofConstants {
+            source_layout: SourceExecutionLayout::new(parsed_function.body()),
+            function_source_registry: registry,
+            ..ExecutionProofConstants::default()
+        },
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let Some((at_call, _)) = root
+        .try_linear_execute_until_descendant(&CodeRegionRef::Statement(1))
+        .expect("declaration should advance to the need call")
+    else {
+        panic!("execution should reach the call frontier");
+    };
+    for (label, callee, interface, ordinal, source_arguments) in [
+        (
+            "wrong callee",
+            "other_callback",
+            "Need",
+            0,
+            vec![CExpression::Variable("x".into())],
+        ),
+        (
+            "wrong interface",
+            "callback",
+            "Other",
+            0,
+            vec![CExpression::Variable("x".into())],
+        ),
+        (
+            "wrong argument",
+            "callback",
+            "Need",
+            0,
+            vec![CExpression::Value(int32(7))],
+        ),
+        (
+            "wrong ordinal",
+            "callback",
+            "Need",
+            1,
+            vec![CExpression::Variable("x".into())],
+        ),
+    ] {
+        let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
+            callee,
+            interface,
+            0,
+            &source_arguments,
+            at_call.execution().unwrap().core.state.memory(),
+        ));
+        let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
+            site,
+            0,
+            Some(ordinal),
+            false,
+            None,
+        ));
+        let refusal = ClickError::new("injected unauthorized source").with_unresolved_requirement(
+            &ProofObligation::verification_condition(requirement.clone())
+                .with_call_requirement_site(source),
+        );
+        let before = at_call.certificate();
+        let error = match at_call.retry_statement_after_refusal(
+            ProofStep::StepContract("Need".into()),
+            &mut BTreeSet::new(),
+            Err(refusal),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("{label} metadata must be refused before synthesis"),
+        };
+        assert_eq!(error.message(), "injected unauthorized source");
+        assert!(error.unresolved_requirement().is_some());
+        assert_eq!(at_call.certificate(), before);
+    }
+    let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
+        "callback",
+        "Need",
+        0,
+        &[CExpression::Variable("x".into())],
+        at_call.execution().unwrap().core.state.memory(),
+    ));
+    let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
+        site,
+        0,
+        Some(0),
+        false,
+        None,
+    ));
+    let refusal = ClickError::new("injected registry mismatch").with_unresolved_requirement(
+        &ProofObligation::verification_condition(requirement.clone())
+            .with_call_requirement_site(source),
+    );
+    let step = ProofStep::StepContract("Need".into());
+    let retried = at_call
+        .retry_statement_after_refusal(step, &mut BTreeSet::new(), Err(refusal))
+        .expect("the exact synthesized fallback should be retained");
+    let certificate = retried.certificate();
+    let Some(ProofStep::Have { proposition, .. }) = certificate.steps().get(1) else {
+        panic!("retry should retain a Have before the call step");
+    };
+    assert!(matches!(proposition, ClickProposition::Exists { .. }));
+    assert_eq!(proposition, &synthesized);
+}
+
+#[test]
 fn supported_source_refusal_on_branch_does_not_enter_planning() {
     let click_file = crate::surface::parse(
         r#"
