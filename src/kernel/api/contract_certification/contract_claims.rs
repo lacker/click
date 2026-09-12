@@ -940,7 +940,7 @@ fn prepare_function_claim_path(
     let exit_memory =
         crate::kernel::functions::function_exit_memory(caller_state, return_state, value, function);
     let mut claim_return_state = return_state.clone();
-    claim_return_state.memory = exit_memory.clone();
+    claim_return_state.set_memory(exit_memory.clone());
     let Some(post_resources) = expand_all_composite_resource_facts(
         claim_return_state.resources(),
         function.composite_resource_definitions(),

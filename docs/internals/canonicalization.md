@@ -183,6 +183,29 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
   relates, and a snapshot the execution has since written no longer relates
   them. That is how a resource body fact about a cell an execution did not
   write survives a write to a sibling cell of the same node.
+- **An `unfold` names the cells it exposes**, for the same reason and through
+  the same projection contract lowering runs
+  (`materialize_unfolded_instance_arm_cells` in
+  `src/surface/proof/resources.rs`, which calls
+  `project_selected_instance_arm_cells`). Contract lowering materializes the
+  cells of the arm a section selects for a held instance; an unfold exposes
+  the same cells one layer deeper and must adopt the same names, so the cell
+  layout and element types are the ones already chosen there rather than a
+  second convention. Left unnamed, the unfolded body's facts keep the
+  unfold-time epoch while a later C read of one of those cells walks its own
+  epoch, and the two differ as soon as a store the assumption-free walk cannot
+  cross lies between them — a write to a *separate* object, whose separation is
+  a resource fact and not a DAG edge. The rbtree refold after
+  `*new = *victim; rb_set_parent(victim->rb_left, new);` is exactly that shape:
+  the child's word is read after the copy, and the fold's exact body-fact check
+  needs it to be the variable the child's own arm spoke about
+  (`mdtests/rb_child_load_identity_across_unfold.md`, and
+  `mdtests/rb_replace_node_with_children.md`). Certification
+  checks this without re-running the projection: an instance rewrite may change
+  memory only by adding cells, and each added cell must hold the canonical load
+  form of its own pointer at the pre-rewrite snapshot
+  (`memory_only_adds_named_cells` in `src/kernel/proof/execution.rs`), which is
+  definitional and needs no search.
 - Surface synthesis resolves load variables it cannot otherwise express
   through the registry (`resolve_load_variables_from_registry`) —
   the sanctioned display direction: rendering a variable as source syntax

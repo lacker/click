@@ -3553,6 +3553,7 @@ pub struct CCountedPopulation {
 
 type ResourceEntryId = u64;
 type ResourceEntryIds = PersistentSet<ResourceEntryId>;
+type ResourceOccurrenceIds = PersistentSet<ResourceOccurrenceId>;
 
 /// Identity of an owned resource occurrence, distinct from local entry IDs.
 /// Occurrences are never recycled by replacement or normalization.
@@ -3592,6 +3593,31 @@ pub struct ResourceContext {
     pub(super) storage: std::sync::Arc<ResourceContextStorage>,
 }
 
+/// The memory-dependent part of a supported observation.  The resource
+/// occurrence identifies the owner; this record pins the memory snapshot and
+/// the exact footprint(s) read while the projection was made.  Unknown
+/// dependencies are deliberately conservative and are invalidated by any
+/// opaque memory transition.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(super) enum ResourceMemoryFootprint {
+    None,
+    Exact(std::sync::Arc<[CMemoryRange]>),
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ResourceSupportMetadata {
+    pub(super) memory_snapshot: CMemorySnapshotIdentity,
+    pub(super) footprint: ResourceMemoryFootprint,
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(super) struct ResourceMemoryIntervalNode {
+    pub(super) block: PointerBlock,
+    pub(super) level: u8,
+    pub(super) start: u32,
+}
+
 #[derive(Clone, Default)]
 pub(super) struct ResourceContextStorage {
     /// Stable ordinals preserve insertion order without shifting surviving
@@ -3617,6 +3643,19 @@ pub(super) struct ResourceContextStorage {
     /// index above, this cannot conflate equal support occurrences.
     pub(super) projections_by_support_occurrence:
         PersistentMap<ResourceOccurrenceId, ResourceEntryIds>,
+    /// Memory-dependent projections, indexed by their exact entry.  The
+    /// companion block index lets a store/call/loop invalidation visit only
+    /// projections whose recorded footprint can be affected.
+    pub(super) support_metadata_by_projection:
+        PersistentMap<ResourceOccurrenceId, ResourceSupportMetadata>,
+    pub(super) projections_by_memory_block: PersistentMap<PointerBlock, ResourceOccurrenceIds>,
+    /// Dyadic interval indexes provide logarithmic affected-support lookup.
+    pub(super) projections_by_memory_interval:
+        PersistentMap<ResourceMemoryIntervalNode, ResourceOccurrenceIds>,
+    pub(super) projections_by_memory_interval_subtree:
+        PersistentMap<ResourceMemoryIntervalNode, ResourceOccurrenceIds>,
+    pub(super) symbolic_memory_support: ResourceOccurrenceIds,
+    pub(super) unknown_memory_support: ResourceOccurrenceIds,
     /// Certified, snapshot-stable owned expansions for folded resource
     /// generations. Reusing these avoids re-lowering the same body into
     /// fresh symbolic load identities at each later transition.
@@ -3697,6 +3736,11 @@ impl std::hash::Hash for ResourceContext {
         for (projection, occurrence) in self.storage.support_occurrence_by_projection.iter() {
             projection.hash(state);
             self.storage.entry_by_occurrence.get(occurrence).hash(state);
+            self.storage
+                .support_metadata_by_projection
+                .get(occurrence)
+                .map(|metadata| &metadata.footprint)
+                .hash(state);
         }
         for (fact, bucket) in self.storage.expansions_by_support_entry.iter() {
             fact.hash(state);
@@ -3766,12 +3810,27 @@ fn compare_support_graph(left: &ResourceContext, right: &ResourceContext) -> std
                 Some((left_projection, left_occurrence)),
                 Some((right_projection, right_occurrence)),
             ) => {
-                let ordering = left_projection.cmp(right_projection).then_with(|| {
-                    left.storage
-                        .entry_by_occurrence
-                        .get(left_occurrence)
-                        .cmp(&right.storage.entry_by_occurrence.get(right_occurrence))
-                });
+                let ordering = left_projection
+                    .cmp(right_projection)
+                    .then_with(|| {
+                        left.storage
+                            .entry_by_occurrence
+                            .get(left_occurrence)
+                            .cmp(&right.storage.entry_by_occurrence.get(right_occurrence))
+                    })
+                    .then_with(|| {
+                        left.storage
+                            .support_metadata_by_projection
+                            .get(left_occurrence)
+                            .map(|metadata| &metadata.footprint)
+                            .cmp(
+                                &right
+                                    .storage
+                                    .support_metadata_by_projection
+                                    .get(right_occurrence)
+                                    .map(|metadata| &metadata.footprint),
+                            )
+                    });
                 if ordering != std::cmp::Ordering::Equal {
                     return ordering;
                 }

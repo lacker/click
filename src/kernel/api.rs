@@ -763,17 +763,19 @@ fn abstract_c_state_for_join_across_with_policy(
                 .iter()
                 .map(|sibling| &sibling.memory)
                 .collect::<Vec<_>>();
-            abstract_state.memory = abstract_state.memory.with_interface_memory_havoc(
+            let memory = abstract_state.memory.clone().with_interface_memory_havoc(
                 variables.next(),
                 &preserved_blocks,
                 &sibling_memories,
             )?;
+            abstract_state.set_memory(memory);
         } else {
-            abstract_state.memory = abstract_state.memory.with_loop_memory_havoc(
+            let memory = abstract_state.memory.clone().with_loop_memory_havoc(
                 variables.next(),
                 &preserved_blocks,
                 None,
             );
+            abstract_state.set_memory(memory);
         }
     }
     for (name, value, c_type) in abstract_objects {

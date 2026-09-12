@@ -94,6 +94,82 @@ fn insert_resource_index_entry<K: Ord>(
     index.with_inserted(key, entries)
 }
 
+fn insert_occurrence_index_entry<K: Ord>(
+    index: &PersistentMap<K, ResourceOccurrenceIds>,
+    key: K,
+    occurrence: ResourceOccurrenceId,
+) -> PersistentMap<K, ResourceOccurrenceIds> {
+    let entries = index
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
+        .with_value(occurrence);
+    index.with_inserted(key, entries)
+}
+
+fn remove_occurrence_index_entry<K: Ord + Clone>(
+    index: &PersistentMap<K, ResourceOccurrenceIds>,
+    key: &K,
+    occurrence: ResourceOccurrenceId,
+) -> PersistentMap<K, ResourceOccurrenceIds> {
+    let Some(entries) = index.get(key) else {
+        return index.clone();
+    };
+    let entries = entries.without_value(&occurrence);
+    if entries.is_empty() {
+        index.without_key(key)
+    } else {
+        index.with_inserted(key.clone(), entries)
+    }
+}
+
+fn memory_interval_nodes(range: &CMemoryRange) -> Option<Vec<ResourceMemoryIntervalNode>> {
+    let (start, end) = concrete_memory_range_bounds(range)?;
+    let start = start.checked_sub(i64::from(i32::MIN))?;
+    let end = end.checked_sub(i64::from(i32::MIN))?;
+    if start < 0 || end <= start || end > (1_i64 << 32) {
+        return None;
+    }
+    let mut nodes = Vec::new();
+    let mut cursor = start as u64;
+    let end = end as u64;
+    while cursor < end {
+        let alignment = if cursor == 0 {
+            32
+        } else {
+            cursor.trailing_zeros().min(32)
+        };
+        let magnitude = 63 - (end - cursor).leading_zeros();
+        let level = alignment.min(magnitude).min(32) as u8;
+        nodes.push(ResourceMemoryIntervalNode {
+            block: range.base().block.clone(),
+            level,
+            start: ((cursor >> level) << level) as u32,
+        });
+        cursor += 1_u64 << level;
+    }
+    Some(nodes)
+}
+
+fn memory_block_may_alias(block: &PointerBlock) -> bool {
+    matches!(
+        block,
+        PointerBlock::ExternalArgument
+            | PointerBlock::Symbolic(_)
+            | PointerBlock::FunctionSymbolic(_)
+    )
+}
+
+fn memory_interval_ancestors(node: &ResourceMemoryIntervalNode) -> Vec<ResourceMemoryIntervalNode> {
+    (node.level..=32)
+        .map(|level| ResourceMemoryIntervalNode {
+            block: node.block.clone(),
+            level,
+            start: (u64::from(node.start) >> level << level) as u32,
+        })
+        .collect()
+}
+
 fn remove_resource_index_entry<K: Ord + Clone>(
     index: &PersistentMap<K, ResourceEntryIds>,
     key: &K,
@@ -238,6 +314,183 @@ impl ResourceContextIndex {
             );
         }
         result
+    }
+}
+
+fn memory_derivation_affects_footprint(
+    derivation: &CMemoryDerivation,
+    footprint: &ResourceMemoryFootprint,
+) -> bool {
+    let ResourceMemoryFootprint::Exact(ranges) = footprint else {
+        return matches!(footprint, ResourceMemoryFootprint::Unknown)
+            && !matches!(
+                derivation,
+                CMemoryDerivation::BlockDeclared { .. }
+                    | CMemoryDerivation::HeapAllocated { .. }
+                    | CMemoryDerivation::HeapAllocationPending { .. }
+                    | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+                    | CMemoryDerivation::CellsForgotten { .. }
+            );
+    };
+    match derivation {
+        CMemoryDerivation::Store { pointer, value, .. } => {
+            memory_block_may_alias(&pointer.block)
+                || ranges
+                    .iter()
+                    .any(|range| memory_range_overlaps_pointer(range, pointer, value.byte_width()))
+        }
+        CMemoryDerivation::CallHavoc { mutable_ranges, .. }
+        | CMemoryDerivation::LoopHavoc {
+            mutable_ranges: Some(mutable_ranges),
+            ..
+        } => {
+            mutable_ranges
+                .iter()
+                .any(|written| memory_block_may_alias(&written.base().block))
+                || ranges.iter().any(|footprint| {
+                    mutable_ranges
+                        .iter()
+                        .any(|written| memory_ranges_overlap(footprint, written))
+                })
+        }
+        CMemoryDerivation::HeapFreed {
+            allocation_base,
+            bytes,
+            ..
+        } => {
+            memory_block_may_alias(&allocation_base.block)
+                || ranges.iter().any(|range| {
+                    memory_range_overlaps_pointer(
+                        range,
+                        allocation_base,
+                        bytes.as_const().unwrap_or(u32::MAX),
+                    )
+                })
+        }
+        CMemoryDerivation::LocalLifetimeEnded { block, .. } => ranges.iter().any(|range| {
+            !range.base().blocks_proven_distinct(&Pointer {
+                block: block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            })
+        }),
+        CMemoryDerivation::LoopHavoc {
+            mutable_ranges: None,
+            ..
+        } => true,
+        CMemoryDerivation::BlockDeclared { .. }
+        | CMemoryDerivation::HeapAllocated { .. }
+        | CMemoryDerivation::HeapAllocationPending { .. }
+        | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+        | CMemoryDerivation::CellsForgotten { .. } => false,
+    }
+}
+
+fn memory_range_overlaps_pointer(range: &CMemoryRange, pointer: &Pointer, bytes: u32) -> bool {
+    let pointer_base = Pointer {
+        block: pointer.block.clone(),
+        offset: pointer.offset.clone(),
+    };
+    if range.base().blocks_proven_distinct(&pointer_base) {
+        return false;
+    }
+    let Some((start, end)) = concrete_memory_range_bounds(range) else {
+        return true;
+    };
+    let Some(pointer_offset) = pointer.offset.as_const() else {
+        return true;
+    };
+    let Some(pointer_end) = pointer_offset.checked_add(i64::from(bytes)) else {
+        return true;
+    };
+    pointer_offset < end && pointer_end > start
+}
+
+fn add_memory_interval_candidates(
+    index: &PersistentMap<ResourceMemoryIntervalNode, ResourceOccurrenceIds>,
+    subtree: &PersistentMap<ResourceMemoryIntervalNode, ResourceOccurrenceIds>,
+    range: &CMemoryRange,
+    occurrences: &mut ResourceOccurrenceIds,
+) {
+    let Some(query_nodes) = memory_interval_nodes(range) else {
+        return;
+    };
+    for query in query_nodes {
+        crate::instrumentation::record_deterministic_work(1);
+        for ancestor in memory_interval_ancestors(&query) {
+            #[cfg(test)]
+            crate::instrumentation::record_deterministic_work(index.lookup_comparisons(&ancestor));
+            #[cfg(not(test))]
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(bucket) = index.get(&ancestor) {
+                for occurrence in bucket.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    *occurrences = occurrences.with_value(*occurrence);
+                }
+            }
+        }
+        #[cfg(test)]
+        crate::instrumentation::record_deterministic_work(subtree.lookup_comparisons(&query));
+        #[cfg(not(test))]
+        crate::instrumentation::record_deterministic_work(1);
+        if let Some(bucket) = subtree.get(&query) {
+            for occurrence in bucket.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                *occurrences = occurrences.with_value(*occurrence);
+            }
+        }
+    }
+}
+
+fn memory_ranges_overlap(left: &CMemoryRange, right: &CMemoryRange) -> bool {
+    if left.base().blocks_proven_distinct(right.base()) {
+        return false;
+    }
+    let (Some((left_start, left_end)), Some((right_start, right_end))) = (
+        concrete_memory_range_bounds(left),
+        concrete_memory_range_bounds(right),
+    ) else {
+        return true;
+    };
+    left_start < right_end && right_start < left_end
+}
+
+pub(crate) fn concrete_memory_range_bounds(range: &CMemoryRange) -> Option<(i64, i64)> {
+    let base = range.base().offset.as_const()?;
+    let start_elements = signed_bitvector_constant(range.start())?;
+    let end_elements = signed_bitvector_constant(range.end())?;
+    if start_elements >= end_elements {
+        return None;
+    }
+    let width = i64::from(range.element_width());
+    let start = base.checked_add(start_elements.checked_mul(width)?)?;
+    let byte_count = end_elements
+        .checked_sub(start_elements)?
+        .checked_mul(width)?;
+    let end = start.checked_add(byte_count)?;
+    // The interval index and the resource-clause waiter index share this
+    // fixed signed 32-bit physical coordinate space. In particular, the
+    // exclusive end is not allowed to be i32::MAX + 1.
+    (i64::from(i32::MIN)..=i64::from(i32::MAX))
+        .contains(&start)
+        .then_some(())?;
+    (i64::from(i32::MIN)..=i64::from(i32::MAX))
+        .contains(&end)
+        .then_some(())?;
+    Some((start, end))
+}
+
+fn memory_footprint_for_fact(fact: &CResourceFact) -> ResourceMemoryFootprint {
+    if let Some(range) = fact.memory_range() {
+        return ResourceMemoryFootprint::Exact(std::sync::Arc::from(vec![range.clone()]));
+    }
+    // A composite core is the result of one or more body loads.  Until the
+    // lowering supplies those prerequisite ranges explicitly, treating it as
+    // unknown is the only sound choice; it still remains independently
+    // indexed from concrete sibling projections.
+    if matches!(fact.resource(), CResource::Composite { .. }) {
+        ResourceMemoryFootprint::Unknown
+    } else {
+        ResourceMemoryFootprint::None
     }
 }
 
@@ -451,7 +704,10 @@ impl ResourceContext {
         changed.extend(right.changed_facts_since(ancestor)?);
         let representations = |context: &Self, fact: &CResourceFact| {
             let mut explicit = 0usize;
-            let mut supported = BTreeMap::<(CResourceFact, ResourceOccurrenceId), usize>::new();
+            let mut supported = BTreeMap::<
+                (CResourceFact, ResourceOccurrenceId),
+                (usize, Option<ResourceSupportMetadata>, bool),
+            >::new();
             for entry in context
                 .storage
                 .index
@@ -469,9 +725,25 @@ impl ResourceContext {
                     else {
                         continue;
                     };
-                    *supported
+                    let metadata = context
+                        .storage
+                        .support_metadata_by_projection
+                        .get(&context.occurrence(*entry))
+                        .cloned();
+                    let slot = supported
                         .entry((support.clone(), support_entry))
-                        .or_default() += 1;
+                        .or_insert((0, metadata.clone(), true));
+                    if slot.1 != metadata {
+                        // Equal projections with different dependency
+                        // topology cannot be safely joined under one record.
+                        // The explicit consistency bit distinguishes this
+                        // from a legacy projection that has no metadata at
+                        // all; the former is dropped, the latter remains
+                        // valid support-only evidence.
+                        slot.1 = None;
+                        slot.2 = false;
+                    }
+                    slot.0 += 1;
                 } else {
                     explicit += 1;
                 }
@@ -484,10 +756,19 @@ impl ResourceContext {
             let (right_explicit, right_supported) = representations(right, fact);
             let supported = left_supported
                 .into_iter()
-                .filter_map(|(support, left_count)| {
+                .filter_map(|(support, (left_count, left_metadata, left_consistent))| {
                     right_supported
                         .get(&support)
-                        .map(|right_count| (support, left_count.min(*right_count)))
+                        .filter(|(_, right_metadata, right_consistent)| {
+                            left_consistent
+                                && *right_consistent
+                                && left_metadata.as_ref().map(|metadata| &metadata.footprint)
+                                    == right_metadata.as_ref().map(|metadata| &metadata.footprint)
+                        })
+                        .map(|_| {
+                            let right_count = right_supported[&support].0;
+                            (support, left_count.min(right_count), left_metadata)
+                        })
                 })
                 .collect::<Vec<_>>();
             let shared_owned = if fact.is_own() {
@@ -597,7 +878,7 @@ impl ResourceContext {
             }
         }
         for (fact, _, supported, _, _) in &common_representations {
-            for ((support, support_occurrence), count) in supported.iter() {
+            for ((support, support_occurrence), count, metadata) in supported.iter() {
                 if !common.storage.index.exact.contains_key(support) {
                     continue;
                 }
@@ -608,10 +889,11 @@ impl ResourceContext {
                         .get(support_occurrence)
                         .is_some_and(|entry| common.fact(*entry) == support)
                     {
-                        common.insert_fact_with_support_occurrence(
+                        common.insert_fact_with_support_occurrence_and_metadata(
                             fact.clone(),
                             Some(support.clone()),
                             Some(*support_occurrence),
+                            metadata.clone(),
                         );
                     }
                 }
@@ -691,8 +973,40 @@ impl ResourceContext {
         support: Option<CResourceFact>,
         support_occurrence: Option<ResourceOccurrenceId>,
     ) {
+        self.insert_fact_with_support_occurrence_and_metadata(
+            fact,
+            support,
+            support_occurrence,
+            None,
+        );
+    }
+
+    fn insert_fact_with_support_occurrence_and_metadata(
+        &mut self,
+        fact: CResourceFact,
+        support: Option<CResourceFact>,
+        support_occurrence: Option<ResourceOccurrenceId>,
+        support_metadata: Option<ResourceSupportMetadata>,
+    ) {
+        self.insert_fact_with_support_occurrence_and_metadata_at(
+            fact,
+            support,
+            support_occurrence,
+            support_metadata,
+            None,
+        );
+    }
+
+    fn insert_fact_with_support_occurrence_and_metadata_at(
+        &mut self,
+        fact: CResourceFact,
+        support: Option<CResourceFact>,
+        support_occurrence: Option<ResourceOccurrenceId>,
+        support_metadata: Option<ResourceSupportMetadata>,
+        occurrence_override: Option<ResourceOccurrenceId>,
+    ) {
         let entry = self.storage.next_entry_id;
-        let occurrence = ResourceOccurrenceId::fresh();
+        let occurrence = occurrence_override.unwrap_or_else(ResourceOccurrenceId::fresh);
         let next_entry_id = self
             .storage
             .next_entry_id
@@ -734,6 +1048,98 @@ impl ResourceContext {
                 )
             },
         );
+        let support_metadata_by_projection = support_metadata.as_ref().map_or_else(
+            || self.storage.support_metadata_by_projection.clone(),
+            |metadata| {
+                self.storage
+                    .support_metadata_by_projection
+                    .with_inserted(occurrence, metadata.clone())
+            },
+        );
+        let projections_by_memory_block = match support_metadata
+            .as_ref()
+            .map(|metadata| &metadata.footprint)
+        {
+            Some(ResourceMemoryFootprint::Exact(ranges)) => ranges.iter().fold(
+                self.storage.projections_by_memory_block.clone(),
+                |index, footprint| {
+                    insert_occurrence_index_entry(
+                        &index,
+                        footprint.base().block.clone(),
+                        occurrence,
+                    )
+                },
+            ),
+            Some(ResourceMemoryFootprint::None | ResourceMemoryFootprint::Unknown) | None => {
+                self.storage.projections_by_memory_block.clone()
+            }
+        };
+        let unknown_memory_support = support_metadata.as_ref().map_or_else(
+            || self.storage.unknown_memory_support.clone(),
+            |metadata| match metadata.footprint {
+                ResourceMemoryFootprint::Exact(_) | ResourceMemoryFootprint::None => {
+                    self.storage.unknown_memory_support.clone()
+                }
+                ResourceMemoryFootprint::Unknown => {
+                    self.storage.unknown_memory_support.with_value(occurrence)
+                }
+            },
+        );
+        let projections_by_memory_interval = match support_metadata
+            .as_ref()
+            .map(|metadata| &metadata.footprint)
+        {
+            Some(ResourceMemoryFootprint::Exact(ranges)) => ranges.iter().fold(
+                self.storage.projections_by_memory_interval.clone(),
+                |index, footprint| {
+                    let Some(nodes) = memory_interval_nodes(footprint) else {
+                        return index;
+                    };
+                    nodes.into_iter().fold(index, |index, node| {
+                        insert_occurrence_index_entry(&index, node, occurrence)
+                    })
+                },
+            ),
+            Some(ResourceMemoryFootprint::None | ResourceMemoryFootprint::Unknown) | None => {
+                self.storage.projections_by_memory_interval.clone()
+            }
+        };
+        let projections_by_memory_interval_subtree = match support_metadata
+            .as_ref()
+            .map(|metadata| &metadata.footprint)
+        {
+            Some(ResourceMemoryFootprint::Exact(ranges)) => ranges.iter().fold(
+                self.storage.projections_by_memory_interval_subtree.clone(),
+                |index, footprint| {
+                    let Some(nodes) = memory_interval_nodes(footprint) else {
+                        return index;
+                    };
+                    nodes
+                        .into_iter()
+                        .flat_map(|node| memory_interval_ancestors(&node))
+                        .fold(index, |index, ancestor| {
+                            insert_occurrence_index_entry(&index, ancestor, occurrence)
+                        })
+                },
+            ),
+            Some(ResourceMemoryFootprint::None | ResourceMemoryFootprint::Unknown) | None => {
+                self.storage.projections_by_memory_interval_subtree.clone()
+            }
+        };
+        let symbolic_memory_support = support_metadata.as_ref().map_or_else(
+            || self.storage.symbolic_memory_support.clone(),
+            |metadata| match &metadata.footprint {
+                ResourceMemoryFootprint::Exact(ranges)
+                    if ranges.iter().any(|range| {
+                        memory_interval_nodes(range).is_none()
+                            || memory_block_may_alias(&range.base().block)
+                    }) =>
+                {
+                    self.storage.symbolic_memory_support.with_value(occurrence)
+                }
+                _ => self.storage.symbolic_memory_support.clone(),
+            },
+        );
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.with_inserted(entry, fact.clone()),
             next_entry_id,
@@ -750,6 +1156,12 @@ impl ResourceContext {
             support_occurrence_by_projection,
             projections_by_support,
             projections_by_support_occurrence,
+            support_metadata_by_projection,
+            projections_by_memory_block,
+            projections_by_memory_interval,
+            projections_by_memory_interval_subtree,
+            symbolic_memory_support,
+            unknown_memory_support,
             expansions_by_support_occurrence: self.storage.expansions_by_support_occurrence.clone(),
             expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
@@ -762,17 +1174,39 @@ impl ResourceContext {
     }
 
     fn remove_entry(&mut self, entry: ResourceEntryId) -> CResourceFact {
-        let projections = self
-            .storage
-            .projections_by_support_occurrence
-            .get(&self.occurrence(entry))
-            .cloned()
-            .unwrap_or_default();
-        for projection in projections.iter().copied() {
-            crate::instrumentation::record_deterministic_work(1);
-            self.remove_entry_only(projection);
+        // Remove the complete support-descendant closure. An explicit stack
+        // keeps work proportional to affected output, and the visited set
+        // makes malformed cyclic evidence harmless.
+        let fact = self.fact(entry).clone();
+        let mut pending = vec![(entry, false)];
+        let mut scheduled = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        scheduled.insert(entry);
+        while let Some((current, leaving)) = pending.pop() {
+            if leaving {
+                if self.storage.facts.contains_key(&current) {
+                    self.remove_entry_only(current);
+                }
+                continue;
+            }
+            if !visited.insert(current) || !self.storage.facts.contains_key(&current) {
+                continue;
+            }
+            pending.push((current, true));
+            let projections = self
+                .storage
+                .projections_by_support_occurrence
+                .get(&self.occurrence(current))
+                .cloned()
+                .unwrap_or_default();
+            for projection in projections.iter().copied().rev() {
+                if scheduled.insert(projection) {
+                    crate::instrumentation::record_deterministic_work(1);
+                    pending.push((projection, false));
+                }
+            }
         }
-        self.remove_entry_only(entry)
+        fact
     }
 
     fn remove_entry_only(&mut self, entry: ResourceEntryId) -> CResourceFact {
@@ -805,6 +1239,82 @@ impl ResourceContext {
             },
         );
         let occurrence = self.occurrence(entry);
+        let support_metadata = self
+            .storage
+            .support_metadata_by_projection
+            .get(&occurrence)
+            .cloned();
+        let projections_by_memory_block = match support_metadata
+            .as_ref()
+            .map(|metadata| &metadata.footprint)
+        {
+            Some(ResourceMemoryFootprint::Exact(ranges)) => ranges.iter().fold(
+                self.storage.projections_by_memory_block.clone(),
+                |index, footprint| {
+                    remove_occurrence_index_entry(&index, &footprint.base().block, occurrence)
+                },
+            ),
+            Some(ResourceMemoryFootprint::None | ResourceMemoryFootprint::Unknown) | None => {
+                self.storage.projections_by_memory_block.clone()
+            }
+        };
+        let projections_by_memory_interval = match support_metadata
+            .as_ref()
+            .map(|metadata| &metadata.footprint)
+        {
+            Some(ResourceMemoryFootprint::Exact(ranges)) => ranges.iter().fold(
+                self.storage.projections_by_memory_interval.clone(),
+                |index, footprint| {
+                    let Some(nodes) = memory_interval_nodes(footprint) else {
+                        return index;
+                    };
+                    nodes.into_iter().fold(index, |index, node| {
+                        remove_occurrence_index_entry(&index, &node, occurrence)
+                    })
+                },
+            ),
+            Some(ResourceMemoryFootprint::None | ResourceMemoryFootprint::Unknown) | None => {
+                self.storage.projections_by_memory_interval.clone()
+            }
+        };
+        let projections_by_memory_interval_subtree = match support_metadata
+            .as_ref()
+            .map(|metadata| &metadata.footprint)
+        {
+            Some(ResourceMemoryFootprint::Exact(ranges)) => ranges.iter().fold(
+                self.storage.projections_by_memory_interval_subtree.clone(),
+                |index, footprint| {
+                    let Some(nodes) = memory_interval_nodes(footprint) else {
+                        return index;
+                    };
+                    nodes
+                        .into_iter()
+                        .flat_map(|node| memory_interval_ancestors(&node))
+                        .fold(index, |index, ancestor| {
+                            remove_occurrence_index_entry(&index, &ancestor, occurrence)
+                        })
+                },
+            ),
+            Some(ResourceMemoryFootprint::None | ResourceMemoryFootprint::Unknown) | None => {
+                self.storage.projections_by_memory_interval_subtree.clone()
+            }
+        };
+        let symbolic_memory_support = support_metadata.as_ref().map_or_else(
+            || self.storage.symbolic_memory_support.clone(),
+            |metadata| match &metadata.footprint {
+                ResourceMemoryFootprint::Exact(ranges)
+                    if ranges.iter().any(|range| {
+                        memory_interval_nodes(range).is_none()
+                            || memory_block_may_alias(&range.base().block)
+                    }) =>
+                {
+                    self.storage
+                        .symbolic_memory_support
+                        .without_value(&occurrence)
+                }
+                _ => self.storage.symbolic_memory_support.clone(),
+            },
+        );
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.without_key(&entry),
             next_entry_id: self.storage.next_entry_id,
@@ -815,6 +1325,18 @@ impl ResourceContext {
             support_occurrence_by_projection,
             projections_by_support,
             projections_by_support_occurrence,
+            support_metadata_by_projection: self
+                .storage
+                .support_metadata_by_projection
+                .without_key(&occurrence),
+            projections_by_memory_block,
+            projections_by_memory_interval,
+            projections_by_memory_interval_subtree,
+            symbolic_memory_support,
+            unknown_memory_support: self
+                .storage
+                .unknown_memory_support
+                .without_value(&occurrence),
             expansions_by_support_occurrence: self
                 .storage
                 .expansions_by_support_occurrence
@@ -880,6 +1402,15 @@ impl ResourceContext {
                 .storage
                 .projections_by_support_occurrence
                 .clone(),
+            support_metadata_by_projection: self.storage.support_metadata_by_projection.clone(),
+            projections_by_memory_block: self.storage.projections_by_memory_block.clone(),
+            projections_by_memory_interval: self.storage.projections_by_memory_interval.clone(),
+            projections_by_memory_interval_subtree: self
+                .storage
+                .projections_by_memory_interval_subtree
+                .clone(),
+            symbolic_memory_support: self.storage.symbolic_memory_support.clone(),
+            unknown_memory_support: self.storage.unknown_memory_support.clone(),
             expansions_by_support_occurrence: self.storage.expansions_by_support_occurrence.clone(),
             expansions_by_support_entry,
             origin: self.storage.origin.clone(),
@@ -935,6 +1466,12 @@ impl ResourceContext {
             support_occurrence_by_projection: PersistentMap::default(),
             projections_by_support: PersistentMap::default(),
             projections_by_support_occurrence: PersistentMap::default(),
+            support_metadata_by_projection: PersistentMap::default(),
+            projections_by_memory_block: PersistentMap::default(),
+            projections_by_memory_interval: PersistentMap::default(),
+            projections_by_memory_interval_subtree: PersistentMap::default(),
+            symbolic_memory_support: ResourceOccurrenceIds::default(),
+            unknown_memory_support: ResourceOccurrenceIds::default(),
             expansions_by_support_occurrence: PersistentMap::default(),
             expansions_by_support_entry: PersistentMap::default(),
             origin: self.storage.origin.clone(),
@@ -1106,6 +1643,212 @@ impl ResourceContext {
                     && self.storage.support_occurrence_by_projection.get(entry)
                         == Some(&support_occurrence)
             })
+    }
+
+    /// Drop memory-dependent projections whose exact support footprint is
+    /// touched by a memory transition.  The transition is walked through the
+    /// existing memory DAG; indexed block buckets bound the work to affected
+    /// observations rather than the ambient resource frame.
+    pub(crate) fn invalidate_memory_support(mut self, before: &CMemory, after: &CMemory) -> Self {
+        if before.diagnostic_identity() == after.diagnostic_identity()
+            || self.storage.support_metadata_by_projection.is_empty()
+        {
+            return self;
+        }
+        let before_node = crate::kernel::intern_c_memory_ref(before);
+        let mut current = crate::kernel::intern_c_memory_ref(after);
+        let mut affected = ResourceEntryIds::default();
+        let mut reached_before = false;
+        loop {
+            if current == before_node {
+                reached_before = true;
+                break;
+            }
+            let Some(derivation) = current.derivation() else {
+                break;
+            };
+            let candidates = self.entries_affected_by_memory_derivation(&derivation);
+            for occurrence in candidates.iter() {
+                let Some(metadata) = self.storage.support_metadata_by_projection.get(occurrence)
+                else {
+                    continue;
+                };
+                if memory_derivation_affects_footprint(&derivation, &metadata.footprint)
+                    && let Some(entry) = self.storage.entry_by_occurrence.get(occurrence)
+                {
+                    affected = affected.with_value(*entry);
+                }
+            }
+            current = derivation.base().clone();
+        }
+        if !reached_before {
+            // A provenance barrier (for example an interface join) has no
+            // typed write set.  Only memory-qualified projections are stale;
+            // the entry index bounds this conservative cleanup.
+            for occurrence in self.storage.support_metadata_by_projection.keys() {
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some(entry) = self.storage.entry_by_occurrence.get(occurrence) {
+                    affected = affected.with_value(*entry);
+                }
+            }
+        }
+        for entry in affected.iter().copied().collect::<Vec<_>>() {
+            if self.storage.facts.contains_key(&entry) {
+                self.remove_entry(entry);
+            }
+        }
+        self
+    }
+
+    fn entries_affected_by_memory_derivation(
+        &self,
+        derivation: &CMemoryDerivation,
+    ) -> ResourceOccurrenceIds {
+        let mut entries = self.storage.unknown_memory_support.clone();
+        entries = self
+            .storage
+            .symbolic_memory_support
+            .iter()
+            .fold(entries, |entries, occurrence| {
+                entries.with_value(*occurrence)
+            });
+        let ambiguous_event = match derivation {
+            CMemoryDerivation::Store { pointer, .. } => memory_block_may_alias(&pointer.block),
+            CMemoryDerivation::CallHavoc { mutable_ranges, .. }
+            | CMemoryDerivation::LoopHavoc {
+                mutable_ranges: Some(mutable_ranges),
+                ..
+            } => mutable_ranges
+                .iter()
+                .any(|range| memory_block_may_alias(&range.base().block)),
+            CMemoryDerivation::HeapFreed {
+                allocation_base, ..
+            }
+            | CMemoryDerivation::HeapAllocationPending {
+                allocation_base, ..
+            } => memory_block_may_alias(&allocation_base.block),
+            CMemoryDerivation::LocalLifetimeEnded { block, .. } => memory_block_may_alias(block),
+            CMemoryDerivation::LoopHavoc {
+                mutable_ranges: None,
+                ..
+            }
+            | CMemoryDerivation::BlockDeclared { .. }
+            | CMemoryDerivation::HeapAllocated { .. }
+            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+            | CMemoryDerivation::CellsForgotten { .. } => false,
+        };
+        if ambiguous_event {
+            for occurrence in self.storage.support_metadata_by_projection.keys() {
+                crate::instrumentation::record_deterministic_work(1);
+                entries = entries.with_value(*occurrence);
+            }
+        }
+        match derivation {
+            CMemoryDerivation::Store { pointer, value, .. } => {
+                let write = CMemoryRange::new_with_element_width(
+                    pointer.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                    value.byte_width(),
+                );
+                if memory_interval_nodes(&write).is_some() {
+                    add_memory_interval_candidates(
+                        &self.storage.projections_by_memory_interval,
+                        &self.storage.projections_by_memory_interval_subtree,
+                        &write,
+                        &mut entries,
+                    );
+                } else if let Some(bucket) =
+                    self.storage.projections_by_memory_block.get(&pointer.block)
+                {
+                    for occurrence in bucket.iter() {
+                        entries = entries.with_value(*occurrence);
+                    }
+                }
+            }
+            CMemoryDerivation::CallHavoc { mutable_ranges, .. }
+            | CMemoryDerivation::LoopHavoc {
+                mutable_ranges: Some(mutable_ranges),
+                ..
+            } => {
+                for range in mutable_ranges {
+                    if memory_interval_nodes(range).is_some() {
+                        add_memory_interval_candidates(
+                            &self.storage.projections_by_memory_interval,
+                            &self.storage.projections_by_memory_interval_subtree,
+                            range,
+                            &mut entries,
+                        );
+                    } else if let Some(bucket) = self
+                        .storage
+                        .projections_by_memory_block
+                        .get(&range.base().block)
+                    {
+                        for occurrence in bucket.iter() {
+                            entries = entries.with_value(*occurrence);
+                        }
+                    }
+                }
+            }
+            CMemoryDerivation::HeapFreed {
+                allocation_base,
+                bytes,
+                ..
+            } => {
+                if let Some(byte_count) = bytes.as_const() {
+                    let freed = CMemoryRange::new_with_element_width(
+                        allocation_base.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(byte_count),
+                        1,
+                    );
+                    add_memory_interval_candidates(
+                        &self.storage.projections_by_memory_interval,
+                        &self.storage.projections_by_memory_interval_subtree,
+                        &freed,
+                        &mut entries,
+                    );
+                } else if let Some(bucket) = self
+                    .storage
+                    .projections_by_memory_block
+                    .get(&allocation_base.block)
+                {
+                    for occurrence in bucket.iter() {
+                        entries = entries.with_value(*occurrence);
+                    }
+                }
+            }
+            CMemoryDerivation::LoopHavoc {
+                mutable_ranges: None,
+                ..
+            } => {
+                // An interface loop barrier has no checked write set.  It
+                // invalidates every memory-dependent projection, including
+                // exact ones, but leaves pure observations alone.
+                for occurrence in self.storage.support_metadata_by_projection.keys() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    entries = entries.with_value(*occurrence);
+                }
+            }
+            CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
+                if memory_block_may_alias(block) {
+                    for occurrence in self.storage.support_metadata_by_projection.keys() {
+                        crate::instrumentation::record_deterministic_work(1);
+                        entries = entries.with_value(*occurrence);
+                    }
+                } else if let Some(bucket) = self.storage.projections_by_memory_block.get(block) {
+                    for occurrence in bucket.iter() {
+                        entries = entries.with_value(*occurrence);
+                    }
+                }
+            }
+            CMemoryDerivation::BlockDeclared { .. }
+            | CMemoryDerivation::HeapAllocated { .. }
+            | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
+            | CMemoryDerivation::CellsForgotten { .. } => {}
+        }
+        entries
     }
 
     pub(crate) fn proves_owned_resources_separate(
@@ -1543,6 +2286,41 @@ impl ResourceContext {
         self
     }
 
+    /// Adds observation projections while recording the memory snapshot and
+    /// exact footprint used to derive each one.  This is the memory-aware
+    /// counterpart to the legacy support-only API used by call packaging.
+    pub(crate) fn unchecked_with_supported_facts_from_occurrence_with_memory(
+        mut self,
+        support_occurrence: ResourceOccurrenceId,
+        support: &CResourceFact,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        memory: &CMemory,
+    ) -> Self {
+        debug_assert!(support.is_own());
+        debug_assert!(
+            self.storage
+                .entry_by_occurrence
+                .get(&support_occurrence)
+                .is_some_and(|entry| self.fact(*entry) == support)
+        );
+        let memory_snapshot = CMemorySnapshotIdentity::of(memory);
+        let facts = facts.into_iter().collect::<Vec<_>>();
+        for fact in facts {
+            debug_assert!(fact.is_view());
+            let metadata = ResourceSupportMetadata {
+                memory_snapshot,
+                footprint: memory_footprint_for_fact(&fact),
+            };
+            self.insert_fact_with_support_occurrence_and_metadata(
+                fact,
+                Some(support.clone()),
+                Some(support_occurrence),
+                Some(metadata),
+            );
+        }
+        self
+    }
+
     #[allow(dead_code)]
     pub(crate) fn with_cached_supported_expansion(
         self,
@@ -1583,6 +2361,15 @@ impl ResourceContext {
                 .storage
                 .projections_by_support_occurrence
                 .clone(),
+            support_metadata_by_projection: self.storage.support_metadata_by_projection.clone(),
+            projections_by_memory_block: self.storage.projections_by_memory_block.clone(),
+            projections_by_memory_interval: self.storage.projections_by_memory_interval.clone(),
+            projections_by_memory_interval_subtree: self
+                .storage
+                .projections_by_memory_interval_subtree
+                .clone(),
+            symbolic_memory_support: self.storage.symbolic_memory_support.clone(),
+            unknown_memory_support: self.storage.unknown_memory_support.clone(),
             expansions_by_support_occurrence: self
                 .storage
                 .expansions_by_support_occurrence
@@ -1682,6 +2469,15 @@ impl ResourceContext {
                 .storage
                 .projections_by_support_occurrence
                 .clone(),
+            support_metadata_by_projection: self.storage.support_metadata_by_projection.clone(),
+            projections_by_memory_block: self.storage.projections_by_memory_block.clone(),
+            projections_by_memory_interval: self.storage.projections_by_memory_interval.clone(),
+            projections_by_memory_interval_subtree: self
+                .storage
+                .projections_by_memory_interval_subtree
+                .clone(),
+            symbolic_memory_support: self.storage.symbolic_memory_support.clone(),
+            unknown_memory_support: self.storage.unknown_memory_support.clone(),
             expansions_by_support_occurrence: self
                 .storage
                 .expansions_by_support_occurrence
@@ -2360,6 +3156,20 @@ impl ResourceContext {
                 .iter()
                 .map(|entry| self.fact(*entry).clone())
                 .collect::<Vec<_>>();
+            let mut reusable_occurrences = original
+                .iter()
+                .zip(entries.iter())
+                .filter(|(fact, _)| fact.is_own())
+                .fold(
+                    BTreeMap::<CResourceFact, Vec<ResourceOccurrenceId>>::new(),
+                    |mut occurrences, (fact, entry)| {
+                        occurrences
+                            .entry(fact.clone())
+                            .or_default()
+                            .push(self.occurrence(*entry));
+                        occurrences
+                    },
+                );
             let normalized = ResourceContext::new()
                 .unchecked_with_facts(original.iter().cloned())
                 .normalized(assumptions)
@@ -2373,7 +3183,14 @@ impl ResourceContext {
                 self.remove_entry(*entry);
             }
             for fact in normalized {
-                self.insert_fact(fact);
+                let occurrence = fact
+                    .is_own()
+                    .then(|| reusable_occurrences.get_mut(&fact))
+                    .flatten()
+                    .and_then(Vec::pop);
+                self.insert_fact_with_support_occurrence_and_metadata_at(
+                    fact, None, None, None, occurrence,
+                );
             }
         }
         self.restore_supported_projection_pairs(supported)
@@ -2531,6 +3348,15 @@ impl ResourceContext {
                     .storage
                     .projections_by_support_occurrence
                     .clone(),
+                support_metadata_by_projection: self.storage.support_metadata_by_projection.clone(),
+                projections_by_memory_block: self.storage.projections_by_memory_block.clone(),
+                projections_by_memory_interval: self.storage.projections_by_memory_interval.clone(),
+                projections_by_memory_interval_subtree: self
+                    .storage
+                    .projections_by_memory_interval_subtree
+                    .clone(),
+                unknown_memory_support: self.storage.unknown_memory_support.clone(),
+                symbolic_memory_support: self.storage.symbolic_memory_support.clone(),
                 expansions_by_support_occurrence: PersistentMap::default(),
                 expansions_by_support_entry: PersistentMap::default(),
                 origin: self.storage.origin.clone(),
@@ -2606,7 +3432,12 @@ impl ResourceContext {
 
     fn supported_projection_pairs(
         &self,
-    ) -> Vec<(Option<ResourceOccurrenceId>, CResourceFact, CResourceFact)> {
+    ) -> Vec<(
+        Option<ResourceOccurrenceId>,
+        CResourceFact,
+        CResourceFact,
+        Option<ResourceSupportMetadata>,
+    )> {
         self.storage
             .supported_by
             .iter()
@@ -2618,6 +3449,10 @@ impl ResourceContext {
                         .copied(),
                     support.clone(),
                     self.fact(*entry).clone(),
+                    self.storage
+                        .support_metadata_by_projection
+                        .get(&self.occurrence(*entry))
+                        .cloned(),
                 )
             })
             .collect()
@@ -2625,9 +3460,14 @@ impl ResourceContext {
 
     fn restore_supported_projection_pairs(
         mut self,
-        supported: Vec<(Option<ResourceOccurrenceId>, CResourceFact, CResourceFact)>,
+        supported: Vec<(
+            Option<ResourceOccurrenceId>,
+            CResourceFact,
+            CResourceFact,
+            Option<ResourceSupportMetadata>,
+        )>,
     ) -> Self {
-        for (support_entry, support, projection) in supported {
+        for (support_entry, support, projection, metadata) in supported {
             if !self.storage.index.exact.contains_key(&support) {
                 continue;
             }
@@ -2641,10 +3481,11 @@ impl ResourceContext {
                         .get(occurrence)
                         .is_some_and(|entry| self.storage.facts.get(entry) == Some(&support))
                 }) {
-                    self.insert_fact_with_support_occurrence(
+                    self.insert_fact_with_support_occurrence_and_metadata(
                         projection,
                         Some(support),
                         Some(support_occurrence),
+                        metadata,
                     );
                 } else if support_entry.is_none() {
                     self.insert_fact_with_support(projection, Some(support));
@@ -4145,4 +4986,110 @@ fn bitvector_terms_proven_equal(
     left == right
         || assumptions.decide(&ConditionTerm::equal(left.clone(), right.clone())) == Some(true)
         || assumptions.bitvector_terms_equal_from_facts(left, right)
+}
+
+#[cfg(test)]
+mod support_removal_tests {
+    use super::*;
+
+    #[test]
+    fn concrete_interval_rejects_exclusive_end_outside_shared_coordinate_space() {
+        let range = CMemoryRange::new(
+            Pointer {
+                block: "boundary".into(),
+                offset: PointerOffsetTerm::Constant(1),
+            },
+            Bitvector32Term::Constant((i32::MAX - 1) as u32),
+            Bitvector32Term::Constant(i32::MAX as u32),
+        );
+        assert_eq!(concrete_memory_range_bounds(&range), None);
+    }
+
+    #[test]
+    fn removing_support_cascades_through_nested_projection_chain() {
+        let parent = CResourceFact::own_composite("parent".into(), Vec::new());
+        let child = CResourceFact::view_token("child".into(), Vec::new());
+        let grandchild = CResourceFact::view_token("grandchild".into(), Vec::new());
+        let mut context = ResourceContext::new().unchecked_with_fact(parent.clone());
+        let parent_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&parent)
+            .expect("parent entry")
+            .iter()
+            .next()
+            .expect("parent entry id");
+        let parent_occurrence = context.occurrence(parent_entry);
+        // These direct calls intentionally exercise the internal support graph
+        // beyond the public owned-authority constructor: normalization and
+        // future observation composition must not leave nested descendants
+        // behind when an ancestor is invalidated.
+        context.insert_fact_with_support_occurrence(
+            child.clone(),
+            Some(parent.clone()),
+            Some(parent_occurrence),
+        );
+        let child_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&child)
+            .expect("child entry")
+            .iter()
+            .next()
+            .expect("child entry id");
+        context.insert_fact_with_support_occurrence(
+            grandchild.clone(),
+            Some(child.clone()),
+            Some(context.occurrence(child_entry)),
+        );
+
+        context.remove_entry(parent_entry);
+
+        assert!(context.storage.facts.is_empty());
+        assert!(context.storage.projections_by_support_occurrence.is_empty());
+    }
+
+    #[test]
+    fn removing_cyclic_support_graph_terminates_and_cleans_all_nodes() {
+        let left = CResourceFact::view_token("left".into(), Vec::new());
+        let right = CResourceFact::view_token("right".into(), Vec::new());
+        let mut context = ResourceContext::new().unchecked_with_fact(left.clone());
+        let left_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&left)
+            .expect("left entry")
+            .iter()
+            .next()
+            .expect("left entry id");
+        let left_occurrence = context.occurrence(left_entry);
+        context.insert_fact_with_support_occurrence(
+            right.clone(),
+            Some(left.clone()),
+            Some(left_occurrence),
+        );
+        let right_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&right)
+            .expect("right entry")
+            .iter()
+            .next()
+            .expect("right entry id");
+        // Build malformed cyclic evidence only to verify the removal guard;
+        // production constructors never create this edge.
+        context.insert_fact_with_support_occurrence(
+            left.clone(),
+            Some(right.clone()),
+            Some(context.occurrence(right_entry)),
+        );
+
+        context.remove_entry(left_entry);
+
+        assert!(context.storage.facts.is_empty());
+    }
 }

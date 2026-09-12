@@ -485,10 +485,12 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             };
             let before_memory = state.memory.clone();
             let mut state = state.clone();
-            state.memory = state
+            let next_memory = state
                 .memory
+                .clone()
                 .without_possible_aliasing_cells(&pointer, &effective_assumptions)
                 .store_with_context(pointer.clone(), value.clone(), &effective_assumptions);
+            state.set_memory(next_memory);
             let mut facts = facts;
             facts.push(ExecutionPureFact::certified_store(
                 before_memory,
@@ -604,8 +606,8 @@ fn execute_c_aggregate_copy_paths(
                 continue;
             }
             let mut state = state.clone();
-            state.memory = match crate::kernel::functions::copy_aggregate_fields_checked(
-                state.memory,
+            let next_memory = match crate::kernel::functions::copy_aggregate_fields_checked(
+                state.memory.clone(),
                 source_pointer.pointer(),
                 target_pointer.pointer(),
                 layout,
@@ -620,6 +622,7 @@ fn execute_c_aggregate_copy_paths(
                     continue;
                 }
             };
+            state.set_memory(next_memory);
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
                 facts,
@@ -1316,6 +1319,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
 
             let old_cells = state
                 .memory
+                .clone()
                 .cells
                 .iter()
                 .filter(|(pointer, _)| pointer.block == old_pointer.block)
@@ -1679,7 +1683,7 @@ pub(crate) fn resolve_pending_heap_allocations(
                 .clone()
                 .resolve_pending_heap_reallocation(&base, !is_null)
                 .expect("collected pending reallocation should still exist");
-            state.memory = memory;
+            state = state.with_memory(memory);
             for binding in std::sync::Arc::make_mut(&mut state.locals.bindings).values_mut() {
                 if let CLocalBinding::Object {
                     value: CValue::Pointer(pointer),
@@ -1735,7 +1739,7 @@ pub(crate) fn resolve_pending_heap_allocations(
             .clone()
             .resolve_pending_heap_allocation(&base, !is_null)
             .expect("collected pending allocation should still exist");
-        state.memory = memory;
+        state = state.with_memory(memory);
         for binding in std::sync::Arc::make_mut(&mut state.locals.bindings).values_mut() {
             if let CLocalBinding::Object {
                 value: CValue::Pointer(pointer),
@@ -2724,7 +2728,7 @@ fn local_declaration_pointer(state: &mut CState, name: &str) -> Pointer {
     if let Some(previous) = previous
         && previous.block.starts_with("local:")
     {
-        state.memory = state.memory.without_local_block(&previous.block);
+        state.set_memory(state.memory.without_local_block(&previous.block));
         let lifetime = state.next_local_lifetime();
         *state = state
             .clone()
@@ -2778,9 +2782,12 @@ pub(in crate::kernel) fn declare_local(
         | CType::Float64PointerPointer
         | CType::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(4));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(4)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::Int32,
@@ -2791,7 +2798,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt8Array(length) => {
-            state.memory = state.memory.with_block(pointer.block.clone(), length);
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt8,
@@ -2802,9 +2814,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Int16Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(2));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(2)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::Int16,
@@ -2815,9 +2830,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt16Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(2));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(2)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt16,
@@ -2828,9 +2846,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt32Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(4));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(4)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt32,
@@ -2841,9 +2862,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Int64Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(8));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(8)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::Int64,
@@ -2854,9 +2878,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::UInt64Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(8));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(8)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt64,
@@ -2867,9 +2894,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Float32Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(4));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(4)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::Float32,
@@ -2880,9 +2910,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
         CType::Float64Array(length) => {
-            state.memory = state
-                .memory
-                .with_block(pointer.block.clone(), length.saturating_mul(8));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length.saturating_mul(8)),
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::Float64,
@@ -2893,7 +2926,12 @@ pub(in crate::kernel) fn declare_local(
             return state;
         }
     };
-    state.memory = state.memory.with_block(pointer.block.clone(), byte_width);
+    state.set_memory(
+        state
+            .memory
+            .clone()
+            .with_block(pointer.block.clone(), byte_width),
+    );
     if volatile {
         state.locals.set_uninitialized_with_all_qualifiers(
             name.to_string(),
@@ -2926,9 +2964,12 @@ pub(in crate::kernel) fn declare_aggregate_local(
     let mut state = state.clone();
     let pointer = local_declaration_pointer(&mut state, name);
     register_block_alignment(&pointer.block, layout.alignment_bytes());
-    state.memory = state
-        .memory
-        .with_block(pointer.block.clone(), layout.size_bytes());
+    state.set_memory(
+        state
+            .memory
+            .clone()
+            .with_block(pointer.block.clone(), layout.size_bytes()),
+    );
     state
         .locals
         .set_aggregate_object_at(name.to_string(), layout.clone(), pointer);
@@ -2940,6 +2981,6 @@ pub(in crate::kernel) fn sync_stack_local(state: &mut CState, name: &str, value:
         return;
     };
     if state.memory.has_block(&pointer.block) {
-        state.memory = state.memory.clone().store(pointer, value.clone());
+        state.set_memory(state.memory.clone().store(pointer, value.clone()));
     }
 }

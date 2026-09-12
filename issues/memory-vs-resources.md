@@ -974,6 +974,106 @@ unrelated-fact scaling regressions. It is a green partial W5 checkpoint; the
 observe-then-consume/replace C fixture and the remaining R3/R6 mutation and
 callback-cell regressions are outstanding for later W5 checkpoints.
 
+#### W5 checkpoint B1 handoff (2026-09-12)
+
+Checkpoint B1 carries memory-dependent observation provenance through checked
+state transitions. Each supported projection retains its supporting opaque
+resource occurrence, source memory identity, and per-projection footprint;
+concrete footprints use a fixed-depth dyadic interval index, while symbolic or
+ambiguous pointer blocks use a conservative alias bucket. Stores, aggregate
+copies, calls, loops, allocation/lifetime transitions, and initialization
+paths now replace memory through one invalidating state hook. Overlapping or
+unknown effects remove only affected projections (with cascading support
+cleanup); disjoint effects preserve framed observations, and an unknown loop
+effect invalidates all memory-dependent projections but not pure resources.
+For a non-ambiguous indexed event, each checked transition walks only its
+adjacent memory-derivation edges and queries affected interval candidates,
+giving O(edges + log U + k) work for U indexed ranges and k affected
+projections. Opaque or otherwise ambiguous events conservatively fall back to
+an O(U + k) scan of memory-dependent metadata because their block may alias
+any indexed block; an opaque barrier is likewise output-sized over the
+memory-dependent projections it invalidates.
+Normalization and exact joins preserve occurrence and footprint metadata only
+when the authority and dependency topology agree. Resource-context equality
+and hashing include the observable footprint topology but never raw snapshot
+identity.
+
+The checkpoint adds direct observe/store, nested-support removal, divergent
+join, same-block interval invalidation curves, repeated symbolic-alias cleanup,
+and wide-footprint/loop-barrier regressions, plus normalization,
+support-occurrence, and interval-index coverage. The invalidation curves use
+sizes 4, 16, 64, 256, and 1024, separately measuring concrete indexed
+queries, supported-projection insertion/removal, barriers, and opaque alias
+fallback. Focused `cargo test --lib kernel::tests::resource_tests` passed
+107/107;
+`cargo test --lib kernel::proof::execution::tests::` passed 35/35;
+`cargo clippy --all-targets -- -D warnings` passed; and unfiltered
+`scripts/check.sh` passed 2759/2759 tests and 14/14 fixture/example checks
+(the existing quarantined example remains skipped). This worktree is
+`codex/mvr-w5b` from `43f4a51`; the checkpoint commits are `0a1bd260`,
+`4b726370`, `cb6b2d5f`, and `4705b1f2` (latest before this prose update).
+This is a partial B1 checkpoint, not a complete W5 claim: remaining
+W5 C/D work includes the real three-call callback/table fixtures, scoped-open
+expiry coverage, and richer prerequisite-load footprints for composite
+observations. No C source, syntax, budgets, quarantine, or unrelated semantics
+changed.
+
+#### W5 checkpoint C handoff (2026-09-12)
+
+Checkpoint C first reproduced the smallest existing scoped resource cases on
+the reviewed B1 integration head: ordinary and counted population opens,
+nested branch scopes, callback borrows, post-close reallocation, and the
+kernel's transactional open-scope test. They were already green, so no new
+representation defect was observed and no scope workaround was added.
+
+The C regressions retain that behavior at the surface boundary. Two
+back-to-back opens execute a permitted body store in the first body and prove
+that close restores the owned marker exactly once; the helper then calls
+`preserve_spare`, whose checked contract consumes and produces the unrelated
+token after both closes. A second fixture executes one permitted store inside
+the open and rejects the comparable store after close, proving the opened body
+authority cannot escape. Existing `token_resource_consumed_by_call` continues
+to reject double consumption, while the kernel test checks rooted nested
+scopes, forged joins, transactional failure, and exactly one recorded `Open`
+certificate step.
+The added fixtures are `mdtests/resource_scope_preserves_unrelated.md` and
+`mdtests/resource_scope_does_not_escape_body.md`. This is a green partial C
+checkpoint, not a complete W5 claim; callback/table mutation and richer
+composite prerequisite-footprint work remain for D. No C source, syntax,
+budget, quarantine, or unrelated semantics changed.
+
+#### W5 checkpoint D handoff (2026-09-12)
+
+Checkpoint D first reran the existing R3 callback reductions on the approved C
+head: the views, owned-footprint, cell-separated, unseparated-rejection, table,
+and contract-mismatch fixtures all passed. The smallest permitted callback
+body mutation was then reduced without changing an existing C fixture. The
+first callback stores through its owned `node->left` footprint; the later
+`copy` and `rotate` callbacks remain checked, and an unrelated framed token is
+consumed and returned. This is covered by
+`mdtests/rb_augment_callbacks_helper_mutates_body.md`.
+
+Two negative reductions establish selective retirement. Replacing
+`augment->copy` with the known `dummy_rotate` pointer through a checked helper
+allows the unaffected `rotate` callback but rejects the subsequent `Copy` call
+because the newly loaded pointer has no `Copy` fact. Consuming the folded
+`callback_suite` between callback calls likewise retires its old callback
+predicates. These cases are covered by
+`mdtests/rb_augment_callbacks_helper_rejects_changed_cell.md` and
+`mdtests/rb_augment_callbacks_helper_consumes_suite.md`.
+
+No stale callback authorization was reproduced: callback lookup already keys
+the requirement by the current loaded function-pointer value, and checked
+table-cell ownership/memory transitions retire the old predicate. Therefore no
+FactProvenance sidecar, unconditional callback-fact retention list, or other
+representation change was added. Existing deterministic callback scaling
+tests continue to cover selected-call work versus unrelated functions/facts;
+no new hot-path index was introduced. Richer composite prerequisite-load
+footprints were not required by this callback reduction and remain outside
+this checkpoint. This is a green partial D checkpoint, not a complete W5
+claim. No existing C source, syntax, budget, quarantine, or unrelated
+semantics changed.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.

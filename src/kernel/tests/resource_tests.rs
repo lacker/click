@@ -2785,6 +2785,53 @@ fn resource_join_preserves_only_common_projection_support() {
 }
 
 #[test]
+fn resource_join_drops_projection_when_memory_footprints_diverge() {
+    let support = CResourceFact::own_composite("join_memory_support".into(), Vec::new());
+    let view = |block: &str| {
+        CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ))
+    };
+    let root = ResourceContext::new().unchecked_with_fact(support.clone());
+    let support_occurrence = root.owned_occurrences_for_fact(&support)[0];
+    let left_memory = CMemory::new().with_block("left-join", 8);
+    let right_memory = CMemory::new().with_block("right-join", 8);
+    let left = root
+        .clone()
+        .unchecked_with_supported_facts_from_occurrence_with_memory(
+            support_occurrence,
+            &support,
+            [view("left-join")],
+            &left_memory,
+        );
+    let right = root
+        .clone()
+        .unchecked_with_supported_facts_from_occurrence_with_memory(
+            support_occurrence,
+            &support,
+            [view("right-join")],
+            &right_memory,
+        );
+    let common = ResourceContext::common_exact_descendant(&left, &right, &root)
+        .expect("branches share the root resource authority");
+    assert!(common.contains_exact_representation(&support));
+    assert_eq!(
+        common
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_view() && fact.memory_range().is_some())
+            .count(),
+        0,
+        "a projection with divergent memory dependency metadata must not be reintroduced unindexed"
+    );
+}
+
+#[test]
 fn resource_common_descendant_visits_only_branch_local_changes() {
     let left_path = CResourceFact::own_token("left_path".to_string(), Vec::new());
     let right_path = CResourceFact::own_token("right_path".to_string(), Vec::new());
@@ -5054,4 +5101,376 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
     .expect("clause evaluation stays inside its budget")
     .expect("the symbolic provider should wake the concrete pending clause");
     assert_eq!(result.facts().len(), 3);
+}
+
+#[test]
+fn observed_memory_projection_is_invalidated_by_overlap_but_not_disjoint_store() {
+    let support = CResourceFact::own_composite("memory_support".to_string(), Vec::new());
+    let observed_range = CMemoryRange::new(
+        Pointer {
+            block: "observed-block".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let base = CMemory::new().with_block("observed-block", 32);
+    let resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let support_occurrence = *resources
+        .storage
+        .index
+        .exact
+        .get(&support)
+        .expect("support entry")
+        .iter()
+        .next()
+        .and_then(|entry| resources.storage.occurrence_by_entry.get(entry))
+        .expect("support occurrence");
+    let resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+        support_occurrence,
+        &support,
+        [CResourceFact::view_memory(observed_range.clone())],
+        &base,
+    );
+    let state = CState::new()
+        .with_memory(base.clone())
+        .with_resource_context(resources);
+    let disjoint = state.clone().with_memory(base.clone().store(
+        Pointer {
+            block: "observed-block".into(),
+            offset: PointerOffsetTerm::Constant(16),
+        },
+        int32(1),
+    ));
+    assert!(
+        disjoint
+            .resources()
+            .contains_exact_representation(&CResourceFact::view_memory(observed_range.clone()))
+    );
+    let overlapping = disjoint
+        .clone()
+        .with_memory(disjoint.memory().clone().store(
+            Pointer {
+                block: "observed-block".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            int32(2),
+        ));
+    assert!(
+        !overlapping
+            .resources()
+            .contains_exact_representation(&CResourceFact::view_memory(observed_range))
+    );
+    assert!(
+        overlapping
+            .resources()
+            .contains_exact_representation(&support)
+    );
+}
+
+#[test]
+fn observed_wide_footprint_and_unknown_loop_barrier_are_invalidated() {
+    let support = CResourceFact::own_composite("wide_support".to_string(), Vec::new());
+    let range = CMemoryRange::new_with_element_width(
+        Pointer {
+            block: "wide-block".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(20_000),
+        1,
+    );
+    let memory = CMemory::new().with_block("wide-block", 20_000);
+    let resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let entry = *resources
+        .storage
+        .index
+        .exact
+        .get(&support)
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap();
+    let occurrence = resources.occurrence(entry);
+    let resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+        occurrence,
+        &support,
+        [CResourceFact::view_memory(range.clone())],
+        &memory,
+    );
+    let state = CState::new()
+        .with_memory(memory)
+        .with_resource_context(resources);
+    let barrier =
+        state
+            .memory()
+            .clone()
+            .with_loop_memory_havoc(Variable(81), &BTreeSet::new(), None);
+    let after = state.with_memory(barrier);
+    assert!(
+        !after
+            .resources()
+            .contains_exact_representation(&CResourceFact::view_memory(range))
+    );
+    assert!(after.resources().contains_exact_representation(&support));
+}
+
+#[test]
+fn memory_invalidation_scales_with_affected_intervals_and_barrier_output() {
+    let mut samples = Vec::new();
+    for unrelated_count in [4_usize, 16, 64, 256, 1024] {
+        let target_support = CResourceFact::own_composite("curve_target".into(), Vec::new());
+        let target_view = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: "curve-block".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let memory = CMemory::new().with_block("curve-block", (8 * unrelated_count + 8) as u32);
+        let mut resources = ResourceContext::new().unchecked_with_fact(target_support.clone());
+        let target_occurrence = resources.owned_occurrences_for_fact(&target_support)[0];
+        resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+            target_occurrence,
+            &target_support,
+            [target_view.clone()],
+            &memory,
+        );
+        let mut unrelated_views = Vec::new();
+        for index in 0..unrelated_count {
+            let support =
+                CResourceFact::own_composite(format!("curve_unrelated_{index}"), Vec::new());
+            resources = resources.unchecked_with_fact(support.clone());
+            let occurrence = resources.owned_occurrences_for_fact(&support)[0];
+            let view = CResourceFact::view_memory(CMemoryRange::new(
+                Pointer {
+                    block: "curve-block".into(),
+                    offset: PointerOffsetTerm::Constant((8 + index * 8) as i64),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ));
+            resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+                occurrence,
+                &support,
+                [view.clone()],
+                &memory,
+            );
+            unrelated_views.push(view);
+        }
+        let state = CState::new()
+            .with_memory(memory.clone())
+            .with_resource_context(resources);
+        let before_allocations = crate::persistent::persistent_node_allocations();
+        let (after, store_work) = crate::instrumentation::measure_deterministic_work(|| {
+            state.clone().with_memory(memory.clone().store(
+                Pointer {
+                    block: "curve-block".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                int32(1),
+            ))
+        });
+        let store_allocations =
+            crate::persistent::persistent_node_allocations() - before_allocations;
+        assert!(
+            !after
+                .resources()
+                .contains_exact_representation(&target_view)
+        );
+        for view in &unrelated_views {
+            assert!(after.resources().contains_exact_representation(view));
+        }
+
+        let before_barrier_allocations = crate::persistent::persistent_node_allocations();
+        let (barrier_after, barrier_work) =
+            crate::instrumentation::measure_deterministic_work(|| {
+                state
+                    .clone()
+                    .with_memory(memory.clone().with_loop_memory_havoc(
+                        Variable(820),
+                        &BTreeSet::new(),
+                        None,
+                    ))
+            });
+        let barrier_allocations =
+            crate::persistent::persistent_node_allocations() - before_barrier_allocations;
+        assert!(
+            !barrier_after
+                .resources()
+                .contains_exact_representation(&target_view)
+        );
+        for view in &unrelated_views {
+            assert!(
+                !barrier_after
+                    .resources()
+                    .contains_exact_representation(view)
+            );
+        }
+        let before_alias_allocations = crate::persistent::persistent_node_allocations();
+        let (alias_after, alias_work) = crate::instrumentation::measure_deterministic_work(|| {
+            state.with_memory(
+                memory
+                    .clone()
+                    .store(Pointer::symbolic(Variable(821)), int32(1)),
+            )
+        });
+        let alias_allocations =
+            crate::persistent::persistent_node_allocations() - before_alias_allocations;
+        assert!(
+            !alias_after
+                .resources()
+                .contains_exact_representation(&target_view)
+        );
+        for view in &unrelated_views {
+            assert!(!alias_after.resources().contains_exact_representation(view));
+        }
+        samples.push((
+            unrelated_count,
+            store_work,
+            store_allocations,
+            barrier_work,
+            barrier_allocations,
+            alias_work,
+            alias_allocations,
+        ));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 + 80 && pair[1].2 <= pair[0].2 + 256,
+            "same-block disjoint intervals leaked unrelated work: {samples:?}"
+        );
+        assert!(
+            pair[1].3 >= pair[0].3
+                && pair[1].5 >= pair[0].5
+                && pair[1].3 <= pair[0].3.saturating_mul(20).saturating_add(32)
+                && pair[1].5 <= pair[0].5.saturating_mul(20).saturating_add(32)
+                && pair[1].4 <= pair[0].4.saturating_mul(8).saturating_add(2048)
+                && pair[1].6 <= pair[0].6.saturating_mul(8).saturating_add(2048),
+            "barrier and alias fallback work/allocations must track affected output: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn supported_projection_interval_updates_scale_with_index_height() {
+    let mut samples = Vec::new();
+    for unrelated_count in [4_usize, 16, 64, 256, 1024] {
+        let memory =
+            CMemory::new().with_block("projection-curve", (8 * unrelated_count + 8) as u32);
+        let mut resources = ResourceContext::new();
+        for index in 0..unrelated_count {
+            let support = CResourceFact::own_composite(
+                format!("projection_curve_unrelated_{index}"),
+                Vec::new(),
+            );
+            resources = resources.unchecked_with_fact(support.clone());
+            let occurrence = resources.owned_occurrences_for_fact(&support)[0];
+            let view = CResourceFact::view_memory(CMemoryRange::new(
+                Pointer {
+                    block: "projection-curve".into(),
+                    offset: PointerOffsetTerm::Constant((8 + index * 8) as i64),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ));
+            resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+                occurrence,
+                &support,
+                [view],
+                &memory,
+            );
+        }
+        let target_support =
+            CResourceFact::own_composite("projection_curve_target".into(), Vec::new());
+        resources = resources.unchecked_with_fact(target_support.clone());
+        let target_occurrence = resources.owned_occurrences_for_fact(&target_support)[0];
+        let target_view = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: "projection-curve".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let before_insert = crate::persistent::persistent_node_allocations();
+        let resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+            target_occurrence,
+            &target_support,
+            [target_view.clone()],
+            &memory,
+        );
+        let insert_allocations = crate::persistent::persistent_node_allocations() - before_insert;
+        let target_entry = *resources
+            .storage
+            .index
+            .exact
+            .get(&target_view)
+            .expect("target projection entry")
+            .iter()
+            .next()
+            .expect("target projection entry id");
+        let target_occurrence = resources.occurrence(target_entry);
+        let before_remove = crate::persistent::persistent_node_allocations();
+        let remaining = resources
+            .without_exact_representation_for_occurrence(target_occurrence)
+            .expect("target projection should be removable");
+        let remove_allocations = crate::persistent::persistent_node_allocations() - before_remove;
+        assert!(!remaining.contains_exact_representation(&target_view));
+        samples.push((unrelated_count, insert_allocations, remove_allocations));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(3).saturating_add(256)
+                && pair[1].2 <= pair[0].2.saturating_mul(3).saturating_add(256),
+            "supported interval insertion/removal grew with ambient facts: {samples:?}"
+        );
+    }
+    for (size, insert_allocations, remove_allocations) in samples {
+        let height = usize::BITS as usize - size.leading_zeros() as usize;
+        assert!(
+            insert_allocations <= 512 * height && remove_allocations <= 512 * height,
+            "supported interval update exceeded fixed-depth indexed bound at size {size}: insert={insert_allocations}, remove={remove_allocations}"
+        );
+    }
+}
+
+#[test]
+fn removing_symbolic_memory_observations_does_not_leave_alias_bucket_entries() {
+    let support = CResourceFact::own_composite("symbolic_alias_support".into(), Vec::new());
+    let memory = CMemory::new();
+    let mut resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let support_occurrence = resources.owned_occurrences_for_fact(&support)[0];
+    for iteration in 0..4 {
+        let view = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::Symbolic(Variable(900 + iteration)),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+            support_occurrence,
+            &support,
+            [view.clone()],
+            &memory,
+        );
+        let entry = *resources
+            .storage
+            .index
+            .exact
+            .get(&view)
+            .expect("symbolic observation entry")
+            .iter()
+            .next()
+            .expect("symbolic observation entry id");
+        let occurrence = resources.occurrence(entry);
+        resources = resources
+            .without_exact_representation_for_occurrence(occurrence)
+            .expect("symbolic observation should be removable");
+        assert!(resources.storage.symbolic_memory_support.is_empty());
+        assert!(resources.storage.support_metadata_by_projection.is_empty());
+    }
 }

@@ -162,6 +162,22 @@ impl<'a> Proof<'a> {
             selected_children.as_deref(),
         )
         .map_err(|message| self.step_error(message))?;
+        // The unfold exposed this arm's cells; name them in the snapshot so
+        // the body's facts and the C's own reads of those cells share one
+        // load identity. See `materialize_unfolded_instance_arm_cells`.
+        let after = if unfold {
+            crate::surface::proof::resources::materialize_unfolded_instance_arm_cells(
+                context.resource_environment,
+                context.click_function_environment,
+                context.parsed_function.parameters(),
+                context.arguments,
+                after,
+                instance,
+                self.facts().assumptions(),
+            )
+        } else {
+            after
+        };
         let mut facts = self.facts().clone();
         for fact in &added {
             facts = facts.with_kernel_checked_fact(fact.clone());
