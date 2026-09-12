@@ -243,6 +243,16 @@ fixup commit following it. The manager should integrate both commits without
 merging or pushing from this worktree. No verified blockers remain; G2/G3 and
 later R1-R6 behavior remain assigned to later chunks.
 
+Final integration note (2026-09-11): this reviewed W1 pair was applied onto
+`42b8b6eb` after upstream's whole-contract resource supply and centralized
+unaddressable-clause diagnostics landed in `53948479` and `7e55fdc7`. The
+resulting commits are `ef44ad20` and `d8d1db47`. Their only merge conflict was
+resolved in favor of W1's normalized, validated `CResourceTerm`/`CResourceSpec`
+carrier while retaining upstream's dependency-aware whole-clause evaluation,
+current issue findings, and dedicated instance-rename representation. This
+integration does not duplicate or revert the upstream whole-contract algorithm;
+the branch remains unmerged and unpushed for manager integration.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

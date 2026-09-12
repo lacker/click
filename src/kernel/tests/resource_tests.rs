@@ -4264,7 +4264,7 @@ fn satisfies_fact_miss_ignores_unrelated_facts() {
 #[test]
 fn resource_clauses_with_no_evaluable_order_name_two_positions() {
     let unowned = |variable| {
-        CResourceSpec::OwnMemory(CMemorySegment {
+        CResourceSpec::owned_memory(CMemorySegment {
             base: CExpression::Load(Box::new(CExpression::Value(CValue::pointer(Pointer {
                 block: PointerBlock::ExternalArgument,
                 offset: PointerOffsetTerm::scale_int32(
