@@ -542,6 +542,52 @@ free unfolding or forward-language change was introduced. W3 did not merge or
 push; the manager should cherry-pick `ec820946` and this documentation update
 after checking the primary branch base.
 
+## W3 follow-up: symbolic-event waiter fallback (2026-09-11)
+
+This follow-up starts from `4c82c4f6` and is implemented by `56958fa6` on
+`codex/mvr-w3`, still unmerged and unpushed. The interval index had one
+asymmetric boundary: a concrete dependency was registered in exact and
+interval nodes, but a symbolic or otherwise un-normalizable supplied range
+could query neither. Concrete dependencies now also register a block-local
+fallback waiter set keyed by `(clause, dependency)`. It is consulted only for
+such symbolic supplied memory events; concrete supplied events continue to
+use exact and interval lookup, preserving the same-block disjoint curve.
+Candidate clause ids are deduplicated, and unregister removes the same waiter
+from both indexes, including when one clause waits on multiple ranges in one
+block.
+
+The permanent functional regression is
+`symbolic_supplied_range_wakes_concrete_pending_dependency`: a first clause
+waits on a concrete loaded pointer, a later symbolic-range provider first
+waits on a seed cell, and a final seed clause unlocks the provider. With the
+assumption `1 <= n`, the provider's symbolic event then wakes the concrete
+pending clause and all three resources evaluate. The kernel worklist tests
+also cover fallback registration/removal and continue to cover adjacent-range
+union and physical-byte cross-width matching. The four-size same-block
+disjoint curve remains exact candidate visits `4, 8, 16, 32`; the reverse
+dependency curve remains deterministic work `70, 168, 412, 1092` and attempts
+`7, 15, 31, 63`.
+
+The fallback is intentionally conservative rather than a stronger asymptotic
+claim: one explicit symbolic supplied event may inspect all concrete waiters
+in its block, bounded by that event's block-local set. Concrete events do not
+pay this scan and remain interval-sensitive. No whole-pending or whole-section
+rescan was reintroduced.
+
+Files changed are `src/kernel/functions.rs`,
+`src/kernel/tests/resource_tests.rs`, and this issue document. Focused
+worklist/resource tests passed (6 and 90 respectively), the focused
+`resource_tests contract_execution_tests callback_contract_tests` nextest
+selection passed `173/173`, and `cargo clippy --all-targets -- -D warnings`,
+formatting, and diff checks passed. Unfiltered `scripts/check.sh` exited 0:
+`2591/2591` tests and all `14/14` fixture/example checks passed (the one
+pre-existing quarantined example remains skipped). No tooling-stop condition
+or stale verifier process was observed. No C source, Click syntax, budget,
+quarantine, excluded semantics, free unfolding, or forward-language change
+was introduced. W3 did not merge or push; the manager should cherry-pick
+`56958fa6` and this documentation commit after checking the primary branch
+base.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different
