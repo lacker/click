@@ -1,62 +1,38 @@
-# an ascending walk on the rbtree shapes
+# an rbtree ascent whose guard reads the parent's link through the frame
 
 This is the ascent of
-[`loop_ascending_walk_to_root.md`](loop_ascending_walk_to_root.md) on the
-parameter-keyed rbtree shapes package C1 landed: `rb_at(p, parent)`, whose
-`Node` arm owns the packed parent word and states it as the parent's address
-plus the color bit, and `ctx_at(child, parent, root)`, whose `Top` frame owns
-`root->rb_node` and says the root struct points at the focused node. Every
-rbtree fixup loop climbs this way, so the boundary the walk ends at is the one
-`rb_insert_color`, `rb_next` and `__rb_erase_color` need.
+[`rb_ascent_conjunctive_guard.md`](rb_ascent_conjunctive_guard.md) with the
+second conjunct `rb_next` actually writes: `node == parent->rb_right`. Every
+iteration consumes one frame — unfold the frame, take the C step that moves the
+cursor up, fold the node the frame owned into a larger subtree — and the measure
+is the context, `decreases c;`.
 
-This fixture keeps the parameter spelling on purpose, and that is a gap rather
-than a preference. Package C1b re-keyed the rbtree model by node with the
-parent in the payload — `rb_at(p)` and `ctx_at(child, root)`, verified in
-[`rb_first_last.md`](rb_first_last.md), [`rb_at_link_helpers.md`](rb_at_link_helpers.md)
-and [`rb_ctx_change_child.md`](rb_ctx_change_child.md) — because the top-level
-traversals have no C local naming the focused node's parent. A *descent* needs
-no such local, so it re-keys cleanly. This *ascent* is the opposite case: what
-makes it work below is exactly that the frame's `fact parent != 0` names the
-C local the loop reassigns, so the failed guard `parent != 0` refutes the
-`Left` and `Right` arms and the exit learns `c.model == Context::Top`. With the
-parent in the payload the arm fact is about a payload the `unfold` binds
-freshly, the failed guard refutes nothing, and the exit cannot name `Top`. The
-bridge a node-keyed ascent needs — a C pointer equated to a frame payload that
-survives `unfold` — is the same one
-[`rb_replace_node.md`](rb_replace_node.md)'s closing note records.
+What is new is where the guard reads. `parent->rb_right` is not the focused
+node's own cell; it belongs to the folded frame `c`, and at a loop head no arm
+of the three-constructor `Context` is selected, so the whole guard used to be
+refused as undecided: "the loop condition could not be evaluated on this path".
+The guard decides itself. A short-circuit conjunct is read under the truth of
+the conjuncts before it, `parent != 0` contradicts the `Top` arm's own
+`fact parent == 0`, and the two arms that remain both own `parent->rb_right`.
+So the cell is readable whichever way the model turns out, and the loop head
+publishes it as a view — read authority only, with the frame still folded and
+still owned exactly where it was. A cell only one of the possible arms owned
+would not be published, and the guard would still be refused.
 
-The loop body reads the parent through the unchanged Linux `rb_parent`, so
-each iteration clears the color tag out of the packed word and recovers the
-parent's provenance from the frame's own facts. The frames carry the node they
-own as the payload `identity`, because the frame above is keyed by
-`(parent, grandparent)` and `plug` still has to know which node each frame
-rebuilds.
+The C is a minimal translation of the Linux guard. `rb_next` writes
+`while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`,
+and an assignment is not an expression in the supported C0 subset, so the
+assignment moves into the body exactly as `rb_ascending_walk_to_root.md`
+already writes it. That is the whole translation.
 
-The exit is the root: the failed guard `parent != 0` refutes the `Left` and
-`Right` arms' `fact parent != 0`, the exit learns `c.model == Context::Top`,
-and the produced instances name that position with the null pointer constant,
-`ctx_at(result, 0, root)` and `rb_at(result, 0)`.
-
-Two limits are deliberate here, and both are verifier gaps rather than
-modeling choices.
-
-`rb_next`'s own ascent is
-`while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`.
-Its C0 form is refused twice over: an assignment is not an expression in the
-supported subset, and a short-circuit guard whose second conjunct reads memory
-leaves the `loop` tactic two statement successors. That
-guard also stops at the first left frame, a position no contract can name,
-which is why package C4 owns `rb_next` in full; see
-[`rb_next_conjunctive_guard.md`](rb_next_conjunctive_guard.md).
-
-The loop carries the same structural measure the scaffold ascent does,
-`decreases c;`, even though its body calls the contract-less inline
-`rb_parent`. An inline body has no contract boundary: it executes at the call
-site, so termination reads it as a call-graph node of its own rather than as
-an opaque callee needing a verified rule. `rb_parent`'s body is one return of
-a masked load, with no loop, no recursion, and no further call, so it
-terminates by construction and the ascent's own ranking is the whole of the
-obligation.
+The contract consumes the walk's instances and produces none. The ascent stops
+either at the root or at the first node that is not its parent's right child,
+and no contract can name the second position: `ctx_at(child, parent, root)` and
+`rb_at(p, parent)` take the focused node's parent, and a produced instance's
+arguments are the entry-time ones. That is gap 35, which package C1b re-keys the
+model to fix. What this fixture states at the exit is what the loop proved on
+the way: `plug(c.model, t.model)` is unchanged from the entry model at every
+iteration, and the focused node is not null.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -81,11 +57,13 @@ static inline struct rb_node *rb_parent(struct rb_node *r) {
 #endif
 ```
 
-```c filename=rb_ascending_walk_to_root.c
+```c filename=rb_ascent_parent_link_guard.c
 #include "rbtree.h"
 
-struct rb_node *rb_root_of(struct rb_node *node, struct rb_node *parent, struct rb_root *root) {
-    while (parent != 0) {
+struct rb_node *rb_up_while_right_child(struct rb_node *node,
+                                        struct rb_node *parent,
+                                        struct rb_root *root) {
+    while (parent != 0 && node == parent->rb_right) {
         node = parent;
         parent = rb_parent(node);
     }
@@ -95,7 +73,7 @@ struct rb_node *rb_root_of(struct rb_node *node, struct rb_node *parent, struct 
 ```
 
 ```click
-verifying "rb_ascending_walk_to_root.c";
+verifying "rb_ascent_parent_link_guard.c";
 
 spec enum Color { Red, Black }
 
@@ -198,14 +176,12 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
     }
 }
 
-struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
-                           struct rb_root* root) {
+struct rb_node* rb_up_while_right_child(struct rb_node* node, struct rb_node* parent,
+                                        struct rb_root* root) {
     consumes c: ctx_at(node, parent, root);
     consumes t: rb_at(node, parent);
     requires t.model != RbTree::Empty;
-    produces ctx: ctx_at(result, 0, root);
-    produces sub: rb_at(result, 0);
-    ensures sub.model == plug(old(c.model), old(t.model));
+    ensures result != 0;
 } by {
     loop {
         decreases c;
@@ -265,33 +241,10 @@ struct rb_node* rb_root_of(struct rb_node* node, struct rb_node* parent,
             }
         }
     }
-    have plug(c.model, t.model) == t.model by {
-        rewrite(c.model == Context::Top);
-        unfold(plug(Context::Top, t.model));
-        normalize();
-    }
-    have t.model == plug(old(c.model), old(t.model)) by {
-        rewrite(t.model == plug(c.model, t.model));
-        assumption();
-    }
-    unfold(c);
-    let ctx = fold(ctx_at(node, parent, root), { model: Context::Top });
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
         RbTree::Node(identity, color, left_model, right_model) => {
-            have RbTree::Node(identity, color, left_model, right_model)
-                == plug(old(c.model), old(t.model)) by {
-                rewrite(RbTree::Node(identity, color, left_model, right_model) == t.model);
-                assumption();
-            }
             unfold(t) as { left: l, right: r };
-            let sub = fold(rb_at(node, parent), {
-                model: RbTree::Node(identity, color, left_model, right_model)
-            }, { left: l, right: r });
-            have sub.model == plug(old(c.model), old(t.model)) by {
-                rewrite(sub.model == RbTree::Node(identity, color, left_model, right_model));
-                assumption();
-            }
             step();
             simp();
         },

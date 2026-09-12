@@ -183,6 +183,36 @@ does not prove that such an iteration is eventually reached. Termination needs
 a separate well-founded argument; ordinary C verification does not require
 one.
 
+### Short-circuit guards
+
+A guard with `&&` or `||` leaves the loop by one path per operand that can end
+it. `while (a != 0 && p[0] != 0)` exits when `a` is zero, and also when `a` is
+nonzero and `p[0]` is zero; the second path never evaluates the first operand
+away. Every one of those paths reaches the same exit state, so the loop rule
+certifies them together and the exit states their join: everything they all
+state — which includes every invariant — plus the disjunction of what each
+states alone, here `a == 0 or p[0] == 0`. A proof that needs to know which
+operand failed splits on that disjunction with `cases`:
+
+<!-- verified-example: mdtests/loop_conjunctive_guard_exit_join.md -->
+```click
+have p[0] == 0 by {
+    cases(a == 0 or p[0] == 0) {
+        contradiction(a == 0);
+    } {
+        assumption();
+    }
+}
+```
+
+The negation of the first operand alone is *not* assumed at the exit: the loop
+really can stop with `a` nonzero. An operand the function has no authority to
+read leaves the guard undecided rather than dropping its path, and the loop is
+refused — but an operand is read under the truth of the operands before it, so
+a conjunct that refutes an arm of a folded modeled instance can give the next
+conjunct the authority to read through it. That is the arm selection described
+under [structural loop measures](#structural-loop-measures).
+
 ## Memory loops
 
 Pointer-writing loops often need both arithmetic invariants and memory facts:
@@ -332,6 +362,18 @@ open is refused by name rather than guessed. The invariants also publish the
 selected arm's cells as read authority at the loop head, which is what lets a
 guard such as `root->left != 0` read through the focused subtree the binder
 holds.
+
+A guard's own earlier conjuncts count as premises for the conjunct after them.
+A short-circuit conjunct is read under the truth of the ones before it, so a
+prefix that refutes an arm publishes what the arms it leaves possible agree on,
+and the next conjunct may read what the prefix unlocked. The `rb_next` ascent
+`while (parent != 0 && node == parent->rb_right)` is the shape: no arm of a
+three-constructor frame is selected at the head, `parent != 0` refutes the
+`Top` arm, and both remaining arms own `parent->rb_right`, so the second
+conjunct reads it through the folded frame — as a view, with ownership
+untouched. A cell only one possible arm owns is not published and the guard
+stays undecided, which refuses the loop. The verified example is
+`mdtests/rb_ascent_parent_link_guard.md`.
 
 Unlike the numeric components, the structural descent is not a member of the
 back-edge invariant bundle. The back edge decides it directly and names the

@@ -414,6 +414,66 @@ enough to become the first regression of the package that fixes them.
     (`step()` executes the whole inlined call). Package A17 owns the first
     two; the third is not needed for the Linux functions, which are
     top-level.
+38. **Gap 37 (b) was misdiagnosed; the blocker is load identity across an
+    unfold.** A17 showed the bit-mask arithmetic already closes when the
+    children are contract instances; it fails when the children come from
+    `unfold(t) as { left: l, right: r }`: the child's cell is named through
+    a symbolic pointer and the C's own read of the same cell in the same
+    epoch mints a second load variable, and the fold's exact check has no
+    route between `V_u & 1 == color_bit(lc)` and the goal over `V_c`. The
+    two are related only by a pointer equality. Equating two registered
+    loads at provably equal pointers in one epoch inside the exact check is
+    the load-equality prover deliberately kept out of the kernel; the fix
+    belongs on the surface, as an explicit step that names the identity
+    (`rewrite` of the load through the pointer equality, or `normalize()
+    using` the equality) and a kernel rule that accepts it as one
+    certified step. Package A18. C4's general-children `rb_replace_node`
+    and every fixup that unfolds a child then writes its word depend on it.
+39. **A guard prefix does not publish the read authority common to the
+    arms it leaves possible.** A17: the verbatim `rb_next` guard `parent !=
+    0 && node == parent->rb_right` is undecided at a loop head because
+    `parent->rb_right` is owned by the folded `ctx_at` frame and no single
+    arm is selected; the first conjunct refutes `Top`, and both remaining
+    arms own `parent->rb_right`. D7 extension: after a guard prefix, publish
+    as views the cells owned by every arm still possible. Package A19.
+40. **Smaller A17 findings, not scheduled.** Two ascent loops in one
+    function fail the second loop's `close_invariants` with plain guards
+    (pre-existing); `simp` cannot use a loop's exported exit disjunction by
+    itself because the fact is kernel-minted with no surface spelling
+    (`cases(...)` works); the S1 successor-refusal diagnostic no longer has
+    a reachable shape.
+41. **Soundness hole 2, closed by C1b: capture in pure-function unfold.**
+    `unfold(f(args))` substituted arguments and then reduced the body's
+    `match`, capturing a match-arm binding that shared a name with a
+    parameter, so `unfold(reparent(Node(node, node, ...), parent))`
+    produced the old parent and a false equation closed under `requires
+    node != parent`. `prepare_contract_match_arm` now renames the binding
+    out of the way (regressions `spec_function_arm_binding_capture*.md`).
+42. **A body fact applying a pure predicate to a pointer is not discharged
+    at fold.** C1b: `fact rb_parent_is(left_model, p) == 1` makes every
+    fold refuse although the identical proposition is an available checked
+    fact just before; `fact color_bit(color) >= 0` discharges, and even the
+    constant `rb_parent_is(RbTree::Empty, identity) == 1` does not. So
+    parent/child consistency is stated in contracts, not in the body,
+    which deviates from D2. Package A20.
+43. **A frame's identity payload does not stand for the C local that names
+    the same node on unfolded cells.** C1b: `rb_replace_node`'s non-root
+    frame fails with "requires exactly one statement successor, got 2"
+    because `unfold` binds the frame's `identity` freshly and the inlined
+    `__rb_change_child` reads `parent->rb_left` while the frame owns
+    `identity->rb_left`; the re-keyed ascending walk has the same problem
+    at its exit refutation (`fact parent != 0` no longer names the C local),
+    so `rb_ascending_walk_to_root.md` stays on the parameter spelling. The
+    bridge exists: `requires t.model == rb_reparent(t.model, parent)` plus
+    `extract` yields `identity == parent` in the arm; what is missing is
+    that equality reaching the unfolded frame's owned cells and guards.
+    Package A20.
+44. **Two `RbTree` shapes.** `examples/rbtree-model` (C2) still has the
+    four-payload `Node`; the rbtree fixtures now use the five-payload
+    re-keyed one. Package C2b ports the pure library. The verbatim `rb_next`
+    guard does not parse in C0 (assignment expression;
+    kernel-scale-preprocessing) and is pinned as
+    `mdtests/rb_next_conjunctive_guard.md`.
 
 ## Design decisions
 
@@ -680,6 +740,19 @@ appears to need one reports the need instead of adding it.
   for a childless victim on the verbatim body) are on master. C4's
   traversal functions are blocked by gap 35; C1b and A17 dispatched. C3
   waits on C1b and A17.
+- 2026-09-12: A17 (1472f6f8) is on master: every exit of a short-circuit
+  guard is certified and joined, and proof nesting goes from an effective
+  five levels to eleven. Its masked-word part was a misdiagnosis (gap 38);
+  A18 and A19 dispatched. C1b in progress.
+- 2026-09-12: C1b (368c4aec) is on master: the rbtree model is keyed by
+  node with the parent in the payload; **the unchanged Linux `rb_first`
+  and `rb_last` verify and audit** (19 of 19 sites), with the seven link
+  helpers, `__rb_change_child` in all three frames, and `rb_replace_node`
+  at the root; soundness hole 2 closed. C2b dispatched; A20 after A18.
+- 2026-09-12: A19 (eec257aa) is on master: the cells every possible arm
+  owns are published as views at contract lowering, loop heads, and per
+  guard conjunct; the translated `rb_next` ascent guard verifies and
+  audits on the parameter spelling. A18 and C2b in progress.
 
 ## Work packages
 
@@ -930,6 +1003,37 @@ parent-word fact closable after `rb_set_parent` for a child named through
 a field path. Regressions: a two-conjunct guard loop, a four-level match,
 and C4's general-children `rb_replace_node`. C3's ascent depends on the
 guard part; C1b's `rb_next` ascent depends on it too.
+
+**A18. Load identity across an unfold (gap 38).** Scope: a surface step
+that equates a load variable minted by C execution with the load the
+unfolded child's body named for the same cell, justified by the pointer
+equality the context holds, checked by the kernel as one bounded step
+(no search in the exact check). Regressions: A17's `sp7` reduction and
+C4's general-children `rb_replace_node`. C3 and C5 depend on it.
+
+**A19. Read authority common to the possible arms (gap 39).** Scope:
+after a guard prefix or a section requirement refutes some arms of a
+folded matched instance, publish as views the cells every remaining arm
+owns, at contract lowering, loop heads, and within a guard's own
+short-circuit evaluation. Regression: the verbatim `rb_next` ascent guard
+on the re-keyed frame. C1b's `rb_next` and C3's fixup guards depend on
+it.
+
+**A20. Pointer-argument body facts and payload-to-local identity (gaps 42,
+43).** Scope: make a body fact applying a pure function to a pointer
+argument dischargeable at fold exactly as a scalar one; and let a proved
+equality between a frame's identity payload and a C local (`identity ==
+parent`) apply to the unfolded frame's owned cells and to guard reads, so
+`rb_replace_node`'s non-root frames and the re-keyed ascent verify.
+Regressions: `rb_parent_is` as a body fact; `rb_replace_node` `Left` and
+`Right` frames; `rb_ascending_walk_to_root.md` ported to `rb_at(p)`/`ctx_at`.
+Depends on A18 (same fold check). C3 depends on it.
+
+**C2b. Port the pure red-black library to the re-keyed model.** Scope:
+`examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
+right)`, keeping every theorem, and adding the parent-consistency predicate
+and its preservation by rotation and recolor. Fixtures only. C3 depends on
+it.
 
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and

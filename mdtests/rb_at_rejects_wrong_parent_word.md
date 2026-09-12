@@ -1,9 +1,9 @@
 # a parent word naming another node cannot be folded at that parent
 
-`rb_at(p, parent)`'s `Node` arm states what the node's own word holds, so a
-node whose `__rb_parent_color` was set to `other` is not an `rb_at(node, parent)`
-for a different `parent`. The fold is refused; the frame cannot be re-parented
-by claiming it.
+`rb_at(p)`'s `Node` arm states what the node's own word holds, so a
+node whose `__rb_parent_color` was set to `other` does not fold as a model
+naming `parent` as its parent payload. The fold is refused; a node cannot be
+re-parented in the model by claiming it.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -44,7 +44,7 @@ spec enum Color { Red, Black }
 
 spec enum RbTree {
     Empty,
-    Node(struct rb_node*, Color, RbTree, RbTree),
+    Node(struct rb_node*, struct rb_node*, Color, RbTree, RbTree),
 }
 
 function color_bit(color: Color) -> int {
@@ -54,16 +54,16 @@ function color_bit(color: Color) -> int {
     }
 }
 
-resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
+resource rb_at(p: struct rb_node*) {
     field model: RbTree;
     match model {
         RbTree::Empty => { fact p == 0; },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
             owns p->rb_left;
             owns p->rb_right;
-            owns left: rb_at(p->rb_left, p);
-            owns right: rb_at(p->rb_right, p);
+            owns left: rb_at(p->rb_left);
+            owns right: rb_at(p->rb_right);
             fact p != 0;
             fact p == identity;
             fact aligned(p, 8);
@@ -78,20 +78,20 @@ resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
 
 void set_parent_elsewhere(struct rb_node* node, struct rb_node* old_parent,
                           struct rb_node* parent, struct rb_node* other) {
-    consumes t: rb_at(node, old_parent);
+    consumes t: rb_at(node);
     requires t.model != RbTree::Empty;
     requires aligned(parent, 8);
     requires aligned(other, 8);
     requires other != parent;
-    produces u: rb_at(node, parent);
+    produces u: rb_at(node);
     ensures u.model == old(t.model);
 } by {
     match t.model {
         RbTree::Empty => { contradiction(t.model == RbTree::Empty); },
-        RbTree::Node(identity, color, left_model, right_model) => {
+        RbTree::Node(identity, parent, color, left_model, right_model) => {
             unfold(t) as { left: l, right: r };
             execute();
-            let u = fold(rb_at(node, parent), { model: old(t.model) }, { left: l, right: r });
+            let u = fold(rb_at(node), { model: old(t.model) }, { left: l, right: r });
             simp();
         },
     }

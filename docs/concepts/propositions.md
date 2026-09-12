@@ -118,7 +118,7 @@ requires q != 0;
 With those, the C test `if (p == q)` is decided false before it splits. The
 null side may be read out of an owned cell (`requires node->left == 0;`)
 rather than named by a parameter; a loaded pointer is a pointer like any
-other. `mdtests/rb_ctx_change_child_right_frame.md` is the same step on the
+other. `mdtests/rb_ctx_change_child.md`'s right-child wrapper is the same step on the
 unchanged Linux `__rb_change_child`: the right-child frame's empty left
 sibling makes `parent->rb_left` null, the caller's child exists, and the
 helper's inner `parent->rb_left == old` test is decided with no requirement

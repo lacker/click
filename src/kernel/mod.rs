@@ -56,6 +56,7 @@ pub(crate) use functions::initialize_c_program_storage;
 #[cfg(test)]
 pub(crate) use functions::measure_resource_clause_attempts;
 pub(crate) use functions::modified_by_value_aggregate_parameter_with_current_ensure_in_source;
+pub(crate) use functions::possible_resource_model_arm_variants;
 pub(crate) use functions::refuted_instance_arm_model_facts;
 pub(crate) use functions::select_resource_model_arm;
 pub(crate) use functions::selected_instance_arm_binding_free_facts;

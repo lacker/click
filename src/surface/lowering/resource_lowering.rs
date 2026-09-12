@@ -498,7 +498,7 @@ pub(in crate::surface) fn folded_matched_instance_note(
     fn undecided<'a>(
         instance: &'a crate::kernel::ResourceInstance,
         assumptions: &PureFactContext,
-    ) -> Option<&'a str> {
+    ) -> Option<(&'a str, Vec<String>)> {
         instance
             .schema()
             .fields()
@@ -511,9 +511,16 @@ pub(in crate::surface) fn folded_matched_instance_note(
             .find(|(_, model)| {
                 crate::kernel::select_resource_model_arm(model, assumptions).is_none()
             })
-            .map(|(name, _)| name)
+            .map(|(name, model)| {
+                let possible =
+                    crate::kernel::possible_resource_model_arm_variants(model, assumptions)
+                        .iter()
+                        .map(|variant| format!("{}::{variant}", model.algebraic_type.name))
+                        .collect::<Vec<_>>();
+                (name, possible)
+            })
     }
-    let Some((instance, field)) = state
+    let Some((instance, field, possible)) = state
         .resources()
         .facts()
         .iter()
@@ -521,19 +528,36 @@ pub(in crate::surface) fn folded_matched_instance_note(
             CResource::Instance(instance) => Some(instance),
             _ => None,
         })
-        .find_map(|instance| undecided(instance, assumptions).map(|field| (instance, field)))
+        .find_map(|instance| {
+            undecided(instance, assumptions).map(|(field, possible)| (instance, field, possible))
+        })
     else {
         return String::new();
     };
+    let declared = crate::surface::diagnostics::format_declared_resource(
+        instance.name(),
+        instance.arguments(),
+        parameters,
+        arguments,
+    );
+    // The premises may have refuted some arms without deciding one. Then the
+    // cells every surviving arm owns are readable and this cell is not one of
+    // them, so name the arms the reader has to reconcile rather than repeating
+    // that no arm is selected.
+    if possible.len() > 1 {
+        return format!(
+            "\n  `{declared}` stays folded: the requirements leave the arms {} possible, and this \
+             cell is not owned by every one of them, so it is not readable here",
+            possible
+                .iter()
+                .map(|variant| format!("`{variant}`"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        );
+    }
     format!(
-        "\n  `{}` stays folded: no requirement of this contract selects one arm of its `{field}` \
-         field, so the cells its arms own are not readable here",
-        crate::surface::diagnostics::format_declared_resource(
-            instance.name(),
-            instance.arguments(),
-            parameters,
-            arguments,
-        )
+        "\n  `{declared}` stays folded: no requirement of this contract selects one arm of its \
+         `{field}` field, so the cells its arms own are not readable here",
     )
 }
 

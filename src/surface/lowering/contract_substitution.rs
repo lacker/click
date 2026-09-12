@@ -524,6 +524,111 @@ fn prepare_contract_range_fold_body(
     ))
 }
 
+/// A `match` arm binds its payload names inside its body, so a replacement that
+/// still applies there must not itself mention one of them: substituting it
+/// under the binder would silently rebind the caller's name to this arm's
+/// payload and make the instantiated body say something other than the
+/// definition. Quantifier and range-fold binders avoid that by renaming
+/// themselves out of the way first; a match arm now follows the same rule, and
+/// a binding a live replacement mentions is renamed before the substitution
+/// reaches the body. Renaming a binding also un-shadows a replacement keyed by
+/// its old name, so the surviving arm bindings decide the final substitutions,
+/// and anything a rename could not separate is refused rather than captured.
+fn prepare_contract_match_arm(
+    arm: &AlgebraicMatchArm,
+    substitutions: &ContractSubstitutions<'_>,
+) -> Result<AlgebraicMatchArm, String> {
+    let mut shadowed = substitutions.clone();
+    for binding in &arm.bindings {
+        shadowed = shadowed.without_binding(binding);
+    }
+
+    let mut bindings = arm.bindings.clone();
+    let mut body = arm.body.clone();
+    for binding in &mut bindings {
+        if !match_arm_replacements_reference_name(&body, &shadowed, binding) {
+            continue;
+        }
+        let fresh = fresh_click_binding_name_for_expression(binding, &body, &shadowed);
+        let renaming =
+            BTreeMap::from([(binding.clone(), ContractExpression::Binding(fresh.clone()))]);
+        body = substitute_contract_expression(&body, &renaming)?;
+        *binding = fresh;
+    }
+
+    let mut arm_substitutions = substitutions.clone();
+    for binding in &bindings {
+        arm_substitutions = arm_substitutions.without_binding(binding);
+    }
+    let renamed = AlgebraicMatchArm {
+        type_name: arm.type_name.clone(),
+        variant: arm.variant.clone(),
+        bindings,
+        body,
+    };
+    refuse_captured_match_arm_substitution(&renamed, &arm_substitutions)?;
+    Ok(AlgebraicMatchArm {
+        body: substitute_contract_expression_in(&renamed.body, &arm_substitutions)?,
+        ..renamed
+    })
+}
+
+/// Whether a replacement that actually reaches `body` mentions `name`. Only a
+/// replacement keyed by a name the arm body still refers to can be substituted
+/// under this arm's binders, so a replacement that lands elsewhere — the match
+/// scrutinee, say, which is outside them — is not a reason to rename anything.
+/// Renaming a binding no substitution reaches would change the instantiated
+/// body for nothing and lose the spelling a later exact check compares against.
+fn match_arm_replacements_reference_name(
+    body: &ContractExpression,
+    substitutions: &ContractSubstitutions<'_>,
+    name: &str,
+) -> bool {
+    let mut body_names = BTreeSet::new();
+    collect_contract_expression_referenced_names(body, &mut body_names);
+    substitutions
+        .values
+        .iter()
+        .filter(|(key, _)| body_names.contains(*key))
+        .any(|(_, replacement)| {
+            let mut names = BTreeSet::new();
+            collect_contract_expression_referenced_names(replacement, &mut names);
+            names.contains(name)
+        })
+}
+
+/// The residual check for [`prepare_contract_match_arm`]: after renaming, no
+/// replacement that still reaches this arm's body may mention a name the arm
+/// binds. The scan is bounded by the arm's own free names and the replacements
+/// that actually reach it.
+fn refuse_captured_match_arm_substitution(
+    arm: &AlgebraicMatchArm,
+    arm_substitutions: &ContractSubstitutions<'_>,
+) -> Result<(), String> {
+    if arm.bindings.is_empty() {
+        return Ok(());
+    }
+    let mut body_names = BTreeSet::new();
+    collect_contract_expression_referenced_names(&arm.body, &mut body_names);
+    for (name, replacement) in arm_substitutions.values.iter() {
+        if !body_names.contains(name) {
+            continue;
+        }
+        let mut replacement_names = BTreeSet::new();
+        collect_contract_expression_referenced_names(replacement, &mut replacement_names);
+        for binding in &arm.bindings {
+            if replacement_names.contains(binding) {
+                return Err(format!(
+                    "substituting `{name}` into the `{}::{}` arm would capture `{binding}`, \
+                     which that arm binds; rename the arm binding or the substituted name",
+                    arm.type_name, arm.variant
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn substitutions_reference_name(substitutions: &ContractSubstitutions<'_>, name: &str) -> bool {
     substitutions.substituted_expressions().any(|expression| {
         let mut names = BTreeSet::new();
@@ -2571,18 +2676,7 @@ pub(in crate::surface) fn substitute_contract_expression_in(
                 scrutinee: Box::new(substitute_contract_expression_in(scrutinee, substitutions)?),
                 arms: arms
                     .iter()
-                    .map(|arm| {
-                        let mut arm_substitutions = substitutions.clone();
-                        for binding in &arm.bindings {
-                            arm_substitutions = arm_substitutions.without_binding(binding);
-                        }
-                        Ok(AlgebraicMatchArm {
-                            type_name: arm.type_name.clone(),
-                            variant: arm.variant.clone(),
-                            bindings: arm.bindings.clone(),
-                            body: substitute_contract_expression_in(&arm.body, &arm_substitutions)?,
-                        })
-                    })
+                    .map(|arm| prepare_contract_match_arm(arm, substitutions))
                     .collect::<Result<Vec<_>, String>>()?,
             })
         }
