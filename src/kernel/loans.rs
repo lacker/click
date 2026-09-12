@@ -1,7 +1,7 @@
 //! Stable shared-loan authority for resource views.
 //!
 //! A [`LoanLedger`] is immutable. Every update returns opaque checked
-//! evidence tied to the exact predecessor version. The ledger deliberately
+//! evidence tied to the exact predecessor state identity. The ledger deliberately
 //! contains no C call-stack policy: ordinary calls, named contracts, and
 //! future language frontends must all use the same transitions.
 
@@ -11,7 +11,9 @@ use super::{
     PureFactContext, ResourceContext, ResourceOccurrenceId,
 };
 use crate::persistent::PersistentMap;
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -117,13 +119,59 @@ struct LoanLedgerData {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoanLedgerStorage {
-    version: u64,
+    state: LoanLedgerStateId,
     data: LoanLedgerData,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+struct LoanLedgerStateId(u64);
+
+impl LoanLedgerStateId {
+    fn fresh() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct LoanLedger {
     storage: Arc<LoanLedgerStorage>,
+}
+
+impl std::fmt::Debug for LoanLedger {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LoanLedger")
+            .field("state", &self.storage.state)
+            .field("arena", &self.storage.data.arena)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for LoanLedger {
+    fn eq(&self, other: &Self) -> bool {
+        self.storage.state == other.storage.state
+    }
+}
+
+impl Eq for LoanLedger {}
+
+impl Hash for LoanLedger {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.storage.state.hash(state);
+    }
+}
+
+impl PartialOrd for LoanLedger {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LoanLedger {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.storage.state.cmp(&other.storage.state)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,8 +235,7 @@ enum LoanTransitionEvidence {
 /// Kernel-issued evidence for one exact ledger transition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedLoanTransition {
-    before_arena: u64,
-    before_version: u64,
+    before_state: LoanLedgerStateId,
     evidence: LoanTransitionEvidence,
     /// A structural seal over the bounded operation payload. A second opaque
     /// copy avoids probabilistic hashing and avoids comparing whole ledgers.
@@ -392,7 +439,7 @@ impl LoanLedger {
         let arena = NEXT_ARENA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
             storage: Arc::new(LoanLedgerStorage {
-                version: 0,
+                state: LoanLedgerStateId::fresh(),
                 data: LoanLedgerData {
                     arena,
                     next_participant: 0,
@@ -623,9 +670,7 @@ impl LoanLedger {
     }
 
     pub(crate) fn apply(&self, transition: &CheckedLoanTransition) -> Result<Self, LoanRefusal> {
-        if self.storage.data.arena != transition.before_arena
-            || self.storage.version != transition.before_version
-        {
+        if self.storage.state != transition.before_state {
             return Err(LoanRefusal::StalePredecessor);
         }
         if transition.evidence != transition.checked_evidence {
@@ -646,21 +691,18 @@ impl LoanLedger {
         // check against the exact predecessor.
         self.apply_evidence(&evidence)?;
         Ok(CheckedLoanTransition {
-            before_arena: self.storage.data.arena,
-            before_version: self.storage.version,
+            before_state: self.storage.state,
             checked_evidence: evidence.clone(),
             evidence,
         })
     }
 
     fn with_data(&self, data: LoanLedgerData) -> Result<Self, LoanRefusal> {
-        let version = self
-            .storage
-            .version
-            .checked_add(1)
-            .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
         Ok(Self {
-            storage: Arc::new(LoanLedgerStorage { version, data }),
+            storage: Arc::new(LoanLedgerStorage {
+                state: LoanLedgerStateId::fresh(),
+                data,
+            }),
         })
     }
 
@@ -1076,6 +1118,17 @@ mod tests {
             unrelated.apply(&opening.transition),
             Err(LoanRefusal::StalePredecessor)
         );
+    }
+
+    #[test]
+    fn divergent_successors_have_distinct_state_identities() {
+        let (ledger, owner, reader) = participants();
+        let first = ledger.lend(owner, reader, owned("first")).unwrap();
+        let second = ledger.lend(owner, reader, owned("second")).unwrap();
+        let first = ledger.apply(&first.transition).unwrap();
+        let second = ledger.apply(&second.transition).unwrap();
+        assert_ne!(first, second);
+        assert!(!first.shares_storage_with(&second));
     }
 
     #[test]

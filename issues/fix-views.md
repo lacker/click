@@ -43,7 +43,7 @@ authority to another simultaneous context requires an explicit share split.
 `src/kernel/loans.rs` contains the production candidate API. Its fresh arena,
 scope, loan, participant, and share identities cannot cross ledgers. Immutable
 ledger snapshots use persistent AVL maps. Every authority operation produces
-opaque evidence bound to the exact predecessor arena and version, and applying
+opaque evidence bound to the exact predecessor state identity, and applying
 it repeats the bounded local check. The evidence seal is a second structural
 copy of the operation payload, avoiding probabilistic hashes and whole-ledger
 comparison. Hostile payload changes, stale predecessors, wrong holders,

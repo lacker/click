@@ -2617,6 +2617,18 @@ impl CState {
         self
     }
 
+    pub(crate) fn loan_ledger(&self) -> Option<&crate::kernel::loans::LoanLedger> {
+        self.loan_ledger.as_ref()
+    }
+
+    pub(crate) fn with_loan_ledger(
+        mut self,
+        ledger: Option<crate::kernel::loans::LoanLedger>,
+    ) -> Self {
+        self.loan_ledger = ledger;
+        self
+    }
+
     pub fn locals(&self) -> &CLocalEnvironment {
         &self.locals
     }

@@ -3622,6 +3622,9 @@ pub struct CState {
     pub(super) locals: CLocalEnvironment,
     pub(super) memory: CMemory,
     pub(super) resources: ResourceContext,
+    /// Active stable-view authority. `None` is the canonical empty ledger so
+    /// independently constructed states retain ordinary structural equality.
+    pub(super) loan_ledger: Option<super::loans::LoanLedger>,
     pub(super) counted_populations: std::sync::Arc<Vec<CCountedPopulation>>,
     /// Monotonic identity source for stack frames created by nested calls.
     /// Keeping this in the symbolic state makes frame identities deterministic
