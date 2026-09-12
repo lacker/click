@@ -1359,6 +1359,14 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             describe_contract_expression(base),
             describe_contract_expression(index)
         ),
+        ContractExpression::ArrayIndex { base, indexes, .. } => format!(
+            "{}{}",
+            describe_contract_expression(base),
+            indexes
+                .iter()
+                .map(|index| format!("[{}]", describe_c_expression(index)))
+                .collect::<String>()
+        ),
         ContractExpression::If {
             condition,
             then_branch,

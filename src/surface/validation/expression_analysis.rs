@@ -87,6 +87,7 @@ pub(in crate::surface) fn contains_old_expression(expression: &ContractExpressio
             _ => false,
         },
         ContractExpression::Field { base, .. } => contains_old_expression(base),
+        ContractExpression::ArrayIndex { base, .. } => contains_old_expression(base),
         ContractExpression::At { expression, .. } => contains_old_expression(expression),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
@@ -161,6 +162,7 @@ pub(in crate::surface) fn contains_resource_count(expression: &ContractExpressio
             expression: base, ..
         }
         | ContractExpression::BitwiseNot(base) => contains_resource_count(base),
+        ContractExpression::ArrayIndex { base, .. } => contains_resource_count(base),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
         | ContractExpression::Multiply(left, right)
@@ -293,6 +295,7 @@ pub(in crate::surface) fn collect_resource_count_families(
                 expression: base, ..
             }
             | ContractExpression::BitwiseNot(base) => collect_expression(base, families),
+            ContractExpression::ArrayIndex { base, .. } => collect_expression(base, families),
             ContractExpression::Add(left, right)
             | ContractExpression::Subtract(left, right)
             | ContractExpression::Multiply(left, right)
@@ -522,6 +525,7 @@ pub(in crate::surface) fn contains_at_expression(expression: &ContractExpression
             _ => false,
         },
         ContractExpression::Field { base, .. } => contains_at_expression(base),
+        ContractExpression::ArrayIndex { base, .. } => contains_at_expression(base),
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             contains_at_expression(expression)
         }
@@ -668,6 +672,7 @@ pub(in crate::surface) fn collect_click_function_calls(
             }
         }
         ContractExpression::Field { base, .. } => collect_click_function_calls(base, calls),
+        ContractExpression::ArrayIndex { base, .. } => collect_click_function_calls(base, calls),
         ContractExpression::Old(body) => collect_click_function_calls(body, calls),
         ContractExpression::At { expression, .. } => {
             collect_click_function_calls(expression, calls)
@@ -1247,6 +1252,9 @@ fn validate_recursive_calls_in_expression(
             let mut body_subterms = structural_subterms.clone();
             body_subterms.remove(name);
             recurse(body, &body_bounds, &body_subterms)
+        }
+        ContractExpression::ArrayIndex { base, .. } => {
+            recurse(base, lower_bounds, structural_subterms)
         }
         ContractExpression::Call { name, arguments } => {
             for argument in arguments {

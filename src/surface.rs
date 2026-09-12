@@ -1224,6 +1224,17 @@ fn collect_current_contract_expression_variables(
             collect_current_contract_expression_variables(base, names);
             collect_c_expression_variables(lowered, names);
         }
+        ContractExpression::ArrayIndex {
+            base,
+            indexes,
+            lowered,
+        } => {
+            collect_current_contract_expression_variables(base, names);
+            for index in indexes {
+                collect_c_expression_variables(index, names);
+            }
+            collect_c_expression_variables(lowered, names);
+        }
         ContractExpression::Binding(name) => {
             names.insert(name.clone());
         }
@@ -1411,6 +1422,7 @@ impl SurfacePropositionMap {
                             base = match base {
                                 ContractExpression::Field { base: inner, .. } => inner,
                                 ContractExpression::Index(inner, _) => inner,
+                                ContractExpression::ArrayIndex { base: inner, .. } => inner,
                                 _ => break,
                             };
                         }
@@ -1776,6 +1788,14 @@ pub enum ContractExpression {
     BitwiseXor(Box<ContractExpression>, Box<ContractExpression>),
     BitwiseNot(Box<ContractExpression>),
     Index(Box<ContractExpression>, Box<ContractExpression>),
+    /// A multidimensional C array access. `lowered` carries the flattened
+    /// pointer access used by the kernel while `indexes` retain the source
+    /// rank for faithful proof expansion and reparsing.
+    ArrayIndex {
+        base: Box<ContractExpression>,
+        indexes: Vec<CExpression>,
+        lowered: CExpression,
+    },
     If {
         condition: Box<ClickProposition>,
         then_branch: Box<ContractExpression>,

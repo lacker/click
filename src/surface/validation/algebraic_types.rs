@@ -1923,6 +1923,7 @@ fn validate_algebraic_expression(
         }
         ContractExpression::QualifiedC { .. }
         | ContractExpression::CFragment(_)
+        | ContractExpression::ArrayIndex { .. }
         | ContractExpression::Field { .. }
         | ContractExpression::Binding(_)
         | ContractExpression::CBinding(_)
@@ -2236,6 +2237,7 @@ fn infer_generic_expression_type(
         ContractExpression::SequenceLiteral(_)
         | ContractExpression::RangeFold { .. }
         | ContractExpression::Field { .. }
+        | ContractExpression::ArrayIndex { .. }
         | ContractExpression::ResourceCount(_)
         | ContractExpression::ResourceWildcard => Ok(None),
     }

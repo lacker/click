@@ -6051,11 +6051,16 @@ impl Parser {
                                 indexes.len()
                             )));
                         }
-                        let offset = flatten_array_indices(indexes, &shape);
-                        expression = ContractExpression::Index(
-                            Box::new(expression),
-                            Box::new(ContractExpression::CFragment(offset)),
-                        );
+                        let lowered_base = contract_expression_as_c_fragment(&expression)
+                            .ok_or_else(|| {
+                                self.error("global array base must be a current C expression")
+                            })?;
+                        let offset = flatten_array_indices(indexes.clone(), &shape);
+                        expression = ContractExpression::ArrayIndex {
+                            base: Box::new(expression),
+                            indexes,
+                            lowered: CExpression::Index(Box::new(lowered_base), Box::new(offset)),
+                        };
                         struct_name = None;
                         union_name = None;
                         struct_array_element_width = None;

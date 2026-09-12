@@ -680,6 +680,7 @@ fn collect_contract_expression_binding_names(
         | ContractExpression::CFragment(_)
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => {}
+        ContractExpression::ArrayIndex { .. } => {}
         ContractExpression::Field { base, .. }
         | ContractExpression::Old(base)
         | ContractExpression::At {
@@ -1045,6 +1046,15 @@ fn reduce_constructor_iota_in_expression(
             Box::new(recurse(left)?),
             Box::new(recurse(right)?),
         )),
+        ContractExpression::ArrayIndex {
+            base,
+            indexes,
+            lowered,
+        } => Ok(ContractExpression::ArrayIndex {
+            base: Box::new(recurse(base)?),
+            indexes: indexes.clone(),
+            lowered: lowered.clone(),
+        }),
         ContractExpression::If {
             condition,
             then_branch,
@@ -1527,6 +1537,30 @@ fn rewrite_contract_expression_exact(
         | ContractExpression::Field { .. }
         | ContractExpression::CBinding(_)
         | ContractExpression::ResourceWildcard => (expression.clone(), false),
+        ContractExpression::ArrayIndex {
+            base,
+            indexes,
+            lowered,
+        } => {
+            let (base, changed) = unary(base);
+            if !changed {
+                return (expression.clone(), false);
+            }
+            let Some(lowered_base) = contract_expression_as_c_fragment(&base) else {
+                return (expression.clone(), false);
+            };
+            let CExpression::Index(_, offset) = lowered else {
+                return (expression.clone(), false);
+            };
+            (
+                ContractExpression::ArrayIndex {
+                    base: Box::new(base),
+                    indexes: indexes.clone(),
+                    lowered: CExpression::Index(Box::new(lowered_base), offset.clone()),
+                },
+                changed,
+            )
+        }
         ContractExpression::ResourceCount(resource) => {
             let (resource, changed) = rewrite_resource_clause_exact(resource, source, target);
             (
@@ -2210,6 +2244,12 @@ pub(in crate::surface) fn collect_contract_expression_referenced_names(
         ContractExpression::Field { base, .. } => {
             collect_contract_expression_referenced_names(base, names);
         }
+        ContractExpression::ArrayIndex { base, indexes, .. } => {
+            collect_contract_expression_referenced_names(base, names);
+            for index in indexes {
+                collect_c_expression_referenced_names(index, names);
+            }
+        }
         ContractExpression::Binding(name) | ContractExpression::CBinding(name) => {
             names.insert(name.clone());
         }
@@ -2559,6 +2599,18 @@ pub(in crate::surface) fn substitute_contract_expression_in(
         ContractExpression::QualifiedC { .. } | ContractExpression::CBinding(_) => {
             Ok(expression.clone())
         }
+        ContractExpression::ArrayIndex {
+            base,
+            indexes,
+            lowered,
+        } => Ok(ContractExpression::ArrayIndex {
+            base: Box::new(substitute_contract_expression_in(base, substitutions)?),
+            indexes: indexes
+                .iter()
+                .map(|index| substitute_c_fragment_in(index, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+            lowered: substitute_c_fragment_in(lowered, substitutions)?,
+        }),
         ContractExpression::ResourceWildcard => Ok(expression.clone()),
         ContractExpression::ResourceCount(resource) => {
             let ResourceClause::Declared {
@@ -3163,6 +3215,7 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
             Box::new(contract_expression_as_c_fragment(base)?),
             Box::new(contract_expression_as_c_fragment(index)?),
         )),
+        ContractExpression::ArrayIndex { lowered, .. } => Some(lowered.clone()),
         ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }
         | ContractExpression::Let { .. } => None,
@@ -3256,9 +3309,63 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
             Box::new(contract_expression_to_c_fragment(base)?),
             Box::new(contract_expression_to_c_fragment(index)?),
         )),
+        ContractExpression::ArrayIndex { lowered, .. } => Some(lowered.clone()),
         ContractExpression::If { .. }
         | ContractExpression::RangeFold { .. }
         | ContractExpression::Let { .. } => None,
         ContractExpression::Call { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multidimensional_array_rewrite_updates_its_lowered_base() {
+        let source_base = ContractExpression::CFragment(CExpression::Variable("old".into()));
+        let target_base = ContractExpression::CFragment(CExpression::Variable("new".into()));
+        let expression = ContractExpression::ArrayIndex {
+            base: Box::new(source_base.clone()),
+            indexes: vec![CExpression::Value(int32(0)), CExpression::Value(int32(1))],
+            lowered: CExpression::Index(
+                Box::new(CExpression::Variable("old".into())),
+                Box::new(CExpression::Value(int32(1))),
+            ),
+        };
+        let (rewritten, changed) =
+            rewrite_contract_expression_exact(&expression, &source_base, &target_base);
+        assert!(changed);
+        let ContractExpression::ArrayIndex { lowered, .. } = rewritten else {
+            panic!("array rewrite must retain its presentation node");
+        };
+        assert_eq!(
+            lowered,
+            CExpression::Index(
+                Box::new(CExpression::Variable("new".into())),
+                Box::new(CExpression::Value(int32(1))),
+            )
+        );
+    }
+
+    #[test]
+    fn multidimensional_array_rewrite_fails_closed_for_non_c_bases() {
+        let source_base = ContractExpression::CFragment(CExpression::Variable("old".into()));
+        let expression = ContractExpression::ArrayIndex {
+            base: Box::new(source_base.clone()),
+            indexes: vec![CExpression::Value(int32(0)), CExpression::Value(int32(1))],
+            lowered: CExpression::Index(
+                Box::new(CExpression::Variable("old".into())),
+                Box::new(CExpression::Value(int32(1))),
+            ),
+        };
+        let target = ContractExpression::Call {
+            name: "not_a_c_fragment".into(),
+            arguments: vec![],
+        };
+        let (rewritten, changed) =
+            rewrite_contract_expression_exact(&expression, &source_base, &target);
+        assert!(!changed);
+        assert_eq!(rewritten, expression);
     }
 }
