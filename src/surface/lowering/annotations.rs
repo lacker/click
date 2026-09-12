@@ -5083,7 +5083,7 @@ fn instantiate_algebraic_kernel_field_type(
 ) -> Result<AlgebraicValueType, String> {
     match field {
         AlgebraicFieldType::Integer => Ok(AlgebraicValueType::Integer),
-        AlgebraicFieldType::C(c_type) => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
+        AlgebraicFieldType::C { c_type, .. } => Ok(AlgebraicValueType::C(c_type.to_kernel_type())),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()
             .iter()

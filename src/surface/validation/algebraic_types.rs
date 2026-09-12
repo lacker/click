@@ -355,7 +355,7 @@ fn validate_algebraic_field_declaration(
             variant.name()
         ))),
         AlgebraicFieldType::Integer => Ok(()),
-        AlgebraicFieldType::C(_) => Ok(()),
+        AlgebraicFieldType::C { .. } => Ok(()),
         AlgebraicFieldType::Algebraic { name, arguments } => {
             let nested = definitions.get(name.as_str()).ok_or_else(|| {
                 ClickError::new(format!(
@@ -550,7 +550,7 @@ fn algebraic_field_is_grounded(field: &AlgebraicFieldType, grounded: &BTreeSet<&
     match field {
         AlgebraicFieldType::Parameter(_)
         | AlgebraicFieldType::Integer
-        | AlgebraicFieldType::C(_) => true,
+        | AlgebraicFieldType::C { .. } => true,
         AlgebraicFieldType::Algebraic { name, .. } => grounded.contains(name.as_str()),
     }
 }
@@ -2448,7 +2448,7 @@ pub(super) fn instantiate_field_type(
 ) -> Result<ClickType, ClickError> {
     match field {
         AlgebraicFieldType::Integer => Ok(ClickType::Integer),
-        AlgebraicFieldType::C(c_type) => Ok(ClickType::C(*c_type)),
+        AlgebraicFieldType::C { c_type, .. } => Ok(ClickType::C(*c_type)),
         AlgebraicFieldType::Parameter(name) => definition
             .type_parameters()
             .iter()
