@@ -2552,6 +2552,56 @@ pub(super) fn finish_ordered_proof<'a>(
                             }
                             PostExecutionTactic::Assumption => {
                                 let mut closed_any = false;
+                                // A contract resource claim is visible only
+                                // through the contract's checked resource
+                                // transition, which `simp` applies before
+                                // closing claims against the outcome. The
+                                // closure `simp` records for such a claim is
+                                // spelled `assumption`, so the same reading of
+                                // the outcome has to be available here: without
+                                // it an expanded `simp` cannot reproduce the
+                                // claim its own certificate reports closed.
+                                if !resource_transition_applied
+                                    && matches!(outcome, CFunctionOutcome::Return { .. })
+                                    && claims.iter().enumerate().any(|(index, claim)| {
+                                        let FunctionClaimRef::Ensure(_, clause) = claim;
+                                        !closures[index].is_closed()
+                                            && matches!(clause.ensure(), Ensure::Resource(_))
+                                    })
+                                    && crate::kernel::c_function_return_resources_definitionally_established(
+                                        pre_state,
+                                        function,
+                                        arguments,
+                                        &outcome,
+                                        &assumptions_from_propositions(&path_requirements),
+                                    )
+                                {
+                                    let mut transitioned = outcome.clone();
+                                    if apply_checked_contract_resource_transition(
+                                        &mut transitioned,
+                                        pre_state,
+                                        function,
+                                        arguments,
+                                        &path_requirements,
+                                        &path.execution_facts(),
+                                        &proof_label,
+                                        path_index,
+                                    )
+                                    .is_ok()
+                                    {
+                                        outcome = transitioned;
+                                        resource_transition_applied = true;
+                                        if let Some(evolving) = outcome_proof.take() {
+                                            outcome_proof = Some(
+                                                evolving
+                                                    .with_outcome_snapshot(&outcome)?
+                                                    .with_checked_outcome_facts(
+                                                        &path_requirements,
+                                                    )?,
+                                            );
+                                        }
+                                    }
+                                }
                                 let transition_facts = path.execution_facts();
                                 // Claim closers focus fresh obligation roots;
                                 // the evolving outcome proof supplies them

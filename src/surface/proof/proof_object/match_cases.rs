@@ -327,7 +327,18 @@ impl<'a> Proof<'a> {
                 arguments: arm
                     .bindings
                     .iter()
-                    .map(|name| plan.bindings[index].get(name).unwrap().clone())
+                    .map(|name| match plan.bindings[index].get(name).unwrap() {
+                        // A C-typed field's binding holds the kernel value the
+                        // case fact assigns it, and that value has no source
+                        // spelling. The arm's own binder names it, so a
+                        // certificate generated inside the arm prints the
+                        // binder the source wrote instead of a kernel variable
+                        // id that no later lowering can resolve.
+                        ContractExpression::CFragment(CExpression::Value(_)) => {
+                            ContractExpression::CFragment(CExpression::Variable(name.clone()))
+                        }
+                        expression => expression.clone(),
+                    })
                     .collect(),
             },
         };
