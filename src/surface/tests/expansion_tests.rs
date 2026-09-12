@@ -3472,6 +3472,66 @@ fn selected_pure_case_split_simp_expands_by_removal() {
 }
 
 #[test]
+fn smart_tactic_in_an_infeasible_branch_arm_expands_by_removal() {
+    // The `then` arm's C path contradicts the contract, so checked execution
+    // drops that arm without running its tactics. The `simp` written there
+    // contributes no checked operation to any retained certificate, so its
+    // expansion is the empty rewrite. Before this was recorded, `click
+    // verify` accepted the proof while `click expand` and `click audit`
+    // reported `has no source tactic 2` for the same sidecar — the
+    // audit/verify disagreement first seen on `tree_contains` in
+    // `examples/modeled-binary-tree`.
+    let c_source = r#"
+            int32 flag(int32 x) {
+                if (x > 0) {
+                    return 1;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "flag.c";
+
+            int32 flag(int32 x) {
+                requires x <= 0;
+                ensures result == 0;
+            } by {
+                branch {
+                    then { step(); simp(); }
+                    else {}
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("flag.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("the infeasible-arm proof should verify");
+
+    let selected = click_source
+        .find("step(); simp();")
+        .expect("proof should contain the arm's selected simp")
+        + "step(); ".len();
+    let line = click_source[..selected]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = selected
+        - click_source[..selected]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column)
+        .expect("a smart tactic on a dropped C path should expand");
+    assert!(!expanded.contains("step(); simp();"), "{expanded}");
+    assert!(expanded.contains("then { step();"), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("removing the dropped arm's closer should still verify");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

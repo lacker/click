@@ -535,6 +535,65 @@ int32 write_selected(int32 p[2], int32 flag) {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn infeasible_branch_arm_site_audits_instead_of_reporting_a_missing_tactic() {
+    // Reduced from `tree_contains` in `examples/modeled-binary-tree`, whose
+    // first `branch` guards a C path the contract rules out. Checked
+    // execution drops that arm, so its `simp` never runs; audit used to fail
+    // the site with `has no source tactic 2` while `click verify` passed the
+    // same sidecar. The site must audit: it expands by removal, the rewrite
+    // verifies, and re-expansion is a fixed point.
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-dropped-arm-{}", std::process::id()));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    let c_source = r#"int32 flag(int32 x) {
+    if (x > 0) {
+        return 1;
+    }
+    return 0;
+}"#;
+    let click_source = r#"verifying "flag.c";
+int32 flag(int32 x) {
+    requires x <= 0;
+    ensures result == 0;
+} by {
+    branch {
+        then { step(); simp(); }
+        else {}
+    }
+    step();
+    simp();
+}
+"#;
+    let click_path = directory.join("dropped_arm.click");
+    fs::write(directory.join("flag.c"), c_source).unwrap();
+    fs::write(&click_path, click_source).unwrap();
+    verify_c0_sources(click_source, &[("flag.c", c_source)])
+        .expect("the infeasible-arm proof should verify");
+
+    let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+    let site = sites
+        .iter()
+        .find(|site| site.position.line == 7)
+        .expect("the dropped arm's simp should be an auditable site");
+    let expanded = expand_location(&format_location(&site_location(site)))
+        .expect("a smart tactic on a dropped C path should expand");
+    assert!(!expanded.contains("step(); simp();"), "{expanded}");
+    let source = load_audit_source_from_text(&click_path, expanded.clone()).unwrap();
+    let refs = source_refs(&source.c_sources);
+    verify_c0_sources(&source.click_source, &refs)
+        .expect("the audited dropped-arm expansion should verify");
+
+    assert_eq!(
+        reexpand_source(&click_path, &site.claim, &expanded).unwrap(),
+        expanded
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // macOS `/usr/bin/gcc` is Apple Clang and cannot exercise the GNU import path.
 #[cfg(not(target_os = "macos"))]
 #[test]
