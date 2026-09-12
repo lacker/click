@@ -1074,6 +1074,39 @@ this checkpoint. This is a green partial D checkpoint, not a complete W5
 claim. No existing C source, syntax, budget, quarantine, or unrelated
 semantics changed.
 
+#### W5 checkpoint E handoff (2026-09-12)
+
+Checkpoint E starts from the pushed D/master head and is implemented by
+`a5ec4580` on `codex/mvr-w5e`. The callback away/back and consumed-support
+reductions did not reproduce stale authorization: callback requirements are
+selected by the current exact function-pointer value, and consuming the
+support retires its callback facts. The callback predicate remains a stable
+fact about that exact pointer value; no proof-side provenance sidecar or
+unconditional predicate retention was added. The new callback lookup curve
+varies calls `1, 2, 4, 8, 16` independently from unrelated supported facts
+`4, 16, 64, 256, 1024`, with zero lookup allocations and work flat in the
+unrelated axis.
+
+The concrete composite reduction did expose a real gap: a memory projection
+whose base or bounds contain a lowered memory load survived a write to that
+prerequisite cell when only the final range was indexed. `a5ec4580` extends
+the typed exact footprint with recursively discovered scalar load cells in
+pointer offsets and range bounds, conservatively retaining `Unknown` for
+term forms whose load-bearing children are not exposed. The regression
+`observed_projection_tracks_loaded_address_prerequisite` proves that the
+selector write retires the stale projection while preserving the owner and a
+disjoint supported sibling; a temporary pre-fix reproduction failed at the stale
+projection assertion. Existing join, nested-observation, overlap/disjoint,
+barrier, alias, and interval curves remain covered by the focused resource
+tests.
+
+This is a green partial E checkpoint, not a complete W5 claim. Composite
+producers still do not expose a general checked load-evidence object for
+arbitrary declared predicate bodies or opaque nested composite cores; those
+remain conservative or require a later design. The callback/table and scope
+claims are not broadened beyond the reductions above. No existing C source,
+syntax, budget, quarantine, or unrelated semantics changed.
+
 ### W6 — Unify existing binder transport and snapshot substitution
 
 **Dependencies:** W2 logically; default dispatch after W5 to avoid conflicts.
