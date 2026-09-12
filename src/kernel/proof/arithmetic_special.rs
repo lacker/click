@@ -538,22 +538,24 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         if !charge_pointer_offset(&base.offset) {
             return false;
         }
-        if base.block != goal_pointer.block
-            || alignment % goal_alignment != 0
-            || offset_difference(&goal_pointer.offset, &base.offset)
-                .is_none_or(|delta| delta.rem_euclid(goal_alignment as i128) != 0)
-        {
+        if base.block != goal_pointer.block || alignment % goal_alignment != 0 {
             return false;
         }
-        true
+        offset_difference(&goal_pointer.offset, &base.offset)
+            .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
     } else {
         let intrinsic_alignment = match &goal_pointer.block {
             PointerBlock::Heap(_) => Some(crate::kernel::primitives::HEAP_ALLOCATION_ALIGNMENT),
             block => crate::kernel::primitives::registered_block_alignment(block),
         };
-        intrinsic_alignment.is_some_and(|intrinsic| goal_alignment <= intrinsic)
-            && offset_difference(&goal_pointer.offset, &PointerOffsetTerm::Constant(0))
-                .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+        let Some(intrinsic) = intrinsic_alignment else {
+            return false;
+        };
+        if goal_alignment > intrinsic {
+            return false;
+        }
+        offset_difference(&goal_pointer.offset, &PointerOffsetTerm::Constant(0))
+            .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
     };
     *expected == aligned
 }
@@ -888,7 +890,7 @@ mod tests {
         let wrong = Proposition::ConditionIs(
             ConditionTerm::pointer_aligned(
                 Pointer {
-                    block: base.block,
+                    block: base.block.clone(),
                     offset: PointerOffsetTerm::Constant(25),
                 },
                 8,
@@ -903,9 +905,29 @@ mod tests {
                 }],
                 conclusion: 0,
             }
-            .check(&goal, &[aligned_base]),
+            .check(&goal, std::slice::from_ref(&aligned_base)),
             Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
         ));
+
+        let known_misalignment = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(
+                Pointer {
+                    block: base.block.clone(),
+                    offset: PointerOffsetTerm::Constant(1),
+                },
+                8,
+            ),
+            false,
+        );
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                premise: Some(0),
+                result: known_misalignment.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&known_misalignment, std::slice::from_ref(&aligned_base))
+        .unwrap();
 
         for alignment in [2, 4, 8, 16] {
             let goal = Proposition::ConditionIs(
@@ -942,6 +964,25 @@ mod tests {
                     conclusion: 0,
                 }
                 .check(&goal, &[]),
+                Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+            ));
+
+            let unknown_negative = Proposition::ConditionIs(
+                ConditionTerm::pointer_aligned(
+                    heap_pointer(PointerOffsetTerm::Constant(0)),
+                    alignment,
+                ),
+                false,
+            );
+            assert!(matches!(
+                SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                        premise: None,
+                        result: unknown_negative.clone(),
+                    }],
+                    conclusion: 0,
+                }
+                .check(&unknown_negative, &[]),
                 Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
             ));
         }
