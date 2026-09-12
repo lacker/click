@@ -560,6 +560,7 @@ fn full_external_guarded_range_surface() -> ClickProposition {
     let all_before_loadable = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: "__click_q1".into(),
+        written_name: None,
         body: Box::new(ClickProposition::Implies(
             Box::new(ClickProposition::And(
                 Box::new(ClickProposition::Comparison {
@@ -579,6 +580,7 @@ fn full_external_guarded_range_surface() -> ClickProposition {
     ClickProposition::Exists {
         click_type: ClickType::C(C0Type::Int32),
         name: "__click_q0".into(),
+        written_name: None,
         body: Box::new(ClickProposition::And(
             Box::new(ClickProposition::Defined {
                 expression: ContractExpression::CFragment(CExpression::Add(

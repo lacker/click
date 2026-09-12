@@ -1003,41 +1003,49 @@ fn instantiate_proposition(
         ClickProposition::ForAll {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => ClickProposition::ForAll {
             click_type: instantiate_click_type(c_type, substitution)?,
             name: name.clone(),
+            written_name: written_name.clone(),
             body: Box::new(recurse(body)?),
         },
         ClickProposition::Exists {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => ClickProposition::Exists {
             click_type: instantiate_click_type(c_type, substitution)?,
             name: name.clone(),
+            written_name: written_name.clone(),
             body: Box::new(recurse(body)?),
         },
         ClickProposition::RangeAll {
             start,
             end,
             item,
+            written_item,
             body,
         } => ClickProposition::RangeAll {
             start: expression(start)?,
             end: expression(end)?,
             item: item.clone(),
+            written_item: written_item.clone(),
             body: Box::new(recurse(body)?),
         },
         ClickProposition::RangeAny {
             start,
             end,
             item,
+            written_item,
             body,
         } => ClickProposition::RangeAny {
             start: expression(start)?,
             end: expression(end)?,
             item: item.clone(),
+            written_item: written_item.clone(),
             body: Box::new(recurse(body)?),
         },
         ClickProposition::PredicateCall { name, arguments } => ClickProposition::PredicateCall {

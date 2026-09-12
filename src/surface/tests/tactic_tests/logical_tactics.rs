@@ -411,6 +411,103 @@ fn parses_local_have_proof_tactic() {
 }
 
 #[test]
+fn contract_lets_do_not_capture_later_quantifier_binders() {
+    let false_claims = [
+        r#"
+            theorem false_c(x: int32) {
+                let saved = x;
+                ensures forall (x: int32) { saved == x } by {
+                    intro();
+                    normalize();
+                }
+            }
+        "#,
+        r#"
+            theorem false_integer(x: Integer) {
+                let saved: Integer = x;
+                ensures forall (x: Integer) { saved == x } by {
+                    intro();
+                    normalize();
+                }
+            }
+        "#,
+        r#"
+            theorem false_exists(x: Integer) {
+                requires x == 0;
+                let saved: Integer = x;
+                ensures exists (x: Integer) { saved == 1 } by {
+                    witness(x = 1);
+                    normalize();
+                }
+            }
+        "#,
+    ];
+
+    for source in false_claims {
+        let error = verify_c0_sources(source, &[])
+            .expect_err("a lexical alias must retain the outer binding");
+        assert!(
+            error.message().contains("did not normalize to true"),
+            "{}",
+            error.message()
+        );
+    }
+
+    let false_range = r#"
+        theorem false_range(x: int32) {
+            requires x == 0;
+            let saved = x;
+            ensures (0..2).all(|x| { saved == x }) by auto;
+        }
+    "#;
+    let error = verify_c0_sources(false_range, &[])
+        .expect_err("a range binder must not capture the lexical alias");
+    assert!(
+        error
+            .message()
+            .contains("simplified proposition was not true"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn capture_avoiding_contract_lets_preserve_written_proof_names_and_expansion() {
+    let source = r#"
+        theorem universal(x: Integer) {
+            let saved: Integer = x;
+            ensures forall (x: Integer) { saved == saved } by auto;
+        }
+
+        theorem existential(x: Integer) {
+            let saved: Integer = x;
+            ensures exists (x: Integer) { saved == x } by {
+                witness(x = x);
+                normalize();
+            }
+        }
+
+        theorem nested_witness(x: Integer) {
+            let saved: Integer = x;
+            ensures exists (z: Integer) {
+                forall (x: Integer) { z == saved }
+            } by {
+                witness(z = x);
+                intro();
+                have x == x by { normalize(); }
+                normalize();
+            }
+        }
+    "#;
+
+    verify_c0_sources(source, &[]).expect("written binder names should remain usable");
+    let expanded = expand_c0_claim_source_by_label(source, &[], "universal.ensures_0")
+        .expect("the hygienically renamed universal should expand");
+    assert!(expanded.contains("intro();"), "{expanded}");
+    verify_c0_sources(&expanded, &[]).expect("the expanded proof should independently reverify");
+}
+
+#[test]
 fn fixed_state_proof_intro_places_forall_binder_in_surface_scope() {
     let c_source = r#"
         int32 forall_scope(int32 value) {
@@ -728,6 +825,7 @@ fn parses_contract_level_let_where_bindings() {
             click_type: ClickType::C(C0Type::Int32),
             name,
             body,
+            ..
         }) if name == "k"
             && matches!(body.as_ref(), ClickProposition::And(_, _))
     ));

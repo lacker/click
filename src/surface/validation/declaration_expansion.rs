@@ -1128,10 +1128,12 @@ fn expand_declared_resource_proposition(
         ClickProposition::ForAll {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => Ok(ClickProposition::ForAll {
             click_type: c_type,
             name,
+            written_name,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
                 resource_definitions,
@@ -1140,10 +1142,12 @@ fn expand_declared_resource_proposition(
         ClickProposition::Exists {
             click_type: c_type,
             name,
+            written_name,
             body,
         } => Ok(ClickProposition::Exists {
             click_type: c_type,
             name,
+            written_name,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
                 resource_definitions,
@@ -1153,11 +1157,13 @@ fn expand_declared_resource_proposition(
             start,
             end,
             item,
+            written_item,
             body,
         } => Ok(ClickProposition::RangeAll {
             start: expand_declared_resource_expression(start, resource_definitions)?,
             end: expand_declared_resource_expression(end, resource_definitions)?,
             item,
+            written_item,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
                 resource_definitions,
@@ -1167,11 +1173,13 @@ fn expand_declared_resource_proposition(
             start,
             end,
             item,
+            written_item,
             body,
         } => Ok(ClickProposition::RangeAny {
             start: expand_declared_resource_expression(start, resource_definitions)?,
             end: expand_declared_resource_expression(end, resource_definitions)?,
             item,
+            written_item,
             body: Box::new(expand_declared_resource_proposition(
                 *body,
                 resource_definitions,

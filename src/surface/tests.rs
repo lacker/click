@@ -1943,6 +1943,7 @@ fn contract_substitution_renames_colliding_logical_binders() {
     let proposition = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: "i".to_string(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: current_var("argument"),
             operator: ComparisonOperator::Equal,
@@ -1953,10 +1954,17 @@ fn contract_substitution_renames_colliding_logical_binders() {
 
     let substituted = lowering::substitute_click_proposition(&proposition, &substitutions)
         .expect("surface substitution should succeed");
-    let ClickProposition::ForAll { name, body, .. } = substituted else {
+    let ClickProposition::ForAll {
+        name,
+        written_name,
+        body,
+        ..
+    } = substituted
+    else {
         panic!("substitution should preserve the logical binder");
     };
     assert_ne!(name, "i");
+    assert_eq!(written_name.as_deref(), Some("i"));
     assert_eq!(
         body.as_ref(),
         &ClickProposition::Comparison {

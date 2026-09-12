@@ -597,11 +597,13 @@ fn validate_contract_applications_in_proposition(
             click_type: c_type,
             name,
             body,
+            ..
         }
         | ClickProposition::Exists {
             click_type: c_type,
             name,
             body,
+            ..
         } => {
             let mut variables = variables.clone();
             match c_type {

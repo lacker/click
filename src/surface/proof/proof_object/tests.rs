@@ -1135,6 +1135,7 @@ fn have_scope_accepts_matching_reported_goal_and_records_introductions() {
     let surface = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: binder.clone(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Variable(binder.clone())),
             operator: ComparisonOperator::Equal,
@@ -1254,6 +1255,7 @@ fn have_scope_rejects_inconsistent_universal_binder_flags() {
     let surface = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: binder.clone(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Variable(binder.clone())),
             operator: ComparisonOperator::Equal,
@@ -1287,6 +1289,7 @@ fn have_scope_matches_renamed_existential_display_name_and_binder() {
     let surface = ClickProposition::Exists {
         click_type: ClickType::C(C0Type::Int32),
         name: "chosen".to_string(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Variable("chosen".to_string())),
             operator: ComparisonOperator::Equal,
@@ -1317,6 +1320,7 @@ fn have_scope_rejects_unreachable_universal_introduction() {
     let quantified = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: "branch_local".to_string(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Variable("branch_local".to_string())),
             operator: ComparisonOperator::Equal,
@@ -2385,6 +2389,7 @@ fn fixed_state_witness_refines_existential_transactionally_with_constant_local_w
     let surface_goal = ClickProposition::Exists {
         click_type: ClickType::C(C0Type::Int32),
         name: "chosen".to_string(),
+        written_name: None,
         body: Box::new(expected_surface),
     };
     let instantiated_surface = ClickProposition::Comparison {
@@ -2474,6 +2479,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
     let surface_goal = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: binder.clone(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: binder_expression.clone(),
             operator: ComparisonOperator::Equal,
@@ -3200,6 +3206,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
     let quantified_surface = ClickProposition::ForAll {
         click_type: ClickType::C(C0Type::Int32),
         name: "k".to_string(),
+        written_name: None,
         body: Box::new(ClickProposition::Implies(
             Box::new(ClickProposition::Comparison {
                 left: variable("x"),
@@ -3780,6 +3787,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
     let synthesized_surface = ClickProposition::Exists {
         click_type: ClickType::C(C0Type::Int32),
         name: "k".into(),
+        written_name: None,
         body: Box::new(ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Variable("k".into())),
             operator: ComparisonOperator::Equal,

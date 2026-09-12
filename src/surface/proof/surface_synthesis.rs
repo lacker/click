@@ -522,6 +522,7 @@ fn omit_leading_definedness_spellings(
             Some(ClickProposition::ForAll {
                 click_type: click_type.clone(),
                 name: name.clone(),
+                written_name: None,
                 body: Box::new(body),
             })
         }
@@ -541,6 +542,7 @@ fn omit_leading_definedness_spellings(
             Some(ClickProposition::Exists {
                 click_type: click_type.clone(),
                 name: name.clone(),
+                written_name: None,
                 body: Box::new(body),
             })
         }
@@ -666,11 +668,13 @@ fn synthesize_surface_quantified_proposition(
                 Proposition::ForAll { .. } => ClickProposition::ForAll {
                     click_type: ClickType::C(C0Type::Int32),
                     name,
+                    written_name: None,
                     body,
                 },
                 Proposition::Exists { .. } => ClickProposition::Exists {
                     click_type: ClickType::C(C0Type::Int32),
                     name,
+                    written_name: None,
                     body,
                 },
                 _ => unreachable!(),

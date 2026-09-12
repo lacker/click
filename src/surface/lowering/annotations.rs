@@ -2158,8 +2158,10 @@ impl AnnotationLowerer<'_> {
             ClickProposition::ForAll {
                 click_type: c_type,
                 name,
+                written_name,
                 body,
             } => {
+                let display_name = written_name.as_ref().unwrap_or(name);
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable = self
                     .next_quantifier_variable
@@ -2180,7 +2182,7 @@ impl AnnotationLowerer<'_> {
                     let body =
                         self.click_proposition_to_spec_proposition(body, &body_environment)?;
                     return Ok(SpecProposition::ForAllInteger {
-                        name: name.clone(),
+                        name: display_name.clone(),
                         variable,
                         body: Box::new(body),
                     });
@@ -2215,13 +2217,13 @@ impl AnnotationLowerer<'_> {
                 }
                 if c_type == CType::Int32 {
                     Ok(SpecProposition::ForAllInt32 {
-                        name: name.clone(),
+                        name: display_name.clone(),
                         variable,
                         body: Box::new(body),
                     })
                 } else {
                     Ok(SpecProposition::ForAllPointer {
-                        name: name.clone(),
+                        name: display_name.clone(),
                         variable,
                         c_type,
                         body: Box::new(body),
@@ -2242,8 +2244,10 @@ impl AnnotationLowerer<'_> {
             ClickProposition::Exists {
                 click_type: c_type,
                 name,
+                written_name,
                 body,
             } => {
+                let display_name = written_name.as_ref().unwrap_or(name);
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable = self
                     .next_quantifier_variable
@@ -2264,7 +2268,7 @@ impl AnnotationLowerer<'_> {
                     let body =
                         self.click_proposition_to_spec_proposition(body, &body_environment)?;
                     return Ok(SpecProposition::ExistsInteger {
-                        name: name.clone(),
+                        name: display_name.clone(),
                         variable,
                         body: Box::new(body),
                     });
@@ -2299,13 +2303,13 @@ impl AnnotationLowerer<'_> {
                 }
                 if c_type == CType::Int32 {
                     Ok(SpecProposition::ExistsInt32 {
-                        name: name.clone(),
+                        name: display_name.clone(),
                         variable,
                         body: Box::new(body),
                     })
                 } else {
                     Ok(SpecProposition::ExistsPointer {
-                        name: name.clone(),
+                        name: display_name.clone(),
                         variable,
                         c_type,
                         body: Box::new(body),
@@ -2327,8 +2331,10 @@ impl AnnotationLowerer<'_> {
                 start,
                 end,
                 item,
+                written_item,
                 body,
             } => {
+                let display_item = written_item.as_ref().unwrap_or(item);
                 let start = self.lower_contract_expression_to_spec(start, environment)?;
                 let end = self.lower_contract_expression_to_spec(end, environment)?;
                 let variable = Variable(self.next_quantifier_variable);
@@ -2354,7 +2360,7 @@ impl AnnotationLowerer<'_> {
                 }
                 let range = spec_range_membership_proposition(start, item_value, end);
                 Ok(SpecProposition::ForAllInt32 {
-                    name: item.clone(),
+                    name: display_item.clone(),
                     variable,
                     body: Box::new(SpecProposition::Implies(Box::new(range), Box::new(body))),
                 })
@@ -2374,8 +2380,10 @@ impl AnnotationLowerer<'_> {
                 start,
                 end,
                 item,
+                written_item,
                 body,
             } => {
+                let display_item = written_item.as_ref().unwrap_or(item);
                 let start = self.lower_contract_expression_to_spec(start, environment)?;
                 let end = self.lower_contract_expression_to_spec(end, environment)?;
                 let variable = Variable(self.next_quantifier_variable);
@@ -2401,7 +2409,7 @@ impl AnnotationLowerer<'_> {
                 }
                 let range = spec_range_membership_proposition(start, item_value, end);
                 Ok(SpecProposition::ExistsInt32 {
-                    name: item.clone(),
+                    name: display_item.clone(),
                     variable,
                     body: Box::new(SpecProposition::And(Box::new(range), Box::new(body))),
                 })

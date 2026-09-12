@@ -1764,6 +1764,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             click_type,
             name,
             body,
+            ..
         } => format!(
             "forall ({name}: {}) {{ {} }}",
             describe_click_type(click_type),
@@ -1773,6 +1774,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             click_type,
             name,
             body,
+            ..
         } => format!(
             "exists ({name}: {}) {{ {} }}",
             describe_click_type(click_type),
@@ -1783,6 +1785,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             end,
             item,
             body,
+            ..
         } => format!(
             "({}..{}).all({item} => {})",
             describe_contract_expression(start),
@@ -1794,6 +1797,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             end,
             item,
             body,
+            ..
         } => format!(
             "({}..{}).any({item} => {})",
             describe_contract_expression(start),

@@ -109,11 +109,13 @@ pub(super) fn validate_proposition_expression_types(
             click_type: c_type,
             name,
             body,
+            ..
         }
         | ClickProposition::Exists {
             click_type: c_type,
             name,
             body,
+            ..
         } => {
             let mut body_variables = variables.clone();
             body_variables.insert(
@@ -129,12 +131,14 @@ pub(super) fn validate_proposition_expression_types(
             end,
             item,
             body,
+            ..
         }
         | ClickProposition::RangeAny {
             start,
             end,
             item,
             body,
+            ..
         } => {
             let _ = infer_contract_expression_type(start, variables, click_functions, context)?;
             let _ = infer_contract_expression_type(end, variables, click_functions, context)?;
@@ -307,11 +311,13 @@ fn validate_scoped_integer_proposition(
             click_type,
             name,
             body,
+            ..
         }
         | ClickProposition::Exists {
             click_type,
             name,
             body,
+            ..
         } => {
             let previous_c = variables.remove(name);
             let previous_integer = integer_bindings.remove(name);
@@ -350,12 +356,14 @@ fn validate_scoped_integer_proposition(
             end,
             item,
             body,
+            ..
         }
         | ClickProposition::RangeAny {
             start,
             end,
             item,
             body,
+            ..
         } => {
             let _ = infer_contract_expression_type(start, variables, click_functions, context)?;
             let _ = infer_contract_expression_type(end, variables, click_functions, context)?;

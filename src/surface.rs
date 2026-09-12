@@ -1050,30 +1050,56 @@ pub enum ClickProposition {
     Implies(Box<ClickProposition>, Box<ClickProposition>),
     ForAll {
         click_type: ClickType,
+        /// The hygienic name used while lowering the body.
         name: String,
+        /// The source spelling retained when hygiene changes `name`.
+        written_name: Option<String>,
         body: Box<ClickProposition>,
     },
     Exists {
         click_type: ClickType,
+        /// The hygienic name used while lowering the body.
         name: String,
+        /// The source spelling retained when hygiene changes `name`.
+        written_name: Option<String>,
         body: Box<ClickProposition>,
     },
     RangeAll {
         start: ContractExpression,
         end: ContractExpression,
+        /// The hygienic name used while lowering the body.
         item: String,
+        /// The source spelling retained when hygiene changes `item`.
+        written_item: Option<String>,
         body: Box<ClickProposition>,
     },
     RangeAny {
         start: ContractExpression,
         end: ContractExpression,
+        /// The hygienic name used while lowering the body.
         item: String,
+        /// The source spelling retained when hygiene changes `item`.
+        written_item: Option<String>,
         body: Box<ClickProposition>,
     },
     PredicateCall {
         name: String,
         arguments: Vec<ContractExpression>,
     },
+}
+
+impl ClickProposition {
+    fn written_quantifier_name(&self) -> Option<&str> {
+        match self {
+            Self::ForAll { written_name, .. } | Self::Exists { written_name, .. } => {
+                written_name.as_deref()
+            }
+            Self::RangeAll { written_item, .. } | Self::RangeAny { written_item, .. } => {
+                written_item.as_deref()
+            }
+            _ => None,
+        }
+    }
 }
 
 /// surface forms paired with the exact kernel propositions they lowered

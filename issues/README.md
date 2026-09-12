@@ -58,7 +58,6 @@ check the architecture before launch while rbtree remains the key demo.
 
 Soundness and kernel shape:
 
-- [Preserve lexical aliases under quantifier binders](contract-let-binder-capture.md)
 - [Retain contextual premises in condition-transport theorems](condition-transport-theorem-premises.md)
 - [Preserve object provenance across pointer-parameter boundaries](external-pointer-object-provenance.md)
 - [Preserve ordinary operand reads around expression calls](c-expression-call-evaluation-order.md)

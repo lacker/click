@@ -1313,6 +1313,7 @@ fn annotate_surface_at_snapshot(
             } => ClickProposition::ForAll {
                 click_type: c_type.clone(),
                 name: name.clone(),
+                written_name: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::Exists {
@@ -1322,6 +1323,7 @@ fn annotate_surface_at_snapshot(
             } => ClickProposition::Exists {
                 click_type: c_type.clone(),
                 name: name.clone(),
+                written_name: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::RangeAll {
@@ -1330,6 +1332,7 @@ fn annotate_surface_at_snapshot(
                 start: expression_at_snapshot(start),
                 end: expression_at_snapshot(end),
                 item: item.clone(),
+                written_item: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::RangeAny {
@@ -1338,6 +1341,7 @@ fn annotate_surface_at_snapshot(
                 start: expression_at_snapshot(start),
                 end: expression_at_snapshot(end),
                 item: item.clone(),
+                written_item: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
             },
             ClickProposition::PredicateCall { name, arguments } => {
