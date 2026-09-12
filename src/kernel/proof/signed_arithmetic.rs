@@ -78,6 +78,11 @@ impl SignedArithmeticAtom {
     /// Unsupported payload families fail closed until their own flat token
     /// encoding is added here.
     pub(crate) fn from_term(term: &Bitvector32Term) -> Option<Self> {
+        if crate::instrumentation::deadline_exceeded_with_work(
+            signed_term_work(term).saturating_add(1),
+        ) {
+            return None;
+        }
         signed_arithmetic_atom_key(term)
     }
 }
@@ -91,6 +96,9 @@ fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmetic
     let mut tokens = Vec::new();
     let mut pending = vec![root];
     while let Some(term) = pending.pop() {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return None;
+        }
         match term {
             Bitvector32Term::Constant(value) => {
                 tokens.push(SignedArithmeticAtomToken::Constant(*value));
@@ -287,7 +295,7 @@ fn pair_is_equivalent(cache: &HashMap<(usize, usize), bool>, left: usize, right:
 
 impl TermArena {
     fn atom(&mut self, term: Bitvector32Term) -> Option<usize> {
-        let term = signed_arithmetic_atom_key(&term)?;
+        let term = SignedArithmeticAtom::from_term(&term)?;
         let reference = self.terms.len();
         self.terms.push(CheckedTerm::Atom(term));
         Some(reference)
@@ -421,9 +429,12 @@ impl TermArena {
     fn equivalent_explicit(&self, reference: usize, explicit: &Bitvector32Term) -> bool {
         let mut pending = vec![(reference, explicit)];
         while let Some((reference, explicit)) = pending.pop() {
+            if crate::instrumentation::deadline_exceeded_with_work(1) {
+                return false;
+            }
             match (&self.terms[reference], explicit) {
                 (CheckedTerm::Atom(expected), actual) => {
-                    let Some(actual) = signed_arithmetic_atom_key(actual) else {
+                    let Some(actual) = SignedArithmeticAtom::from_term(actual) else {
                         return false;
                     };
                     if expected != &actual {
@@ -731,7 +742,10 @@ impl SignedArithmeticCertificate {
                     if left.relation == SignedArithmeticRelation::Disequal {
                         return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
                     }
-                    if !charge_claim_work(left) || !charge_claim_work(right) {
+                    if !charge_claim_work(left)
+                        || !charge_claim_work(right)
+                        || !charge_claim_pair_work(left, right)
+                    {
                         return Err(SignedArithmeticCheckError::Overflow(node_index));
                     }
                     let expected = add_claim(left, right)
@@ -749,6 +763,9 @@ impl SignedArithmeticCertificate {
                     let source = affine_at(&checked, *source)?;
                     if source.relation != SignedArithmeticRelation::Equal {
                         return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
+                    }
+                    if !charge_claim_work(source) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
                     }
                     let expected = if *reverse {
                         negate_claim(source, SignedArithmeticRelation::LessEqual)
@@ -774,6 +791,9 @@ impl SignedArithmeticCertificate {
                         || upper.relation != SignedArithmeticRelation::LessEqual
                     {
                         return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
+                    }
+                    if !charge_claim_pair_work(lower, upper) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
                     }
                     let expected = equality_from_bounds(lower, upper)
                         .ok_or(SignedArithmeticCheckError::InvalidRelation(node_index))?;
@@ -1156,7 +1176,9 @@ fn require_int32(carrier: SignedArithmeticCarrier) -> Result<(), SignedArithmeti
 }
 
 fn same_int32_claim(expected: &SignedArithmeticClaim, actual: &SignedArithmeticClaim) -> bool {
-    expected == actual && expected.carrier == SignedArithmeticCarrier::SignedInt32
+    charge_claim_pair_work(expected, actual)
+        && expected == actual
+        && expected.carrier == SignedArithmeticCarrier::SignedInt32
 }
 
 fn charge_claim_work(claim: &SignedArithmeticClaim) -> bool {
@@ -1168,9 +1190,32 @@ fn charge_claim_work(claim: &SignedArithmeticClaim) -> bool {
     !crate::instrumentation::deadline_exceeded_with_work(units.max(1))
 }
 
+fn charge_claim_pair_work(left: &SignedArithmeticClaim, right: &SignedArithmeticClaim) -> bool {
+    let mut units = left
+        .terms
+        .len()
+        .saturating_add(right.terms.len())
+        .saturating_add(1);
+    units = units
+        .saturating_add(left.constant.bits() as usize + 1)
+        .saturating_add(right.constant.bits() as usize + 1);
+    for coefficient in left.terms.values().chain(right.terms.values()) {
+        units = units.saturating_add(coefficient.bits() as usize + 1);
+    }
+    !crate::instrumentation::deadline_exceeded_with_work(units.max(1))
+}
+
 fn charge_scale_work(claim: &SignedArithmeticClaim, coefficient: &BigInt) -> bool {
-    for value in claim.terms.values().chain(std::iter::once(&claim.constant)) {
-        let units = (value.bits() as usize + 1).saturating_mul(coefficient.bits() as usize + 1);
+    for (term, value) in claim
+        .terms
+        .iter()
+        .map(|(term, value)| (Some(term), value))
+        .chain(std::iter::once((None, &claim.constant)))
+    {
+        let atom_units = term.map_or(0, signed_atom_work);
+        let units = atom_units.saturating_add(
+            (value.bits() as usize + 1).saturating_mul(coefficient.bits() as usize + 1),
+        );
         if crate::instrumentation::deadline_exceeded_with_work(units) {
             return false;
         }
@@ -1374,7 +1419,7 @@ fn affine_term_bounds(claim: &SignedArithmeticClaim, term: &Bitvector32Term) -> 
     if claim.terms.len() != 1 || claim.relation != SignedArithmeticRelation::LessEqual {
         return None;
     }
-    let atom = signed_arithmetic_atom_key(term)?;
+    let atom = SignedArithmeticAtom::from_term(term)?;
     let (claim_atom, coefficient) = claim.terms.iter().next()?;
     if claim_atom != &atom {
         return None;
@@ -1501,6 +1546,13 @@ fn affine_difference_from_evidence(
             let multiplier = BigInt::from(coefficient);
             let mut result = BTreeMap::new();
             for (atom, value) in &evidence_affine.0 {
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    signed_atom_work(atom)
+                        .saturating_add(value.bits() as usize + 1)
+                        .saturating_add(multiplier.bits() as usize + 1),
+                ) {
+                    return None;
+                }
                 result.insert(atom.clone(), value * &multiplier);
             }
             return Some((result, evidence_affine.1.clone() * multiplier));
@@ -1589,6 +1641,11 @@ fn interval_affine_evidence(
                         return None;
                     }
                     let contribution = if add { coefficient } else { -coefficient };
+                    if crate::instrumentation::deadline_exceeded_with_work(
+                        signed_atom_work(&atom).saturating_add(contribution.bits() as usize + 1),
+                    ) {
+                        return None;
+                    }
                     let updated: BigInt =
                         affine_terms.entry(atom.clone()).or_default().clone() + contribution;
                     if updated.is_zero() {
@@ -1831,8 +1888,8 @@ fn is_exact_definedness(proposition: &Proposition, term: &Bitvector32Term) -> bo
 
 fn signed_arithmetic_terms_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
     match (
-        signed_arithmetic_atom_key(left),
-        signed_arithmetic_atom_key(right),
+        SignedArithmeticAtom::from_term(left),
+        SignedArithmeticAtom::from_term(right),
     ) {
         (Some(left), Some(right)) => left == right,
         _ => false,
@@ -1985,7 +2042,7 @@ fn affine_difference(
                 ) {
                     return None;
                 }
-                let key = signed_arithmetic_atom_key(&atom)?;
+                let key = SignedArithmeticAtom::from_term(&atom)?;
                 let updated = terms.entry(key.clone()).or_default().clone() + coefficient;
                 if updated.is_zero() {
                     terms.remove(&key);
@@ -2398,7 +2455,7 @@ mod tests {
                 },
                 SignedArithmeticNode::IntervalFromAffine {
                     source: 0,
-                    term: compound,
+                    term: compound.clone(),
                     lower: SIGNED_MIN,
                     upper: 200,
                 },
@@ -2412,6 +2469,35 @@ mod tests {
         assert_eq!(
             unsafe_reuse.check(&premise, std::slice::from_ref(&premise)),
             Err(SignedArithmeticCheckError::InvalidOperator(1))
+        );
+
+        let masked_compound = Bitvector32Term::BitwiseAnd(
+            Box::new(compound.clone()),
+            Box::new(Bitvector32Term::Constant(255)),
+        );
+        let unsafe_operand = SignedArithmeticCertificate {
+            nodes: vec![
+                SignedArithmeticNode::IntervalAtom {
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    term: compound,
+                    lower: SIGNED_MIN,
+                    upper: SIGNED_MAX,
+                },
+                SignedArithmeticNode::IntervalBitwiseAnd {
+                    operand: 0,
+                    mask: 255,
+                    result: SignedArithmeticInterval {
+                        carrier: SignedArithmeticCarrier::SignedInt32,
+                        lower: 0,
+                        upper: 255,
+                    },
+                },
+            ],
+            conclusion: 1,
+        };
+        assert_eq!(
+            unsafe_operand.check(&le(masked_compound, Bitvector32Term::Constant(255)), &[]),
+            Err(SignedArithmeticCheckError::InvalidOperator(0))
         );
     }
 
@@ -2661,6 +2747,36 @@ mod tests {
             bad_coefficient.check(&goal, std::slice::from_ref(&premise)),
             Err(SignedArithmeticCheckError::NodeResultMismatch(1))
         ));
+    }
+
+    #[test]
+    fn scale_work_grows_with_coefficient_magnitude() {
+        let premise = le(Bitvector32Term::Constant(0), Bitvector32Term::Constant(0));
+        let mut measurements = Vec::new();
+        for bits in [8usize, 16, 32, 64] {
+            let coefficient = BigInt::one() << bits;
+            let result = claim(&premise);
+            let certificate = SignedArithmeticCertificate {
+                nodes: vec![
+                    SignedArithmeticNode::Premise {
+                        index: 0,
+                        result: claim(&premise),
+                    },
+                    SignedArithmeticNode::Scale {
+                        source: 0,
+                        coefficient,
+                        result,
+                    },
+                ],
+                conclusion: 1,
+            };
+            let (checked, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate.check(&premise, std::slice::from_ref(&premise))
+            });
+            assert_eq!(checked, Ok(()));
+            measurements.push(work);
+        }
+        assert!(measurements.windows(2).all(|pair| pair[1] > pair[0]));
     }
 
     #[test]

@@ -36,6 +36,7 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
             0,
         ));
     }
+    charge_claim_comparison(&expected)?;
 
     let claims = premises
         .iter()
@@ -46,14 +47,17 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
         })
         .collect::<Vec<_>>();
 
-    if let Some((index, claim)) = claims.iter().find(|(_, claim)| *claim == expected) {
-        return Some(certificate(
-            vec![SignedArithmeticNode::Premise {
-                index: *index,
-                result: claim.clone(),
-            }],
-            0,
-        ));
+    for (index, claim) in &claims {
+        charge_claim_comparison(claim)?;
+        if claim == &expected {
+            return Some(certificate(
+                vec![SignedArithmeticNode::Premise {
+                    index: *index,
+                    result: claim.clone(),
+                }],
+                0,
+            ));
+        }
     }
     if let Some(plan) = plan_affine_one_premise(&claims, &expected) {
         return Some(plan);
@@ -227,7 +231,7 @@ fn affine_difference(
     let mut constant = BigInt::zero();
     let mut pending = vec![(left, BigInt::one()), (right, -BigInt::one())];
     while let Some((term, coefficient)) = pending.pop() {
-        charge_work(1)?;
+        charge_work(coefficient.bits() as usize + 1)?;
         if let Bitvector32Term::Constant(value) = term {
             constant += coefficient * BigInt::from(*value as i32);
         } else {
@@ -251,7 +255,7 @@ fn decomposed_affine_difference(
     let mut constant = BigInt::zero();
     let mut pending = vec![(left, BigInt::one()), (right, -BigInt::one())];
     while let Some((term, coefficient)) = pending.pop() {
-        charge_work(1)?;
+        charge_work(coefficient.bits() as usize + 1)?;
         match term {
             Bitvector32Term::Constant(value) => {
                 constant += coefficient * BigInt::from(*value as i32);
@@ -293,6 +297,7 @@ fn plan_affine_one_premise(
 ) -> Option<SignedArithmeticCertificate> {
     for (index, source) in claims {
         charge_work(1)?;
+        charge_claim_comparison(source)?;
         if source.relation == expected.relation
             && let Some(coefficient) = scale_factor(source, expected)
             && (source.relation == SignedArithmeticRelation::Equal
@@ -429,6 +434,8 @@ fn affine_operation_term(proposition: &Proposition) -> Option<&Bitvector32Term> 
 }
 
 fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) -> Option<BigInt> {
+    charge_claim_comparison(source)?;
+    charge_claim_comparison(target)?;
     if source.terms.is_empty() {
         if !target.terms.is_empty() {
             return None;
@@ -439,7 +446,9 @@ fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) 
     }
     let mut factor = None;
     for (atom, coefficient) in &source.terms {
+        charge_work(coefficient.bits() as usize + 1)?;
         let target_coefficient = target.terms.get(atom).cloned().unwrap_or_default();
+        charge_work(target_coefficient.bits() as usize + 1)?;
         if coefficient.is_zero() {
             continue;
         }
@@ -456,15 +465,15 @@ fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) 
         }
     }
     let factor = factor?;
+    charge_work(source.constant.bits() as usize + factor.bits() as usize + 2)?;
     if source.constant.clone() * &factor != target.constant {
         return None;
     }
-    if target
-        .terms
-        .keys()
-        .any(|atom| !source.terms.contains_key(atom))
-    {
-        return None;
+    for atom in target.terms.keys() {
+        charge_work(1)?;
+        if !source.terms.contains_key(atom) {
+            return None;
+        }
     }
     Some(factor)
 }
@@ -481,6 +490,7 @@ fn add_affine_claims(
     }
     let mut terms = left.terms.clone();
     for (atom, coefficient) in &right.terms {
+        charge_work(coefficient.bits() as usize + 1)?;
         let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
         if updated.is_zero() {
             terms.remove(atom);
@@ -494,6 +504,15 @@ fn add_affine_claims(
         terms,
         constant: &left.constant + &right.constant,
     })
+}
+
+fn charge_claim_comparison(claim: &SignedArithmeticClaim) -> Option<()> {
+    let mut units = claim.terms.len().saturating_add(1);
+    units = units.saturating_add(claim.constant.bits() as usize + 1);
+    for coefficient in claim.terms.values() {
+        units = units.saturating_add(coefficient.bits() as usize + 1);
+    }
+    charge_work(units)
 }
 
 fn equality_direction(source: &SignedArithmeticClaim, reverse: bool) -> SignedArithmeticClaim {
@@ -520,6 +539,7 @@ struct Planner<'a> {
     nodes: Vec<SignedArithmeticNode>,
     intervals: Vec<Option<SignedArithmeticInterval>>,
     interval_cache: HashMap<SignedArithmeticAtom, usize>,
+    defined_cache: HashMap<SignedArithmeticAtom, Option<usize>>,
     premise_cache: HashMap<usize, usize>,
 }
 
@@ -531,6 +551,7 @@ impl<'a> Planner<'a> {
             nodes: Vec::new(),
             intervals: Vec::new(),
             interval_cache: HashMap::new(),
+            defined_cache: HashMap::new(),
             premise_cache: HashMap::new(),
         }
     }
@@ -574,6 +595,7 @@ impl<'a> Planner<'a> {
     fn affine_claim(&mut self, target: &SignedArithmeticClaim) -> Option<usize> {
         for (index, claim) in self.claims {
             charge_work(1)?;
+            charge_claim_comparison(claim)?;
             if claim == target {
                 return self.premise(*index, claim);
             }
@@ -627,13 +649,26 @@ impl<'a> Planner<'a> {
     }
 
     fn defined(&mut self, term: &Bitvector32Term) -> Option<usize> {
-        let index = self
-            .premises
-            .iter()
-            .enumerate()
-            .find_map(|(index, proposition)| {
-                exact_definedness(proposition, term).then_some(index)
-            })?;
+        let cache_key = SignedArithmeticAtom::from_term(term)?;
+        if let Some(index) = self.defined_cache.get(&cache_key) {
+            return index.and_then(|index| {
+                self.push(SignedArithmeticNode::DefinedPremise {
+                    index,
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    term: term.clone(),
+                })
+            });
+        }
+        let mut index = None;
+        for (candidate, proposition) in self.premises.iter().enumerate() {
+            charge_work(1)?;
+            if exact_definedness(proposition, term) {
+                index = Some(candidate);
+                break;
+            }
+        }
+        self.defined_cache.insert(cache_key, index);
+        let index = index?;
         self.push(SignedArithmeticNode::DefinedPremise {
             index,
             carrier: SignedArithmeticCarrier::SignedInt32,
@@ -670,6 +705,7 @@ impl<'a> Planner<'a> {
         let mut lower: Option<(usize, SignedArithmeticClaim, i64)> = None;
         let mut upper: Option<(usize, SignedArithmeticClaim, i64)> = None;
         for (index, claim) in self.claims {
+            charge_work(1)?;
             if claim.relation != SignedArithmeticRelation::LessEqual || claim.terms.len() != 1 {
                 continue;
             }
@@ -1400,6 +1436,67 @@ mod tests {
                 )
                 .is_err()
         );
+
+        let premises = [le(constant(0), var(13)), le(var(13), constant(100))];
+        let mut wrong_evidence_root = plan.clone();
+        let node = wrong_evidence_root
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::AffineConclusion { .. }))
+            .expect("affine conclusion node");
+        if let SignedArithmeticNode::AffineConclusion { evidence, .. } = node {
+            *evidence = 0;
+        }
+        assert!(wrong_evidence_root.check(&goal, &premises).is_err());
+
+        let mut wrong_child = plan.clone();
+        let node = wrong_child
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::IntervalAddBounded { .. }))
+            .expect("bounded addition node");
+        if let SignedArithmeticNode::IntervalAddBounded { left, .. } = node {
+            *left = usize::MAX;
+        }
+        assert!(wrong_child.check(&goal, &premises).is_err());
+
+        let mut wrong_operator = plan.clone();
+        let node = wrong_operator
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::IntervalAddBounded { .. }))
+            .expect("bounded addition node");
+        if let SignedArithmeticNode::IntervalAddBounded {
+            left,
+            right,
+            result,
+        } = node
+        {
+            let left = *left;
+            let right = *right;
+            let result = result.clone();
+            *node = SignedArithmeticNode::IntervalSubtract {
+                left,
+                right,
+                defined: 0,
+                result,
+            };
+        }
+        assert!(wrong_operator.check(&goal, &premises).is_err());
+
+        let mut wrong_expression = plan.clone();
+        let node = wrong_expression
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::AffineConclusion { .. }))
+            .expect("affine conclusion node");
+        if let SignedArithmeticNode::AffineConclusion { result, .. } = node {
+            *result = le(
+                Bitvector32Term::Add(Box::new(var(13)), Box::new(var(14))),
+                constant(200),
+            );
+        }
+        assert!(wrong_expression.check(&goal, &premises).is_err());
     }
 
     #[test]
@@ -1488,17 +1585,36 @@ mod tests {
     }
 
     #[test]
-    fn deep_affine_atom_plans_iteratively() {
-        let mut term = var(9);
-        for _ in 0..128 {
-            term = Bitvector32Term::Add(Box::new(term), Box::new(constant(0)));
+    fn deep_supported_addition_builds_iterative_interval_affine_evidence() {
+        let x = var(9);
+        let lower = le(constant(0), x.clone());
+        let upper = le(x.clone(), constant(1));
+        let mut term = x.clone();
+        for _ in 0..127 {
+            term = Bitvector32Term::Add(Box::new(term), Box::new(x.clone()));
         }
-        let premise = le(term.clone(), constant(100));
-        let goal = le(term, constant(100));
-        let plan = check_plan(&goal, std::slice::from_ref(&premise));
-        assert!(matches!(
-            plan.nodes.first(),
-            Some(SignedArithmeticNode::Premise { .. })
-        ));
+        let goal = le(term, constant(128));
+        let plan = check_plan(&goal, &[lower, upper]);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::IntervalAddBounded { .. }))
+        );
+        assert!(plan
+            .nodes
+            .iter()
+            .any(|node| matches!(node, SignedArithmeticNode::Scale { coefficient, .. } if coefficient == &BigInt::from(128))));
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::AffineConclusion { .. }))
+        );
+
+        let overflowing_inner = Bitvector32Term::Add(Box::new(x.clone()), Box::new(constant(1)));
+        let final_in_range =
+            Bitvector32Term::Subtract(Box::new(overflowing_inner), Box::new(constant(1)));
+        let final_goal = le(final_in_range, constant(i32::MAX));
+        let bounds = [le(constant(0), x.clone()), le(x, constant(i32::MAX))];
+        assert!(plan_signed_arithmetic_certificate(&final_goal, &bounds).is_none());
     }
 }
