@@ -12347,6 +12347,13 @@ struct ResourceClauseIntervalIndex {
 #[derive(Default)]
 struct ResourceClauseWaiterIndex {
     coarse: BTreeMap<ResourceClauseDependencyKey, BTreeSet<usize>>,
+    /// Concrete waiters also have a block-local fallback entry.  It is used
+    /// only when the *supplied* memory fact cannot be normalized to a
+    /// concrete interval: a symbolic event has no interval key to query, but
+    /// its explicit block is still a sound conservative candidate boundary.
+    /// Store the dependency index as well as the clause so register/remove
+    /// stay symmetric when one clause waits on multiple ranges in a block.
+    concrete_block_fallback: BTreeMap<PointerBlock, BTreeSet<ResourceClauseIntervalWaiter>>,
     intervals: ResourceClauseIntervalIndex,
 }
 
@@ -12590,19 +12597,19 @@ impl ResourceClauseWaiterIndex {
                 .memory_range()
                 .and_then(resource_clause_concrete_memory_interval)
             {
+                let waiter = ResourceClauseIntervalWaiter {
+                    clause,
+                    dependency: dependency_index,
+                };
                 self.coarse
                     .entry(ResourceClauseDependencyKey::Fact(dependency.clone()))
                     .or_default()
                     .insert(clause);
-                self.intervals.insert(
-                    ResourceClauseIntervalWaiter {
-                        clause,
-                        dependency: dependency_index,
-                    },
-                    &space,
-                    start,
-                    end,
-                );
+                self.concrete_block_fallback
+                    .entry(space.block.clone())
+                    .or_default()
+                    .insert(waiter.clone());
+                self.intervals.insert(waiter, &space, start, end);
             } else {
                 for key in resource_clause_coarse_keys(dependency) {
                     self.coarse.entry(key).or_default().insert(clause);
@@ -12617,6 +12624,10 @@ impl ResourceClauseWaiterIndex {
                 .memory_range()
                 .and_then(resource_clause_concrete_memory_interval)
             {
+                let waiter = ResourceClauseIntervalWaiter {
+                    clause,
+                    dependency: dependency_index,
+                };
                 let key = ResourceClauseDependencyKey::Fact(dependency.clone());
                 let remove_key = self.coarse.get_mut(&key).is_some_and(|clauses| {
                     clauses.remove(&clause);
@@ -12625,15 +12636,17 @@ impl ResourceClauseWaiterIndex {
                 if remove_key {
                     self.coarse.remove(&key);
                 }
-                self.intervals.remove(
-                    &ResourceClauseIntervalWaiter {
-                        clause,
-                        dependency: dependency_index,
-                    },
-                    &space,
-                    start,
-                    end,
-                );
+                let remove_block = self
+                    .concrete_block_fallback
+                    .get_mut(&space.block)
+                    .is_some_and(|waiters| {
+                        waiters.remove(&waiter);
+                        waiters.is_empty()
+                    });
+                if remove_block {
+                    self.concrete_block_fallback.remove(&space.block);
+                }
+                self.intervals.remove(&waiter, &space, start, end);
             } else {
                 for key in resource_clause_coarse_keys(dependency) {
                     let remove_key = self.coarse.get_mut(&key).is_some_and(|clauses| {
@@ -12650,6 +12663,21 @@ impl ResourceClauseWaiterIndex {
 
     fn candidates_for_supplied(&self, supplied: &CResourceFact) -> BTreeSet<usize> {
         let mut candidates = self.intervals.candidates_for_fact(supplied);
+        // Concrete supplied facts use only exact/interval events.  The
+        // fallback below is deliberately reserved for symbolic or otherwise
+        // un-normalizable supplied memory: scanning concrete waiters in one
+        // explicit symbolic block event is conservative and bounded by that
+        // event's block-local waiter set, while concrete same-block events
+        // retain their interval-sensitive work curve.
+        if supplied
+            .memory_range()
+            .and_then(resource_clause_concrete_memory_interval)
+            .is_none()
+            && let Some(range) = supplied.memory_range()
+            && let Some(waiters) = self.concrete_block_fallback.get(&range.base().block)
+        {
+            ResourceClauseIntervalIndex::add_candidates(waiters, &mut candidates);
+        }
         for key in resource_clause_coarse_keys(supplied) {
             if let Some(clauses) = self.coarse.get(&key) {
                 candidates.extend(clauses.iter().copied());
@@ -12905,6 +12933,37 @@ mod resource_clause_worklist_tests {
         assert_eq!(
             waiters.candidates_for_supplied(&supplied),
             BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn concrete_waiter_block_fallback_registers_and_unregisters_symmetrically() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-fallback-lifetime".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let dependency = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let symbolic_supplied = CResourceFact::view_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Variable(Variable(9_902)),
+        ));
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = ResourceClauseWaiterIndex::default();
+        resource_clause_register_waiters(0, vec![dependency], &mut dependencies, &mut waiters);
+        assert_eq!(
+            waiters.candidates_for_supplied(&symbolic_supplied),
+            BTreeSet::from([0])
+        );
+        resource_clause_unregister_waiters(0, &mut dependencies, &mut waiters);
+        assert!(
+            waiters
+                .candidates_for_supplied(&symbolic_supplied)
+                .is_empty()
         );
     }
 }

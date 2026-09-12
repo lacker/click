@@ -4590,3 +4590,67 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
         "dependent clause work should stay bounded by the dependency graph: {samples:?}"
     );
 }
+
+/// A concrete pending load can be woken by a later symbolic range only after
+/// that range's own base has become readable.  This three-clause chain keeps
+/// the symbolic provider out of the initial section supply, so the positive
+/// result exercises the block-local fallback event rather than the initial
+/// pending scan.
+#[test]
+fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
+    let seed = Pointer {
+        block: PointerBlock::Concrete("resource-clause-symbolic-seed".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let intermediate = Pointer {
+        block: PointerBlock::Concrete("resource-clause-symbolic-intermediate".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let target = Pointer {
+        block: PointerBlock::Concrete("resource-clause-symbolic-target".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let length = Bitvector32Term::Variable(Variable(9_903));
+    let load = |pointer: Pointer| CExpression::TypedLoad {
+        pointer: Box::new(c_pointer_value(pointer)),
+        value_type: CType::Int32Pointer,
+        volatile: false,
+    };
+    let owned = |base: CExpression, end: CExpression| {
+        CResourceSpec::owned_memory(CMemorySegment {
+            base,
+            start: c_int32_literal(0),
+            end,
+            element_width: 4,
+            guard: None,
+        })
+    };
+    let clauses = vec![
+        // A waits on the concrete cell at `intermediate`, but is listed first.
+        owned(load(intermediate.clone()), c_int32_literal(1)),
+        // B is the symbolic provider for that cell.  Its base load waits on C.
+        owned(
+            load(seed.clone()),
+            CExpression::Value(int32(length.clone())),
+        ),
+        // C is the only clause that can evaluate on the first pass.
+        owned(c_pointer_value(seed.clone()), c_int32_literal(1)),
+    ];
+    let memory = CMemory::new()
+        .store(seed, CValue::pointer(intermediate.clone()))
+        .store(intermediate, CValue::pointer(target));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), length),
+        true,
+    );
+    let result = crate::kernel::functions::evaluate_function_resource_context(
+        &CState::new().with_memory(memory),
+        &clauses,
+        &[],
+        &assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("clause evaluation stays inside its budget")
+    .expect("the symbolic provider should wake the concrete pending clause");
+    assert_eq!(result.facts().len(), 3);
+}
