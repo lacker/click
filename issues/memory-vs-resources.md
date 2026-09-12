@@ -1322,9 +1322,9 @@ on master merely because they are described in an earlier handoff.
 | W5-E1 | `a5ec4580`, `7dc0d6ba`, `49ed348b`, `b6fdd9ef`, and integration merge `29d7071e` | The E1 worktree hashes are integrated. E2 remains an investigation, not a landed implementation. |
 | W5-E2/docs | `f4ae6dd4`, `0b1953e4` | `f7d61b76` is a temporary docs-only hash; its net blocker text is represented by integrated `0b1953e4`. The rollback branch also contains local-only `4e6ca3bb`, `f270b748`, and `809812fd`; none is integrated. |
 
-The local documentation handoff being prepared from this summary is not a
-claim that an experimental source implementation landed. The only intended
-change in that handoff is this existing issue document.
+This consolidated documentation handoff is not a claim that an experimental
+source implementation landed. The only intended change in that handoff is
+this existing issue document.
 
 ### E2 semantic findings and evidence boundary
 
