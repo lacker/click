@@ -749,6 +749,10 @@ appears to need one reports the need instead of adding it.
   and `rb_last` verify and audit** (19 of 19 sites), with the seven link
   helpers, `__rb_change_child` in all three frames, and `rb_replace_node`
   at the root; soundness hole 2 closed. C2b dispatched; A20 after A18.
+- 2026-09-12: A19 (eec257aa) is on master: the cells every possible arm
+  owns are published as views at contract lowering, loop heads, and per
+  guard conjunct; the translated `rb_next` ascent guard verifies and
+  audits on the parameter spelling. A18 and C2b in progress.
 
 ## Work packages
 
