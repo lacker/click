@@ -56,6 +56,69 @@ int32 caller(int32 x, int32 y) {
     );
 }
 
+fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("static-array mdtest should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources)
+        .expect("static-array call requirement should verify");
+    let auto_offset = click_source
+        .find("ensures result == 16 by auto")
+        .map(|offset| offset + "ensures result == 16 by ".len())
+        .expect("static-array result ensure should be present");
+    let position = expansion::position_at_offset(click_source, auto_offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &c_sources, position.line, position.column)
+            .expect("static-array call requirement should expand");
+    let have_start = expanded.find(have).unwrap_or_else(|| {
+        panic!("expanded proof should retain six-conjunct static Have: {expanded}")
+    });
+    let step_start = expanded[have_start..]
+        .find("\n        step();")
+        .map(|offset| have_start + offset)
+        .expect("the retained static Have should precede the call step");
+    assert!(have_start < step_start, "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("expanded static-array proof should cold reverify");
+
+    let mut without_have = expanded.clone();
+    without_have.replace_range(have_start..step_start, "");
+    let error = verify_c0_sources(&without_have, &c_sources)
+        .expect_err("deleting the retained static Have must reject the call precondition");
+    assert!(
+        error.unresolved_requirement().is_some(),
+        "deleted static Have should expose the structured call requirement: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn static_array_call_requirement_expands_and_deletion_rejects() {
+    assert_static_array_call_requirement_expands_and_deletion(
+        "mdtests/static_local_arrays.md",
+        "have static_local::increment_twice::values[0] > -1000",
+    );
+}
+
+#[test]
+fn parity_scalar_array_call_requirement_expands_and_deletion_rejects() {
+    assert_static_array_call_requirement_expands_and_deletion(
+        "mdtests/static_array_parity_scalar.md",
+        "have static_local::increment_twice::values[0] > -1000",
+    );
+}
+
 #[test]
 fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -6587,7 +6650,7 @@ fn execution_bare_apply_selects_and_retains_its_step_through_proof() {
         click_source,
         &[("keep.c", c_source)],
         "keep",
-        CProofClaim::Grouped,
+        CProofClaim::Ensure(0),
     )
     .expect("the checked execution apply should expand into source");
     verify_c0_sources(&expanded, &[("keep.c", c_source)])

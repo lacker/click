@@ -1638,6 +1638,130 @@ struct PreparedVerifiedFunctionCall<'a> {
     bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
 }
 
+/// Finds the exact source snapshot carried by a lowered pure requirement.
+/// This is deliberately narrower than the general recursive variable walker:
+/// only the logical/condition/bitvector shapes admitted by the source-backed
+/// classifier are visited, with the same finite structural budget.
+fn source_load_snapshot_for_proposition(
+    proposition: &Proposition,
+) -> ExecutionResult<Option<CMemorySnapshotIdentity>> {
+    const MAX_NODES: usize = 4096;
+    enum Work<'a> {
+        Proposition(&'a Proposition),
+        Condition(&'a ConditionTerm),
+        Bitvector(&'a Bitvector32Term),
+    }
+    let mut work = vec![Work::Proposition(proposition)];
+    let mut visited = 0usize;
+    let mut snapshot = None;
+    while let Some(item) = work.pop() {
+        visited = visited.saturating_add(1);
+        crate::instrumentation::record_deterministic_work(1);
+        if visited > MAX_NODES {
+            return Err(ExecutionLimit::ExpressionSteps);
+        }
+        if crate::kernel::assumptions::reasoning_interrupted() {
+            return Err(ExecutionLimit::Deadline);
+        }
+        match item {
+            Work::Proposition(Proposition::ConditionIs(condition, _)) => {
+                work.push(Work::Condition(condition));
+            }
+            Work::Proposition(Proposition::And(left, right))
+            | Work::Proposition(Proposition::Or(left, right))
+            | Work::Proposition(Proposition::Implies(left, right)) => {
+                work.push(Work::Proposition(right));
+                work.push(Work::Proposition(left));
+            }
+            Work::Proposition(Proposition::Not(body))
+            | Work::Proposition(Proposition::ForAll { body, .. })
+            | Work::Proposition(Proposition::Exists { body, .. }) => {
+                work.push(Work::Proposition(body));
+            }
+            Work::Proposition(_) => return Ok(None),
+            Work::Condition(
+                ConditionTerm::Bitvector32SignedLessThan(left, right)
+                | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector32Equal(left, right)
+                | ConditionTerm::Bitvector64SignedLessThan(left, right)
+                | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+                | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
+                | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
+                | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
+                | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
+                | ConditionTerm::Bitvector64Equal(left, right)
+                | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+                | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
+                | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right),
+            ) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
+            }
+            Work::Condition(ConditionTerm::Constant(_))
+            | Work::Condition(ConditionTerm::Variable(_)) => {}
+            Work::Condition(_) => return Ok(None),
+            Work::Bitvector(Bitvector32Term::Constant(_))
+            | Work::Bitvector(Bitvector32Term::Int64Constant(_))
+            | Work::Bitvector(Bitvector32Term::UInt64Constant(_)) => {}
+            Work::Bitvector(Bitvector32Term::Variable(variable)) => {
+                if crate::kernel::is_load_variable(variable) {
+                    let Some((origin, _)) =
+                        crate::kernel::registered_load_origin_for_variable(variable)
+                    else {
+                        return Ok(None);
+                    };
+                    let identity = CMemorySnapshotIdentity::of(origin.memory());
+                    if snapshot.is_some_and(|known| known != identity) {
+                        return Ok(None);
+                    }
+                    snapshot = Some(identity);
+                }
+            }
+            Work::Bitvector(Bitvector32Term::MemoryLoad(memory, _)) => {
+                let identity = CMemorySnapshotIdentity::of(memory.memory());
+                if snapshot.is_some_and(|known| known != identity) {
+                    return Ok(None);
+                }
+                snapshot = Some(identity);
+            }
+            Work::Bitvector(
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::Multiply(left, right)
+                | Bitvector32Term::Divide(left, right)
+                | Bitvector32Term::UnsignedDivide(left, right)
+                | Bitvector32Term::Remainder(left, right)
+                | Bitvector32Term::UnsignedRemainder(left, right)
+                | Bitvector32Term::ShiftLeft(left, right)
+                | Bitvector32Term::ArithmeticShiftRight(left, right)
+                | Bitvector32Term::LogicalShiftRight(left, right)
+                | Bitvector32Term::BitwiseAnd(left, right)
+                | Bitvector32Term::BitwiseOr(left, right)
+                | Bitvector32Term::BitwiseXor(left, right),
+            ) => {
+                work.push(Work::Bitvector(right));
+                work.push(Work::Bitvector(left));
+            }
+            Work::Bitvector(Bitvector32Term::BitwiseNot(body)) => {
+                work.push(Work::Bitvector(body));
+            }
+            Work::Bitvector(_) => return Ok(None),
+        }
+    }
+    Ok(snapshot)
+}
+
 fn prepare_verified_function_call<'a>(
     caller_state: &CState,
     application: CFunctionContractApplication<'a>,
@@ -1770,6 +1894,7 @@ fn prepare_verified_function_call<'a>(
             .clone()
             .allow_symbolic_contract_loads();
         let mut requirement_source: Option<std::sync::Arc<CallRequirementSource>> = None;
+        let source_load_snapshot = std::cell::Cell::new(None);
         let mut source_for_requirement = || {
             if let Some(source) = &requirement_source {
                 return source.clone();
@@ -1800,6 +1925,7 @@ fn prepare_verified_function_call<'a>(
                         source_requirement_ordinal.is_some()
                             && spec_proposition_is_state_independent(requirement)
                     }),
+                source_load_snapshot.get(),
             ));
             requirement_source = Some(source.clone());
             source
@@ -1811,6 +1937,23 @@ fn prepare_verified_function_call<'a>(
             &lowering_assumptions,
             budget,
         )?;
+        let mut load_snapshot = None;
+        let mut load_snapshot_consistent = true;
+        for requirement_path in &requirement_paths {
+            let Some(identity) =
+                source_load_snapshot_for_proposition(&requirement_path.proposition)?
+            else {
+                continue;
+            };
+            if load_snapshot.is_some_and(|known| known != identity) {
+                load_snapshot_consistent = false;
+            } else {
+                load_snapshot = Some(identity);
+            }
+        }
+        if load_snapshot_consistent {
+            source_load_snapshot.set(load_snapshot);
+        }
         if requirement_paths.is_empty() {
             obligations.push(
                 ProofObligation::verification_condition(false_equals_true_proposition())

@@ -2784,6 +2784,15 @@ impl PureFactContext {
         if let Proposition::And(left, right) = goal {
             return self.states_required_goal(left) && self.states_required_goal(right);
         }
+        // Loads emitted from a callee contract may retain its entry snapshot
+        // while the caller's retained fact uses the registered load variable.
+        // Canonicalize a condition leaf through the kernel's load naming law
+        // before consulting the exact stated-fact index; this is not logical
+        // search and does not apply to memory-loadable/resource predicates.
+        let canonical = crate::kernel::canonical_condition_fact(goal);
+        if canonical != *goal {
+            return self.states_required_goal(&canonical);
+        }
         if let Some(key) = crate::kernel::proof::proposition_identity_key(goal)
             && let Some(bucket) = self.stated_proposition_index.get(&key)
             && let Some(candidate) = bucket.iter().next()

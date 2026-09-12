@@ -3065,6 +3065,11 @@ pub(crate) struct CallRequirementSource {
     pub(crate) site: std::sync::Arc<CallRequirementSite>,
     pub(crate) requirement_ordinal: usize,
     pub(crate) source_requirement_ordinal: Option<usize>,
+    /// Exact snapshot identity of the source-side load carrier, when this
+    /// requirement is stateful and its lowering registered one.  This is
+    /// separate from `site.source_snapshot`, which identifies the caller's
+    /// frontier and must remain stable for source lookup.
+    pub(crate) source_load_snapshot: Option<CMemorySnapshotIdentity>,
     /// Whether the complete selected source requirement is state independent.
     /// This is a capability of the top-level requirement, not of any one
     /// lowered leaf, so every obligation emitted from the requirement shares
@@ -3078,11 +3083,13 @@ impl CallRequirementSource {
         requirement_ordinal: usize,
         source_requirement_ordinal: Option<usize>,
         source_requirement_is_state_independent: bool,
+        source_load_snapshot: Option<CMemorySnapshotIdentity>,
     ) -> Self {
         Self {
             site,
             requirement_ordinal,
             source_requirement_ordinal,
+            source_load_snapshot,
             // Generated requirements and contracts without a source registry
             // must never advertise source-side capabilities.
             source_requirement_is_state_independent: source_requirement_ordinal.is_some()

@@ -232,7 +232,10 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
-                        if source_backed_requirement_should_intercept(obligation)? {
+                        if source_backed_requirement_should_intercept(
+                            obligation,
+                            state.memory(),
+                        )? {
                             return Err(missing_prerequisite_error(
                                 format!(
                                     "{context_label} is missing condition prerequisite{}: {:?}",
@@ -408,6 +411,7 @@ pub(in crate::surface) fn certified_statement_transitions(
     *next_kernel_variable = budget.next_kernel_variable();
     let (mut transitions, loop_rule) = certified_transitions_from_execution(
         execution,
+        state,
         loop_rule,
         &transition_pure_facts,
         function_environment,
@@ -519,6 +523,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
     *next_kernel_variable = budget.next_kernel_variable();
     certified_transitions_from_execution(
         execution,
+        state,
         loop_rule,
         pure_facts,
         function_environment,
@@ -600,6 +605,7 @@ pub(in crate::surface::proof) fn is_internal_snapshot_frame_witness(fact: &Propo
 #[allow(clippy::too_many_arguments)]
 fn certified_transitions_from_execution(
     execution: SymbolicCExecution,
+    state: &CState,
     loop_rule: Option<CVerifiedLoopRule>,
     pure_facts: &[Proposition],
     environment: &CExecutionEnvironment,
@@ -876,7 +882,10 @@ fn certified_transitions_from_execution(
                         // handled by the smart retained-have adapter. Keep
                         // memory-backed and unsupported shapes on the
                         // compatibility path until their transport exists.
-                        if source_backed_requirement_should_intercept(obligation)? {
+                        if source_backed_requirement_should_intercept(
+                            obligation,
+                            state.memory(),
+                        )? {
                             return Err(missing_prerequisite_error(
                                 format!(
                                     "{context_label} is missing prerequisite{}: {}",
@@ -966,7 +975,10 @@ fn certified_transitions_from_execution(
                         }
                     }
                     StatementPrerequisitePolicy::Planning => {
-                        if source_backed_requirement_should_intercept(obligation)? {
+                        if source_backed_requirement_should_intercept(
+                            obligation,
+                            state.memory(),
+                        )? {
                             return Err(missing_prerequisite_error(
                                 format!(
                                     "{context_label} is missing prerequisite{}: {}",

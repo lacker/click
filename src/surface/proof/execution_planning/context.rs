@@ -740,10 +740,24 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     proposition: &Proposition,
     source_requirement_ordinal: Option<usize>,
     source_requirement_is_state_independent: bool,
+    source_snapshot: Option<crate::kernel::CMemorySnapshotIdentity>,
 ) -> Result<bool, ClickError> {
-    if source_requirement_ordinal.is_none() || !source_requirement_is_state_independent {
+    if source_requirement_ordinal.is_none() {
         return Ok(false);
     }
+    // The ordinary source-backed path is restricted to state-independent
+    // propositions.  Static-array preconditions are the one deliberately
+    // audited exception: their indexed loads are read at the call frontier,
+    // so they may be retried only when every load variable is registered from
+    // that exact snapshot and names static storage below.
+    let static_snapshot = if source_requirement_is_state_independent {
+        None
+    } else {
+        let Some(source_snapshot) = source_snapshot else {
+            return Ok(false);
+        };
+        Some(source_snapshot)
+    };
     const MAX_NODES: usize = 4096;
     enum Work<'a> {
         Proposition(&'a Proposition),
@@ -752,6 +766,7 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     }
     let mut work = vec![Work::Proposition(proposition)];
     let mut visited = 0;
+    let mut saw_static_load = false;
     while let Some(item) = work.pop() {
         visited += 1;
         crate::instrumentation::record_deterministic_work(1);
@@ -815,8 +830,28 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
                 | Bitvector32Term::Int64Constant(_)
                 | Bitvector32Term::UInt64Constant(_),
             ) => {}
+            Work::Bitvector(term @ Bitvector32Term::MemoryLoad(_, _))
+                if static_snapshot.is_some_and(|_| {
+                    registered_static_memory_load_matches_snapshot(
+                        term,
+                        static_snapshot.expect("static capability has a source snapshot"),
+                    )
+                }) =>
+            {
+                saw_static_load = true;
+            }
             Work::Bitvector(Bitvector32Term::Variable(variable))
                 if !crate::kernel::is_load_variable(variable) => {}
+            Work::Bitvector(Bitvector32Term::Variable(variable))
+                if static_snapshot.is_some_and(|_| {
+                    registered_static_load_matches_snapshot(
+                        variable,
+                        static_snapshot.expect("static capability has a source snapshot"),
+                    )
+                }) =>
+            {
+                saw_static_load = true;
+            }
             Work::Bitvector(
                 Bitvector32Term::Add(left, right)
                 | Bitvector32Term::Subtract(left, right)
@@ -841,7 +876,52 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
             Work::Bitvector(_) => return Ok(false),
         }
     }
-    Ok(true)
+    Ok(static_snapshot.is_none() || saw_static_load)
+}
+
+/// The only stateful source-backed requirement currently admitted is the
+/// static-array family.  A load variable is usable there only if its defining
+/// load was registered and its pointer names a linked/static block.  The
+/// carrier's exact source snapshot is checked by the retained-have source
+/// lookup before any proof is built; this classifier must not confuse the
+/// callee's entry projection with the caller's persistent memory node.  In
+/// particular, external arguments, heap blocks, and unregistered loads remain
+/// on the compatibility path.
+fn registered_static_load_matches_snapshot(
+    variable: &Variable,
+    source_snapshot: crate::kernel::CMemorySnapshotIdentity,
+) -> bool {
+    let Some((_memory, pointer)) = crate::kernel::registered_load_for_variable(variable) else {
+        return false;
+    };
+    let Some((origin, origin_pointer)) =
+        crate::kernel::registered_load_origin_for_variable(variable)
+    else {
+        return false;
+    };
+    // The registry's first-seen origin is the authoritative load epoch.  It
+    // must be the exact source carrier identity; equal contents or matching
+    // static markers are not a transport relation.
+    if pointer != origin_pointer
+        || crate::kernel::CMemorySnapshotIdentity::of(origin.memory()) != source_snapshot
+    {
+        return false;
+    }
+    matches!(
+        pointer.block,
+        crate::kernel::PointerBlock::Concrete(ref block)
+            if block.starts_with("static:") || block.starts_with("global:")
+    )
+}
+
+fn registered_static_memory_load_matches_snapshot(
+    term: &Bitvector32Term,
+    source_snapshot: crate::kernel::CMemorySnapshotIdentity,
+) -> bool {
+    let Some((variable, _)) = crate::kernel::load_variable_for_term(term) else {
+        return false;
+    };
+    registered_static_load_matches_snapshot(&variable, source_snapshot)
 }
 
 /// Whether this non-assumable call obligation is eligible for the
@@ -849,6 +929,7 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
 /// this gate so neither route can silently derive the same source requirement.
 pub(in crate::surface) fn source_backed_requirement_should_intercept(
     obligation: &ProofObligation,
+    current_memory: &crate::kernel::CMemory,
 ) -> Result<bool, ClickError> {
     if obligation.is_assumable() {
         return Ok(false);
@@ -856,10 +937,14 @@ pub(in crate::surface) fn source_backed_requirement_should_intercept(
     let Some(site) = obligation.call_requirement_site() else {
         return Ok(false);
     };
+    if crate::kernel::CMemorySnapshotIdentity::of(current_memory) != site.source_snapshot {
+        return Ok(false);
+    }
     source_backed_requirement_is_supported(
         obligation.proposition(),
         site.source_requirement_ordinal,
         site.source_requirement_is_state_independent,
+        site.source_load_snapshot,
     )
 }
 
@@ -894,11 +979,16 @@ mod tests {
     #[test]
     fn source_capability_walk_is_iterative_and_bounded() {
         let leaf = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
-        let supported = (0..1024).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
-        assert!(source_backed_requirement_is_supported(&supported, Some(0), true,).unwrap());
+        for depth in [1, 16, 128, 1024] {
+            let supported =
+                (0..depth).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
+            assert!(
+                source_backed_requirement_is_supported(&supported, Some(0), true, None).unwrap()
+            );
+        }
 
-        let over_budget = (0..4096).fold(leaf, |body, _| Proposition::Not(Box::new(body)));
-        let error = source_backed_requirement_is_supported(&over_budget, Some(0), true)
+        let over_budget = (0..4096).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
+        let error = source_backed_requirement_is_supported(&over_budget, Some(0), true, None)
             .expect_err("the structural capability bound must be an actionable error");
         assert!(error.message().contains("structural limit"));
 
@@ -909,12 +999,107 @@ mod tests {
             ),
             true,
         );
-        assert!(!source_backed_requirement_is_supported(&load_variable, Some(0), true,).unwrap());
+        assert!(
+            !source_backed_requirement_is_supported(&load_variable, Some(0), true, None).unwrap()
+        );
 
+        let supported = (0..1024).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
         let error = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
-            source_backed_requirement_is_supported(&supported, Some(0), true)
+            source_backed_requirement_is_supported(&supported, Some(0), true, None)
         })
         .expect_err("an expired capability deadline must remain an error");
         assert!(error.message().contains("budget exhausted"));
+    }
+
+    #[test]
+    fn static_load_capability_requires_registered_origin_epoch() {
+        let memory = crate::kernel::intern_c_memory(
+            crate::kernel::CMemory::new().with_block("static:test:values#static0", 16),
+        );
+        let pointer = crate::kernel::Pointer {
+            block: crate::kernel::PointerBlock::Concrete("static:test:values#static0".into()),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        };
+        let variable =
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(variable)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let source_snapshot = crate::kernel::CMemorySnapshotIdentity::of(memory.memory());
+        assert!(
+            source_backed_requirement_is_supported(
+                &proposition,
+                Some(0),
+                false,
+                Some(source_snapshot),
+            )
+            .unwrap()
+        );
+        let memory_load = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    memory.clone(),
+                    Box::new(pointer.clone()),
+                )),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        assert!(
+            source_backed_requirement_is_supported(
+                &memory_load,
+                Some(0),
+                false,
+                Some(source_snapshot),
+            )
+            .unwrap()
+        );
+
+        let dynamic_pointer = crate::kernel::Pointer {
+            block: crate::kernel::PointerBlock::Concrete("heap:test".into()),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        };
+        let dynamic_variable =
+            crate::kernel::load_variable_for_cell_with_origin(&memory, &dynamic_pointer, &memory);
+        let dynamic_load = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(dynamic_variable)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        assert!(
+            !source_backed_requirement_is_supported(
+                &dynamic_load,
+                Some(0),
+                false,
+                Some(source_snapshot),
+            )
+            .unwrap()
+        );
+
+        // A freshly allocated, structurally equal memory is a different epoch.
+        // Its contents and block spelling must not make an old registered load
+        // eligible for a retry at the wrong frontier.
+        let other = memory
+            .memory()
+            .clone()
+            .with_block("static:test:values#static0", 16);
+        let other_snapshot = crate::kernel::CMemorySnapshotIdentity::of(&other);
+        assert_ne!(source_snapshot, other_snapshot);
+        assert!(
+            !source_backed_requirement_is_supported(
+                &proposition,
+                Some(0),
+                false,
+                Some(other_snapshot),
+            )
+            .unwrap(),
+            "a load registered in the old epoch must not cross an equal-content snapshot"
+        );
     }
 }

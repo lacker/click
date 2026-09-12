@@ -3652,7 +3652,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         root.execution().unwrap().core.state.memory(),
     ));
     let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
-        site, 0, None, false,
+        site, 0, None, false, None,
     ));
     let refusal = ClickError::new("injected unsupported requirement").with_unresolved_requirement(
         &ProofObligation::verification_condition(unsupported.clone())
@@ -3706,6 +3706,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         0,
         Some(0),
         true,
+        None,
     ));
     let refusal = ClickError::new("injected supported source refusal").with_unresolved_requirement(
         &ProofObligation::verification_condition(supported).with_call_requirement_site(source),
@@ -3789,6 +3790,7 @@ fn supported_source_refusal_on_branch_does_not_enter_planning() {
         0,
         Some(0),
         true,
+        None,
     ));
     let refusal = ClickError::new("injected supported branch refusal").with_unresolved_requirement(
         &ProofObligation::verification_condition(Proposition::ConditionIs(
@@ -3984,6 +3986,29 @@ fn smart_retry_uses_static_local_array_qualified_source() {
         "static_local::increment_twice::values",
         3,
     );
+}
+
+#[test]
+fn retained_have_conjunct_collection_is_iterative_and_bounded() {
+    let leaf = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+    };
+    let within_limit = (0..2047).fold(leaf.clone(), |body, _| {
+        ClickProposition::And(Box::new(leaf.clone()), Box::new(body))
+    });
+    let leaves = crate::surface::proof::smart_closures::collect_bounded_surface_conjunct_leaves(
+        &within_limit,
+    )
+    .expect("a 4095-node conjunction should fit the retained-have bound");
+    assert_eq!(leaves.len(), 2048);
+
+    let over_limit = ClickProposition::And(Box::new(leaf), Box::new(within_limit));
+    let error =
+        crate::surface::proof::smart_closures::collect_bounded_surface_conjunct_leaves(&over_limit)
+            .expect_err("retained-have collection must propagate structural exhaustion");
+    assert!(error.message().contains("structural limit"));
 }
 
 #[test]

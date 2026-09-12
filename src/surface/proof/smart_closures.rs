@@ -4150,6 +4150,7 @@ impl<'a> Proof<'a> {
                     let Some(execution) = proof.execution() else {
                         return Err(error);
                     };
+                    let execution_memory = execution.core.state.memory().clone();
                     let execution_view = execution.view(context);
                     let _qualified_sources =
                         super::surface_synthesis::QualifiedSynthesisScope::enter(
@@ -4162,7 +4163,7 @@ impl<'a> Proof<'a> {
                     // In particular, do not synthesize from the caller's
                     // reduced snapshot or use the kernel candidate ordinal
                     // as a source selector.
-                    let surface = if requirement.call_site.is_some() {
+                    let mut surface = if requirement.call_site.is_some() {
                         match source_backed_call_requirement_surface(
                             &requirement,
                             &step,
@@ -4187,22 +4188,58 @@ impl<'a> Proof<'a> {
                         .lower_surface_goal(&surface, "smart retained-have requirement")
                     {
                         Ok(lowered) => lowered,
+                        Err(_) if requirement.call_site.is_some() => {
+                            // The immutable source registry names the callee
+                            // clause, but a memory-backed static clause may
+                            // require the caller's recorded qualified source
+                            // spelling.  Synthesize that spelling only under
+                            // the same authoritative source/snapshot scope;
+                            // the exact round-trip check below remains the
+                            // admission gate.
+                            let Some(qualified) = synthesize_surface_proposition(
+                                &requirement.proposition,
+                                context.parsed_function.parameters(),
+                                context.arguments,
+                                &execution.core.state,
+                            ) else {
+                                check_verification_deadline()?;
+                                return Err(error);
+                            };
+                            surface = qualified;
+                            match proof
+                                .lower_surface_goal(&surface, "smart retained-have requirement")
+                            {
+                                Ok(lowered) => lowered,
+                                Err(_) => {
+                                    check_verification_deadline()?;
+                                    return Err(error);
+                                }
+                            }
+                        }
                         Err(_) => {
                             check_verification_deadline()?;
                             return Err(error);
                         }
                     };
-                    if !propositions_are_alpha_equal(&lowered, &requirement.proposition) {
+                    // Contract lowering may retain the load term while the
+                    // caller's qualified spelling lowers to its registered
+                    // load variable.  Compare their shared canonical load
+                    // representation, without weakening snapshot identity.
+                    if !propositions_match_after_canonical_loads(&lowered, &requirement.proposition)
+                    {
                         return Err(error);
                     }
-                    let have = match proof.begin_have(surface) {
+                    let have = match proof.begin_have(surface.clone()) {
                         Ok(have) => have,
                         Err(_) => {
                             check_verification_deadline()?;
                             return Err(error);
                         }
                     };
-                    let Some(closed) = have.try_simp_closure()? else {
+                    let mut closure_surfaces = vec![surface.clone()];
+                    closure_surfaces.extend(collect_bounded_surface_conjunct_leaves(&surface)?);
+                    let Some(closed) = have.try_simp_closure_with_surfaces(&closure_surfaces)?
+                    else {
                         return Err(error);
                     };
                     // `join` publishes the checked proposition into the exact
@@ -4218,7 +4255,10 @@ impl<'a> Proof<'a> {
                             else {
                                 return Err(next_error);
                             };
-                            if requirement_uses_planning_compatibility(&next_requirement)? {
+                            if requirement_uses_planning_compatibility(
+                                &next_requirement,
+                                &execution_memory,
+                            )? {
                                 return proof.apply_step(step.clone());
                             }
                             let Some(next_identity) =
@@ -4292,7 +4332,7 @@ impl<'a> Proof<'a> {
             return match apply(self) {
                 Ok(proof) => Ok(Some(proof)),
                 Err(error) => {
-                    if source_backed_refusal(&error)? {
+                    if source_backed_refusal(&error, execution.core.state.memory())? {
                         Err(error)
                     } else {
                         check_verification_deadline()?;
@@ -4308,17 +4348,94 @@ impl<'a> Proof<'a> {
     }
 }
 
-fn source_backed_refusal(error: &ClickError) -> Result<bool, ClickError> {
+/// Collect conjunction leaves for a retained Have without allowing a deeply
+/// nested source proposition to evade the verifier's work bound.  The full
+/// proposition remains the first closure surface; each leaf is then offered
+/// to the existing checked simp closure.
+pub(in crate::surface::proof) fn collect_bounded_surface_conjunct_leaves(
+    proposition: &ClickProposition,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    const MAX_NODES: usize = 4096;
+    let mut work = vec![proposition];
+    let mut leaves = Vec::new();
+    let mut visited = 0usize;
+    while let Some(current) = work.pop() {
+        visited = visited.saturating_add(1);
+        crate::instrumentation::record_deterministic_work(1);
+        check_verification_deadline()?;
+        if visited > MAX_NODES {
+            return Err(ClickError::new(format!(
+                "retained-have conjunction exceeded structural limit {MAX_NODES}"
+            )));
+        }
+        match current {
+            ClickProposition::And(left, right) => {
+                work.push(right);
+                work.push(left);
+            }
+            _ => leaves.push(current.clone()),
+        }
+    }
+    Ok(leaves)
+}
+
+/// Compare retained-have round-trip forms while applying the kernel's load
+/// naming law to condition leaves. The lockstep worklist keeps this path
+/// iterative and bounded and never clones an entire proposition tree.
+fn propositions_match_after_canonical_loads(left: &Proposition, right: &Proposition) -> bool {
+    const MAX_NODES: usize = 4096;
+    let mut work = vec![(left, right)];
+    let mut visited = 0usize;
+    while let Some((left, right)) = work.pop() {
+        visited = visited.saturating_add(1);
+        if visited > MAX_NODES {
+            return false;
+        }
+        match (left, right) {
+            (Proposition::And(left, right), Proposition::And(other_left, other_right))
+            | (Proposition::Or(left, right), Proposition::Or(other_left, other_right))
+            | (Proposition::Implies(left, right), Proposition::Implies(other_left, other_right)) => {
+                work.push((right, other_right));
+                work.push((left, other_left));
+            }
+            (Proposition::Not(body), Proposition::Not(other_body)) => {
+                work.push((body, other_body));
+            }
+            (Proposition::ConditionIs(_, _), Proposition::ConditionIs(_, _)) => {
+                let left = crate::kernel::canonical_condition_fact(left);
+                let right = crate::kernel::canonical_condition_fact(right);
+                if !propositions_are_alpha_equal(&left, &right) {
+                    return false;
+                }
+            }
+            _ => {
+                if !propositions_are_alpha_equal(left, right) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn source_backed_refusal(
+    error: &ClickError,
+    current_memory: &crate::kernel::CMemory,
+) -> Result<bool, ClickError> {
     let Some(requirement) = error.unresolved_requirement() else {
         return Ok(false);
     };
     let Some(site) = requirement.call_site.as_ref() else {
         return Ok(false);
     };
+    if crate::kernel::CMemorySnapshotIdentity::of(current_memory) != site.source_snapshot {
+        return Ok(false);
+    }
     source_backed_requirement_is_supported(
         &requirement.proposition,
         site.source_requirement_ordinal,
         site.source_requirement_is_state_independent,
+        site.source_load_snapshot,
     )
 }
 
@@ -4471,6 +4588,7 @@ fn source_backed_call_requirement_surface(
 
 fn requirement_uses_planning_compatibility(
     requirement: &UnresolvedRequirement,
+    current_memory: &crate::kernel::CMemory,
 ) -> Result<bool, ClickError> {
     let Some(source) = requirement.call_site.as_ref() else {
         // No carrier means this is not a source-backed call requirement; keep
@@ -4480,10 +4598,14 @@ fn requirement_uses_planning_compatibility(
     if source.source_requirement_ordinal.is_none() {
         return Ok(true);
     }
+    if crate::kernel::CMemorySnapshotIdentity::of(current_memory) != source.source_snapshot {
+        return Ok(true);
+    }
     Ok(!source_backed_requirement_is_supported(
         &requirement.proposition,
         source.source_requirement_ordinal,
         source.source_requirement_is_state_independent,
+        source.source_load_snapshot,
     )?)
 }
 
