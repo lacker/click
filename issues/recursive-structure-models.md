@@ -328,6 +328,28 @@ enough to become the first regression of the package that fixes them.
     ("resource rewrite changed more than a definitional representation")
     because `Bool`, `Float32`, and `Float64` loads still read back as raw
     `MemoryLoad` terms; the same adoption argument as A10.
+29. **An ascending walk stops at the contract boundary.** Found by A13
+    after the loop mechanics worked (the loop-head refutation closes the
+    `Top` arm): with `consumes t: ptree_at(p, parent); produces sub:
+    ptree_at(result, ...)` the produced binder cannot reuse the name the
+    loop rebinds ("duplicate resource instance binding sub"), and the walk
+    has no way to rename its final instance without a fold it cannot
+    perform; with `owns` on both sides the exit clause re-reads a parameter
+    the loop reassigned ("could not lower resource ptree_at argument 1: the
+    kernel evaluation produced 0 paths"), since a returned instance's
+    arguments must be the entry-time ones. Before that, the refold of the
+    parent node from the old subtree plus the sibling was unfinished
+    ("loop binder sub has no owned ptree_at instance at its arguments
+    here"). Every rbtree fixup loop ascends, so this blocks C3, C4's
+    `rb_next`/`rb_prev`, and C5. Package A14.
+30. **Smaller findings from A13, not scheduled.** A `have` whose explicit
+    script fails can report only "body did not construct a completed proof
+    object" with no goal or tactic (`checked_have_with_proof` returns
+    `Ok(None)` on some routes); `unfold(pure_fn(...))` inside a nested
+    proof `match` arm fails the same way while the enclosing arm succeeds.
+    A13 also fixed a pre-existing audit defect in passing: a location-scoped
+    verification planned C termination for every function in the file, so
+    any file with a ranked loop failed every other claim's audit sites.
 
 ## Design decisions
 
@@ -564,6 +586,14 @@ appears to need one reports the need instead of adding it.
   did not identify.
 - 2026-09-12: T6 (2ed15042) is on master; gap 23 closed as stale (gap 28).
   All tooling packages T1 to T6 are landed. A13 in progress.
+- 2026-09-12: A13 (6335d1eb) is on master: refuted arms publish negative
+  model facts at unfold, loop head, back edge, and contract lowering; the
+  selected arm's facts are published at contract lowering; struct-pointer
+  locals have layouts; `old(name.field)` in a loop invariant reads the
+  entry instance. **B1's core is delivered**: the unchanged `tree_leftmost`
+  and `tree_rightmost` verify and audit (35 of 35 sites) with `Context`,
+  `ctx_at(child)`, `plug`, loop binders, a loop-body `match`, and
+  `decreases t;`. A14 and C4 dispatched.
 
 ## Work packages
 
@@ -762,6 +792,19 @@ rbtree, whose loops have a `parent` local), `plug`, loop binders, a
 loop-body `match`, and `decreases sub;`, plus the ascending and
 rotate-then-ascend fixtures and the two context negatives. Depends on
 A12.
+
+**A14. Ascending and rotate-then-ascend walks (gap 29).**
+Scope: let a `produces` binder at the exit take the name the loop rebinds
+(or let the loop's final instance be renamed at the boundary), evaluate a
+returned `owns` instance's arguments at entry when the parameter was
+reassigned, and finish the refold of a parent node from its old subtree and
+sibling inside an ascending `preserve`. Acceptance: an ascending walk over
+`ptree_at(p, parent)`/`pctx_at(child, parent)` frames with `decreases
+ctx;`, verified and audited; a rotate-then-ascend loop that folds a rotated
+subtree and continues at the parent frame; and the same on the rbtree
+shapes `rb_at(p, parent)`/`ctx_at(child, parent, root)` with a verbatim
+`rb_next`-style ascent. Depends on A13; C3, C4's ascending half, and C5
+depend on it.
 
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
