@@ -183,6 +183,33 @@ does not prove that such an iteration is eventually reached. Termination needs
 a separate well-founded argument; ordinary C verification does not require
 one.
 
+### Short-circuit guards
+
+A guard with `&&` or `||` leaves the loop by one path per operand that can end
+it. `while (a != 0 && p[0] != 0)` exits when `a` is zero, and also when `a` is
+nonzero and `p[0]` is zero; the second path never evaluates the first operand
+away. Every one of those paths reaches the same exit state, so the loop rule
+certifies them together and the exit states their join: everything they all
+state — which includes every invariant — plus the disjunction of what each
+states alone, here `a == 0 or p[0] == 0`. A proof that needs to know which
+operand failed splits on that disjunction with `cases`:
+
+<!-- verified-example: mdtests/loop_conjunctive_guard_exit_join.md -->
+```click
+have p[0] == 0 by {
+    cases(a == 0 or p[0] == 0) {
+        contradiction(a == 0);
+    } {
+        assumption();
+    }
+}
+```
+
+The negation of the first operand alone is *not* assumed at the exit: the loop
+really can stop with `a` nonzero. An operand the function has no authority to
+read leaves the guard undecided rather than dropping its path, and the loop is
+refused.
+
 ## Memory loops
 
 Pointer-writing loops often need both arithmetic invariants and memory facts:

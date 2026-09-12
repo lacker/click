@@ -1415,6 +1415,121 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     )
 }
 
+/// Whether one exact condition fact is the negation of another.
+fn condition_fact_refutes(fact: &Proposition, other: &Proposition) -> bool {
+    match (fact, other) {
+        (Proposition::ConditionIs(left, left_value), Proposition::ConditionIs(right, value)) => {
+            left == right && left_value != value
+        }
+        _ => false,
+    }
+}
+
+/// Joins the exit paths of one loop guard into the single exit the loop rule
+/// certifies.
+///
+/// A short-circuit guard such as `while (a && b)` leaves the loop by one path
+/// per conjunct: `!a`, or `a && !b`. They reach the same exit state — the
+/// loop's top state, with the invariants holding and the body's effects
+/// summarized — and differ only in what the failed guard says. Dropping any of
+/// them would export an exit the C never reaches that way (the hole S1
+/// closed), and keeping them as separate statement successors is what the
+/// `loop` tactic refused. So the rule exports their join instead: every fact
+/// all the paths state, in the order the first path stated them, followed by
+/// the disjunction of what each path states alone. A proof after the loop
+/// reasons from the disjunction by cases.
+///
+/// Obligations are the union: an obligation any exit path owes is owed by the
+/// join, which can only refuse more, never less. Ordering is load-bearing —
+/// the verified loop rule's consumers read the exported invariant facts
+/// positionally — so the common prefix keeps its order and the disjunction is
+/// appended after it.
+fn join_loop_exit_paths(
+    mut exits: Vec<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>,
+) -> Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)> {
+    if exits.len() <= 1 {
+        return exits.pop();
+    }
+    let (first_facts, first_obligations) = exits[0].clone();
+    let shared = first_facts
+        .iter()
+        .filter(|fact| {
+            exits[1..].iter().all(|(facts, _)| {
+                facts
+                    .iter()
+                    .any(|other| other.proposition() == fact.proposition())
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let own_facts = exits
+        .iter()
+        .map(|(facts, _)| {
+            facts
+                .iter()
+                .filter(|fact| {
+                    !shared
+                        .iter()
+                        .any(|common| common.proposition() == fact.proposition())
+                })
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    // Short-circuit paths refine one another: the second conjunct's exit also
+    // states the first conjunct true, which the first exit states false. A
+    // conjunct another disjunct contradicts is dropped, which only weakens
+    // that disjunct and so keeps the disjunction true, and turns
+    // `!a | (a & !b)` into the `!a | !b` a proof can name.
+    let mut disjuncts = Vec::new();
+    for (index, own) in own_facts.iter().enumerate() {
+        let narrowed = own
+            .iter()
+            .filter(|fact| {
+                !own_facts[..index].iter().any(|facts| {
+                    facts
+                        .iter()
+                        .any(|earlier| condition_fact_refutes(earlier, fact))
+                })
+            })
+            .collect::<Vec<_>>();
+        // Dropping every conjunct would make this disjunct, and with it the
+        // whole disjunction, vacuous. Keep what the path actually stated.
+        let mut own = if narrowed.is_empty() {
+            own.iter().collect::<Vec<_>>().into_iter()
+        } else {
+            narrowed.into_iter()
+        };
+        match own.next() {
+            Some(first) => disjuncts.push(own.fold(first.clone(), |left, right| {
+                Proposition::And(Box::new(left), Box::new(right.clone()))
+            })),
+            // A path that states nothing of its own makes the disjunction
+            // vacuously true, so the shared facts are the whole join.
+            None => {
+                disjuncts.clear();
+                break;
+            }
+        }
+    }
+    let mut facts = shared;
+    if let Some(mut disjunction) = disjuncts.pop() {
+        while let Some(disjunct) = disjuncts.pop() {
+            disjunction = Proposition::Or(Box::new(disjunct), Box::new(disjunction));
+        }
+        facts.push(ExecutionPureFact::new(disjunction));
+    }
+    let mut obligations = first_obligations;
+    for (_, path_obligations) in exits.drain(1..) {
+        for obligation in path_obligations {
+            if !obligations.contains(&obligation) {
+                obligations.push(obligation);
+            }
+        }
+    }
+    Some((facts, obligations))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_c_while_exit_paths(
     state: &CState,
@@ -1542,6 +1657,7 @@ fn execute_c_while_exit_paths(
         for candidate in final_exit_candidates {
             let candidate_assumptions =
                 assumptions_with_propositions(assumptions, candidate.pure_facts());
+            let mut exits = Vec::new();
             for assumption in assume_condition_truthiness(
                 candidate.state(),
                 condition,
@@ -1577,6 +1693,9 @@ fn execute_c_while_exit_paths(
                     });
                     continue;
                 }
+                exits.push((facts, obligations));
+            }
+            if let Some((facts, obligations)) = join_loop_exit_paths(exits) {
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::Normal(head.restored_exit_state(candidate.state())),
                     facts,
@@ -1623,6 +1742,7 @@ fn execute_c_while_exit_paths(
                 false,
                 budget,
             )?;
+            let mut exits = Vec::new();
             for assumption in condition_contexts {
                 let CConditionAssumption {
                     branch,
@@ -1666,6 +1786,13 @@ fn execute_c_while_exit_paths(
                 ) {
                     facts.push(ExecutionPureFact::new(fact));
                 }
+                exits.push((facts, obligations));
+            }
+            // A short-circuit guard leaves the loop by one path per conjunct,
+            // all at the same exit state. Every one of them is certified, and
+            // the loop exports their join: what they all state, plus the
+            // disjunction of what each states alone.
+            if let Some((facts, obligations)) = join_loop_exit_paths(exits) {
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::Normal(top_state.clone()),
                     facts,
