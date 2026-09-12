@@ -380,7 +380,8 @@ appears to need one reports the need instead of adding it.
   binder arguments, arm views at loop heads, 2ab5dba3) is on master with a
   confirming full gate; its positive loop fixtures wait on A9. T1 (audit on
   an infeasible `branch` arm, fixed by expanding the dropped arm's tactic by
-  removal) is gating; T3 dispatched for gap 14.
+  removal, 531b5651) is on master; the scaffold audits 26 of 26 sites. T3
+  dispatched for gap 14; T2 is gating.
 
 ## Work packages
 
