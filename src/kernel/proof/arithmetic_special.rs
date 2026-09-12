@@ -918,15 +918,26 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
 struct TaggedAddress {
     pointer: Pointer,
     tag: Bitvector32Term,
+    /// The tag's constant value, when it is known.  Keeping this alongside
+    /// the term is important: a symbolic tag chain must not be recursively
+    /// re-evaluated every time another address operation extends it.
+    tag_constant: Option<u64>,
 }
 
-fn bounded_uint64_const(root: &Bitvector32Term) -> Option<u64> {
-    let mut pending = vec![(root, false)];
-    let mut values: Vec<u64> = Vec::new();
+fn bounded_uint64_constants(roots: &[&Bitvector32Term]) -> HashMap<usize, Option<u64>> {
+    let mut pending = roots.iter().map(|root| (*root, false)).collect::<Vec<_>>();
+    let mut values: HashMap<usize, Option<u64>> = HashMap::new();
     while let Some((term, expanded)) = pending.pop() {
+        let identity = term as *const Bitvector32Term as usize;
+        if values.contains_key(&identity) {
+            continue;
+        }
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return HashMap::new();
+        }
         if expanded {
             let value = match term {
-                Bitvector32Term::UInt64Constant(value) => *value,
+                Bitvector32Term::UInt64Constant(value) => Some(*value),
                 Bitvector32Term::UInt64Add(_, _)
                 | Bitvector32Term::UInt64Subtract(_, _)
                 | Bitvector32Term::UInt64Multiply(_, _)
@@ -937,42 +948,99 @@ fn bounded_uint64_const(root: &Bitvector32Term) -> Option<u64> {
                 | Bitvector32Term::UInt64BitwiseAnd(_, _)
                 | Bitvector32Term::UInt64BitwiseOr(_, _)
                 | Bitvector32Term::UInt64BitwiseXor(_, _) => {
-                    let right = values.pop()?;
-                    let left = values.pop()?;
-                    match term {
-                        Bitvector32Term::UInt64Add(_, _) => left.wrapping_add(right),
-                        Bitvector32Term::UInt64Subtract(_, _) => left.wrapping_sub(right),
-                        Bitvector32Term::UInt64Multiply(_, _) => left.wrapping_mul(right),
-                        Bitvector32Term::UInt64Divide(_, _) if right != 0 => left / right,
-                        Bitvector32Term::UInt64Remainder(_, _) if right != 0 => left % right,
-                        Bitvector32Term::UInt64ShiftLeft(_, _) if right < 64 => {
-                            left.wrapping_shl(right as u32)
+                    let (left, right) = match term {
+                        Bitvector32Term::UInt64Add(left, right)
+                        | Bitvector32Term::UInt64Subtract(left, right)
+                        | Bitvector32Term::UInt64Multiply(left, right)
+                        | Bitvector32Term::UInt64Divide(left, right)
+                        | Bitvector32Term::UInt64Remainder(left, right)
+                        | Bitvector32Term::UInt64ShiftLeft(left, right)
+                        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+                        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+                        | Bitvector32Term::UInt64BitwiseOr(left, right)
+                        | Bitvector32Term::UInt64BitwiseXor(left, right) => (
+                            values
+                                .get(&(left.as_ref() as *const _ as usize))
+                                .copied()
+                                .flatten(),
+                            values
+                                .get(&(right.as_ref() as *const _ as usize))
+                                .copied()
+                                .flatten(),
+                        ),
+                        _ => (None, None),
+                    };
+                    match (term, left, right) {
+                        (Bitvector32Term::UInt64Add(_, _), Some(left), Some(right)) => {
+                            Some(left.wrapping_add(right))
                         }
-                        Bitvector32Term::UInt64LogicalShiftRight(_, _) if right < 64 => {
-                            left >> right
+                        (Bitvector32Term::UInt64Subtract(_, _), Some(left), Some(right)) => {
+                            Some(left.wrapping_sub(right))
                         }
-                        Bitvector32Term::UInt64BitwiseAnd(_, _) => left & right,
-                        Bitvector32Term::UInt64BitwiseOr(_, _) => left | right,
-                        Bitvector32Term::UInt64BitwiseXor(_, _) => left ^ right,
-                        _ => return None,
+                        (Bitvector32Term::UInt64Multiply(_, _), Some(left), Some(right)) => {
+                            Some(left.wrapping_mul(right))
+                        }
+                        (Bitvector32Term::UInt64Divide(_, _), Some(left), Some(right))
+                            if right != 0 =>
+                        {
+                            Some(left / right)
+                        }
+                        (Bitvector32Term::UInt64Remainder(_, _), Some(left), Some(right))
+                            if right != 0 =>
+                        {
+                            Some(left % right)
+                        }
+                        (Bitvector32Term::UInt64ShiftLeft(_, _), Some(left), Some(right))
+                            if right < 64 =>
+                        {
+                            Some(left.wrapping_shl(right as u32))
+                        }
+                        (
+                            Bitvector32Term::UInt64LogicalShiftRight(_, _),
+                            Some(left),
+                            Some(right),
+                        ) if right < 64 => Some(left >> right),
+                        (Bitvector32Term::UInt64BitwiseAnd(_, _), Some(left), Some(right)) => {
+                            Some(left & right)
+                        }
+                        (Bitvector32Term::UInt64BitwiseOr(_, _), Some(left), Some(right)) => {
+                            Some(left | right)
+                        }
+                        (Bitvector32Term::UInt64BitwiseXor(_, _), Some(left), Some(right)) => {
+                            Some(left ^ right)
+                        }
+                        _ => None,
                     }
                 }
-                Bitvector32Term::UInt64BitwiseNot(_) => !values.pop()?,
+                Bitvector32Term::UInt64BitwiseNot(value) => values
+                    .get(&(value.as_ref() as *const _ as usize))
+                    .copied()
+                    .flatten()
+                    .map(|value| !value),
                 Bitvector32Term::UInt64From32(value) => match value.as_ref() {
-                    Bitvector32Term::Constant(value) => u64::from(*value),
-                    _ => values.pop()?,
+                    Bitvector32Term::Constant(value) => Some(u64::from(*value)),
+                    _ => values
+                        .get(&(value.as_ref() as *const _ as usize))
+                        .copied()
+                        .flatten(),
                 },
                 Bitvector32Term::UInt64FromInt32(value) => match value.as_ref() {
-                    Bitvector32Term::Constant(value) => (*value as i32 as i64) as u64,
-                    _ => values.pop()?,
+                    Bitvector32Term::Constant(value) => Some((*value as i32 as i64) as u64),
+                    _ => values
+                        .get(&(value.as_ref() as *const _ as usize))
+                        .copied()
+                        .flatten(),
                 },
                 Bitvector32Term::UInt64FromInt64(value) => match value.as_ref() {
-                    Bitvector32Term::Int64Constant(value) => *value as u64,
-                    _ => values.pop()?,
+                    Bitvector32Term::Int64Constant(value) => Some(*value as u64),
+                    _ => values
+                        .get(&(value.as_ref() as *const _ as usize))
+                        .copied()
+                        .flatten(),
                 },
-                _ => return None,
+                _ => None,
             };
-            values.push(value);
+            values.insert(identity, value);
             continue;
         }
         match term {
@@ -1013,10 +1081,12 @@ fn bounded_uint64_const(root: &Bitvector32Term) -> Option<u64> {
                 pending.push((right, false));
                 pending.push((left, false));
             }
-            _ => return None,
+            _ => {
+                values.insert(identity, None);
+            }
         }
     }
-    (values.len() == 1).then_some(values[0])
+    values
 }
 
 fn pointer_identity_hash(pointer: &Pointer) -> Option<u64> {
@@ -1113,13 +1183,35 @@ fn bounded_term_hash(root: &Bitvector32Term) -> Option<u64> {
         .copied()
 }
 
-fn add_tag(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
-    if bounded_uint64_const(&left) == Some(0) {
-        right
-    } else if bounded_uint64_const(&right) == Some(0) {
-        left
+fn constant_value(term: &Bitvector32Term, constants: &HashMap<usize, Option<u64>>) -> Option<u64> {
+    constants
+        .get(&(term as *const Bitvector32Term as usize))
+        .copied()
+        .flatten()
+}
+
+fn add_tag(
+    form: TaggedAddress,
+    right: Bitvector32Term,
+    right_constant: Option<u64>,
+) -> TaggedAddress {
+    if form.tag_constant == Some(0) {
+        TaggedAddress {
+            pointer: form.pointer,
+            tag: right,
+            tag_constant: right_constant,
+        }
+    } else if right_constant == Some(0) {
+        form
     } else {
-        Bitvector32Term::uint64_add(left, right)
+        TaggedAddress {
+            pointer: form.pointer,
+            tag: Bitvector32Term::uint64_add(form.tag, right),
+            tag_constant: form
+                .tag_constant
+                .zip(right_constant)
+                .map(|(left, right)| left.wrapping_add(right)),
+        }
     }
 }
 
@@ -1129,6 +1221,10 @@ fn tagged_form(
     alignments: &[(&Pointer, u64)],
 ) -> Option<TaggedAddress> {
     let identities = bounded_term_hashes(&[term, relation.0, relation.1])?;
+    let constants = bounded_uint64_constants(&[term, relation.0, relation.1]);
+    if constants.is_empty() {
+        return None;
+    }
     let relation_keys = (
         *identities.get(&(relation.0 as *const _ as usize))?,
         *identities.get(&(relation.1 as *const _ as usize))?,
@@ -1139,6 +1235,7 @@ fn tagged_form(
         relation,
         relation_keys,
         &identities,
+        &constants,
         alignments,
         &mut seen,
     )
@@ -1149,6 +1246,7 @@ fn tagged_form_inner(
     relation: (&Bitvector32Term, &Bitvector32Term),
     relation_keys: (u64, u64),
     identities: &HashMap<usize, u64>,
+    constants: &HashMap<usize, Option<u64>>,
     alignments: &[(&Pointer, u64)],
     seen: &mut HashSet<usize>,
 ) -> Option<TaggedAddress> {
@@ -1160,31 +1258,58 @@ fn tagged_form_inner(
         Bitvector32Term::PointerAddress(pointer) => Some(TaggedAddress {
             pointer: pointer.as_ref().clone(),
             tag: Bitvector32Term::UInt64Constant(0),
+            tag_constant: Some(0),
         }),
-        Bitvector32Term::UInt64Add(left, right) => {
-            tagged_form_inner(left, relation, relation_keys, identities, alignments, seen)
-                .map(|form| TaggedAddress {
-                    pointer: form.pointer,
-                    tag: add_tag(form.tag, right.as_ref().clone()),
-                })
-                .or_else(|| {
-                    tagged_form_inner(right, relation, relation_keys, identities, alignments, seen)
-                        .map(|form| TaggedAddress {
-                            pointer: form.pointer,
-                            tag: add_tag(left.as_ref().clone(), form.tag),
-                        })
-                })
-        }
-        Bitvector32Term::UInt64Subtract(left, right) => {
-            tagged_form_inner(left, relation, relation_keys, identities, alignments, seen).map(
-                |form| TaggedAddress {
-                    pointer: form.pointer,
-                    tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
-                },
+        Bitvector32Term::UInt64Add(left, right) => tagged_form_inner(
+            left,
+            relation,
+            relation_keys,
+            identities,
+            constants,
+            alignments,
+            seen,
+        )
+        .map(|form| {
+            add_tag(
+                form,
+                right.as_ref().clone(),
+                constant_value(right, constants),
             )
-        }
+        })
+        .or_else(|| {
+            tagged_form_inner(
+                right,
+                relation,
+                relation_keys,
+                identities,
+                constants,
+                alignments,
+                seen,
+            )
+            .map(|form| add_tag(form, left.as_ref().clone(), constant_value(left, constants)))
+        }),
+        Bitvector32Term::UInt64Subtract(left, right) => tagged_form_inner(
+            left,
+            relation,
+            relation_keys,
+            identities,
+            constants,
+            alignments,
+            seen,
+        )
+        .map(|form| TaggedAddress {
+            pointer: form.pointer,
+            tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
+            tag_constant: form
+                .tag_constant
+                .zip(constant_value(right, constants))
+                .map(|(left, right)| left.wrapping_sub(right)),
+        }),
         Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            let (inner, mask) = match (bounded_uint64_const(left), bounded_uint64_const(right)) {
+            let (inner, mask) = match (
+                constant_value(left, constants),
+                constant_value(right, constants),
+            ) {
                 (None, Some(mask)) => (left.as_ref(), mask),
                 (Some(mask), None) => (right.as_ref(), mask),
                 _ => return None,
@@ -1193,8 +1318,15 @@ fn tagged_form_inner(
             if !alignment.is_power_of_two() {
                 return None;
             }
-            let form =
-                tagged_form_inner(inner, relation, relation_keys, identities, alignments, seen)?;
+            let form = tagged_form_inner(
+                inner,
+                relation,
+                relation_keys,
+                identities,
+                constants,
+                alignments,
+                seen,
+            )?;
             if !alignments.iter().any(|(pointer, candidate)| {
                 pointer_equal(pointer, &form.pointer) && *candidate >= alignment
             }) {
@@ -1206,18 +1338,28 @@ fn tagged_form_inner(
                     form.tag,
                     Bitvector32Term::UInt64Constant(mask),
                 ),
+                tag_constant: form.tag_constant.map(|tag| tag & mask),
             })
         }
         Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            let (inner, constant) = match (bounded_uint64_const(left), bounded_uint64_const(right))
-            {
+            let (inner, constant) = match (
+                constant_value(left, constants),
+                constant_value(right, constants),
+            ) {
                 (None, Some(constant)) => (left.as_ref(), constant),
                 (Some(constant), None) => (right.as_ref(), constant),
                 _ => return None,
             };
             let alignment = constant.checked_add(1)?.next_power_of_two();
-            let form =
-                tagged_form_inner(inner, relation, relation_keys, identities, alignments, seen)?;
+            let form = tagged_form_inner(
+                inner,
+                relation,
+                relation_keys,
+                identities,
+                constants,
+                alignments,
+                seen,
+            )?;
             if constant != 0
                 && !alignments.iter().any(|(pointer, candidate)| {
                     pointer_equal(pointer, &form.pointer) && *candidate >= alignment
@@ -1231,6 +1373,7 @@ fn tagged_form_inner(
                     form.tag,
                     Bitvector32Term::UInt64Constant(constant),
                 ),
+                tag_constant: form.tag_constant.map(|tag| tag | constant),
             })
         }
         _ => None,
@@ -1245,6 +1388,7 @@ fn tagged_form_inner(
             relation,
             relation_keys,
             identities,
+            constants,
             alignments,
             seen,
         )
@@ -1256,6 +1400,7 @@ fn tagged_form_inner(
             relation,
             relation_keys,
             identities,
+            constants,
             alignments,
             seen,
         )
@@ -1325,10 +1470,7 @@ fn pointer_word_equality(
                 if pointer_equal(&goal_left.pointer, &goal_right.pointer) =>
             {
                 matches!(
-                    (
-                        bounded_uint64_const(&goal_left.tag),
-                        bounded_uint64_const(&goal_right.tag),
-                    ),
+                    (goal_left.tag_constant, goal_right.tag_constant),
                     (Some(left), Some(right)) if left != right
                 )
             }
@@ -1935,6 +2077,51 @@ mod tests {
                 tagged = Bitvector32Term::UInt64Add(
                     Box::new(tagged),
                     Box::new(Bitvector32Term::UInt64Constant(1)),
+                );
+            }
+            let relation = Proposition::ConditionIs(
+                ConditionTerm::Bitvector64Equal(Box::new(variable.clone()), Box::new(tagged)),
+                true,
+            );
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::Bitvector64Equal(Box::new(variable.clone()), Box::new(variable)),
+                true,
+            );
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            };
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate
+                    .check(&goal, std::slice::from_ref(&relation))
+                    .is_ok()
+            });
+            assert!(valid);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 4);
+            }
+            previous = Some(work);
+        }
+    }
+
+    #[test]
+    fn tagged_word_symbolic_tag_chains_scale_without_rewalking_tags() {
+        let mut previous = None;
+        for depth in [4, 8, 16, 32, 64] {
+            let address =
+                Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0))));
+            let variable = Bitvector32Term::Variable(crate::kernel::Variable(194));
+            let mut tagged = address;
+            for index in 0..depth {
+                tagged = Bitvector32Term::UInt64Add(
+                    Box::new(tagged),
+                    Box::new(Bitvector32Term::Variable(crate::kernel::Variable(
+                        200 + index,
+                    ))),
                 );
             }
             let relation = Proposition::ConditionIs(
