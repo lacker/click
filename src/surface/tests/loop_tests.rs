@@ -476,7 +476,6 @@ fn pointer_loop_increment_emits_checked_equality_proof() {
 }
 
 #[test]
-#[ignore = "pending kernel scaled-alignment lowering for this source shape"]
 fn symbolic_alignment_expands_to_special_certificate_and_rechecks_without_planning() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/aligned_symbolic_displacement.md");

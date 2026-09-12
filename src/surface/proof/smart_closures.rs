@@ -1225,6 +1225,78 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(unfolded));
         }
+        // A Special fact such as `aligned(p + i, 8)` is not generally a
+        // simp-derivation: the kernel's pointer rule consumes a matching
+        // alignment/relation fact directly. Use the selected pairs when
+        // `simp using` supplied them; otherwise recover only typed Special
+        // candidates from the recorded Surface map for generic `simp()`.
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(goal) = self.goal()
+        {
+            let special_pairs = if !anchored_pairs.is_empty() {
+                anchored_pairs.clone()
+            } else {
+                let (surface_facts, premise_anchor) = match self.context.as_ref() {
+                    ProofContext::Pure(context) => {
+                        (&context.theorem_context.surface_requirements, None)
+                    }
+                    ProofContext::FixedState(context) => (
+                        context.surface_propositions,
+                        context.premise_anchor.as_ref(),
+                    ),
+                    ProofContext::Execution(_) => {
+                        if let Some(data) = self.focused_outcome_data() {
+                            (&data.surface_propositions, data.premise_anchor.as_ref())
+                        } else {
+                            let Some(execution) = self.execution() else {
+                                return Ok(None);
+                            };
+                            (&execution.presentation.surface_propositions, None)
+                        }
+                    }
+                };
+                self.facts()
+                    .to_vec()
+                    .iter()
+                    .filter(|premise| {
+                        matches!(
+                            premise,
+                            Proposition::ConditionIs(
+                                ConditionTerm::Bitvector64Equal(..)
+                                    | ConditionTerm::PointerEqual(..)
+                                    | ConditionTerm::PointerOffsetEqual(..)
+                                    | ConditionTerm::Float32(
+                                        CFloatCondition::Classification { .. }
+                                    )
+                                    | ConditionTerm::Float64(
+                                        CFloatCondition::Classification { .. }
+                                    ),
+                                true
+                            )
+                        )
+                    })
+                    .filter_map(|premise| {
+                        self.available_surface_fact(surface_facts, premise_anchor, premise)
+                            .map(|surface| (premise.clone(), surface))
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let kernels = special_pairs
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            let surfaces = special_pairs
+                .iter()
+                .map(|(_, surface)| surface.clone())
+                .collect::<Vec<_>>();
+            if let Some(plan) = plan_special_arithmetic_certificate(goal, &kernels)
+                && let Ok(proof) = self.apply_step(ProofStep::ArithmeticCertificate(
+                    special_plan_to_surface_certificate(&plan, &surfaces, surface_goal),
+                ))
+            {
+                return Ok(Some(proof));
+            }
+        }
         // Signed arithmetic is the final fallback. All established
         // equality, transport, quantifier, structural, and function-unfold
         // routes must get first choice so their selected proof steps remain

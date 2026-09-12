@@ -949,6 +949,7 @@ impl<'a> Proof<'a> {
             states.element_types, &states.entry_state, states.entry_values, states.current_values,
             algebraic, &integers, None, &RecordedSnapshots::new(), &PureFactContext::new(),
             context.predicate_environment, context.click_function_environment, BTreeSet::new(),
+            BTreeMap::new(),
         ).map_err(|message| self.step_error(format!("could not lower Integer witness: {message}")))?;
         let crate::kernel::SpecProposition::IntegerComparison { left, .. } = spec else {
             return Err(self.step_error("witness must be an Integer expression"));

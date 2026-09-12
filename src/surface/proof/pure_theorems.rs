@@ -3159,6 +3159,7 @@ fn lower_pure_simp_after_function_unfold(
                 predicate_environment,
                 click_function_environment,
                 &opaque_calls,
+                BTreeMap::new(),
             )
             .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
         let Some(plan) = plan_simp_certificate(&refreshed_goal, &assumptions) else {
@@ -3893,6 +3894,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
         predicate_environment,
         click_function_environment,
         &BTreeSet::new(),
+        BTreeMap::new(),
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
@@ -3978,6 +3980,7 @@ fn lower_pure_theorem_proposition_with_opaque_calls_and_integer_values(
         predicate_environment,
         click_function_environment,
         opaque_click_functions,
+        BTreeMap::new(),
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
@@ -4685,6 +4688,7 @@ fn prove_pure_theorem_tactics(
                         predicate_environment,
                         click_function_environment,
                         &opaque_calls,
+                        BTreeMap::new(),
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
