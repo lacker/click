@@ -24,6 +24,26 @@ fn charge_payload(payload: usize) -> bool {
         && !crate::instrumentation::deadline_exceeded_with_work(payload.max(1))
 }
 
+fn pointer_block_payload(block: &PointerBlock) -> Option<usize> {
+    let payload = match block {
+        PointerBlock::Concrete(name) | PointerBlock::Function(name) => {
+            1usize.checked_add(name.len())?
+        }
+        PointerBlock::StringLiteral { identity, bytes } => 1usize
+            .checked_add(identity.len())?
+            .checked_add(bytes.len())?,
+        PointerBlock::FunctionSymbolic(_)
+        | PointerBlock::ExternalArgument
+        | PointerBlock::Symbolic(_)
+        | PointerBlock::Heap(_) => 1,
+    };
+    (payload <= MAX_TERM_PAYLOAD).then_some(payload)
+}
+
+fn pointer_payload(pointer: &Pointer) -> Option<usize> {
+    pointer_block_payload(&pointer.block)?.checked_add(pointer_offset_payload(&pointer.offset)?)
+}
+
 fn pointer_offset_payload(root: &PointerOffsetTerm) -> Option<usize> {
     let mut pending = vec![root];
     let mut payload = 0usize;
@@ -75,7 +95,7 @@ fn bitvector_payload(root: &Bitvector32Term) -> Option<usize> {
                 pending.push(right);
             }
             Bitvector32Term::PointerAddress(pointer) => {
-                payload = payload.checked_add(pointer_offset_payload(&pointer.offset)?)?;
+                payload = payload.checked_add(pointer_payload(pointer)?)?;
             }
             _ => return None,
         }
@@ -88,6 +108,14 @@ fn bitvector_payload(root: &Bitvector32Term) -> Option<usize> {
 
 fn charge_pointer_offset(offset: &PointerOffsetTerm) -> bool {
     pointer_offset_payload(offset).is_some_and(charge_payload)
+}
+
+fn charge_pointer(pointer: &Pointer) -> bool {
+    pointer_payload(pointer).is_some_and(charge_payload)
+}
+
+fn charge_pointer_block(block: &PointerBlock) -> bool {
+    pointer_block_payload(block).is_some_and(charge_payload)
 }
 
 fn charge_bitvector(term: &Bitvector32Term) -> bool {
@@ -115,6 +143,163 @@ fn charge_signed_bound(proposition: &Proposition) -> bool {
         return false;
     };
     charge_bitvector(left) && charge_bitvector(right)
+}
+
+fn pointer_block_equal(left: &PointerBlock, right: &PointerBlock) -> bool {
+    match (left, right) {
+        (PointerBlock::Concrete(left), PointerBlock::Concrete(right))
+        | (PointerBlock::Function(left), PointerBlock::Function(right)) => left == right,
+        (
+            PointerBlock::StringLiteral {
+                identity: left_identity,
+                bytes: left_bytes,
+            },
+            PointerBlock::StringLiteral {
+                identity: right_identity,
+                bytes: right_bytes,
+            },
+        ) => left_identity == right_identity && left_bytes == right_bytes,
+        (PointerBlock::FunctionSymbolic(left), PointerBlock::FunctionSymbolic(right))
+        | (PointerBlock::Symbolic(left), PointerBlock::Symbolic(right)) => left == right,
+        (PointerBlock::ExternalArgument, PointerBlock::ExternalArgument)
+        | (PointerBlock::Heap(_), PointerBlock::Heap(_)) => left == right,
+        _ => false,
+    }
+}
+
+fn pointer_offset_equal(left: &PointerOffsetTerm, right: &PointerOffsetTerm) -> bool {
+    let mut pending = vec![(left, right)];
+    while let Some((left, right)) = pending.pop() {
+        match (left, right) {
+            (PointerOffsetTerm::Constant(left), PointerOffsetTerm::Constant(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (PointerOffsetTerm::Variable(left), PointerOffsetTerm::Variable(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (
+                PointerOffsetTerm::Add(left_first, left_second),
+                PointerOffsetTerm::Add(right_first, right_second),
+            ) => {
+                pending.push((left_first, right_first));
+                pending.push((left_second, right_second));
+            }
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) if left_width == right_width => {
+                if !bitvector_equal(left, right) {
+                    return false;
+                }
+            }
+            (
+                PointerOffsetTerm::Int64Scaled {
+                    value: left,
+                    byte_width: left_width,
+                    unsigned: left_unsigned,
+                },
+                PointerOffsetTerm::Int64Scaled {
+                    value: right,
+                    byte_width: right_width,
+                    unsigned: right_unsigned,
+                },
+            ) if left_width == right_width && left_unsigned == right_unsigned => {
+                if !bitvector_equal(left, right) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn pointer_equal(left: &Pointer, right: &Pointer) -> bool {
+    pointer_block_equal(&left.block, &right.block)
+        && pointer_offset_equal(&left.offset, &right.offset)
+}
+
+/// Compare only the bounded structural fragment accepted by `bitvector_payload`.
+/// This avoids recursive equality on attacker-controlled expression depth after
+/// the payload has already been charged.
+fn bitvector_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    let mut pending = vec![(left, right)];
+    while let Some((left, right)) = pending.pop() {
+        match (left, right) {
+            (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (Bitvector32Term::Int64Constant(left), Bitvector32Term::Int64Constant(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (Bitvector32Term::UInt64Constant(left), Bitvector32Term::UInt64Constant(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (Bitvector32Term::Variable(left), Bitvector32Term::Variable(right)) => {
+                if left != right {
+                    return false;
+                }
+            }
+            (
+                Bitvector32Term::Add(left_first, left_second),
+                Bitvector32Term::Add(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::Subtract(left_first, left_second),
+                Bitvector32Term::Subtract(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::UInt64Add(left_first, left_second),
+                Bitvector32Term::UInt64Add(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::UInt64Subtract(left_first, left_second),
+                Bitvector32Term::UInt64Subtract(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::UInt64BitwiseAnd(left_first, left_second),
+                Bitvector32Term::UInt64BitwiseAnd(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::UInt64BitwiseOr(left_first, left_second),
+                Bitvector32Term::UInt64BitwiseOr(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::BitwiseAnd(left_first, left_second),
+                Bitvector32Term::BitwiseAnd(right_first, right_second),
+            )
+            | (
+                Bitvector32Term::BitwiseOr(left_first, left_second),
+                Bitvector32Term::BitwiseOr(right_first, right_second),
+            ) => {
+                pending.push((left_first, right_first));
+                pending.push((left_second, right_second));
+            }
+            (Bitvector32Term::PointerAddress(left), Bitvector32Term::PointerAddress(right)) => {
+                if !pointer_equal(left, right) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -176,99 +361,107 @@ impl SpecialArithmeticCertificate {
                 self.conclusion,
             ));
         }
-        let mut checked = Vec::with_capacity(self.nodes.len());
-        for (index, node) in self.nodes.iter().enumerate() {
-            if crate::instrumentation::deadline_exceeded_with_work(1) {
-                return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
-            }
-            let result = match node {
-                SpecialArithmeticNode::PointerTranslation {
-                    relation,
-                    bounds,
-                    result,
-                } => {
-                    if crate::instrumentation::deadline_exceeded_with_work(
-                        bounds.len().saturating_add(1),
-                    ) {
-                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
-                    }
-                    let relation_proposition = premises
-                        .get(*relation)
-                        .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
-                    let bound_propositions = bounds
-                        .iter()
-                        .map(|bound| {
-                            premises
-                                .get(*bound)
-                                .ok_or(SpecialArithmeticCheckError::InvalidPremise(*bound))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if !pointer_translation(relation_proposition, &bound_propositions, result) {
-                        return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
-                    }
-                    result.clone()
-                }
-                SpecialArithmeticNode::PointerAlignment { premise, result } => {
-                    if crate::instrumentation::deadline_exceeded_with_work(1) {
-                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
-                    }
-                    let premise = premise
-                        .map(|index| {
-                            premises
-                                .get(index)
-                                .ok_or(SpecialArithmeticCheckError::InvalidPremise(index))
-                        })
-                        .transpose()?;
-                    if !pointer_alignment(premise, result) {
-                        return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
-                    }
-                    result.clone()
-                }
-                SpecialArithmeticNode::PointerWordEquality {
-                    relation,
-                    alignments,
-                    result,
-                } => {
-                    if crate::instrumentation::deadline_exceeded_with_work(
-                        alignments.len().saturating_add(1),
-                    ) {
-                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
-                    }
-                    let relation = premises
-                        .get(*relation)
-                        .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
-                    let alignments = alignments
-                        .iter()
-                        .map(|index| {
-                            premises
-                                .get(*index)
-                                .ok_or(SpecialArithmeticCheckError::InvalidPremise(*index))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if !pointer_word_equality(relation, &alignments, result) {
-                        return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
-                    }
-                    result.clone()
-                }
-                SpecialArithmeticNode::FloatReflexive { finite, result } => {
-                    if crate::instrumentation::deadline_exceeded_with_work(1) {
-                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
-                    }
-                    let finite = premises
-                        .get(*finite)
-                        .ok_or(SpecialArithmeticCheckError::InvalidPremise(*finite))?;
-                    if !float_reflexive(finite, result) {
-                        return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
-                    }
-                    result.clone()
-                }
-            };
-            checked.push(result);
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
         }
-        if checked[self.conclusion] == *goal {
-            Ok(())
-        } else {
-            Err(SpecialArithmeticCheckError::DoesNotFollow)
+        let node = &self.nodes[self.conclusion];
+        match node {
+            SpecialArithmeticNode::PointerTranslation {
+                relation,
+                bounds,
+                result,
+            } => {
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    bounds.len().saturating_add(1),
+                ) {
+                    return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let relation_proposition = premises
+                    .get(*relation)
+                    .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
+                let bound_propositions = bounds
+                    .iter()
+                    .map(|bound| {
+                        premises
+                            .get(*bound)
+                            .ok_or(SpecialArithmeticCheckError::InvalidPremise(*bound))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !pointer_translation(relation_proposition, &bound_propositions, result) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
+                        self.conclusion,
+                    ));
+                }
+                (result == goal)
+                    .then_some(())
+                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+            }
+            SpecialArithmeticNode::PointerAlignment { premise, result } => {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let premise = premise
+                    .map(|index| {
+                        premises
+                            .get(index)
+                            .ok_or(SpecialArithmeticCheckError::InvalidPremise(index))
+                    })
+                    .transpose()?;
+                if !pointer_alignment(premise, result) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
+                        self.conclusion,
+                    ));
+                }
+                (result == goal)
+                    .then_some(())
+                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+            }
+            SpecialArithmeticNode::PointerWordEquality {
+                relation,
+                alignments,
+                result,
+            } => {
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    alignments.len().saturating_add(1),
+                ) {
+                    return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let relation = premises
+                    .get(*relation)
+                    .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
+                let alignments = alignments
+                    .iter()
+                    .map(|index| {
+                        premises
+                            .get(*index)
+                            .ok_or(SpecialArithmeticCheckError::InvalidPremise(*index))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !pointer_word_equality(relation, &alignments, result) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
+                        self.conclusion,
+                    ));
+                }
+                (result == goal)
+                    .then_some(())
+                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+            }
+            SpecialArithmeticNode::FloatReflexive { finite, result } => {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let finite = premises
+                    .get(*finite)
+                    .ok_or(SpecialArithmeticCheckError::InvalidPremise(*finite))?;
+                if !float_reflexive(finite, result) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(
+                        self.conclusion,
+                    ));
+                }
+                (result == goal)
+                    .then_some(())
+                    .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
+            }
         }
     }
 }
@@ -384,6 +577,16 @@ fn pointer_translation(
         || !charge_pointer_offset(goal_right)
         || !charge_pointer_offset(premise_left)
         || !charge_pointer_offset(premise_right)
+    {
+        return false;
+    }
+    if let Some((goal_l, goal_r)) = goal_blocks
+        && (!charge_pointer_block(goal_l) || !charge_pointer_block(goal_r))
+    {
+        return false;
+    }
+    if let Some((premise_l, premise_r)) = premise_blocks
+        && (!charge_pointer_block(premise_l) || !charge_pointer_block(premise_r))
     {
         return false;
     }
@@ -519,7 +722,7 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
     let Some((goal_pointer, goal_alignment)) = condition.as_pointer_alignment() else {
         return false;
     };
-    if !charge_pointer_offset(&goal_pointer.offset) {
+    if !charge_pointer(goal_pointer) {
         return false;
     }
     let premise_alignment = premise.and_then(|proposition| {
@@ -535,14 +738,16 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         return false;
     }
     let aligned = if let Some((base, alignment)) = premise_alignment {
-        if !charge_pointer_offset(&base.offset) {
+        if !charge_pointer(base) {
             return false;
         }
         if base.block != goal_pointer.block || alignment % goal_alignment != 0 {
             return false;
         }
-        offset_difference(&goal_pointer.offset, &base.offset)
-            .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+        let Some(delta) = offset_difference(&goal_pointer.offset, &base.offset) else {
+            return false;
+        };
+        delta.rem_euclid(goal_alignment as i128) == 0
     } else {
         let intrinsic_alignment = match &goal_pointer.block {
             PointerBlock::Heap(_) => Some(crate::kernel::primitives::HEAP_ALLOCATION_ALIGNMENT),
@@ -554,8 +759,11 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         if goal_alignment > intrinsic {
             return false;
         }
-        offset_difference(&goal_pointer.offset, &PointerOffsetTerm::Constant(0))
-            .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+        let Some(delta) = offset_difference(&goal_pointer.offset, &PointerOffsetTerm::Constant(0))
+        else {
+            return false;
+        };
+        delta.rem_euclid(goal_alignment as i128) == 0
     };
     *expected == aligned
 }
@@ -581,27 +789,46 @@ fn tagged_form(
     relation: (&Bitvector32Term, &Bitvector32Term),
     alignments: &[(&Pointer, u64)],
 ) -> Option<TaggedAddress> {
+    tagged_form_inner(term, relation, alignments, &mut Vec::new())
+}
+
+fn tagged_form_inner(
+    term: &Bitvector32Term,
+    relation: (&Bitvector32Term, &Bitvector32Term),
+    alignments: &[(&Pointer, u64)],
+    seen: &mut Vec<Bitvector32Term>,
+) -> Option<TaggedAddress> {
+    if seen
+        .iter()
+        .any(|candidate| bitvector_equal(candidate, term))
+    {
+        return None;
+    }
+    seen.push(term.clone());
     let direct = match term {
         Bitvector32Term::PointerAddress(pointer) => Some(TaggedAddress {
             pointer: pointer.as_ref().clone(),
             tag: Bitvector32Term::UInt64Constant(0),
         }),
-        Bitvector32Term::UInt64Add(left, right) => tagged_form(left, relation, alignments)
-            .map(|form| TaggedAddress {
-                pointer: form.pointer,
-                tag: add_tag(form.tag, right.as_ref().clone()),
-            })
-            .or_else(|| {
-                tagged_form(right, relation, alignments).map(|form| TaggedAddress {
+        Bitvector32Term::UInt64Add(left, right) => {
+            tagged_form_inner(left, relation, alignments, seen)
+                .map(|form| TaggedAddress {
                     pointer: form.pointer,
-                    tag: add_tag(left.as_ref().clone(), form.tag),
+                    tag: add_tag(form.tag, right.as_ref().clone()),
                 })
-            }),
-        Bitvector32Term::UInt64Subtract(left, right) => tagged_form(left, relation, alignments)
-            .map(|form| TaggedAddress {
+                .or_else(|| {
+                    tagged_form_inner(right, relation, alignments, seen).map(|form| TaggedAddress {
+                        pointer: form.pointer,
+                        tag: add_tag(left.as_ref().clone(), form.tag),
+                    })
+                })
+        }
+        Bitvector32Term::UInt64Subtract(left, right) => {
+            tagged_form_inner(left, relation, alignments, seen).map(|form| TaggedAddress {
                 pointer: form.pointer,
                 tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
-            }),
+            })
+        }
         Bitvector32Term::UInt64BitwiseAnd(left, right) => {
             let (inner, mask) = match (left.uint64_as_const(), right.uint64_as_const()) {
                 (None, Some(mask)) => (left.as_ref(), mask),
@@ -612,7 +839,7 @@ fn tagged_form(
             if !alignment.is_power_of_two() {
                 return None;
             }
-            let form = tagged_form(inner, relation, alignments)?;
+            let form = tagged_form_inner(inner, relation, alignments, seen)?;
             if !alignments
                 .iter()
                 .any(|(pointer, candidate)| *pointer == &form.pointer && *candidate >= alignment)
@@ -634,7 +861,7 @@ fn tagged_form(
                 _ => return None,
             };
             let alignment = constant.checked_add(1)?.next_power_of_two();
-            let form = tagged_form(inner, relation, alignments)?;
+            let form = tagged_form_inner(inner, relation, alignments, seen)?;
             if constant != 0
                 && !alignments.iter().any(|(pointer, candidate)| {
                     *pointer == &form.pointer && *candidate >= alignment
@@ -652,16 +879,17 @@ fn tagged_form(
         }
         _ => None,
     };
-    if direct.is_some() {
-        return direct;
-    }
-    if term == relation.0 {
-        return tagged_form(relation.1, relation, alignments);
-    }
-    if term == relation.1 {
-        return tagged_form(relation.0, relation, alignments);
-    }
-    None
+    let result = if direct.is_some() {
+        direct
+    } else if bitvector_equal(term, relation.0) {
+        tagged_form_inner(relation.1, relation, alignments, seen)
+    } else if bitvector_equal(term, relation.1) {
+        tagged_form_inner(relation.0, relation, alignments, seen)
+    } else {
+        None
+    };
+    seen.pop();
+    result
 }
 
 fn pointer_word_equality(
@@ -763,10 +991,13 @@ fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
         }) => (*operator, left.as_ref(), right.as_ref(), 64),
         _ => return false,
     };
-    if width != finite_width || left != right || left != finite_expression {
+    if !charge_bitvector(left) || !charge_bitvector(right) {
         return false;
     }
-    if !charge_bitvector(left) || !charge_bitvector(right) {
+    if width != finite_width
+        || !bitvector_equal(left, right)
+        || !bitvector_equal(left, finite_expression)
+    {
         return false;
     }
     let reflexive = matches!(
@@ -928,6 +1159,50 @@ mod tests {
         }
         .check(&known_misalignment, std::slice::from_ref(&aligned_base))
         .unwrap();
+
+        let unknown_offset = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(
+                pointer(PointerOffsetTerm::Variable(crate::kernel::Variable(77))),
+                8,
+            ),
+            false,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: None,
+                    result: unknown_offset.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&unknown_offset, &[]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+
+        let unknown_from_base = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(
+                Pointer {
+                    block: base.block.clone(),
+                    offset: PointerOffsetTerm::Add(
+                        Box::new(PointerOffsetTerm::Constant(0)),
+                        Box::new(PointerOffsetTerm::Variable(crate::kernel::Variable(78))),
+                    ),
+                },
+                8,
+            ),
+            false,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: Some(0),
+                    result: unknown_from_base.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&unknown_from_base, std::slice::from_ref(&aligned_base)),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
 
         for alignment in [2, 4, 8, 16] {
             let goal = Proposition::ConditionIs(
@@ -1162,6 +1437,120 @@ mod tests {
             conclusion: 0,
         }
         .check(&goal, &[relation])
+        .unwrap();
+    }
+
+    #[test]
+    fn tagged_word_rejects_cyclic_raw_variable_relation() {
+        let left = Bitvector32Term::Variable(crate::kernel::Variable(80));
+        let right = Bitvector32Term::Variable(crate::kernel::Variable(81));
+        let relation = Proposition::ConditionIs(
+            ConditionTerm::Bitvector64Equal(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        );
+        let goal = relation.clone();
+        let certificate = SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                relation: 0,
+                alignments: vec![],
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        };
+        assert!(matches!(
+            certificate.check(&goal, &[relation]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
+    fn pointer_block_payload_is_bounded_before_block_comparison() {
+        let blocks = [
+            PointerBlock::Concrete("c".repeat(MAX_TERM_PAYLOAD + 1)),
+            PointerBlock::StringLiteral {
+                identity: "s".repeat(MAX_TERM_PAYLOAD / 2 + 1),
+                bytes: vec![b'x'; MAX_TERM_PAYLOAD / 2 + 1],
+            },
+        ];
+        for block in blocks {
+            let left = Pointer {
+                block: block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let right = Pointer {
+                block,
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let relation = Proposition::ConditionIs(
+                ConditionTerm::PointerEqual(Box::new(left.clone()), Box::new(right.clone())),
+                true,
+            );
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerTranslation {
+                    relation: 0,
+                    bounds: vec![],
+                    result: relation.clone(),
+                }],
+                conclusion: 0,
+            };
+            assert!(matches!(
+                certificate.check(&relation, std::slice::from_ref(&relation)),
+                Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+            ));
+        }
+    }
+
+    #[test]
+    fn float_payload_is_bounded_before_structural_identity() {
+        let mut value = Bitvector32Term::Variable(crate::kernel::Variable(90));
+        for _ in 0..=MAX_TERM_PAYLOAD {
+            value = Bitvector32Term::Add(Box::new(value), Box::new(Bitvector32Term::Constant(1)));
+        }
+        let finite = Proposition::ConditionIs(
+            ConditionTerm::float32_classification(value.clone(), CFloatClassification::Finite),
+            true,
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::float32_compare(value.clone(), value, CComparisonOperator::Equal),
+            true,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::FloatReflexive {
+                    finite: 0,
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, &[finite]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
+    fn checker_ignores_unselected_nodes_without_cloning_results() {
+        let value = Bitvector32Term::Variable(crate::kernel::Variable(91));
+        let finite = Proposition::ConditionIs(
+            ConditionTerm::float32_classification(value.clone(), CFloatClassification::Finite),
+            true,
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::float32_compare(value.clone(), value, CComparisonOperator::Equal),
+            true,
+        );
+        let mut nodes = vec![SpecialArithmeticNode::FloatReflexive {
+            finite: 0,
+            result: goal.clone(),
+        }];
+        nodes.extend((0..1024).map(|_| SpecialArithmeticNode::FloatReflexive {
+            finite: usize::MAX,
+            result: Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+        }));
+        SpecialArithmeticCertificate {
+            nodes,
+            conclusion: 0,
+        }
+        .check(&goal, &[finite])
         .unwrap();
     }
 }
