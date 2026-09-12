@@ -518,7 +518,7 @@ Scope: `examples/modeled-binary-tree` sidecar. Add `Context`, `ctx_at`,
 `produces ctx: ctx_at(result); produces sub: tree_at(result); ensures
 plug(ctx.model, sub.model) == old(t.model);` and the leftmost or rightmost
 position stated on the model. Regressions: the example itself plus a focused
-mdtest with a negative that drops a frame. Depends on A1, A2, A3, A4.
+mdtest with a negative that drops a frame. Depends on A1, A2, A3, A4, A5, A9.
 
 **B2. Right rotation, membership, and rotation theorems.**
 Scope: `heap_rotate_right` with its in-order preservation theorem, the
