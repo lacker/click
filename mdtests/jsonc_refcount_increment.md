@@ -1,8 +1,7 @@
 # json-c refcount increment
 
-This pilot keeps the json-c-shaped reference-count slice on the non-ownership
-side of the design boundary. It proves a field increment under an ordinary
-signed-overflow precondition.
+This regression proves a field increment in a synthetic json-c-shaped object
+under a signed-overflow precondition and a field-sized write resource.
 
 ```c filename=json_object_inc_ref_count.c
 struct json_object {

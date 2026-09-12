@@ -8,8 +8,9 @@ exactly one function"). The tokenizer has no arm for `#` or `"`
 (`syntax.rs:1945-1972`), so every real file fails on its first `#include`.
 There are no forward declarations or prototypes, and every callee's struct
 declarations must be re-pasted per file (see `examples/jsonc-refcount/*.c`,
-each redeclaring `struct json_object`). `docs/internals/roadmap.md:264-272`
-lists the preprocessor as deferred.
+each redeclaring `struct json_object`). These observations describe the
+original audit baseline. Current launch priority follows the rbtree scope in
+[README.md](README.md).
 
 The first implementation slice accepts multiple function definitions and
 compatible forward prototypes in one source. The next slice now resolves

@@ -73,13 +73,12 @@ lowered as scalar constants in C expressions.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
-rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists broader struct values and unsupported pointer forms as remaining. The first
-tagged-union slice is covered by
+rides on pointer offsets. The first tagged-union slice is covered by
 `mdtests/struct_tagged_union.md`; arbitrary tag-to-member mappings remain an
-explicit source-level precondition rather than an inferred rule. The pilot
-target json-c's `json_object` uses unions,
-enums, and function pointers.
+explicit source-level precondition rather than an inferred rule. Prioritize
+the aggregate and callback-field support required by the rbtree launch scope
+in [README.md](README.md); broader aggregate coverage is not an additional
+launch prerequisite.
 
 ## Violated invariant
 

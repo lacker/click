@@ -26,11 +26,12 @@ an issue, scope it narrowly to the evidence.
 
 ## P1: before launch (9)
 
-Launch is the minimum viable rbtree (MVR): the smallest result that supports
-a public claim that Click verified the Linux kernel rbtree implementation. It
-verifies an unchanged, pinned upstream `lib/rbtree.c` and the public inline
-rbtree implementation in `rbtree.h` and `rbtree_augmented.h`, under one pinned
-compiler configuration and LP64 target.
+The launch strategy is to complete P1, deliver the minimum viable rbtree
+(MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
+result that supports a public claim that Click verified the Linux kernel
+rbtree implementation. It verifies an unchanged, pinned upstream `lib/rbtree.c`
+and the public inline rbtree implementation in `rbtree.h` and
+`rbtree_augmented.h`, under one pinned compiler configuration and LP64 target.
 
 The proof must establish sequential memory safety and defined behavior;
 parent/child consistency and acyclicity; preservation of the red-black color

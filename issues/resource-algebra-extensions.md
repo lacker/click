@@ -1,9 +1,10 @@
 # Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients
 
-Found by the 2026-09-01 kernel audit at cb034b21. `docs/internals/roadmap.md:133-137`
-and `docs/concepts/resources.md:589-599` already list most of these as
-future work; this issue records the concrete rejection sites and a
-regression for each so any one can be picked up independently.
+Found by the 2026-09-01 kernel audit at cb034b21. This issue records the
+rejection sites observed in that audit and a regression for each so the
+remaining work can be picked up independently. Priority follows the P2 list
+in [README.md](README.md); these extensions are not launch prerequisites
+unless they become rbtree or tooling blockers.
 
 - **Fractional and persistent read permissions.** Shared read-only structures
   (several readers of one buffer across call boundaries) need exact-transfer

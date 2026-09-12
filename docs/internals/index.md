@@ -23,7 +23,8 @@ name differ, user-facing documentation uses the Surface Click name.
 
 ## Project direction
 
-- [Roadmap](roadmap.md)
+- [Rbtree launch roadmap](roadmap.md)
 
-The roadmap describes intended work, not accepted syntax or a stability
+The roadmap is to complete P1, verify rbtree, and launch publicly with rbtree
+as the key demo. It describes intended work, not accepted syntax or a stability
 promise. The technical reference remains authoritative for current behavior.

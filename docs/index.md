@@ -55,5 +55,6 @@ subset.
 
 Click is experimental and its supported language is intentionally small. The
 [language limitations](reference/language/limitations.md) describe known
-boundaries. The [roadmap](internals/roadmap.md) is project direction rather
-than a promise that unimplemented behavior is available.
+boundaries. The [rbtree launch roadmap](internals/roadmap.md) is to complete P1,
+verify rbtree, and launch publicly with rbtree as the key demo. It describes
+project direction rather than a promise that unimplemented behavior is available.
