@@ -2880,6 +2880,26 @@ pub(crate) fn registered_block_alignment(block: &PointerBlock) -> Option<u64> {
     BLOCK_ALIGNMENT_REGISTRY.with(|registry| registry.borrow().get(block).copied())
 }
 
+/// Look up an intrinsic block alignment after charging the bounded key
+/// payload and logarithmic ordered-map search. Callers must validate the key
+/// payload before invoking this helper; the charge here accounts for the
+/// registry lookup itself and never scans unrelated entries.
+pub(crate) fn registered_block_alignment_charged(
+    block: &PointerBlock,
+    key_payload: usize,
+) -> Option<u64> {
+    BLOCK_ALIGNMENT_REGISTRY.with(|registry| {
+        let registry = registry.borrow();
+        let comparisons = (usize::BITS - registry.len().max(1).leading_zeros()) as usize;
+        if crate::instrumentation::deadline_exceeded_with_work(
+            key_payload.saturating_mul(comparisons).max(1),
+        ) {
+            return None;
+        }
+        registry.get(block).copied()
+    })
+}
+
 pub(crate) fn clear_block_alignment_registry() {
     BLOCK_ALIGNMENT_REGISTRY.with(|registry| registry.borrow_mut().clear());
 }

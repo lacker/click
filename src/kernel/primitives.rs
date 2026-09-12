@@ -25,6 +25,7 @@ mod derivations;
 mod memory_state;
 pub(crate) use memory_state::{
     clear_block_alignment_registry, register_block_alignment, registered_block_alignment,
+    registered_block_alignment_charged,
 };
 mod resource_algebra;
 mod term_operations;

@@ -13,7 +13,9 @@ use super::super::{
     Bitvector32Term, CComparisonOperator, CFloatClassification, CFloatCondition, ConditionTerm,
     Pointer, PointerBlock, PointerOffsetTerm, Proposition,
 };
-use std::collections::BTreeMap;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 const SIGNED_MIN: i64 = i32::MIN as i64;
 const SIGNED_MAX: i64 = i32::MAX as i64;
@@ -881,9 +883,21 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         };
         delta.rem_euclid(goal_alignment as i128) == 0
     } else {
-        let intrinsic_alignment = match &goal_pointer.block {
-            PointerBlock::Heap(_) => Some(crate::kernel::primitives::HEAP_ALLOCATION_ALIGNMENT),
-            block => crate::kernel::primitives::registered_block_alignment(block),
+        let intrinsic_alignment = if pointer_equal(goal_pointer, &Pointer::null()) {
+            // The null address is zero, so every valid power-of-two alignment
+            // divides it; use the largest possible bound as an intrinsic
+            // alignment sentinel.
+            Some(u64::MAX)
+        } else {
+            match &goal_pointer.block {
+                PointerBlock::Heap(_) => Some(crate::kernel::primitives::HEAP_ALLOCATION_ALIGNMENT),
+                block => {
+                    let Some(payload) = pointer_block_payload(block) else {
+                        return false;
+                    };
+                    crate::kernel::primitives::registered_block_alignment_charged(block, payload)
+                }
+            }
         };
         let Some(intrinsic) = intrinsic_alignment else {
             return false;
@@ -906,10 +920,203 @@ struct TaggedAddress {
     tag: Bitvector32Term,
 }
 
+fn bounded_uint64_const(root: &Bitvector32Term) -> Option<u64> {
+    let mut pending = vec![(root, false)];
+    let mut values: Vec<u64> = Vec::new();
+    while let Some((term, expanded)) = pending.pop() {
+        if expanded {
+            let value = match term {
+                Bitvector32Term::UInt64Constant(value) => *value,
+                Bitvector32Term::UInt64Add(_, _)
+                | Bitvector32Term::UInt64Subtract(_, _)
+                | Bitvector32Term::UInt64Multiply(_, _)
+                | Bitvector32Term::UInt64Divide(_, _)
+                | Bitvector32Term::UInt64Remainder(_, _)
+                | Bitvector32Term::UInt64ShiftLeft(_, _)
+                | Bitvector32Term::UInt64LogicalShiftRight(_, _)
+                | Bitvector32Term::UInt64BitwiseAnd(_, _)
+                | Bitvector32Term::UInt64BitwiseOr(_, _)
+                | Bitvector32Term::UInt64BitwiseXor(_, _) => {
+                    let right = values.pop()?;
+                    let left = values.pop()?;
+                    match term {
+                        Bitvector32Term::UInt64Add(_, _) => left.wrapping_add(right),
+                        Bitvector32Term::UInt64Subtract(_, _) => left.wrapping_sub(right),
+                        Bitvector32Term::UInt64Multiply(_, _) => left.wrapping_mul(right),
+                        Bitvector32Term::UInt64Divide(_, _) if right != 0 => left / right,
+                        Bitvector32Term::UInt64Remainder(_, _) if right != 0 => left % right,
+                        Bitvector32Term::UInt64ShiftLeft(_, _) if right < 64 => {
+                            left.wrapping_shl(right as u32)
+                        }
+                        Bitvector32Term::UInt64LogicalShiftRight(_, _) if right < 64 => {
+                            left >> right
+                        }
+                        Bitvector32Term::UInt64BitwiseAnd(_, _) => left & right,
+                        Bitvector32Term::UInt64BitwiseOr(_, _) => left | right,
+                        Bitvector32Term::UInt64BitwiseXor(_, _) => left ^ right,
+                        _ => return None,
+                    }
+                }
+                Bitvector32Term::UInt64BitwiseNot(_) => !values.pop()?,
+                Bitvector32Term::UInt64From32(value) => match value.as_ref() {
+                    Bitvector32Term::Constant(value) => u64::from(*value),
+                    _ => values.pop()?,
+                },
+                Bitvector32Term::UInt64FromInt32(value) => match value.as_ref() {
+                    Bitvector32Term::Constant(value) => (*value as i32 as i64) as u64,
+                    _ => values.pop()?,
+                },
+                Bitvector32Term::UInt64FromInt64(value) => match value.as_ref() {
+                    Bitvector32Term::Int64Constant(value) => *value as u64,
+                    _ => values.pop()?,
+                },
+                _ => return None,
+            };
+            values.push(value);
+            continue;
+        }
+        match term {
+            Bitvector32Term::UInt64Constant(_) => pending.push((term, true)),
+            Bitvector32Term::UInt64BitwiseNot(value)
+            | Bitvector32Term::UInt64From32(value)
+            | Bitvector32Term::UInt64FromInt32(value)
+            | Bitvector32Term::UInt64FromInt64(value) => {
+                pending.push((term, true));
+                let direct = matches!(
+                    (term, value.as_ref()),
+                    (
+                        Bitvector32Term::UInt64From32(_),
+                        Bitvector32Term::Constant(_)
+                    ) | (
+                        Bitvector32Term::UInt64FromInt32(_),
+                        Bitvector32Term::Constant(_)
+                    ) | (
+                        Bitvector32Term::UInt64FromInt64(_),
+                        Bitvector32Term::Int64Constant(_)
+                    )
+                );
+                if !direct {
+                    pending.push((value, false));
+                }
+            }
+            Bitvector32Term::UInt64Add(left, right)
+            | Bitvector32Term::UInt64Subtract(left, right)
+            | Bitvector32Term::UInt64Multiply(left, right)
+            | Bitvector32Term::UInt64Divide(left, right)
+            | Bitvector32Term::UInt64Remainder(left, right)
+            | Bitvector32Term::UInt64ShiftLeft(left, right)
+            | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+            | Bitvector32Term::UInt64BitwiseAnd(left, right)
+            | Bitvector32Term::UInt64BitwiseOr(left, right)
+            | Bitvector32Term::UInt64BitwiseXor(left, right) => {
+                pending.push((term, true));
+                pending.push((right, false));
+                pending.push((left, false));
+            }
+            _ => return None,
+        }
+    }
+    (values.len() == 1).then_some(values[0])
+}
+
+fn pointer_identity_hash(pointer: &Pointer) -> Option<u64> {
+    let mut hasher = DefaultHasher::new();
+    pointer.block.hash(&mut hasher);
+    let mut pending = vec![&pointer.offset];
+    while let Some(offset) = pending.pop() {
+        match offset {
+            PointerOffsetTerm::Constant(value) => {
+                0u8.hash(&mut hasher);
+                value.hash(&mut hasher);
+            }
+            PointerOffsetTerm::Variable(value) => {
+                1u8.hash(&mut hasher);
+                value.hash(&mut hasher);
+            }
+            PointerOffsetTerm::Add(left, right) => {
+                2u8.hash(&mut hasher);
+                pending.push(right);
+                pending.push(left);
+            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                3u8.hash(&mut hasher);
+                byte_width.hash(&mut hasher);
+                bounded_term_hash(value)?.hash(&mut hasher);
+            }
+            PointerOffsetTerm::Int64Scaled { .. } => return None,
+        }
+    }
+    Some(hasher.finish())
+}
+
+fn bounded_term_hashes(roots: &[&Bitvector32Term]) -> Option<HashMap<usize, u64>> {
+    let mut pending = roots.iter().map(|root| (*root, false)).collect::<Vec<_>>();
+    let mut hashes: HashMap<usize, u64> = HashMap::new();
+    while let Some((term, expanded)) = pending.pop() {
+        let identity = term as *const Bitvector32Term as usize;
+        if hashes.contains_key(&identity) {
+            continue;
+        }
+        if expanded {
+            let mut hasher = DefaultHasher::new();
+            std::mem::discriminant(term).hash(&mut hasher);
+            match term {
+                Bitvector32Term::Constant(value) => value.hash(&mut hasher),
+                Bitvector32Term::Int64Constant(value) => value.hash(&mut hasher),
+                Bitvector32Term::UInt64Constant(value) => value.hash(&mut hasher),
+                Bitvector32Term::Variable(value) => value.hash(&mut hasher),
+                Bitvector32Term::PointerAddress(pointer) => {
+                    pointer_identity_hash(pointer)?.hash(&mut hasher)
+                }
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::UInt64Add(left, right)
+                | Bitvector32Term::UInt64Subtract(left, right)
+                | Bitvector32Term::UInt64BitwiseAnd(left, right)
+                | Bitvector32Term::UInt64BitwiseOr(left, right)
+                | Bitvector32Term::BitwiseAnd(left, right)
+                | Bitvector32Term::BitwiseOr(left, right) => {
+                    hashes
+                        .get(&(left.as_ref() as *const _ as usize))?
+                        .hash(&mut hasher);
+                    hashes
+                        .get(&(right.as_ref() as *const _ as usize))?
+                        .hash(&mut hasher);
+                }
+                _ => return None,
+            }
+            hashes.insert(identity, hasher.finish());
+        } else {
+            pending.push((term, true));
+            match term {
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::UInt64Add(left, right)
+                | Bitvector32Term::UInt64Subtract(left, right)
+                | Bitvector32Term::UInt64BitwiseAnd(left, right)
+                | Bitvector32Term::UInt64BitwiseOr(left, right)
+                | Bitvector32Term::BitwiseAnd(left, right)
+                | Bitvector32Term::BitwiseOr(left, right) => {
+                    pending.push((right, false));
+                    pending.push((left, false));
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(hashes)
+}
+
+fn bounded_term_hash(root: &Bitvector32Term) -> Option<u64> {
+    bounded_term_hashes(&[root])?
+        .get(&(root as *const Bitvector32Term as usize))
+        .copied()
+}
+
 fn add_tag(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
-    if left.uint64_as_const() == Some(0) {
+    if bounded_uint64_const(&left) == Some(0) {
         right
-    } else if right.uint64_as_const() == Some(0) {
+    } else if bounded_uint64_const(&right) == Some(0) {
         left
     } else {
         Bitvector32Term::uint64_add(left, right)
@@ -921,48 +1128,63 @@ fn tagged_form(
     relation: (&Bitvector32Term, &Bitvector32Term),
     alignments: &[(&Pointer, u64)],
 ) -> Option<TaggedAddress> {
-    tagged_form_inner(term, relation, alignments, &mut Vec::new())
+    let identities = bounded_term_hashes(&[term, relation.0, relation.1])?;
+    let relation_keys = (
+        *identities.get(&(relation.0 as *const _ as usize))?,
+        *identities.get(&(relation.1 as *const _ as usize))?,
+    );
+    let mut seen = HashSet::new();
+    tagged_form_inner(
+        term,
+        relation,
+        relation_keys,
+        &identities,
+        alignments,
+        &mut seen,
+    )
 }
 
 fn tagged_form_inner(
     term: &Bitvector32Term,
     relation: (&Bitvector32Term, &Bitvector32Term),
+    relation_keys: (u64, u64),
+    identities: &HashMap<usize, u64>,
     alignments: &[(&Pointer, u64)],
-    seen: &mut Vec<Bitvector32Term>,
+    seen: &mut HashSet<usize>,
 ) -> Option<TaggedAddress> {
-    if seen
-        .iter()
-        .any(|candidate| bitvector_equal(candidate, term))
-    {
+    let identity = term as *const Bitvector32Term as usize;
+    if !seen.insert(identity) {
         return None;
     }
-    seen.push(term.clone());
     let direct = match term {
         Bitvector32Term::PointerAddress(pointer) => Some(TaggedAddress {
             pointer: pointer.as_ref().clone(),
             tag: Bitvector32Term::UInt64Constant(0),
         }),
         Bitvector32Term::UInt64Add(left, right) => {
-            tagged_form_inner(left, relation, alignments, seen)
+            tagged_form_inner(left, relation, relation_keys, identities, alignments, seen)
                 .map(|form| TaggedAddress {
                     pointer: form.pointer,
                     tag: add_tag(form.tag, right.as_ref().clone()),
                 })
                 .or_else(|| {
-                    tagged_form_inner(right, relation, alignments, seen).map(|form| TaggedAddress {
-                        pointer: form.pointer,
-                        tag: add_tag(left.as_ref().clone(), form.tag),
-                    })
+                    tagged_form_inner(right, relation, relation_keys, identities, alignments, seen)
+                        .map(|form| TaggedAddress {
+                            pointer: form.pointer,
+                            tag: add_tag(left.as_ref().clone(), form.tag),
+                        })
                 })
         }
         Bitvector32Term::UInt64Subtract(left, right) => {
-            tagged_form_inner(left, relation, alignments, seen).map(|form| TaggedAddress {
-                pointer: form.pointer,
-                tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
-            })
+            tagged_form_inner(left, relation, relation_keys, identities, alignments, seen).map(
+                |form| TaggedAddress {
+                    pointer: form.pointer,
+                    tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
+                },
+            )
         }
         Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            let (inner, mask) = match (left.uint64_as_const(), right.uint64_as_const()) {
+            let (inner, mask) = match (bounded_uint64_const(left), bounded_uint64_const(right)) {
                 (None, Some(mask)) => (left.as_ref(), mask),
                 (Some(mask), None) => (right.as_ref(), mask),
                 _ => return None,
@@ -971,7 +1193,8 @@ fn tagged_form_inner(
             if !alignment.is_power_of_two() {
                 return None;
             }
-            let form = tagged_form_inner(inner, relation, alignments, seen)?;
+            let form =
+                tagged_form_inner(inner, relation, relation_keys, identities, alignments, seen)?;
             if !alignments.iter().any(|(pointer, candidate)| {
                 pointer_equal(pointer, &form.pointer) && *candidate >= alignment
             }) {
@@ -986,13 +1209,15 @@ fn tagged_form_inner(
             })
         }
         Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            let (inner, constant) = match (left.uint64_as_const(), right.uint64_as_const()) {
+            let (inner, constant) = match (bounded_uint64_const(left), bounded_uint64_const(right))
+            {
                 (None, Some(constant)) => (left.as_ref(), constant),
                 (Some(constant), None) => (right.as_ref(), constant),
                 _ => return None,
             };
             let alignment = constant.checked_add(1)?.next_power_of_two();
-            let form = tagged_form_inner(inner, relation, alignments, seen)?;
+            let form =
+                tagged_form_inner(inner, relation, relation_keys, identities, alignments, seen)?;
             if constant != 0
                 && !alignments.iter().any(|(pointer, candidate)| {
                     pointer_equal(pointer, &form.pointer) && *candidate >= alignment
@@ -1012,14 +1237,32 @@ fn tagged_form_inner(
     };
     let result = if direct.is_some() {
         direct
-    } else if bitvector_equal(term, relation.0) {
-        tagged_form_inner(relation.1, relation, alignments, seen)
-    } else if bitvector_equal(term, relation.1) {
-        tagged_form_inner(relation.0, relation, alignments, seen)
+    } else if identities.get(&identity) == Some(&relation_keys.0)
+        && bitvector_equal(term, relation.0)
+    {
+        tagged_form_inner(
+            relation.1,
+            relation,
+            relation_keys,
+            identities,
+            alignments,
+            seen,
+        )
+    } else if identities.get(&identity) == Some(&relation_keys.1)
+        && bitvector_equal(term, relation.1)
+    {
+        tagged_form_inner(
+            relation.0,
+            relation,
+            relation_keys,
+            identities,
+            alignments,
+            seen,
+        )
     } else {
         None
     };
-    seen.pop();
+    seen.remove(&identity);
     result
 }
 
@@ -1082,7 +1325,10 @@ fn pointer_word_equality(
                 if pointer_equal(&goal_left.pointer, &goal_right.pointer) =>
             {
                 matches!(
-                    (goal_left.tag.uint64_as_const(), goal_right.tag.uint64_as_const()),
+                    (
+                        bounded_uint64_const(&goal_left.tag),
+                        bounded_uint64_const(&goal_right.tag),
+                    ),
                     (Some(left), Some(right)) if left != right
                 )
             }
@@ -1395,6 +1641,86 @@ mod tests {
                 Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
             ));
         }
+
+        crate::kernel::primitives::clear_block_alignment_registry();
+        let registered_block = PointerBlock::Concrete("registered-static".to_string());
+        crate::kernel::primitives::register_block_alignment(&registered_block, 32);
+        let registered = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(
+                Pointer {
+                    block: registered_block,
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                32,
+            ),
+            true,
+        );
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                premise: None,
+                result: registered.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&registered, &[])
+        .unwrap();
+        crate::kernel::primitives::clear_block_alignment_registry();
+
+        for alignment in [1, 2, 4, 8, 16, 32, 64, 1u64 << 63] {
+            let null_condition = ConditionTerm::Bitvector64Equal(
+                Box::new(Bitvector32Term::UInt64BitwiseAnd(
+                    Box::new(Bitvector32Term::PointerAddress(Box::new(Pointer::null()))),
+                    Box::new(Bitvector32Term::UInt64Constant(alignment - 1)),
+                )),
+                Box::new(Bitvector32Term::UInt64Constant(0)),
+            );
+            let null = Proposition::ConditionIs(null_condition.clone(), true);
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: None,
+                    result: null.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&null, &[])
+            .unwrap_or_else(|error| panic!("null alignment {alignment}: {error:?}"));
+            let negative = Proposition::ConditionIs(null_condition, false);
+            assert!(matches!(
+                SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                        premise: None,
+                        result: negative.clone(),
+                    }],
+                    conclusion: 0,
+                }
+                .check(&negative, &[]),
+                Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+            ));
+        }
+
+        for expected in [true, false] {
+            let displaced_null = Proposition::ConditionIs(
+                ConditionTerm::pointer_aligned(
+                    Pointer {
+                        block: PointerBlock::Concrete("null".to_string()),
+                        offset: PointerOffsetTerm::Constant(1),
+                    },
+                    2,
+                ),
+                expected,
+            );
+            assert!(matches!(
+                SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                        premise: None,
+                        result: displaced_null.clone(),
+                    }],
+                    conclusion: 0,
+                }
+                .check(&displaced_null, &[]),
+                Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+            ));
+        }
     }
 
     #[test]
@@ -1595,6 +1921,49 @@ mod tests {
             certificate.check(&goal, &[relation]),
             Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
         ));
+    }
+
+    #[test]
+    fn tagged_word_traversal_scales_with_tagged_depth() {
+        let mut previous = None;
+        for depth in [4, 8, 16, 32, 64] {
+            let address =
+                Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0))));
+            let variable = Bitvector32Term::Variable(crate::kernel::Variable(94));
+            let mut tagged = address;
+            for _ in 0..depth {
+                tagged = Bitvector32Term::UInt64Add(
+                    Box::new(tagged),
+                    Box::new(Bitvector32Term::UInt64Constant(1)),
+                );
+            }
+            let relation = Proposition::ConditionIs(
+                ConditionTerm::Bitvector64Equal(Box::new(variable.clone()), Box::new(tagged)),
+                true,
+            );
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::Bitvector64Equal(Box::new(variable.clone()), Box::new(variable)),
+                true,
+            );
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![],
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            };
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate
+                    .check(&goal, std::slice::from_ref(&relation))
+                    .is_ok()
+            });
+            assert!(valid);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 4);
+            }
+            previous = Some(work);
+        }
     }
 
     #[test]
