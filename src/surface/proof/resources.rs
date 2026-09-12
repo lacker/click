@@ -441,6 +441,53 @@ fn common_possible_instance_arm(
     Some(common)
 }
 
+/// Names the cells an `unfold` of a matched instance has just exposed.
+///
+/// Naming is atomic across producers (`docs/internals/canonicalization.md`).
+/// Contract lowering already materializes the cells of the arm a section
+/// selects for a held instance, so the fact it states about a cell and the
+/// C's own read of that cell are one load variable. An unfold exposes the same
+/// cells one layer deeper and must name them the same way. Without this, the
+/// unfolded child's facts keep the unfold-time epoch while a later C read of
+/// the same cell walks its own epoch, and the two differ as soon as a store
+/// the assumption-free epoch walk cannot cross lies between them — a write to
+/// a *separate* object, whose separation is a resource fact and not a DAG
+/// edge. That is exactly the gap between `*new = *victim` and the refold after
+/// `rb_set_parent(victim->rb_left, new)`.
+///
+/// This is the same projection contract lowering runs, so the cell layout and
+/// element types are the ones already chosen there rather than a second
+/// convention. It is bounded by the arm body: one cell per element of each
+/// constant-bounded range the arm owns, no search, and cells the snapshot
+/// already holds are left alone.
+pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
+    resource_environment: &ResourceEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    instance: &ResourceInstance,
+    assumptions: &PureFactContext,
+) -> CState {
+    let Some(arm) = selected_resource_instance_arm(
+        resource_environment,
+        click_function_environment,
+        instance,
+        assumptions,
+    ) else {
+        return state;
+    };
+    project_selected_instance_arm_cells(
+        &arm,
+        instance,
+        parameters,
+        arguments,
+        state,
+        assumptions,
+        false,
+    )
+}
+
 pub(super) fn project_initial_composite_resource_cores(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],

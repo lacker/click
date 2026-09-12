@@ -374,6 +374,73 @@ pub(crate) struct CheckedResourceRewrite {
     delta_proofs: Arc<Vec<CheckedResourceDeltaProof>>,
 }
 
+/// Whether `after` differs from `before` only by cells that name their own
+/// load: each added cell holds the canonical form of the load of that very
+/// pointer at `before`. Adding one is definitional — it records what the
+/// snapshot already said about the cell — so a rewrite that names the cells it
+/// exposes stays checkable without a second state comparison rule. Bounded by
+/// the cell count, with no assumption consulted and nothing searched.
+fn memory_only_adds_named_cells(
+    before: &crate::kernel::CMemory,
+    after: &crate::kernel::CMemory,
+) -> bool {
+    let mut rebased = after.clone();
+    rebased.cells = before.cells.clone();
+    if rebased != *before {
+        return false;
+    }
+    let base = crate::kernel::intern_c_memory(before.clone());
+    after
+        .cells
+        .iter()
+        .all(|(pointer, value)| match before.cells.get(pointer) {
+            Some(existing) => existing == value,
+            None => {
+                let load = crate::kernel::canonical_form_of_load(base.clone(), pointer.clone());
+                cell_value_is_exactly_load(value, &load, pointer)
+            }
+        })
+}
+
+/// Whether a materialized cell's value is exactly the given load of its own
+/// cell, in one of the representations resource projection writes: the scalar
+/// term itself, the `_Bool` normalization of it, or a pointer whose offset is
+/// that term scaled by its pointee width in the cell's own block.
+fn cell_value_is_exactly_load(
+    value: &CValue,
+    load: &Bitvector32Term,
+    pointer: &crate::kernel::Pointer,
+) -> bool {
+    match value {
+        CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => term == load,
+        CValue::Bool(term) => {
+            term == &Bitvector32Term::if_then_else(
+                crate::kernel::ConditionTerm::equal(load.clone(), Bitvector32Term::Constant(0)),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )
+        }
+        CValue::Pointer(value) => {
+            let target = value.pointer();
+            target.block == pointer.block
+                && matches!(
+                    &target.offset,
+                    crate::kernel::PointerOffsetTerm::Int32Scaled { value, .. }
+                        if value.as_ref() == load
+                )
+        }
+        _ => false,
+    }
+}
+
 impl CheckedResourceRewrite {
     pub(crate) fn before_state(&self) -> &CState {
         &self.before_state
@@ -435,7 +502,23 @@ impl CheckedResourceRewrite {
             let mut unchanged = after_state.clone();
             unchanged.resources = before_state.resources.clone();
             if unchanged != *before_state {
-                return Err("instance rewrite changed an unchecked part of the state");
+                // An unfold names the cells it exposes, which materializes
+                // them in the snapshot so the body's facts and a later C read
+                // of one of those cells are one load variable
+                // (`docs/internals/canonicalization.md`). Adding such a cell
+                // is the only memory change a resource rewrite may make, and
+                // each added cell must hold the canonical load form of its own
+                // pointer at the pre-rewrite snapshot. That is a definitional
+                // identity, checked here per added cell with no search.
+                if !unfold
+                    || !memory_only_adds_named_cells(&before_state.memory, &after_state.memory)
+                {
+                    return Err("instance rewrite changed an unchecked part of the state");
+                }
+                unchanged.memory = before_state.memory.clone();
+                if unchanged != *before_state {
+                    return Err("instance rewrite changed an unchecked part of the state");
+                }
             }
             if !expected
                 .resources
