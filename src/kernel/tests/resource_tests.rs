@@ -2590,7 +2590,8 @@ fn duplicate_cached_authorities_rekey_after_remove_and_reinsert() {
         context
             .storage
             .expansions_by_support_entry
-            .get(&(authority.clone(), 0))
+            .get(&authority)
+            .and_then(|bucket| bucket.get(&0))
             .map(|expansion| expansion.as_slice()),
         Some(second_expansion.as_slice())
     );
@@ -2610,10 +2611,59 @@ fn duplicate_cached_authorities_rekey_after_remove_and_reinsert() {
         context
             .storage
             .expansions_by_support_entry
-            .get(&(authority.clone(), 0))
+            .get(&authority)
+            .and_then(|bucket| bucket.get(&0))
             .map(|expansion| expansion.as_slice()),
         Some(second_expansion.as_slice())
     );
+}
+
+#[test]
+fn cached_support_updates_ignore_unrelated_cached_supports() {
+    let target = CResourceFact::own_composite("target_cache".to_string(), Vec::new());
+    let mut samples = Vec::new();
+    for size in [4_usize, 8, 16, 32] {
+        let mut context = ResourceContext::new();
+        for index in 0..size {
+            let support = CResourceFact::own_composite(format!("cached_{index}"), Vec::new());
+            context = context.unchecked_with_fact(support.clone());
+            let occurrence = context.owned_occurrences_for_fact(&support)[0];
+            context = context.with_cached_supported_expansion_for_occurrence(
+                occurrence,
+                &support,
+                vec![CResourceFact::own_token(
+                    format!("body_{index}"),
+                    Vec::new(),
+                )],
+            );
+        }
+        context = context.unchecked_with_fact(target.clone());
+        let target_occurrence = context.owned_occurrences_for_fact(&target)[0];
+        let (context, cache_work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.with_cached_supported_expansion_for_occurrence(
+                target_occurrence,
+                &target,
+                vec![CResourceFact::own_token(
+                    "target_body".to_string(),
+                    Vec::new(),
+                )],
+            )
+        });
+        let (remaining, remove_work) = crate::instrumentation::measure_deterministic_work(|| {
+            context
+                .without_exact_representation_for_occurrence(target_occurrence)
+                .expect("the target support should be removable")
+        });
+        assert_eq!(remaining.cached_supported_expansions(&target).len(), 0);
+        samples.push((size, cache_work, remove_work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(8)
+                && pair[1].2 <= pair[0].2.saturating_mul(2).saturating_add(8),
+            "support cache updates scanned unrelated cached authorities: {samples:?}"
+        );
+    }
 }
 
 #[test]

@@ -838,14 +838,7 @@ impl ResourceContext {
     /// authority; leaving the old `(fact, rank)` entries in place would let a
     /// later insertion inherit stale expansion evidence.
     fn rekey_cached_support_entries(&mut self, fact: &CResourceFact) {
-        let mut cache = self
-            .storage
-            .expansions_by_support_entry
-            .iter()
-            .filter(|(key, _)| &key.0 != fact)
-            .fold(PersistentMap::default(), |cache, (key, expansion)| {
-                cache.with_inserted(key.clone(), expansion.clone())
-            });
+        let mut bucket = PersistentMap::default();
         let mut rank = 0usize;
         for entry in self
             .storage
@@ -855,17 +848,25 @@ impl ResourceContext {
             .into_iter()
             .flat_map(ResourceEntryIds::iter)
         {
+            crate::instrumentation::record_deterministic_work(1);
             if self.fact(*entry).is_own() {
                 if let Some(expansion) = self
                     .storage
                     .expansions_by_support_occurrence
                     .get(&self.occurrence(*entry))
                 {
-                    cache = cache.with_inserted((fact.clone(), rank), expansion.clone());
+                    bucket = bucket.with_inserted(rank, expansion.clone());
                 }
                 rank += 1;
             }
         }
+        let expansions_by_support_entry = if bucket.is_empty() {
+            self.storage.expansions_by_support_entry.without_key(fact)
+        } else {
+            self.storage
+                .expansions_by_support_entry
+                .with_inserted(fact.clone(), bucket)
+        };
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.clone(),
             next_entry_id: self.storage.next_entry_id,
@@ -880,7 +881,7 @@ impl ResourceContext {
                 .projections_by_support_occurrence
                 .clone(),
             expansions_by_support_occurrence: self.storage.expansions_by_support_occurrence.clone(),
-            expansions_by_support_entry: cache,
+            expansions_by_support_entry,
             origin: self.storage.origin.clone(),
             history: self.storage.history.clone(),
             materialized: std::sync::OnceLock::new(),
@@ -1668,7 +1669,6 @@ impl ResourceContext {
             .entry_by_occurrence
             .get(&occurrence)
             .expect("cached expansion occurrence must be live");
-        let support_cache_key = self.support_cache_key(support_entry);
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.clone(),
             next_entry_id: self.storage.next_entry_id,
@@ -1686,14 +1686,13 @@ impl ResourceContext {
                 .storage
                 .expansions_by_support_occurrence
                 .without_key(&occurrence),
-            expansions_by_support_entry: self
-                .storage
-                .expansions_by_support_entry
-                .without_key(&support_cache_key),
+            expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
             history: self.storage.history.clone(),
             materialized: std::sync::OnceLock::new(),
         });
+        let support = self.fact(support_entry).clone();
+        self.rekey_cached_support_entries(&support);
         self
     }
 

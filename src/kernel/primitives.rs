@@ -3622,12 +3622,13 @@ pub(super) struct ResourceContextStorage {
     /// fresh symbolic load identities at each later transition.
     pub(super) expansions_by_support_occurrence:
         PersistentMap<ResourceOccurrenceId, std::sync::Arc<Vec<CResourceFact>>>,
-    /// The same cache keyed by the snapshot-local owner entry. This is a
-    /// canonical comparison view: independently built equivalent snapshots
-    /// can compare their support graph without exposing opaque occurrence
+    /// Canonical cache buckets keyed by support fact and rank among equal
+    /// owned authorities. Independently built equivalent snapshots can
+    /// compare their support graph without exposing opaque occurrence
     /// allocation order, while invalidation remains occurrence-keyed above.
+    /// Nesting by fact lets rekeying touch only the affected bucket.
     pub(super) expansions_by_support_entry:
-        PersistentMap<(CResourceFact, usize), std::sync::Arc<Vec<CResourceFact>>>,
+        PersistentMap<CResourceFact, PersistentMap<usize, std::sync::Arc<Vec<CResourceFact>>>>,
     /// Persistent mutation ancestry used by checked Proof joins. The origin
     /// distinguishes unrelated snapshots; the history names only exact facts
     /// whose multiplicity or representation changed.
@@ -3697,8 +3698,11 @@ impl std::hash::Hash for ResourceContext {
             projection.hash(state);
             self.storage.entry_by_occurrence.get(occurrence).hash(state);
         }
-        for entry in self.storage.expansions_by_support_entry.iter() {
-            entry.hash(state);
+        for (fact, bucket) in self.storage.expansions_by_support_entry.iter() {
+            fact.hash(state);
+            for entry in bucket.iter() {
+                entry.hash(state);
+            }
         }
     }
 }
@@ -3714,12 +3718,30 @@ impl Ord for ResourceContext {
                     .cmp(other.storage.supported_by.iter())
             })
             .then_with(|| compare_support_graph(self, other))
-            .then_with(|| {
-                self.storage
-                    .expansions_by_support_entry
-                    .iter()
-                    .cmp(other.storage.expansions_by_support_entry.iter())
-            })
+            .then_with(|| compare_cached_expansions(self, other))
+    }
+}
+
+fn compare_cached_expansions(
+    left: &ResourceContext,
+    right: &ResourceContext,
+) -> std::cmp::Ordering {
+    let mut left_facts = left.storage.expansions_by_support_entry.iter();
+    let mut right_facts = right.storage.expansions_by_support_entry.iter();
+    loop {
+        match (left_facts.next(), right_facts.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some((left_fact, left_bucket)), Some((right_fact, right_bucket))) => {
+                let ordering = left_fact
+                    .cmp(right_fact)
+                    .then_with(|| left_bucket.iter().cmp(right_bucket.iter()));
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
     }
 }
 

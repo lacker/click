@@ -964,6 +964,9 @@ facts. Joins and cached expansions preserve support only when the same
 occurrence survives both descendants. The surface observer now uses the exact
 support occurrence, including when observing a view that is itself already
 supported. Explicit unsupported views remain explicit.
+Resource-context equality deliberately compares the observable support topology
+of a snapshot; provenance-sensitive transition and evidence checks use the
+opaque occurrence directly and never infer authority identity from equality.
 
 The checkpoint adds equal-occurrence removal, fork identity, normalization and
 join/cached-expansion preservation, stale-support evidence, and four-size

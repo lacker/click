@@ -3018,6 +3018,15 @@ fn fold_composite_resources_on_outcome_with_facts(
                     describe_resource_clause(resource)
                 )));
             };
+            if !post_state
+                .resources()
+                .owned_occurrence_matches(authority_occurrence, &abstract_resource)
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` changed its folded authority snapshot",
+                    describe_resource_clause(resource)
+                )));
+            }
             let authority = &abstract_resource;
             let projections = lowered_contained
                 .iter()
