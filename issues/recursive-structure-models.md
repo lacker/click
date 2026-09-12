@@ -136,6 +136,34 @@ enough to become the first regression of the package that fixes them.
     pure functions; and a `witness` needs a term no pure function can
     produce for pointers, so the in-order successor is named by hypothesis
     (`rb_min_list(right) == Cons(successor, Nil)`) that a C proof supplies.
+11. **`click audit` disagrees with `click verify` on the scaffold.** Found by
+    package A7 and reproduced on the sidecar before A7's change: `click audit
+    examples/modeled-binary-tree` fails at the first `branch`'s `simp` in
+    `tree_contains` with "Grouped proof has no source tactic 9" while
+    `verify` passes. Audit is not in `scripts/check.sh`. This is a tooling
+    failure under `AGENTS.md` and is package T1, dispatched ahead of further
+    proof work. Smaller A7 findings, not scheduled: a match-arm binding
+    cannot be a theorem argument inside `have` (`apply_theorem_using` skips
+    the fixed-state local substitution; work around with the instance field
+    plus a bridge equality); `apply`/`extract` at the top level of a `branch`
+    arm is refused by the grouped driver (wrap them in a `have`); and a
+    `simp() using` premise naming a bound call result fails to lower when
+    the goal names it too (use `rewrite` plus `normalize`).
+12. **Proof `match` is capped at two constructors.** Found by package C1:
+    `match c.model` over the three-constructor `Context` is refused with
+    "proof match currently supports one or two constructors; wider execution
+    joins are not implemented" (`src/surface/proof/proof_object/match_cases.rs`).
+    Removing the guard let a three-arm match plan and run through the
+    existing binary range split, so the guard looks stale, but it needs its
+    own regression and review. Package A8. Also from C1, not scheduled: a
+    `have` placed after `execute()` does not reach the post-return fold
+    recheck, so facts a return-path fold needs go before `execute()`; a
+    match-arm binding as a bare argument in a purely pure `have` goal is
+    "not an algebraic binding in this scope" while the same binding beside a
+    C operand works; and `exists` cannot quantify an ADT-typed variable. A
+    failed pure `simp` printed a full Rust debug dump of the proposition and
+    schemas twice, which is the raw-state-dump class of diagnostic defect;
+    package T2.
 
 ## Design decisions
 
@@ -154,8 +182,11 @@ multiplicity claims are stated about that list.
 
 **D2. Parent pointers and color live in the node's own arm.** The tree
 resource takes the parent as a parameter, `rb_at(p, parent)`, and its `Node`
-arm owns `p->__rb_parent_color` and states
-`fact p->__rb_parent_color == address(parent) + color_bit(color)`. Children
+arm owns `p->__rb_parent_color` and states the packed word. C1 landed it as
+two facts, `p->__rb_parent_color == address(parent) + (p->__rb_parent_color
+& 1)` and `(p->__rb_parent_color & 1) == color_bit(color)`, because the
+single fact with an opaque `color_bit(color)` carries no bound for the
+tag-clearing step in `rb_parent`. Children
 are `owns left: rb_at(p->rb_left, p)` and `owns right: rb_at(p->rb_right, p)`.
 Parent/child consistency is therefore a body fact, not a separate claim, and
 no witness inside a matched body is required. Acyclicity is inherent in a
@@ -197,6 +228,17 @@ function plug(ctx: Context, sub: RbTree) -> RbTree decreases ctx { ... }
 ```
 
 `plug` rebuilds the whole model from a context and the focused subtree.
+
+Amendment after C1 (2026-09-12): the frame takes the focused child's parent
+as a resource parameter, `ctx_at(child, parent, root)`, exactly as `rb_at`
+takes it. `Top` states `parent == 0`; `Left(grandparent, color,
+sibling_model, up_model)` owns `parent`'s cells and `up: ctx_at(parent,
+grandparent, root)`. A frame keyed only by the child needs a pure accessor
+from `ctx.model` to the parent pointer in its contracts, and pure functions
+cannot return pointers (gap 8); with the parent as an argument, contracts
+and loop binders name it as the C local the Linux loops already maintain
+(`parent = rb_red_parent(node)`), and no accessor is needed. C1's fixtures
+use concrete frames and predate this amendment; C3 adopts it.
 Every loop invariant in the rbtree algorithms has the form
 `inorder(plug(ctx.model, sub.model)) == inorder(old(t.model))` plus the
 algorithm's shape predicate. `ctx_at` contains `rb_at`; `rb_at` never contains
@@ -307,6 +349,9 @@ appears to need one reports the need instead of adding it.
   pure red-black library in `examples/rbtree-model`, c9d5afee) are on
   master. `tree_contains` proves the guarded membership form; the
   unguarded form is package A7. A4, A7, and C1 are in progress.
+- 2026-09-12: C1 (`rb_at`, `ctx_at`, `plug`, the seven link helpers and
+  `__rb_change_child` on verbatim Linux bodies, 05257e8e) is on master. A7
+  is gating; T1 (audit defect) and A8 are dispatched; A4 is in progress.
 
 ## Work packages
 
@@ -414,6 +459,24 @@ call's result identity. Regression: the scaffold's `tree_contains` with the
 unguarded `ensures result == heap_member(old(t.model), target)`, and a
 small fixture with `if (f(x)) return 1;`. No new syntax if the `let ... =
 step(...)` form suffices. Depends on A6.
+
+**T1. Make `click audit` agree with `click verify` on nested arm tactics.**
+Scope: reduce gap 11, fix the grouped-proof source-tactic indexing for
+`branch`/`if` arms, and add audit coverage of the reduction (and of the
+scaffold if cheap) to the gate. No proof or C changes to route around it.
+
+**A8. Lift the two-constructor cap on proof `match`.**
+Scope: remove the stale guard in `match_cases.rs` if the range split
+already handles wider joins, or implement the wider join; regressions with
+a three- and a four-constructor execution `match`, including an all-but-one
+contradiction shape and a negative missing arm. Depends on nothing; C3
+depends on it.
+
+**T2. Bound the failed-`simp` diagnostic.**
+Scope: replace the repeated Rust debug dump of the proposition and
+algebraic schemas in a failed pure `simp` with the bounded goal, premise,
+and search context the diagnostics policy allows. Regression: a fixture
+whose failure message is checked for the absence of the debug dump.
 
 ### Phase B: models on the fixed scaffold
 

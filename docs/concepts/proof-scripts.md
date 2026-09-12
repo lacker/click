@@ -79,6 +79,30 @@ Proof-level `if` splits reasoning; it does not execute a C `if`. Frontier-local
 A mark remembers a state the proof has already reached; it does not move the
 frontier and is not an `execute_until` target.
 
+## Naming a call result
+
+C often uses a call's result without ever storing it: `if (f(x))` and
+`return f(x);` both leave the callee's guarantee and the branch or return
+fact attached to a value the proof has no word for. The call step's existing
+`let` binder names it. On a callee that declares a `produces` binder the `let`
+introduces that instance; on a callee that declares none it names the call's
+scalar result:
+
+<!-- verified-example: mdtests/call_result_in_condition.md -->
+```click
+let r = step(classify(x), { });
+```
+
+`r` is then an ordinary value name in `have`, `rewrite`, `normalize() using`,
+and `simp` premises, on both sides of the `branch` that spells the C `if`. It
+denotes the value the call returned, so it keeps its meaning after later
+statements. Naming the result of a call whose result the C discards is an
+error, as is reusing a name that is already a C local or a proof-local
+binding. `examples/modeled-binary-tree` uses this to prove
+`ensures result == heap_member(old(t.model), target);` for the recursive
+`tree_contains`, whose two recursive calls appear only in a condition and a
+return expression.
+
 ## Expansion and diagnosis
 
 `click expand` replaces a selected smart tactic with a checked explicit proof.

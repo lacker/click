@@ -185,6 +185,11 @@ explicit program-point snapshots. Expansion spells the chain with source C
 locals and fields; symbolic call identities, havoc markers, and other
 execution-only facts remain kernel details rather than Surface Click premises.
 
+When the C never assigns the result to a local — `if (f(x))` and
+`return f(x);` — the call step's `let` binder names it instead, so the
+postcondition and the branch or return fact can be related in one proposition.
+See [naming a call result](proof-scripts.md#naming-a-call-result).
+
 An opaque call first creates proof obligations for the callee's `requires`
 clauses. Those requirements are then available as established assumptions while
 Click evaluates the remaining resource, effect, and postcondition clauses of
