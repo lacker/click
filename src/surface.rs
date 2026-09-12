@@ -2939,9 +2939,22 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
 /// internal-only implementation operations. Smart tactics should ultimately
 /// return this type directly; printing it is then a structural conversion
 /// back to ordinary `.click` syntax.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The step list is shared, not copied. A certificate is cloned once per
+/// certified path and once per claim on that path, and a structured step owns
+/// its child certificates, so a deep copy would make cloning and comparing a
+/// finished proof quadratic in the joined path structure. Sharing also gives
+/// equality a pointer fast path: the identical certificate every claim of one
+/// function carries is recognized in constant time instead of being walked.
+#[derive(Clone, Debug, Eq)]
 pub struct ProofCertificate {
-    steps: Vec<ProofStep>,
+    steps: std::sync::Arc<Vec<ProofStep>>,
+}
+
+impl PartialEq for ProofCertificate {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.steps, &other.steps) || self.steps == other.steps
+    }
 }
 
 /// One explicit, surface-expressible step in a [`ProofCertificate`].
@@ -3085,15 +3098,38 @@ impl ProofCertificate {
     pub fn from_proof_tactics(tactics: &[ProofTactic]) -> Result<Self, CertificateError> {
         validate_certificate_tactics(tactics, &mut Vec::new())?;
         Ok(Self {
-            steps: tactics
-                .iter()
-                .map(ProofStep::from_validated_tactic)
-                .collect(),
+            steps: std::sync::Arc::new(
+                tactics
+                    .iter()
+                    .map(ProofStep::from_validated_tactic)
+                    .collect(),
+            ),
         })
     }
 
     pub fn steps(&self) -> &[ProofStep] {
         &self.steps
+    }
+
+    /// The steps by value, reusing the shared allocation when this is the last
+    /// handle to it.
+    pub(crate) fn into_steps(self) -> Vec<ProofStep> {
+        std::sync::Arc::try_unwrap(self.steps).unwrap_or_else(|shared| (*shared).clone())
+    }
+
+    /// Copy-on-write access for the surface stitcher, which grows a
+    /// certificate's leaves in place while it is still uniquely owned.
+    pub(crate) fn steps_mut(&mut self) -> &mut Vec<ProofStep> {
+        std::sync::Arc::make_mut(&mut self.steps)
+    }
+
+    /// Whether the two certificates are the same retained object rather than
+    /// two equal copies of it. Every claim certified on one function proof
+    /// carries the same certificate, so this is what keeps comparing and
+    /// cloning them independent of the certificate's size.
+    #[cfg(test)]
+    pub(crate) fn shares_steps_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.steps, &other.steps)
     }
 
     /// Serializes checked proof provenance as a certificate.
@@ -3113,14 +3149,18 @@ impl ProofCertificate {
                 error.path(),
             ))
         })?;
-        Ok(Self { steps })
+        Ok(Self {
+            steps: std::sync::Arc::new(steps),
+        })
     }
 
     /// Steps that were already admitted by a certificate constructor. Nested
     /// certificates are validated where they are built, so re-walking them at
     /// every enclosing construction would be quadratic in the certificate.
     fn from_validated_steps(steps: Vec<ProofStep>) -> Self {
-        Self { steps }
+        Self {
+            steps: std::sync::Arc::new(steps),
+        }
     }
 
     pub fn to_proof_tactics(&self) -> Vec<ProofTactic> {
@@ -3132,10 +3172,12 @@ impl ProofCertificate {
             unreachable!("validated simple proof must be an explicit script")
         };
         Self {
-            steps: tactics
-                .iter()
-                .map(ProofStep::from_validated_tactic)
-                .collect(),
+            steps: std::sync::Arc::new(
+                tactics
+                    .iter()
+                    .map(ProofStep::from_validated_tactic)
+                    .collect(),
+            ),
         }
     }
 
@@ -3213,13 +3255,12 @@ impl ProofStep {
                         type_name: arm.type_name.clone(),
                         variant: arm.variant.clone(),
                         bindings: arm.bindings.clone(),
-                        proof: Box::new(ProofCertificate {
-                            steps: arm
-                                .tactics
+                        proof: Box::new(ProofCertificate::from_validated_steps(
+                            arm.tactics
                                 .iter()
                                 .map(Self::from_validated_tactic)
                                 .collect(),
-                        }),
+                        )),
                     })
                     .collect(),
             },
@@ -3287,64 +3328,64 @@ impl ProofStep {
             },
             ProofTactic::Open(proof_open) => Self::Open {
                 resource: proof_open.resource.clone(),
-                proof: Box::new(ProofCertificate {
-                    steps: proof_open
+                proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_open
                         .tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::If(proof_if) => Self::If {
                 condition: proof_if.condition.clone(),
-                then_proof: Box::new(ProofCertificate {
-                    steps: proof_if
+                then_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_if
                         .then_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
-                else_proof: Box::new(ProofCertificate {
-                    steps: proof_if
+                )),
+                else_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_if
                         .else_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::Cases(proof_cases) => Self::Cases {
                 disjunction: proof_cases.disjunction.clone(),
-                left_proof: Box::new(ProofCertificate {
-                    steps: proof_cases
+                left_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_cases
                         .left_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
-                right_proof: Box::new(ProofCertificate {
-                    steps: proof_cases
+                )),
+                right_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_cases
                         .right_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::Branch(proof_branch) => Self::Branch {
                 ensuring: proof_branch.ensuring.clone(),
-                then_proof: Box::new(ProofCertificate {
-                    steps: proof_branch
+                then_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_branch
                         .then_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
-                else_proof: Box::new(ProofCertificate {
-                    steps: proof_branch
+                )),
+                else_proof: Box::new(ProofCertificate::from_validated_steps(
+                    proof_branch
                         .else_tactics
                         .iter()
                         .map(Self::from_validated_tactic)
                         .collect(),
-                }),
+                )),
             },
             ProofTactic::Loop(clause) => Self::Loop(CertificateStructuralClause {
                 region: clause.region,
