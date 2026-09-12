@@ -981,8 +981,21 @@ appears to need one reports the need instead of adding it.
   clause carries its proof scope and every lowering (re-annotation,
   finishing, both planners) resolves through it while the written spelling
   is what certificates record and expansion prints
-  (`loop_clause_reads_arm_bindings.md`). A28 (one arm-publication point per
-  frontier in the kernel) in progress; C3 resumes on the insert fixture.
+  (`loop_clause_reads_arm_bindings.md`). A28 dispatched; C3 resumes on the
+  insert fixture.
+- 2026-09-12: A28 (badc1de3) is on master: decision D7 is published in one
+  place, `publish_instance_arms`, which every frontier consumes (contract
+  entry lowering, contract return, loop head, back edge, exit, guard
+  conjunct, `unfold`, frontier case split; listed in
+  `docs/concepts/resources.md`). Refutation runs before read authority and
+  arm facts, so a guard conjunct that refutes a frame's `Top` arm reads the
+  cell the survivors agree on. Gap 61's contract-lowering half is closed:
+  contract entry ran no refutation at all
+  (`contract_arithmetic_refutes_an_arm.md`); `arm_publication_sites.md`
+  states one refutation at all eight sites. One documented non-uniformity
+  remains: while a contract section's clauses are evaluated one at a time,
+  only read authority is published, because a full re-decision per clause
+  broke the near-linear width contract. C3 in progress.
 
 ## Work packages
 
