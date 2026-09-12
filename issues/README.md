@@ -55,7 +55,7 @@ them. A gap that only a different program would hit is P2.
 
 Soundness and kernel shape:
 
-- [Make `arithmetic` a smart tactic with an explicit certificate](arithmetic.md)
+- [Make `arithmetic` smart and expand it to `arithmetic_certificate`](arithmetic.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 C import and execution:
