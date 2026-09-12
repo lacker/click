@@ -16,6 +16,7 @@ pub(crate) mod integer_arithmetic;
 mod integer_arithmetic_soundness_tests;
 mod object;
 mod obligations;
+pub(crate) mod signed_arithmetic;
 mod storage;
 pub(crate) mod term_rewrite;
 
