@@ -120,6 +120,22 @@ fn parity_scalar_array_call_requirement_expands_and_deletion_rejects() {
 }
 
 #[test]
+fn parity_multidimensional_array_call_requirement_expands_and_deletion_rejects() {
+    assert_static_array_call_requirement_expands_and_deletion(
+        "mdtests/static_array_parity_multidimensional.md",
+        "have static_local::increment_twice::values[0][0] > -1000 and static_local::increment_twice::values[0][0] < 1000 and static_local::increment_twice::values[0][1] > -1000 and static_local::increment_twice::values[0][1] < 1000 and static_local::increment_twice::values[0][2] > -1000 and static_local::increment_twice::values[0][2] < 1000",
+    );
+}
+
+#[test]
+fn parity_fixed_multidimensional_array_call_requirement_expands_and_deletion_rejects() {
+    assert_static_array_call_requirement_expands_and_deletion(
+        "mdtests/static_array_parity_fixed_multidimensional.md",
+        "have static_local::increment_twice::values[0][0] > -1000 and static_local::increment_twice::values[0][0] < 1000 and static_local::increment_twice::values[0][1] > -1000 and static_local::increment_twice::values[0][1] < 1000 and static_local::increment_twice::values[0][2] > -1000 and static_local::increment_twice::values[0][2] < 1000",
+    );
+}
+
+#[test]
 fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/c_named_function_contract_source_refusal_in_symbolic_branch.md");
