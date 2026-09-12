@@ -98,7 +98,8 @@ at unchanged function entry, after executed statements, and inside a loop's
 
 An arm's bindings are in scope in every term the arm writes: `have` goals,
 theorem arguments and `using` premises, `instantiate`, `extract`, `rewrite`,
-and `normalize() using`. A name that a `have` goal can see is a theorem
+`normalize() using`, and the clauses of a `loop` written inside the arm
+(`mdtests/loop_clause_reads_arm_bindings.md`). A name that a `have` goal can see is a theorem
 argument at the same point; `mdtests/theorem_argument_arm_binding.md` and
 `mdtests/theorem_argument_arm_binding_algebraic.md` pin the pointer, integer,
 and model cases.

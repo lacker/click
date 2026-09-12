@@ -4307,6 +4307,7 @@ impl Parser {
                 resources,
                 initialize_proof,
                 preserve_proof,
+                scope: BTreeMap::new(),
             }));
         }
         self.parse_named_proof_tactic(name)

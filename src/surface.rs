@@ -897,6 +897,11 @@ pub struct StructuralClause {
     label: Option<String>,
     decreases: Option<TerminationMeasure>,
     items: Vec<StructuralItem>,
+    /// The proof locals in scope where a frontier loop clause was written: a
+    /// proof `match` arm's bindings, `unfold ... as` names, call-result
+    /// binders. The clause keeps its written spelling, which expansion
+    /// prints; every lowering reads it through [`StructuralClause::resolved`].
+    scope: BTreeMap<String, ContractExpression>,
     /// Resource clauses declared beside the invariants. They give the region
     /// the write and read authority of a callee contract: the body executes
     /// owning exactly these resources, and the loop's write footprint is the
@@ -3664,6 +3669,7 @@ impl ProofStep {
                     .preserve_proof
                     .as_ref()
                     .map(|proof| proof.to_source_proof()),
+                scope: BTreeMap::new(),
             }),
         }
     }
@@ -5190,6 +5196,28 @@ impl FunctionBlock {
         function.structural_clauses.extend_from_slice(clauses);
         function
     }
+
+    /// This block with every structural clause resolved through its own
+    /// scope, for lowering. A block whose clauses carry no scope is borrowed
+    /// as it is.
+    pub(in crate::surface) fn with_resolved_structural_clauses(
+        &self,
+    ) -> Result<std::borrow::Cow<'_, Self>, String> {
+        if self
+            .structural_clauses
+            .iter()
+            .all(|clause| clause.scope.is_empty())
+        {
+            return Ok(std::borrow::Cow::Borrowed(self));
+        }
+        let mut function = self.clone();
+        function.structural_clauses = self
+            .structural_clauses
+            .iter()
+            .map(StructuralClause::resolved)
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(std::borrow::Cow::Owned(function))
+    }
 }
 
 impl FunctionSignature {
@@ -5365,6 +5393,123 @@ impl StructuralClause {
         bound.region = CodeRegion::Loop(loop_index);
         bound
     }
+
+    /// This clause tagged with the proof locals it was written under.
+    pub(in crate::surface) fn with_scope(
+        &self,
+        scope: BTreeMap<String, ContractExpression>,
+    ) -> Self {
+        let mut clause = self.clone();
+        clause.scope = scope;
+        clause
+    }
+
+    /// This clause with its own scope resolved into its written terms, for
+    /// lowering. The result carries no scope.
+    pub(in crate::surface) fn resolved(&self) -> Result<Self, String> {
+        if self.scope.is_empty() {
+            return Ok(self.clone());
+        }
+        let mut clause = self.with_substituted_bindings(&self.scope)?;
+        clause.scope = BTreeMap::new();
+        Ok(clause)
+    }
+
+    /// This clause with the proof locals it names resolved: invariants,
+    /// declared-resource arguments, and the `decreases` measure may spell a
+    /// proof `match` arm's bindings or an `unfold ... as` name, which are in
+    /// scope for a loop written inside that arm exactly as for a `have` goal
+    /// there. Memory segments are left as written; they name C places.
+    pub(in crate::surface) fn with_substituted_bindings(
+        &self,
+        substitutions: &BTreeMap<String, ContractExpression>,
+    ) -> Result<Self, String> {
+        let mut clause = self.clone();
+        clause.items = self
+            .items
+            .iter()
+            .map(|item| {
+                let claim = crate::surface::lowering::substitute_click_proposition(
+                    &item.claim,
+                    substitutions,
+                )?;
+                Ok(StructuralItem { claim })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        clause.resources = self
+            .resources
+            .iter()
+            .map(|resource| substitute_resource_clause_bindings(resource, substitutions))
+            .collect::<Result<Vec<_>, String>>()?;
+        clause.decreases = match &self.decreases {
+            Some(measure) => Some(TerminationMeasure::new(
+                measure
+                    .components
+                    .iter()
+                    .map(|component| {
+                        crate::surface::lowering::substitute_contract_expression(
+                            component,
+                            substitutions,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            )),
+            None => None,
+        };
+        Ok(clause)
+    }
+}
+
+/// Resolves proof-local names in the argument positions of a resource
+/// clause. Only declared-resource arguments and quantities are written
+/// terms; memory segments name C places and are left as written.
+fn substitute_resource_clause_bindings(
+    resource: &ResourceClause,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ResourceClause, String> {
+    Ok(match resource {
+        ResourceClause::Named { binding, resource } => ResourceClause::Named {
+            binding: binding.clone(),
+            resource: Box::new(substitute_resource_clause_bindings(
+                resource,
+                substitutions,
+            )?),
+        },
+        ResourceClause::Quantified { quantity, resource } => ResourceClause::Quantified {
+            quantity: crate::surface::lowering::substitute_contract_expression(
+                quantity,
+                substitutions,
+            )?,
+            resource: Box::new(substitute_resource_clause_bindings(
+                resource,
+                substitutions,
+            )?),
+        },
+        ResourceClause::Declared {
+            access,
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => ResourceClause::Declared {
+            access: *access,
+            kind: *kind,
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    crate::surface::lowering::substitute_contract_expression(
+                        argument,
+                        substitutions,
+                    )
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            parameter_types: parameter_types.clone(),
+        },
+        ResourceClause::ViewMemory(_)
+        | ResourceClause::OwnMemory(_)
+        | ResourceClause::MemoryAggregate { .. } => resource.clone(),
+    })
 }
 
 impl StructuralItem {

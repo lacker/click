@@ -142,6 +142,36 @@ fn invariant_lowering_under_recorded_guards<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The written invariants of `loop_index`, read through the proof scope the
+/// clause was written under: a clause bound inside a proof `match` arm names
+/// that arm's bindings, and lowering sees the values they stand for.
+fn loop_invariant_surfaces(
+    environment: &ExecutionProofEnvironment<'_>,
+    loop_index: usize,
+    claim_label: &str,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .map(|clause| {
+            clause.resolved().map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` loop {loop_index}: could not resolve loop clause bindings: {message}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|clauses| {
+            clauses
+                .iter()
+                .flat_map(StructuralClause::items)
+                .map(|item| item.proposition().clone())
+                .collect()
+        })
+}
+
 pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     loop_index: usize,
@@ -265,7 +295,20 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             let mut tactics = Vec::new();
             let mut all_invariants_checked = true;
             for (invariant_index, item) in invariant_items.iter().enumerate() {
-                let proposition = item.proposition();
+                let written = item.proposition();
+                // Lower the invariant with the frontier's proof locals
+                // resolved; the written spelling is what the source proof's
+                // `have`s are matched against.
+                let resolved = crate::surface::lowering::substitute_click_proposition(
+                    written,
+                    &environment.proof_locals,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` loop {loop_index} invariant {invariant_index}: {message}"
+                    ))
+                })?;
+                let proposition = &resolved;
                 // A phase source certificate normally contains one `have`
                 // per invariant and can be checked as a whole.  If one of
                 // those bodies still contains the source-only arithmetic
@@ -277,7 +320,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         .tactics()
                         .and_then(|tactics| {
                             tactics.iter().find_map(|tactic| match tactic {
-                                ProofTactic::Have(have) if have.proposition == *proposition => {
+                                ProofTactic::Have(have) if have.proposition == *written => {
                                     Some(&have.proof)
                                 }
                                 _ => None,
@@ -313,7 +356,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 // discharging, exactly as if it were written as a `have`.
                 let planned_step = timings_enabled.then(|| {
                     ProofTactic::Have(ProofHave {
-                        proposition: proposition.clone(),
+                        proposition: written.clone(),
                         proof: invariant_proof.clone(),
                     })
                 });
@@ -373,10 +416,12 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 ) {
                     initialization_surface_propositions
                         .borrow_mut()
-                        .record_lowering(proposition, lowered)?;
+                        .record_lowering(written, lowered)?;
                 }
+                // The certificate keeps the invariant's written spelling:
+                // it is what the source names and what expansion prints.
                 tactics.push(ProofTactic::Have(ProofHave {
-                    proposition: proposition.clone(),
+                    proposition: written.clone(),
                     proof: SourceProof::Script(planned_certificate.to_proof_tactics().to_vec()),
                 }));
                 if !planning_available.contains(&planned_fact) {
@@ -784,14 +829,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
-    let invariant_surfaces = environment
-        .function_block
-        .structural_clauses()
-        .iter()
-        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .flat_map(StructuralClause::items)
-        .map(|item| item.proposition().clone())
-        .collect::<Vec<_>>();
+    let invariant_surfaces = loop_invariant_surfaces(environment, loop_index, &claim_label)?;
     let frontier = ExecutionFrontier {
         position: FrontierPosition::StatementEntry {
             remaining: body.clone().into(),
@@ -934,14 +972,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         &claim_label,
         &mut leaves,
     )?;
-    let invariant_surfaces = environment
-        .function_block
-        .structural_clauses()
-        .iter()
-        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .flat_map(StructuralClause::items)
-        .map(|item| item.proposition().clone())
-        .collect::<Vec<_>>();
+    let invariant_surfaces = loop_invariant_surfaces(environment, loop_index, &claim_label)?;
     let invariant_premise_surfaces = invariant_surfaces
         .iter()
         .map(|surface| {

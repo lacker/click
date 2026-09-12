@@ -606,6 +606,10 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     resource_environment: &ResourceEnvironment,
     frame_entry: Option<ResourceFrameEntry<'_>>,
 ) -> Result<CFunction, ClickError> {
+    // A frontier loop clause carries the proof scope it was written under;
+    // lowering reads every clause through that scope.
+    let resolved_block = resolved_function_block(function_block)?;
+    let function_block: &FunctionBlock = &resolved_block;
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, parsed_function, resource_environment)?;
     let resource_constructors = function_resource_constructors(function_block)?;
@@ -1204,6 +1208,19 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
     )
 }
 
+/// The block with each frontier loop clause resolved through the proof scope
+/// it was written under, so a clause written inside a proof `match` arm lowers
+/// with that arm's bindings exactly as a `have` there would.
+fn resolved_function_block(
+    function_block: &FunctionBlock,
+) -> Result<std::borrow::Cow<'_, FunctionBlock>, ClickError> {
+    function_block
+        .with_resolved_structural_clauses()
+        .map_err(|message| {
+            ClickError::new(format!("could not resolve loop clause bindings: {message}"))
+        })
+}
+
 pub(in crate::surface) fn function_contract_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1211,6 +1228,8 @@ pub(in crate::surface) fn function_contract_summary(
     click_function_environment: &ClickFunctionEnvironment,
     _resource_environment: &ResourceEnvironment,
 ) -> Result<FunctionContractSummary, ClickError> {
+    let resolved_block = resolved_function_block(function_block)?;
+    let function_block: &FunctionBlock = &resolved_block;
     let entry_state = crate::kernel::initialize_c_function_globals(
         &CState::new(),
         &parsed_function.to_kernel_function(),

@@ -1717,9 +1717,14 @@ impl<'a> Proof<'a> {
             &ProofTactic::Loop(loop_clause.clone()),
             execution.core.frontier.next_statement_index,
         );
+        // The loop clauses are written inside whatever proof scope reached
+        // this frontier; the re-annotation resolves that scope's locals
+        // before lowering them, as a `have` goal at this point would.
+        let proof_locals = self.proof_local_values();
         let expanded_loop = execute_frontier_local_loop(
             expansion_capture.as_deref_mut(),
             loop_clause,
+            &proof_locals,
             &mut execution,
             &tactic_context,
             &mut facts,

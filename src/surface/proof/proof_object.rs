@@ -1372,6 +1372,20 @@ impl<'a> Proof<'a> {
         self.state().locals().values.get(name)
     }
 
+    /// Every proof local in scope at this point, by name: a proof `match`
+    /// arm's bindings, `unfold ... as` names, call-result binders, loop
+    /// binders. Loop clauses written in this scope are resolved through it.
+    pub(in crate::surface::proof) fn proof_local_values(
+        &self,
+    ) -> BTreeMap<String, ContractExpression> {
+        self.state()
+            .locals()
+            .values
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
+
     /// Whether the obligation this handle addresses has been discharged. On
     /// a single-goal proof this coincides with completion; inside a sibling
     /// split, only the focused branch obligation's discharge is an arm's success —

@@ -569,6 +569,12 @@ that decides its cursor's constructor once at entry is written. The arm's
 constructor equation is a premise of the path, not a different entry state:
 the loop's entry projection, the checked body, and contract certification all
 see the contract's own entry (`mdtests/rb_ascending_walk_in_entry_match.md`).
+The arm's bindings are in scope in the loop's clauses, as they are in any
+term the arm writes: an invariant, a declared resource's arguments, and a
+`decreases` measure may name the arm's pointer, integer, and model bindings,
+and the clause is read with them resolved exactly as a `have` goal at the
+loop's frontier is. The clause keeps its written spelling, which is what
+expansion prints (`mdtests/loop_clause_reads_arm_bindings.md`).
 
 An invariant that fixes a pure function's value at the binder's model refutes
 arms too, and it is the invariant a model keyed by its own payload needs: the

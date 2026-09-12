@@ -189,6 +189,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
 pub(in crate::surface::proof) fn execute_frontier_local_loop(
     expansion_capture: Option<&mut ExpansionCapture>,
     loop_template: &StructuralClause,
+    proof_locals: &BTreeMap<String, ContractExpression>,
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
@@ -236,7 +237,12 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     }
     let function_with_prior_loops = function_block
         .with_bound_frontier_loop_clauses(&execution.presentation.frontier_loop_clauses.to_vec());
-    let mut current_loop_clauses = vec![loop_template.bound_to_loop(loop_index)];
+    // The loop's clauses were written inside this frontier's proof scope: a
+    // proof `match` arm's bindings, `unfold ... as` names, call-result
+    // binders. The bound clause keeps its written spelling, which expansion
+    // prints, and carries that scope, which every lowering of it resolves.
+    let scoped_template = loop_template.with_scope(proof_locals.clone());
+    let mut current_loop_clauses = vec![scoped_template.bound_to_loop(loop_index)];
     let mut nested_loop_clauses = Vec::new();
     for proof in [
         loop_template.initialize_proof(),
@@ -248,10 +254,14 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         proof.collect_termination_loop_clauses(&mut nested_loop_clauses);
     }
     for (offset, clause) in nested_loop_clauses.into_iter().enumerate() {
-        current_loop_clauses.push(clause.bound_to_loop(loop_index + offset + 1));
+        current_loop_clauses.push(
+            clause
+                .with_scope(proof_locals.clone())
+                .bound_to_loop(loop_index + offset + 1),
+        );
     }
     let bound_function_block = function_with_prior_loops
-        .with_frontier_loop_clause(loop_template, loop_index)
+        .with_frontier_loop_clause(&scoped_template, loop_index)
         .with_bound_frontier_loop_clauses(&current_loop_clauses[1..]);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
@@ -326,6 +336,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         function_source_registry: proof_context.function_source_registry(),
         frontier_loop_certificates: Some(&loop_certificates),
         frontier_loop_source: Some(&loop_source),
+        proof_locals: proof_locals.clone(),
     };
     let case_path = execution
         .presentation
@@ -489,7 +500,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     execution
         .presentation
         .frontier_loop_clauses
-        .push(loop_template.bound_to_loop(loop_index));
+        .push(scoped_template.bound_to_loop(loop_index));
     execution.core.frontier_loop_rules.push(loop_rule);
     Ok(expanded_loop)
 }
