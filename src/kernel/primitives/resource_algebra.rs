@@ -333,29 +333,40 @@ fn memory_derivation_affects_footprint(
             );
     };
     match derivation {
-        CMemoryDerivation::Store { pointer, value, .. } => ranges
-            .iter()
-            .any(|range| memory_range_overlaps_pointer(range, pointer, value.byte_width())),
+        CMemoryDerivation::Store { pointer, value, .. } => {
+            memory_block_may_alias(&pointer.block)
+                || ranges
+                    .iter()
+                    .any(|range| memory_range_overlaps_pointer(range, pointer, value.byte_width()))
+        }
         CMemoryDerivation::CallHavoc { mutable_ranges, .. }
         | CMemoryDerivation::LoopHavoc {
             mutable_ranges: Some(mutable_ranges),
             ..
-        } => ranges.iter().any(|footprint| {
+        } => {
             mutable_ranges
                 .iter()
-                .any(|written| memory_ranges_overlap(footprint, written))
-        }),
+                .any(|written| memory_block_may_alias(&written.base().block))
+                || ranges.iter().any(|footprint| {
+                    mutable_ranges
+                        .iter()
+                        .any(|written| memory_ranges_overlap(footprint, written))
+                })
+        }
         CMemoryDerivation::HeapFreed {
             allocation_base,
             bytes,
             ..
-        } => ranges.iter().any(|range| {
-            memory_range_overlaps_pointer(
-                range,
-                allocation_base,
-                bytes.as_const().unwrap_or(u32::MAX),
-            )
-        }),
+        } => {
+            memory_block_may_alias(&allocation_base.block)
+                || ranges.iter().any(|range| {
+                    memory_range_overlaps_pointer(
+                        range,
+                        allocation_base,
+                        bytes.as_const().unwrap_or(u32::MAX),
+                    )
+                })
+        }
         CMemoryDerivation::LocalLifetimeEnded { block, .. } => ranges.iter().any(|range| {
             !range.base().blocks_proven_distinct(&Pointer {
                 block: block.clone(),
@@ -404,15 +415,26 @@ fn add_memory_interval_candidates(
         return;
     };
     for query in query_nodes {
+        crate::instrumentation::record_deterministic_work(1);
         for ancestor in memory_interval_ancestors(&query) {
+            #[cfg(test)]
+            crate::instrumentation::record_deterministic_work(index.lookup_comparisons(&ancestor));
+            #[cfg(not(test))]
+            crate::instrumentation::record_deterministic_work(1);
             if let Some(bucket) = index.get(&ancestor) {
                 for occurrence in bucket.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
                     *occurrences = occurrences.with_value(*occurrence);
                 }
             }
         }
+        #[cfg(test)]
+        crate::instrumentation::record_deterministic_work(subtree.lookup_comparisons(&query));
+        #[cfg(not(test))]
+        crate::instrumentation::record_deterministic_work(1);
         if let Some(bucket) = subtree.get(&query) {
             for occurrence in bucket.iter() {
+                crate::instrumentation::record_deterministic_work(1);
                 *occurrences = occurrences.with_value(*occurrence);
             }
         }

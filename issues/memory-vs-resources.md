@@ -986,10 +986,13 @@ paths now replace memory through one invalidating state hook. Overlapping or
 unknown effects remove only affected projections (with cascading support
 cleanup); disjoint effects preserve framed observations, and an unknown loop
 effect invalidates all memory-dependent projections but not pure resources.
-Each checked transition walks only its adjacent memory-derivation edges and
-queries the affected interval candidates, giving O(edges + log U + k) work for
-U indexed ranges and k affected projections; an opaque barrier is explicitly
-output-sized over the memory-dependent projections it invalidates.
+For a non-ambiguous indexed event, each checked transition walks only its
+adjacent memory-derivation edges and queries affected interval candidates,
+giving O(edges + log U + k) work for U indexed ranges and k affected
+projections. Opaque or otherwise ambiguous events conservatively fall back to
+an O(U + k) scan of memory-dependent metadata because their block may alias
+any indexed block; an opaque barrier is likewise output-sized over the
+memory-dependent projections it invalidates.
 Normalization and exact joins preserve occurrence and footprint metadata only
 when the authority and dependency topology agree. Resource-context equality
 and hashing include the observable footprint topology but never raw snapshot
@@ -998,11 +1001,14 @@ identity.
 The checkpoint adds direct observe/store, nested-support removal, divergent
 join, same-block interval invalidation curves, repeated symbolic-alias cleanup,
 and wide-footprint/loop-barrier regressions, plus normalization,
-support-occurrence, and interval-index coverage. Focused
-`cargo test --lib kernel::tests::resource_tests` passed 106/106;
+support-occurrence, and interval-index coverage. The invalidation curves use
+sizes 4, 16, 64, 256, and 1024, separately measuring concrete indexed
+queries, supported-projection insertion/removal, barriers, and opaque alias
+fallback. Focused `cargo test --lib kernel::tests::resource_tests` passed
+107/107;
 `cargo test --lib kernel::proof::execution::tests::` passed 35/35;
 `cargo clippy --all-targets -- -D warnings` passed; and unfiltered
-`scripts/check.sh` passed 2758/2758 tests and 14/14 fixture/example checks
+`scripts/check.sh` passed 2759/2759 tests and 14/14 fixture/example checks
 (the existing quarantined example remains skipped). This worktree is
 `codex/mvr-w5b` from `43f4a51`; the checkpoint commits are `0a1bd260` and
 `4b726370`. This is a partial B1 checkpoint, not a complete W5 claim: remaining
