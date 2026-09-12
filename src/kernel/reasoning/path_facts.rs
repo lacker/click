@@ -1365,6 +1365,7 @@ mod mandatory_integer_obligation_tests {
             )),
             ordinal,
             Some(ordinal),
+            true,
         ))
     }
 

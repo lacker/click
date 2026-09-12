@@ -278,6 +278,8 @@ fn unresolved_call_requirements_retain_selected_source_site_identity() {
     assert_eq!(second_site.requirement_ordinal, 0);
     assert_eq!(first_site.source_requirement_ordinal, None);
     assert_eq!(second_site.source_requirement_ordinal, None);
+    assert!(!first_site.source_requirement_is_state_independent);
+    assert!(!second_site.source_requirement_is_state_independent);
     assert_eq!(first_site.source_arguments.as_slice(), arguments.as_slice());
     assert_eq!(
         second_site.source_arguments.as_slice(),
@@ -350,7 +352,109 @@ fn selected_contract_and_requirement_ordinals_stay_with_their_call() {
     assert_eq!(sources[1].requirement_ordinal, 1);
     assert_eq!(sources[0].source_requirement_ordinal, None);
     assert_eq!(sources[1].source_requirement_ordinal, Some(1));
+    assert!(!sources[0].source_requirement_is_state_independent);
+    assert!(!sources[1].source_requirement_is_state_independent);
     assert!(std::sync::Arc::ptr_eq(&sources[0].site, &sources[1].site));
+}
+
+#[test]
+fn requirement_capability_describes_the_complete_source_tree() {
+    let pure_disjunction = SpecProposition::Or(
+        Box::new(SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("x")),
+            operator: CComparisonOperator::GreaterThan,
+            right: SpecExpression::Value(int32(100)),
+        }),
+        Box::new(SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("x")),
+            operator: CComparisonOperator::LessThan,
+            right: SpecExpression::Value(int32(0)),
+        }),
+    );
+    // This shape is the arithmetic guard beneath the existential witnesses
+    // used by cstr-style predicates. Its enclosing source requirement still
+    // reads memory, so a lowered arithmetic leaf must not advertise the
+    // whole requirement as state independent.
+    let stateful_exists = SpecProposition::ExistsInt32 {
+        name: "len".to_string(),
+        variable: Variable(900),
+        body: Box::new(SpecProposition::MemoryLoadable {
+            memory: SpecMemory::Current,
+            base: SpecExpression::CExpression(c_variable("p")),
+            start: SpecExpression::Value(int32(0)),
+            end: SpecExpression::Value(int32(1)),
+            element_width: 4,
+        }),
+    };
+    let function = c_function(
+        CType::Int32,
+        "capability_source",
+        vec![
+            c_parameter("p", CType::Int32Pointer),
+            c_parameter("x", CType::Int32),
+        ],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        vec![pure_disjunction, stateful_exists],
+        vec![],
+        vec![],
+        vec![],
+        true,
+    )
+    .with_contract_requirement_sources(vec![Some(0), Some(1)]);
+    let contract = CFunctionContract::new("CapabilitySource", function).unwrap();
+    let paths = execute_c_function_contracts_paths(
+        &CState::new(),
+        &[&contract],
+        &[
+            c_typed_pointer_value(Pointer::symbolic(Variable(901)), CType::Int32Pointer),
+            c_int32_literal(7),
+        ],
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    let sources = paths[0]
+        .obligations
+        .iter()
+        .filter_map(|obligation| obligation.call_requirement_site())
+        .collect::<Vec<_>>();
+    let pure_source = sources
+        .iter()
+        .find(|source| source.requirement_ordinal == 0)
+        .expect("the pure source requirement should remain an obligation");
+    let stateful_source = sources
+        .iter()
+        .find(|source| source.requirement_ordinal == 1)
+        .expect("the stateful source requirement should remain an obligation");
+    assert!(pure_source.source_requirement_is_state_independent);
+    assert!(
+        sources
+            .iter()
+            .filter(|source| source.requirement_ordinal == 1)
+            .all(|source| !source.source_requirement_is_state_independent)
+    );
+    assert_eq!(pure_source.source_requirement_ordinal, Some(0));
+    assert_eq!(stateful_source.source_requirement_ordinal, Some(1));
+    assert!(std::sync::Arc::ptr_eq(
+        &pure_source.site,
+        &stateful_source.site
+    ));
+}
+
+#[test]
+fn generated_requirement_source_cannot_advertise_state_independence() {
+    let site = std::sync::Arc::new(CallRequirementSite::for_requirement(
+        "generated",
+        "Generated",
+        0,
+        &[],
+        &CMemory::new(),
+    ));
+    let source = CallRequirementSource::new(site, 0, None, true);
+    assert!(!source.source_requirement_is_state_independent);
 }
 
 #[test]

@@ -3011,6 +3011,11 @@ pub(crate) struct CallRequirementSource {
     pub(crate) site: std::sync::Arc<CallRequirementSite>,
     pub(crate) requirement_ordinal: usize,
     pub(crate) source_requirement_ordinal: Option<usize>,
+    /// Whether the complete selected source requirement is state independent.
+    /// This is a capability of the top-level requirement, not of any one
+    /// lowered leaf, so every obligation emitted from the requirement shares
+    /// the same answer.
+    pub(crate) source_requirement_is_state_independent: bool,
 }
 
 impl CallRequirementSource {
@@ -3018,11 +3023,16 @@ impl CallRequirementSource {
         site: std::sync::Arc<CallRequirementSite>,
         requirement_ordinal: usize,
         source_requirement_ordinal: Option<usize>,
+        source_requirement_is_state_independent: bool,
     ) -> Self {
         Self {
             site,
             requirement_ordinal,
             source_requirement_ordinal,
+            // Generated requirements and contracts without a source registry
+            // must never advertise source-side capabilities.
+            source_requirement_is_state_independent: source_requirement_ordinal.is_some()
+                && source_requirement_is_state_independent,
         }
     }
 }

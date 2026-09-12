@@ -3651,7 +3651,9 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         &arguments,
         root.execution().unwrap().core.state.memory(),
     ));
-    let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(site, 0, None));
+    let source = std::sync::Arc::new(crate::kernel::CallRequirementSource::new(
+        site, 0, None, false,
+    ));
     let refusal = ClickError::new("injected unsupported requirement").with_unresolved_requirement(
         &ProofObligation::verification_condition(unsupported.clone())
             .with_call_requirement_site(source.clone()),

@@ -1710,6 +1710,12 @@ fn prepare_verified_function_call<'a>(
                 function
                     .contract_requirement_source(requirement_ordinal)
                     .unwrap_or(None),
+                function
+                    .contract_requirement_source(requirement_ordinal)
+                    .is_some_and(|source_requirement_ordinal| {
+                        source_requirement_ordinal.is_some()
+                            && spec_proposition_is_state_independent(requirement)
+                    }),
             ));
             requirement_source = Some(source.clone());
             source
