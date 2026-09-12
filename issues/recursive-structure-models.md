@@ -350,6 +350,37 @@ enough to become the first regression of the package that fixes them.
     A13 also fixed a pre-existing audit defect in passing: a location-scoped
     verification planned C termination for every function in the file, so
     any file with a ranked loop failed every other claim's audit sites.
+31. **Soundness hole: a `while` guard with an unevaluable conjunct drops
+    it.** Found by A14, reproduced with no resources or loop binders:
+    `while (a != 0 && p[0] != 0) { a = 0; }` in a function that does not
+    own `p`, contracted `ensures result == 0`, verifies and audits clean
+    although the loop never runs when `p[0] == 0`. The second conjunct's
+    branch is dropped instead of refused and the exit assumes the negation
+    of the first conjunct alone. When both conjuncts are evaluable the loop
+    tactic refuses correctly. P1 regardless of rbtree. Package S1.
+32. **An induction hypothesis fixes every non-inducted parameter.** Found
+    by A14: `induct(ctx) as ih` yields `ih` of one argument, so the
+    context-transport lemma `heap_inorder(a) == heap_inorder(b) implies
+    heap_inorder(plug(ctx, a)) == heap_inorder(plug(ctx, b))` cannot be
+    proved (the `Left` arm needs the hypothesis at different `a`, `b`).
+    This is the shape of the rbtree fixup invariant, so it blocks the
+    rotate-then-ascend fixture and C3. Package A16.
+33. **A ranked loop cannot call a contract-less inline helper.** Found by
+    A14: `c_verified_function_termination_rules` builds its call graph from
+    verified rules only, so an inlined straight-line helper such as
+    `rb_parent` is never terminating and `decreases` fails with "every
+    reachable loop, recursive cycle, and callee must have a checked
+    ranking proof". Every rbtree fixup loop calls `rb_parent`. Package A15.
+34. **Smaller A14 findings, not scheduled.** A body that reassigns a
+    parameter cannot refold its borrowed instance at the entry position
+    (`fold(tree_at(old(root)), ...)` is refused; arguments are current-state
+    only); the grouped driver declines a top-level `match c.model` after a
+    loop while the same shape on the subtree binder works; the loop
+    tactic's "requires exactly one statement successor" refusal dumps the
+    raw `While` node (S1 fixes this diagnostic); the verbatim `rb_next`
+    guard `while ((parent = rb_parent(node)) && node == parent->rb_right)`
+    does not parse in C0 (assignment expressions), which
+    kernel-scale-preprocessing owns.
 
 ## Design decisions
 
@@ -594,6 +625,13 @@ appears to need one reports the need instead of adding it.
   and `tree_rightmost` verify and audit (35 of 35 sites) with `Context`,
   `ctx_at(child)`, `plug`, loop binders, a loop-body `match`, and
   `decreases t;`. A14 and C4 dispatched.
+- 2026-09-12: A14 (660c7643) is on master: ascending walks verify and
+  audit on the scaffold and the rbtree shapes; a resource argument may be
+  the null constant, and a loop exit publishes refuted arms. No binder
+  renaming rule was needed. It found the soundness hole (gap 31), the
+  induction-hypothesis limit (gap 32), and the inline-helper termination
+  gap (gap 33); S1, A15, A16 dispatched, C4 in progress. C3 waits on A15
+  and A16.
 
 ## Work packages
 
@@ -806,6 +844,26 @@ shapes `rb_at(p, parent)`/`ctx_at(child, parent, root)` with a verbatim
 `rb_next`-style ascent. Depends on A13; C3, C4's ascending half, and C5
 depend on it.
 
+**S1. Refuse an unevaluable guard conjunct (gap 31).** Scope: an
+unevaluable guard operand makes the guard undecided and refuses, never
+drops a branch; audit every condition shape; failing regressions per
+shape; bounded diagnostic for the successor refusal. Soundness: lands
+ahead of everything.
+
+**A15. Ranked loops may call contract-less inline helpers (gap 33).**
+Scope: classify an inlined helper in the termination call graph by its
+body (straight-line is terminating; a loop needs its own ranking; a
+recursive helper needs a rule), bounded to the body. Regressions: A14's
+`rb_ascending_walk_to_root.md` with `decreases`, a numeric case, and
+negatives. C3 and C5 depend on it.
+
+**A16. Induction hypotheses over all theorem parameters (gap 32).**
+Scope: `ih` takes the theorem's full parameter list, the inducted position
+accepting a strict structural descendant and the others any well-typed
+term, with the theorem's `requires` checked at the instance. Regressions:
+`plug_inorder_transport` on the scaffold, a two-parameter list theorem,
+negatives for a non-descendant and a violated premise. C3 depends on it.
+
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
 nested `branch` fixtures from gap 15, remove the deep clones or make them
@@ -879,7 +937,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, A8, A9, A10, A11, B1, C1, C2.
+on A4, A8, A9, A10, A11, A14, A15, A16, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with
