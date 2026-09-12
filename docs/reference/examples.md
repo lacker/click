@@ -536,11 +536,12 @@ sequence:
   guarded list resource, with both structural-resource and numeric termination
   proofs kept separate from its ordinary partial contract.
 - `examples/modeled-binary-tree/`: a matched recursive resource whose model
-  records each node's address, payload, and both submodels. It verifies the
-  unchanged initializer, both rotations against `heap_rotate_left` and
-  `heap_rotate_right` with in-order preservation, and the recursive
-  depth-first search against `heap_member`, alongside pure in-order and
-  membership theorems. Both of its recursive calls appear only in a condition
+  records each node's address, payload, and both submodels. Every function in
+  its C file is verified: the unchanged initializer, both rotations against
+  `heap_rotate_left` and `heap_rotate_right` with in-order preservation, the
+  recursive depth-first search against `heap_member`, and both iterative walks
+  against a context resource, alongside pure in-order, membership, rotation,
+  and `plug` theorems. Both of its recursive calls appear only in a condition
   or a return expression, and each is named with the call step's `let` binder;
   `mdtests/call_result_in_condition.md` is the minimal form of that naming,
   with `mdtests/call_result_wrong_value.md` and
@@ -558,9 +559,14 @@ sequence:
   verified against a context resource: `Context` and `ctx_at(child)` hold
   everything but the focused subtree, `plug` rebuilds the whole model from a
   context and that subtree, and the loop carries both binders with
-  `decreases t;`. Their negatives are
-  `mdtests/loop_decreases_rejects_unrelated_node.md` and
-  `mdtests/loop_context_frame_refold_rejected.md`.
+  `decreases t;` and `invariant plug(ctx.model, t.model) == old(t.model);`.
+  Their negatives are `mdtests/loop_decreases_rejects_unrelated_node.md`, for a
+  back edge that leaves the tree, and
+  `mdtests/loop_context_frame_refold_rejected.md`, for a frame folded twice
+  from the same children. `plug_inorder_transport` carries an in-order equality
+  on a focused subtree out to the whole tree, and is the induction that
+  instantiates its hypothesis at every parameter rather than the inducted one
+  alone.
 - `examples/rbtree-model/`: the pure red-black library, with no C and no
   `verifying` line. `RbTree` carries each node's `struct rb_node*` identity,
   its parent, color, and both submodels, the node-keyed shape the rbtree
@@ -579,7 +585,9 @@ sequence:
   recolor, a fresh linked leaf, and both splice lemmas each preserve
   `rb_parent_consistent`. `Context`, `plug`, `plug_inorder_transport`, and
   `plug_parent_consistent_transport` are the zipper half, mirroring
-  `examples/modeled-binary-tree` on the five-payload node.
+  `examples/modeled-binary-tree` on the five-payload node. The project has no C
+  of its own; the proofs about verbatim Linux bodies that use this model are the
+  `rb_*` mdtests below.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads, runtime-sized allocation,
   malloc-copy-free growth, and a resource-neutral in-capacity push shared by
@@ -598,6 +606,60 @@ sequence:
 packed into an `unsigned long` word with the low bit as a deletion mark. Its
 resource binds the tail as an existential witness, and every mark, read,
 clear, and cast back is a checked rewrite on the word's address form.
+
+## Unchanged rbtree functions
+
+Until a pinned import lands, the rbtree proofs are mdtests whose C is the
+unchanged function body from the Linux source with its headers. They share one
+model, the node-keyed `RbTree` of `examples/rbtree-model/`, with `rb_at(p)` for
+a subtree and `ctx_at(child, root)` for the frame above it.
+
+- `mdtests/rb_parent_family.md`: the packed parent word, with the unchanged
+  helper shapes recovering a parent pointer and its provenance from a tagged
+  word.
+- `mdtests/rb_at_link_helpers.md`: `rb_link_node`, `rb_set_parent`,
+  `rb_set_parent_color`, `rb_set_black`, and `rb_red_parent` over the modeled
+  subtree, each stating its effect on the model. Its negatives are
+  `mdtests/rb_at_rejects_wrong_color_bit.md` and
+  `mdtests/rb_at_rejects_wrong_parent_word.md`, which refuse a fold that
+  proposes a color or a parent the node's own word does not carry.
+- `mdtests/rb_ctx_change_child.md`: `__rb_change_child` under one contract
+  covering all three frames, `Top`, `Left`, and `Right`, since the cell it
+  writes always belongs to the frame. The negative
+  `mdtests/rb_change_child_rejects_wrong_slot.md` exchanges the two writes.
+- `mdtests/rb_first_last.md`: the unchanged `rb_first` and `rb_last`, the
+  descending walk that produces a frame and a focused subtree with
+  `plug(ctx.model, sub.model) == old(t.model)` and states the result as the
+  first or last element of `rb_inorder`. Its negatives are
+  `mdtests/rb_first_rejects_unguarded_first.md`, which drops the nonempty
+  guard, and `mdtests/rb_first_rejects_wrong_frame_parent.md`, which folds a
+  descent frame naming the wrong ancestor.
+- `mdtests/rb_replace_node.md`: the unchanged `rb_replace_node` for a childless
+  victim, whose model effect is the identity substitution `rb_substitute`, in
+  all three frame positions. `mdtests/rb_replace_node_with_children.md` is the
+  general case, where each child's parent word is rewritten and refolded.
+  `mdtests/rb_replace_node_keeps_victim.md` and
+  `mdtests/rb_replace_node_keeps_parent_link.md` are the negatives that claim
+  the tree still holds the victim, or that the splice left the root cell alone.
+- `mdtests/rb_child_load_identity_across_unfold.md`: a child's packed word
+  keeps one load identity across the `unfold` that exposed it, which is what
+  lets the rewritten word's arm fact discharge exactly at the refold. Its
+  negative is `mdtests/rb_child_load_identity_rejects_a_wrong_color.md`.
+- `mdtests/rb_ascending_walk_to_root.md`: the ascent every rbtree fixup loop
+  performs, on `rb_at(p)` and `ctx_at(child, root)` with `decreases c;`. Each
+  iteration consumes one frame and folds the node it owned into a larger
+  focused subtree, and the exit is an arm refutation from the failed guard.
+  `mdtests/rb_ascent_conjunctive_guard.md` and
+  `mdtests/rb_ascent_parent_link_guard.md` are the same ascent under
+  `rb_next`'s short-circuit guard, the second reading the parent's link through
+  the folded frame.
+- `mdtests/rb_next_conjunctive_guard.md`: the verbatim `rb_next` ascent guard,
+  pinned as unsupported. Its `while ((parent = rb_parent(node)) && ...)` uses
+  an assignment expression, which the supported C0 subset does not parse.
+- `mdtests/rb_augment_callbacks_table.md` and the neighboring
+  `rb_augment_callbacks_helper*.md` fixtures: the augmented-rbtree callback
+  suite as a const table of function pointers, with the effect and ownership
+  negatives around it.
 
 ## Library-shaped mdtests
 

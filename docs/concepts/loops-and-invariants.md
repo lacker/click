@@ -375,6 +375,12 @@ untouched. A cell only one possible arm owns is not published and the guard
 stays undecided, which refuses the loop. The verified example is
 `mdtests/rb_ascent_parent_link_guard.md`.
 
+The descending walk that pushes those frames is `tree_leftmost` in
+`examples/modeled-binary-tree`, verified with `decreases t;` on the focused
+subtree; [larger examples](larger-examples.md#a-modeled-loop-end-to-end) walks
+through the whole proof, and the same shape on the unchanged Linux `rb_first`
+is `mdtests/rb_first_last.md`.
+
 Unlike the numeric components, the structural descent is not a member of the
 back-edge invariant bundle. The back edge decides it directly and names the
 binder when it does not descend, as in

@@ -144,6 +144,38 @@ preserves the sibling resource and parent fields needed afterward. Allocation,
 deallocation, mutating traversal, balancing, sharing, and cycles remain outside
 the example.
 
+### Modeled binary tree
+
+```text
+examples/modeled-binary-tree/
+```
+
+This fixture is the same C shape with an exact model attached. `HeapTree`
+records each node's address, payload, and both submodels, and the matched
+resource `tree_at(p)` owns different cells in each arm, so the model decides
+what the resource holds. A second resource, `ctx_at(child)`, holds everything
+the tree has *except* one focused subtree, and the pure `plug` rebuilds the
+whole model from the two. Every function in its C file is verified: the
+initializer, both rotations against exact model transformations with in-order
+preservation, the recursive search against a membership function, and the two
+iterative walks against the context. It is the reference example for a model
+that is derived from owned memory rather than asserted beside it, and the next
+section walks through its loop proof.
+
+### Red-black tree model
+
+```text
+examples/rbtree-model/
+```
+
+This fixture is pure: no C file and no `verifying` line. It is the Linux rbtree
+model — `RbTree` with each node's identity, parent, color, and both submodels
+— with the in-order list, membership, black height, the red-black and
+almost-red-black predicates, parent/child consistency, and the theorems that
+rotation, recolor, leaf insertion, and both erase splices preserve them. The
+proofs about verbatim Linux C that use this model live in the `rb_*` mdtests;
+this project is the library they cite.
+
 ### Recursive zero list
 
 ```text
@@ -233,6 +265,109 @@ element of one segment, so the other segment and the rest of its own are
 framed by ownership with no effect clause. The swap changes only metadata and
 refolds the same two ranges in the opposite order. A modular pipeline composes
 initialization, both segment mutations, and a first-segment read.
+
+## A modeled loop, end to end
+
+`tree_leftmost` in
+[`examples/modeled-binary-tree`](https://github.com/lacker/click/tree/master/examples/modeled-binary-tree)
+is the smallest complete instance of the pattern every walk over a recursive
+structure uses, including the Linux rbtree traversals. Its C does three
+things — reject null, run `while (root->left != 0) root = root->left;`, return
+the cursor — and the proof around it is worth reading as a unit.
+
+The problem the contract solves is that the function stops in the middle of the
+tree. It consumes a whole tree and hands back a pointer into it, so a
+postcondition needs a name for the part it walked past. That name is a context
+resource, and the frame it pushes each iteration is a matched arm that owns its
+parent's cells through a constructor binding:
+
+<!-- verified-example: mdtests/resource_arm_binding_struct_base.md -->
+```click
+resource ctx_at(child: struct tree_node*) {
+    field model: Context;
+    match model {
+        Context::Top => {},
+        Context::Left(parent, value, sibling_model, up_model) => {
+            owns parent->value;
+            owns parent->left;
+            owns parent->right;
+            owns sibling: tree_at(parent->right);
+            owns up: ctx_at(parent);
+            fact parent != 0;
+            fact parent->left == child;
+            fact parent->value == value;
+            fact sibling.model == sibling_model;
+            fact up.model == up_model;
+        },
+    }
+}
+```
+
+A frame owns the parent's three cells, the subtree the walk did not take, and
+the frame above it. The pure `plug(ctx, sub)` rebuilds the whole model from a
+frame stack and the focused subtree, so the contract's real claim is one
+equation: `ensures plug(ctx.model, sub.model) == old(t.model);`, beside
+`produces ctx: ctx_at(result);` and `produces sub: tree_at(result);`. It says
+the walk lost nothing — not that the result is some well-formed tree, but that
+it is the same tree, with the same nodes in the same order. The position it
+stopped at is the second clause,
+`ensures heap_left(sub.model) == HeapTree::Empty;`.
+
+The loop carries the same pair the contract produces, and its measure is the
+focused subtree:
+
+<!-- verified-example: mdtests/loop_context_frame_refold_rejected.md -->
+```click
+loop {
+    owns ctx: ctx_at(root);
+    owns t: tree_at(root);
+    decreases t;
+    invariant t.model != HeapTree::Empty;
+    invariant plug(ctx.model, t.model) == old(t.model);
+}
+```
+
+The fixture named above is this walk with one extra fold, refused for that
+fold; the passing walk is the example itself.
+
+One iteration is five steps, and each is an ordinary tactic:
+
+1. `match t.model` inside `preserve` supplies the constructor. The binder's
+   model at an arbitrary loop head is a fresh symbolic value, so nothing can
+   `unfold` it until a proof `match` names the arm; the `HeapTree::Empty` arm
+   closes by `contradiction` on the first invariant.
+2. `unfold(t) as { left: l, right: rt }` takes the node apart into its three
+   cells and its two child instances.
+3. `fold(ctx_at(root->left), { model: Context::Left(...) }, { sibling: rt, up:
+   ctx })` builds the new frame from the parent's cells, the untaken sibling,
+   and the old frame. Those children are consumed by the fold, which is what
+   keeps the frame stack linear — a body that folds a second frame from the
+   same children is refused by name.
+4. `step()` runs `root = root->left`.
+5. `close_invariants()` rebinds `ctx` and `t` by proved argument equality: the
+   binder arguments are read in the state the body reached, so `tree_at(root)`
+   is now the left child's instance, and the structural measure sees a direct
+   contained child of what the head held.
+
+The `plug` invariant moves forward with a `have` per iteration: `plug` of the
+new frame at the left submodel unfolds to `plug` of the old frame at the whole
+node, which the invariant already equates with `old(t.model)`.
+
+What is left is the guard, and it is decided by arm selection rather than by a
+case split. `requires t.model != HeapTree::Empty` entails the `HeapTree::Node`
+arm at contract lowering, and that arm's own `fact p != 0` decides the opening
+`if (root == 0)` with no `branch`. Inside the loop the rule runs backwards: the
+guard `root->left != 0` contradicts the `HeapTree::Empty` arm's `fact p == 0`,
+so the child the unfold exposes carries the next iteration's invariant. At the
+exit the failed guard refutes the `HeapTree::Node` arm instead, and because
+`Empty` has no fields the equation is published outright, which is the
+postcondition. The rules are in [resources](resources.md) and
+[loops and invariants](loops-and-invariants.md).
+
+The same five steps, on an unchanged Linux body, are `mdtests/rb_first_last.md`:
+`rb_at(n)` and `ctx_at(n, root)` replace the scaffold's resources, the loop
+declares the same two binders and the same measure, and the extra work is the
+packed parent word and the color, not the shape of the proof.
 
 ## How to read an example project
 
