@@ -2,11 +2,12 @@
 
 ## Objective
 
-Remove unretained prerequisite derivation from simple statement checking. A
-bare `step()` must either use an exactly stated prerequisite or return a
-structured unmet requirement. A smart caller such as `execute()` or
-`execute_until()` may construct an ordinary checked `have`, then retry the
-same step. Expansion must show that `have` and all of its witnesses,
+`step()` is a simple tactic, not a smart tactic. Remove unretained prerequisite
+derivation from its statement checking. A bare `step()` must either use an
+exactly stated prerequisite or return a structured unmet requirement. A smart
+caller such as `execute()` or `execute_until()` may construct an ordinary
+checked `have`, then retry the same step. Expansion must show that `have` and
+all of its witnesses,
 transports, branches, and simplifications; the expanded proof must verify
 cold without repeating hidden planning.
 
@@ -56,33 +57,44 @@ Expanded proofs contain only ordinary Surface Click operations. The ordinary
 checker remains the authority and must not consult source metadata to accept a
 certificate.
 
-## Current baseline
+## Status at the implementation pause
 
-The following interfaces are available for the vertical work and should be
-extended rather than bypassed:
+The caller-requirement vertical is complete. The dynamic C-string path retains
+an ordinary checked proof using exact caller source identity rather than
+reconstructing a requirement from the final fact vector.
 
-- structured unmet call requirements, including callee/source metadata and
-  lowering context;
-- transactional retry that can retain a checked `have` before retrying the
-  original statement;
-- exact source-backed retry admission and bounded synthesis;
-- checked `Have`, `Choose`, `Witness`, `Both`, `Intro`, transport, coverage,
-  and simplification operations; and
-- source projection and generated-load binding representations.
+The generated-load foundation is also landed and green:
 
-The remaining work is architectural: caller source identity must reach the
-projection used by the dynamic C-string proof, and generated loads must carry
-their source occurrence across expression lowering. Only after those paths are
-complete should the repository-wide `Planning` census and cutover proceed.
+- parsed scalar field accesses have deterministic source identities;
+- exact generated-load/source observations travel through execution;
+- conflicting observations produce persistent ambiguity tombstones;
+- branch forks and joins retain output-sized event suffixes; and
+- only accepted cursor transitions commit source observations.
 
-## Phase 1 — caller requirement identity
+The last green checkpoint is `266d0d44`. `scripts/check.sh` passed there with
+2,831 tests and all 14 fixture gates. There is no pending implementation diff.
 
-### Scope
+The next checkpoint is deliberately narrower than the rest of Phase 2: build
+an immutable per-function source-load plan. Given a `LoadSourceId`, it must
+return exactly one source field spelling, position, containing statement, and
+validation record for the source-side pointer/type/offset. It must be built
+alongside C0 lowering, shared between proof branches, and queried without an
+AST walk or ambient scan. The current event identity contains only source unit,
+function, and occurrence, so no load-equation consumer should land before this
+plan supplies and validates the missing region and spelling data.
 
-Build a proof-context-scoped caller requirement index while constructing the
-initial claim context. Preserve an `EntryFactOrigin` alongside lowered entry
-facts so the source declaration is never reconstructed by comparing or
-slicing the final fact vector. The index record must keep distinct:
+After that checkpoint, reassess the representation before implementing the
+`owned-string` and `bounded-pool` consumers. Do not combine the source-plan
+design, both consumers, and the Planning cutover into one change.
+
+## Phase 1 — caller requirement identity (complete)
+
+### Landed boundary
+
+The proof context now builds a caller requirement index while constructing the
+initial claim context. It preserves an `EntryFactOrigin` alongside lowered
+entry facts, so the source declaration is not reconstructed by comparing or
+slicing the final fact vector. The index record keeps distinct:
 
 - `RequirementSourceId` and outer declaration ordinal;
 - the lowered principal fact index and exact fact;
@@ -112,47 +124,27 @@ Unsupported labels, nested/resource/generated forms, callbacks, generic
 wrappers, ambiguous candidates, and stale positions fail with the original
 structured requirement.
 
-The current vertical consumer is the dynamic C-string proof. It must retain a
-checked `have` containing ordinary `Choose`, `Witness`, explicit transport,
-and coverage operations. Its production C remains unchanged. The regression
-uses a nonzero requirement ordinal, unrelated entry facts, and an alternate
-pointer name; it must prove that the selected caller source is the intended
-one. Expansion must contain no smart operations and must verify in a fresh
-process without entering logical Planning.
+The dynamic C-string regression retains a checked `have` containing ordinary
+`Choose`, `Witness`, explicit transport, and coverage operations. It uses a
+nonzero requirement ordinal, unrelated entry facts, and an alternate pointer
+name. Its expansion contains no smart operations and verifies cold without
+logical Planning.
 
-### Phase 1 delegation and gate
+## Phase 2 — generated-load source occurrence identity (foundation complete)
 
-Root owns the shared identity interfaces, retry state machine, projection
-integration, and final merge. A Luna implementation task may own only the
-bounded index and its unit/scaling tests after the interfaces are frozen. A
-separate Luna task may own only explicit-`have` composition after the index
-contract is fixed. Luna reviews are read-only and must check exact source
-selection, snapshot authority, deletion behavior, and scaling.
-
-Do not merge Phase 1 until focused dynamic tests, expansion/deletion tests,
-wrong-epoch and invalidation negatives, clippy, and unfiltered
-`scripts/check.sh` pass on one base. The root agent must verify the primary
-checkout is clean and unchanged before fast-forwarding and pushing.
-
-## Phase 2 — generated-load source occurrence identity
-
-Continue from the landed Phase 1 result on a fresh integration branch. The
-remaining `bounded-pool` and `owned-string` obligations need faithful source
-expressions for equations such as:
+Continue from the landed runtime event channel on a fresh integration branch.
+The remaining `bounded-pool` and `owned-string` obligations need faithful
+source expressions for equations such as:
 
 ```text
 Var(load_variable) == load(snapshot, pointer)
 ```
 
-Mint `LoadSourceId` before C access syntax is erased. Lowering must return an
-aligned source plan alongside the kernel expression/statement; every
-shape-changing rewrite, including synthetic nodes, creates an explicit plan
-node at the same time. A reconstructed preorder walk is not acceptable.
-The evaluated plan node emits a source event at the operation that mints the
-exact `GeneratedLoadBinding`.
-
-Carry events through the ephemeral expression, argument, statement, and
-transition paths. Record a persistent transition-local resolution:
+`LoadSourceId` is now minted before C access syntax is erased, and the
+evaluated load emits a source event when it mints the exact
+`GeneratedLoadBinding`. Events travel through the ephemeral expression,
+argument, statement, and transition paths into a persistent transition-local
+resolution:
 
 ```text
 Variable -> Unique(exact binding, source use) | Ambiguous
@@ -163,6 +155,11 @@ the same variable creates a permanent ambiguity tombstone; identical pairs
 are idempotent. Forks share roots, joins consume arm suffixes, and failed
 retries record nothing. The source-independent `GeneratedLoadBinding` type
 does not change.
+
+What remains is the aligned source plan beside the kernel
+expression/statement. Every shape-changing rewrite, including synthetic
+nodes, must create or explicitly omit its plan node at the same time. A
+reconstructed preorder walk is not acceptable.
 
 A Surface consumer must validate variable, binding, source owner/region/
 occurrence, instantiated spelling, statement-entry selector, memory identity,
