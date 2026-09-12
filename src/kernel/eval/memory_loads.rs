@@ -147,7 +147,15 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             obligations,
         }];
     }
-    let mut load_assumptions = assumptions.clone();
+    // Transport is the exception, not the rule: most loads add no condition
+    // fact and must keep reasoning against the *caller's* fact set object.
+    // The memo identity of a fact set is the ambient scope its address was
+    // registered under (`PureFactContextIdScope`), so cloning it
+    // unconditionally handed every query below a fact set no scope names, and
+    // the whole load — including the cell scans — then ran memo-cold. Build a
+    // new context only when a transport actually lands, and register that one
+    // in its own scope.
+    let mut load_assumptions: Option<PureFactContext> = None;
     let candidates = if assumptions.should_transport_memory_load_condition_facts() {
         {
             assumptions
@@ -169,13 +177,21 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             continue;
         }
         let target = target.as_ref().clone();
-        load_assumptions = load_assumptions.assume_proposition(target.clone());
+        let base = load_assumptions
+            .take()
+            .unwrap_or_else(|| assumptions.clone());
+        load_assumptions = Some(base.assume_proposition(target.clone()));
         let transported = ExecutionPureFact::certified_transport(source, target, theorem);
         if !facts.contains(&transported) {
             facts.push(transported);
         }
     }
-    let assumptions = &load_assumptions;
+    let _load_assumptions_id_scope = load_assumptions
+        .as_ref()
+        .map(PureFactContext::enter_id_scope);
+    // Borrowing the transported context here also freezes it, which is what
+    // keeps the scope's registered address describing this exact fact set.
+    let assumptions = load_assumptions.as_ref().unwrap_or(assumptions);
     // A typed union overlay is the authoritative view for an exact typed
     // load, including in provenance-sensitive symbolic-load mode. Selecting
     // the raw load first would reinterpret a copied pointer member as an
@@ -277,17 +293,25 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 obligations,
             }];
         }
-    } else if let Some(value) = memory.cells.iter().find_map(|(stored_pointer, value)| {
-        let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
-        // A bounded equality query can retain an alias guard before its
-        // nested separation search reaches a compact resource composition.
-        // Recheck separation at the top-level query before treating that
-        // materialized cell as authoritative. If both hold, the alias guard
-        // describes an unreachable branch and must not manufacture a typed
-        // load from the disjoint cell.
-        (equal && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions))
-            .then(|| value.clone())
-    }) {
+    } else if let Some(value) = crate::instrumentation::measure_operation(
+        "kernel",
+        "memory load",
+        "memory load: equal-cell scan",
+        || {
+            crate::instrumentation::record_deterministic_work(memory.cells.len());
+            memory.cells.iter().find_map(|(stored_pointer, value)| {
+                let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
+                // A bounded equality query can retain an alias guard before its
+                // nested separation search reaches a compact resource composition.
+                // Recheck separation at the top-level query before treating that
+                // materialized cell as authoritative. If both hold, the alias guard
+                // describes an unreachable branch and must not manufacture a typed
+                // load from the disjoint cell.
+                (equal && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions))
+                    .then(|| value.clone())
+            })
+        },
+    ) {
         if let Some(value) = canonicalized_pointer_value_from_int_cell(
             &pointer,
             &value,
@@ -365,9 +389,17 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     let mut memory = memory.clone();
     let reduction_base = Some(intern_c_memory_ref(&memory));
     let cells_before_reduction = memory.cells.len();
-    std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
-        !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
-    });
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "memory load",
+        "memory load: distinct-cell reduction",
+        || {
+            crate::instrumentation::record_deterministic_work(cells_before_reduction);
+            std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
+                !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+            });
+        },
+    );
     // The returned symbolic load carries the reduced memory snapshot, so
     // other queries must relate it back to its source. Dropping cells
     // provably distinct from the loaded pointer is a
@@ -402,17 +434,25 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
-    let unresolved = memory
-        .cells
-        .iter()
-        .find_map(|(stored_pointer, stored_value)| {
-            (stored_pointer != &pointer
-                && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
-                && !alias_cache.resolution_equal(&pointer, stored_pointer, assumptions)
-                && (assumptions.should_defer_non_exact_condition_reasoning()
-                    || !alias_cache.equal(&pointer, stored_pointer, assumptions)))
-            .then(|| (stored_pointer.clone(), stored_value.clone()))
-        });
+    let unresolved = crate::instrumentation::measure_operation(
+        "kernel",
+        "memory load",
+        "memory load: unresolved-cell scan",
+        || {
+            crate::instrumentation::record_deterministic_work(memory.cells.len());
+            memory
+                .cells
+                .iter()
+                .find_map(|(stored_pointer, stored_value)| {
+                    (stored_pointer != &pointer
+                        && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+                        && !alias_cache.resolution_equal(&pointer, stored_pointer, assumptions)
+                        && (assumptions.should_defer_non_exact_condition_reasoning()
+                            || !alias_cache.equal(&pointer, stored_pointer, assumptions)))
+                    .then(|| (stored_pointer.clone(), stored_value.clone()))
+                })
+        },
+    );
     if let Some((stored_pointer, stored_value)) = unresolved {
         let mut paths = Vec::new();
 

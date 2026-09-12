@@ -1055,3 +1055,124 @@ fn symbolic_memory_block_sizes_are_free_and_substitutable() {
         Some(&Bitvector32Term::Constant(24)),
     );
 }
+
+/// A snapshot DAG `depth` levels deep: each level's snapshot is reachable
+/// through two distinct cells of the level above, so a rewrite that follows
+/// structure instead of snapshot identity visits `2^depth` snapshots while the
+/// DAG holds `depth` of them. This is the shape a proof builds when each
+/// `unfold` names the cells it exposes and the C then loads through them, one
+/// nesting level per unfolded child.
+fn nested_snapshot_load(depth: usize) -> Bitvector32Term {
+    let block = PointerBlock::Concrete("snapshot-chain".to_string());
+    let at = |offset: i64| Pointer {
+        block: block.clone(),
+        offset: PointerOffsetTerm::Constant(offset),
+    };
+    let blocks = std::sync::Arc::new(BTreeMap::from([(
+        block.clone(),
+        CBlock::with_symbolic_size(Bitvector32Term::Constant(8 * depth as u32 + 16)),
+    )]));
+    let level_memory = |cells| CMemory {
+        blocks: blocks.clone(),
+        cells: std::sync::Arc::new(cells),
+        union_cells: std::sync::Arc::new(BTreeMap::new()),
+        ended_local_blocks: std::sync::Arc::new(BTreeSet::new()),
+        heap: std::sync::Arc::new(CHeapMemory::default()),
+    };
+
+    let mut memory = level_memory(BTreeMap::new());
+    for level in 0..depth {
+        let offset = 8 * level as i64;
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(memory),
+            Box::new(at(offset)),
+        );
+        memory = level_memory(BTreeMap::from([
+            (at(offset), CValue::Int32(load.clone())),
+            (at(offset + 4), CValue::Int32(load)),
+        ]));
+    }
+    Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(memory),
+        Box::new(at(8 * depth as i64)),
+    )
+}
+
+/// How many snapshots the named `substitution: snapshot rewrite` operation
+/// rebuilt while `operation` ran, beside the run's total deterministic work.
+///
+/// The count, not the summed span work, is the scaling signal: an operation's
+/// work is inclusive of the operations nested inside it, so summing a `depth`
+/// deep nest of spans is quadratic even when each snapshot is rebuilt once.
+fn snapshot_rewrite_count<R>(operation: impl FnOnce() -> R) -> (R, usize, usize) {
+    let ((result, total), events) = crate::instrumentation::collect(|| {
+        crate::instrumentation::measure_deterministic_work(operation)
+    });
+    let rewrites = events
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "substitution: snapshot rewrite"
+            )
+        })
+        .count();
+    (result, rewrites, total)
+}
+
+/// Rewriting one variable must visit each distinct snapshot the term reaches
+/// once, not once per path that reaches it.
+///
+/// A `MemoryLoad` term carries a whole snapshot and a snapshot's cells hold
+/// further `MemoryLoad` terms, so these terms are a DAG. Walking it as a tree
+/// is what made `mdtests/rb_replace_node_with_children.md` slow: its 96
+/// load-variable rewrites cost 965,776 snapshot rebuilds, because three nested
+/// `unfold`s each name a cell and the rewritten variable occurs in none of
+/// them.
+#[test]
+fn variable_substitution_visits_each_snapshot_once_per_rewrite() {
+    let mut rewrites = Vec::new();
+    let mut totals = Vec::new();
+    for depth in [2, 4, 8, 16] {
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(nested_snapshot_load(depth)),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let (rewritten, rewrite_count, total) = snapshot_rewrite_count(|| {
+            crate::kernel::reasoning::substitute_bitvector_variable_in_proposition(
+                &goal,
+                Variable(770_001),
+                &Bitvector32Term::Constant(1),
+            )
+        });
+        // The rewritten variable occurs nowhere, so every visit is pure
+        // walking and the goal must come back unchanged.
+        assert_eq!(rewritten, goal, "depth {depth} rewrite changed the goal");
+        rewrites.push(rewrite_count);
+        totals.push(total);
+    }
+
+    assert!(
+        rewrites[0] > 0,
+        "the snapshot-rewrite operation must observe this cost: {rewrites:?}"
+    );
+    // Four geometric depths, each twice the last. A rewrite performed per
+    // reaching path doubles with every added level, so holding adjacent
+    // ratios under 3x rejects it without encoding host timing.
+    for pair in rewrites.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(3),
+            "snapshot rewrites follow reaching paths instead of the snapshot DAG: {rewrites:?} (total work {totals:?})"
+        );
+    }
+    for pair in totals.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(3),
+            "substitution work grows faster than the snapshot DAG: {totals:?} (snapshot rewrites {rewrites:?})"
+        );
+    }
+}
