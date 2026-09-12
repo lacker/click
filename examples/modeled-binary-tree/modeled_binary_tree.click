@@ -357,12 +357,18 @@ struct tree_node* tree_rotate_right(struct tree_node* root) {
 int tree_contains(struct tree_node* root, struct tree_node* target) {
     owns t: tree_at(root);
     ensures t.model == old(t.model);
+    ensures root == target implies result == heap_member(old(t.model), target);
 } by {
     match t.model {
         HeapTree::Empty => {
             unfold(t);
             execute();
             let t = fold(tree_at(root), { model: HeapTree::Empty });
+            have result == heap_member(old(t.model), target) by {
+                rewrite(old(t.model) == HeapTree::Empty);
+                unfold(heap_member(HeapTree::Empty, target));
+                normalize();
+            }
             simp();
         },
         HeapTree::Node(node, value, left_model, right_model) => {
@@ -375,6 +381,17 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
                 then {
                     step();
                     let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
+                    have node == target by {
+                        rewrite(node == root);
+                        normalize() using { root == target; }
+                    }
+                    have result == heap_member(old(t.model), target) by {
+                        rewrite(old(t.model)
+                            == HeapTree::Node(node, value, left_model, right_model));
+                        unfold(heap_member(
+                            HeapTree::Node(node, value, left_model, right_model), target));
+                        normalize() using { node == target; }
+                    }
                     simp();
                 }
                 else {}

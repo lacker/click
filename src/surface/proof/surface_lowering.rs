@@ -80,6 +80,36 @@ pub(super) fn promote_integer_expression(
     }
 }
 
+/// Materializes the proof-local lexical bindings a written proposition
+/// names.
+///
+/// A checked `Proof` handle resolves these through
+/// [`Proof::substitute_fixed_state_locals_in_proposition`]. A shared law that
+/// lowers a written proposition before it owns such a handle has no locals of
+/// its own, so a match arm's field bindings must be supplied explicitly or
+/// the name stays an unbound C variable and lowers to no path at all.
+///
+/// Only the names this proposition actually spells are looked up, each
+/// through one indexed persistent-map query.
+pub(in crate::surface::proof) fn substitute_lexical_bindings_in_proposition(
+    proposition: &ClickProposition,
+    bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
+) -> Result<ClickProposition, String> {
+    if bindings.is_empty() {
+        return Ok(proposition.clone());
+    }
+    let mut names = BTreeSet::new();
+    collect_click_proposition_referenced_names(proposition, &mut names);
+    let substitutions = names
+        .into_iter()
+        .filter_map(|name| bindings.get(&name).cloned().map(|value| (name, value)))
+        .collect::<BTreeMap<_, _>>();
+    if substitutions.is_empty() {
+        return Ok(proposition.clone());
+    }
+    substitute_click_proposition(proposition, &substitutions)
+}
+
 pub(super) fn promote_integer_comparison(
     surface: &ClickProposition,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,

@@ -1096,7 +1096,19 @@ and width in `owns`, in `fact`, and in a child instance's arguments. The
 datatype may be declared above or below the resource, because declaration
 order does not create scope. A binding of any other type is not a base, and
 using one as one is refused with the type the constructor declares. They
-cannot shadow resource parameters or fields. Fold/unfold requires constructor
+cannot shadow resource parameters or fields.
+
+A pointer-typed payload is an ordinary C pointer value, so a proposition may
+compare it with any C pointer expression, in `requires`, `ensures`, `have`,
+`rewrite`, and `normalize() using`. A resource arm that records the owner's
+own address, `fact p == identity`, is what connects the two: the C tests an
+address, the model tests its payload, and that fact is the bridge. Pointers
+stay pointers; there is no conversion to an integer and the payload carries no
+ownership. The regression is
+`mdtests/model_identity_pointer_payload.md`, with
+`mdtests/model_identity_pointer_payload_rejects_other_cell.md` as its negative.
+A pure function may not yet *return* a pointer type; its application has no
+kernel pointer term, so such a call cannot be lowered. Fold/unfold requires constructor
 evidence for the actual instance field (for example,
 `c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
 implicit proof-by-cases. Only the selected arm's memory and facts are exposed.

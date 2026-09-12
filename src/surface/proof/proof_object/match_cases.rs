@@ -53,6 +53,32 @@ impl ExecutionMatchPlan {
     }
 }
 
+/// Tags one deferred post-execution tactic, and everything a surface `if` or
+/// `branch` nests inside it, with the match arm's binding scope.
+///
+/// Ordered finalization flattens those arms and applies each selected tactic
+/// to the outcome proof, so a tactic written inside a nested arm reaches that
+/// proof on its own. Tagging only the outermost entry left every nested
+/// tactic without the arm's field bindings.
+fn attach_arm_lexical_scope(
+    tactic: &mut DeferredPostExecutionTactic,
+    scope: &PersistentMap<String, ContractExpression>,
+) {
+    if tactic.lexical_bindings.is_none() {
+        tactic.lexical_bindings = Some(scope.clone());
+    }
+    if let PostExecutionTactic::If {
+        then_tactics,
+        else_tactics,
+        ..
+    } = &mut tactic.tactic
+    {
+        for nested in then_tactics.iter_mut().chain(else_tactics.iter_mut()) {
+            attach_arm_lexical_scope(nested, scope);
+        }
+    }
+}
+
 impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn begin_execution_match(&self) -> Self {
         Self {
@@ -333,9 +359,7 @@ impl<'a> Proof<'a> {
                 .ok_or("match arm lost its deferred-tactic prefix")?;
             let mut deferred = plan.deferred_base.clone();
             for mut tactic in suffix {
-                if tactic.lexical_bindings.is_none() {
-                    tactic.lexical_bindings = Some(scope.clone());
-                }
+                attach_arm_lexical_scope(&mut tactic, &scope);
                 deferred.push(tactic);
             }
             presentation.post_execution_tactics = deferred;

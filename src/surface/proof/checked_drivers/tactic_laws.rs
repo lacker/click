@@ -1,5 +1,6 @@
 use super::*;
 use crate::surface::proof::proof_object::ExecutionProofState;
+use crate::surface::proof::surface_lowering::substitute_lexical_bindings_in_proposition;
 
 /// The one mid-execution `have` law: checked fixed-state proof first, generated
 /// smart plan second, with the entry-prerequisite,
@@ -10,6 +11,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     pure_facts: &mut Vec<Proposition>,
+    lexical_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
 ) -> Result<ProofCertificate, ClickError> {
     let function_block = proof_context.function_block;
     let parsed_function = proof_context.parsed_function;
@@ -33,11 +35,23 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
             .iter()
             .map(|fact| fact.proposition().clone()),
     );
+    // The law lowers a written proposition without a `Proof` handle of its
+    // own, so a match arm's field bindings reach it only here. Without this
+    // a pointer payload named by an arm binding stays an unbound C variable
+    // and the kernel lowering produces no path at all.
+    let goal_surface = substitute_lexical_bindings_in_proposition(&have.proposition, lexical_bindings)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` have proof {tactic_index}: could not substitute match bindings: {message}"
+            ))
+        })?;
     // Surface spellings are not proof authority: a lowering may have been
     // recorded while considering a goal or an unselected conditional fact.
     // Only retained proof facts and checked effect facts may justify `have`.
     let checked_proof_result = checked_have_with_proof(
         have,
+        &goal_surface,
+        lexical_bindings,
         theorem_environment,
         claim_label,
         tactic_index,
@@ -71,7 +85,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         (Some(_), _) => None,
         (None, Some(unfolded_predicates)) => {
             let checked_goal = lower_fixed_state_proposition(
-                &have.proposition,
+                &goal_surface,
                 &facts_for_simple_goal_lowering(&have_facts),
                 parsed_function.parameters(),
                 arguments,
@@ -102,6 +116,7 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
                 predicate_environment,
                 click_function_environment,
                 have,
+                &goal_surface,
                 claim_label,
                 tactic_index,
                 unfolded_predicates,
@@ -115,6 +130,8 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         (None, Some((fact, proof))) => {
             let checked = checked_have_with_proof(
                         have,
+                        &goal_surface,
+                        lexical_bindings,
                         theorem_environment,
                         claim_label,
                         tactic_index,
@@ -468,6 +485,11 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn checked_have_with_proof(
     have: &ProofHave,
+    // `have.proposition` with the enclosing proof's lexical bindings
+    // materialized. The written spelling stays the recorded and serialized
+    // one; only lowering uses this form.
+    goal_surface: &ClickProposition,
+    lexical_bindings: &crate::persistent::PersistentMap<String, ContractExpression>,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
     tactic_index: usize,
@@ -509,7 +531,7 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
                 SourceProof::Script(tactics) => Plan::Script(tactics),
             };
             let goal = lower_fixed_state_proposition(
-                &have.proposition,
+                goal_surface,
                 &facts_for_simple_goal_lowering(available),
                 parameters,
                 arguments,
@@ -550,6 +572,9 @@ pub(in crate::surface::proof) fn checked_have_with_proof(
         original_requirements,
         requirement_label_indices,
     );
+    // The body is written in the same lexical scope as the statement, so a
+    // premise or rewrite inside it may name the same match-arm bindings.
+    let proof = proof.with_surface_local_scope(lexical_bindings);
     let proof = match plan {
         Plan::Script(tactics) => {
             let Some(checked) = proof.try_authoritative_linear_script(tactics)? else {
