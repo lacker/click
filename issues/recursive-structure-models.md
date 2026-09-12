@@ -548,14 +548,37 @@ enough to become the first regression of the package that fixes them.
     after the trace completed`; `loop control has no enclosing loop` for a
     `break` inside a `branch` arm; `close_invariants by` requires the loop
     back edge` for a body ending in `continue`), pinned as
-    `mdtests/loop_body_break_rejected.md` and
-    `loop_body_continue_rejected.md`; (c) `decreases c;` accepts only a
+    `mdtests/loop_body_break_exit.md` and `loop_body_continue_back_edge.md`
+    (renamed by A23, now positives); (c) `decreases c;` accepts only a
     direct contained child, while the uncle-red case climbs two frames
     (`node = gparent`); (d) a pure function refuses the null constant for a
     `struct rb_node*` parameter; (e) a `produces` instance needs `result`,
     and `__rb_insert` is `void` with a reassigned `node`, so the final
     cursor has no C name. Packages A23 (b), A24 (a, c, d, e), and C2c (a
     context-level red-black predicate the exit claim needs).
+54. **`break` exits must reach one state.** A23 (2b64528d) certifies
+    `continue` as a back edge and `break` as an exit joined with the guard
+    exits, dropping no path, but joins exits only when they reach one
+    state: each of `__rb_insert`'s four `break`s writes a color or rotates
+    before leaving, so its exits are refused ("loop exits reach different
+    states: local `x`, memory"), pinned as
+    `mdtests/loop_body_break_exit_state_rejected.md`. A23 suggested a
+    language form; the plan's answer is D5 applied at the exit: rebind the
+    loop's binders at each exit by argument equality, give them fresh
+    fields (as the loop head does), havoc the locals that differ, and
+    export the disjunction of each exit's facts about them, so the
+    post-loop state is one state described by binders plus a disjunction.
+    Package A25. A `break` inside a C `branch` arm stays a named refusal
+    (the arm join cannot keep a breaking leaf apart); the proof-`if`
+    spelling is the one the planner uses.
+55. **Planner and expansion defects found by A23, pre-existing.** An
+    omitted-phase `preserve` over a body with two sibling `if`s fails with
+    "path-aligned certificate case offset exceeds its tactics"; a `while
+    (true)` with two `break`s and omitted phases verifies but `click
+    expand` emits a script that does not (`step` cannot decide the second
+    `if`), an audit disagreement; a `do ... while` whose body breaks routes
+    its guard-false exit through the final-exit channel and can hit the old
+    "exactly one statement successor" message. Package T8.
 
 ## Design decisions
 
@@ -869,6 +892,8 @@ appears to need one reports the need instead of adding it.
 - 2026-09-12: C3 stopped at gap 53; its parser fix and pinned reductions
   are on master (cffe7116). A23, A24, C2c dispatched; C3 resumes after
   them.
+- 2026-09-12: A23 (2b64528d) is on master; gap 54 found; A25 and T8
+  dispatched. A24 and C2c in progress.
 
 ## Work packages
 
@@ -1189,6 +1214,22 @@ of the plug follows, with per-frame construction and destruction lemmas
 and the insert-fixup case theorems restated at the frame level (uncle
 red, inner, outer, on both sides), so C3's loop invariant is one
 predicate over `(ctx.model, sub.model)`. Fixtures only. C3 depends on it.
+
+**A25. Join `break` exits through the loop binders (gap 54).** Scope: at
+each exit path, rebind the loop's declared binders by family and argument
+equality (D5), give them fresh fields and havoc differing locals, and
+export the disjunction of per-exit facts (models, locals) into the one
+post-loop successor; refuse only when an exit holds no instance for a
+declared binder. Regressions: A23's state-rejected reduction as a
+positive with a post-loop claim using the disjunction; a `while (true)`
+with two `break`s that write different colors into a folded instance; a
+negative exit lacking the binder. C3 depends on it.
+
+**T8. Omitted-phase preservation over sibling `if`s, and `do ... while`
+exits (gap 55).** Scope: the path-aligned certificate offset defect, the
+expansion that emits an undecidable `step` for a two-`break` loop (audit
+must agree with verify), and the `do ... while` break exit channel.
+Regressions per mode as `verify -> expand -> reverify` tests.
 
 **C2b. Port the pure red-black library to the re-keyed model.** Scope:
 `examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
