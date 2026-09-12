@@ -2855,6 +2855,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "arithmetic-certificate-signed-int32",
+        syntax: "arithmetic_certificate signed_int32 { ... }",
+        class: "simple",
+    },
+    PublicTacticForm {
         id: "intro",
         syntax: "intro()",
         class: "simple",

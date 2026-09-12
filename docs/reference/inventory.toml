@@ -1527,6 +1527,9 @@ path = "reference/tactics/index.md#proposition-reasoning"
 id = "tactic-form.arithmetic-certificate"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
+id = "tactic-form.arithmetic-certificate-signed-int32"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
 id = "tactic-form.intro"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
