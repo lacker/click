@@ -1,7 +1,8 @@
 # Consuming a callback suite retires its callback facts
 
-The suite is consumed by a checked helper between the first and later
-callback calls. The old `Copy` fact is therefore unavailable afterward.
+The owned suite is opened for the first callback and closed exactly once.
+It is then consumed by a checked helper between the first and later callback
+calls. The old `Copy` fact is therefore unavailable afterward.
 
 ```c filename=rb_augment_callbacks_consumes_suite.c
 struct node { struct node *left; struct node *right; };
@@ -58,7 +59,7 @@ void discard_suite(struct rb_augment_callbacks* augment) {
 
 void erase_discarded(struct node* node, struct node* parent,
                      struct rb_augment_callbacks* augment) {
-    views callback_suite(augment);
+    consumes callback_suite(augment);
     requires node != 0;
     requires parent != 0;
     requires separate(memory(object(augment)), memory(object(parent)));
@@ -66,8 +67,10 @@ void erase_discarded(struct node* node, struct node* parent,
     owns parent->right;
 } by {
     open(callback_suite(augment)) {
-        execute();
+        step();
     }
+    step();
+    step();
 }
 ```
 

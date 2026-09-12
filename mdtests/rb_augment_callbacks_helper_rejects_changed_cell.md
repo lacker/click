@@ -1,7 +1,10 @@
 # A changed callback table cell invalidates its old contract fact
 
 Replacing the `copy` cell after the first callback is a permitted table
-mutation, but the new pointer cannot use the old `Copy` fact.
+mutation, but the new pointer cannot use the old `Copy` fact. The replacement
+helper's checked postcondition equates the cell with its callback argument;
+the call supplies `dummy_rotate`, so the fresh cell value is exact while the
+unaffected `rotate` callback remains usable.
 
 ```c filename=rb_augment_callbacks_rejects_changed_cell.c
 struct node {
@@ -19,14 +22,15 @@ void dummy_propagate(struct node *node, struct node *stop) { }
 void dummy_copy(struct node *old, struct node *new) { }
 void dummy_rotate(struct node *old, struct node *new) { }
 
-void replace_copy(struct rb_augment_callbacks *augment) {
-    augment->copy = dummy_rotate;
+void replace_copy(struct rb_augment_callbacks *augment,
+                  void (*replacement)(struct node *old, struct node *new)) {
+    augment->copy = replacement;
 }
 
 void erase_changed(struct node *node, struct node *parent,
                    struct rb_augment_callbacks *augment) {
     augment->propagate(parent, 0);
-    replace_copy(augment);
+    replace_copy(augment, dummy_rotate);
     augment->rotate(node, parent);
     augment->copy(node, parent);
 }
@@ -38,18 +42,22 @@ verifying "rb_augment_callbacks_rejects_changed_cell.c";
 contract void Propagate(struct node* node, struct node* stop) {
     requires node != 0;
     owns node->left;
+    ensures node->left == old(node->left);
 }
 
 contract void Copy(struct node* old, struct node* new) {
     requires old != 0;
     requires new != 0;
     owns new->left;
+    ensures new->left == old(new->left);
 }
 
 contract void Rotate(struct node* old, struct node* new) {
     requires new != 0;
     owns new->left;
     owns new->right;
+    ensures new->left == old(new->left);
+    ensures new->right == old(new->right);
 }
 
 resource callback_suite(augment: struct rb_augment_callbacks*) {
@@ -61,8 +69,10 @@ resource callback_suite(augment: struct rb_augment_callbacks*) {
     fact Rotate(augment->rotate);
 }
 
-void replace_copy(struct rb_augment_callbacks* augment) {
+void replace_copy(struct rb_augment_callbacks* augment,
+                  void (*replacement)(struct node* old, struct node* new)) {
     owns augment->copy;
+    ensures augment->copy == replacement;
 } by {
     execute();
     simp();
@@ -70,7 +80,7 @@ void replace_copy(struct rb_augment_callbacks* augment) {
 
 void erase_changed(struct node* node, struct node* parent,
                    struct rb_augment_callbacks* augment) {
-    views callback_suite(augment);
+    consumes callback_suite(augment);
     requires node != 0;
     requires parent != 0;
     requires separate(memory(object(augment)), memory(object(parent)));
@@ -78,8 +88,11 @@ void erase_changed(struct node* node, struct node* parent,
     owns parent->right;
 } by {
     open(callback_suite(augment)) {
-        execute();
+        step();
     }
+    step();
+    step();
+    step();
 }
 ```
 
