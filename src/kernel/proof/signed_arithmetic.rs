@@ -14,7 +14,7 @@
 use super::super::{Bitvector32Term, ConditionTerm, Proposition};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const SIGNED_MIN: i64 = i32::MIN as i64;
 const SIGNED_MAX: i64 = i32::MAX as i64;
@@ -126,6 +126,7 @@ enum CheckedTerm {
 #[derive(Default)]
 struct TermArena {
     terms: Vec<CheckedTerm>,
+    equivalence_cache: HashMap<(usize, usize), bool>,
 }
 
 impl TermArena {
@@ -151,13 +152,36 @@ impl TermArena {
         reference
     }
 
-    fn equivalent(&self, left: usize, right: usize) -> bool {
+    fn equivalent(&mut self, left: usize, right: usize) -> bool {
+        if left == right {
+            return true;
+        }
+        if let Some(result) = self.equivalence_cache.get(&(left, right)) {
+            return *result;
+        }
         let mut pending = vec![(left, right)];
+        let mut visited = HashSet::new();
+        let mut equivalent = true;
         while let Some((left, right)) = pending.pop() {
+            if !visited.insert((left, right)) {
+                continue;
+            }
+            if let Some(result) = self.equivalence_cache.get(&(left, right)) {
+                if !result {
+                    equivalent = false;
+                    break;
+                }
+                continue;
+            }
+            if crate::instrumentation::deadline_exceeded_with_work(1) {
+                equivalent = false;
+                break;
+            }
             match (&self.terms[left], &self.terms[right]) {
                 (CheckedTerm::Atom(left), CheckedTerm::Atom(right)) => {
                     if left != right {
-                        return false;
+                        equivalent = false;
+                        break;
                     }
                 }
                 (
@@ -187,10 +211,18 @@ impl TermArena {
                 ) if left_operator == right_operator => {
                     pending.push((*left_operand, *right_operand));
                 }
-                _ => return false,
+                _ => {
+                    equivalent = false;
+                    break;
+                }
             }
         }
-        true
+        // The arena is append-only, so this result remains valid for all later
+        // checks. Caching both orientations makes repeated intersections of
+        // the same deep expression output-sensitive rather than quadratic.
+        self.equivalence_cache.insert((left, right), equivalent);
+        self.equivalence_cache.insert((right, left), equivalent);
+        equivalent
     }
 
     fn equivalent_explicit(&self, reference: usize, explicit: &Bitvector32Term) -> bool {
@@ -377,7 +409,9 @@ pub(crate) enum SignedArithmeticNode {
     IntervalBitwiseAnd {
         operand: usize,
         mask: u32,
-        defined: usize,
+        // Bitwise-and is total for signed int32 values.  UB-sensitive work
+        // needed to construct `operand` is checked by its child interval
+        // nodes, so this node intentionally has no definedness reference.
         result: SignedArithmeticInterval,
     },
     IntervalSignBitFlip {
@@ -549,6 +583,9 @@ impl SignedArithmeticCertificate {
                     upper,
                 } => {
                     let source = affine_at(&checked, *source)?;
+                    if !is_intrinsically_safe_interval_atom(term) {
+                        return Err(SignedArithmeticCheckError::InvalidOperator(node_index));
+                    }
                     let (expected_lower, expected_upper) = affine_term_bounds(source, term)
                         .ok_or(SignedArithmeticCheckError::InvalidEndpoint(node_index))?;
                     if (*lower, *upper) != (expected_lower, expected_upper) {
@@ -756,7 +793,6 @@ impl SignedArithmeticCertificate {
                 SignedArithmeticNode::IntervalBitwiseAnd {
                     operand,
                     mask,
-                    defined,
                     result,
                 } => {
                     let (operand, operand_term) = interval_at(&checked, *operand)?;
@@ -766,7 +802,6 @@ impl SignedArithmeticCertificate {
                     let mask_term = terms.atom(Bitvector32Term::Constant(*mask));
                     let term =
                         terms.binary(CheckedBinaryOperator::BitwiseAnd, operand_term, mask_term);
-                    require_defined(&checked, &terms, *defined, operand_term, node_index)?;
                     let expected = SignedArithmeticInterval {
                         carrier: operand.carrier,
                         lower: 0,
@@ -884,6 +919,10 @@ fn signed_term_work(root: &Bitvector32Term) -> usize {
     while let Some(term) = pending.pop() {
         units = units.saturating_add(1);
         match term {
+            Bitvector32Term::Constant(value) => {
+                units = units.saturating_add((u32::BITS - value.leading_zeros()) as usize + 1);
+            }
+            Bitvector32Term::Variable(_) => {}
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
@@ -899,10 +938,32 @@ fn signed_term_work(root: &Bitvector32Term) -> usize {
                 pending.push(right);
             }
             Bitvector32Term::BitwiseNot(operand) => pending.push(operand),
-            _ => {}
+            // These nodes are accepted as opaque atoms. Their identity is
+            // nevertheless deep: names, arguments, algebraic arms, pointer
+            // offsets, and memory snapshots all participate in equality and
+            // ordering. Charge their complete canonical debug payload rather
+            // than treating the enum discriminant as the whole term size.
+            Bitvector32Term::PureFunctionApplication { .. }
+            | Bitvector32Term::ClickFunctionApplication { .. }
+            | Bitvector32Term::AlgebraicMatch { .. }
+            | Bitvector32Term::MemoryLoad(_, _)
+            | Bitvector32Term::PointerAddress(_) => {
+                units = units.saturating_add(canonical_payload_work(term));
+            }
+            _ => {
+                units = units.saturating_add(canonical_payload_work(term));
+            }
         }
     }
     units
+}
+
+/// A term's derived identity includes all of the payload rendered here. This
+/// is intentionally output-sensitive for opaque applications, algebraic
+/// matches, pointers, and memory snapshots, whose shallow enum size otherwise
+/// hides the work performed by `Eq`/`Ord` and BTreeMap insertion.
+fn canonical_payload_work<T: std::fmt::Debug>(payload: &T) -> usize {
+    format!("{payload:?}").len().saturating_add(1)
 }
 
 fn affine_at(
@@ -1075,6 +1136,15 @@ fn is_opaque_atom(term: &Bitvector32Term) -> bool {
             | Bitvector32Term::ClickFunctionApplication { .. }
             | Bitvector32Term::AlgebraicMatch { .. }
     )
+}
+
+/// An affine-to-interval node may only re-use evidence for a term whose value
+/// was already produced without a machine operation that can be undefined.
+/// Compound arithmetic therefore has to arrive through an interval operation
+/// node, where its exact definedness proposition is checked locally. Constants
+/// and opaque observations are safe identity atoms at this boundary.
+fn is_intrinsically_safe_interval_atom(term: &Bitvector32Term) -> bool {
+    matches!(term, Bitvector32Term::Constant(_)) || is_opaque_atom(term)
 }
 
 /// Check that a compound term can be treated as one signed-int32 atom by an
@@ -1657,7 +1727,7 @@ mod tests {
     }
 
     #[test]
-    fn bitwise_and_retains_operand_definedness_evidence() {
+    fn bitwise_and_is_total_after_checked_compound_operand() {
         let lower_premise = le(Bitvector32Term::Constant(0), x());
         let upper_premise = le(x(), Bitvector32Term::Constant(100));
         let add_term = Bitvector32Term::Add(Box::new(x()), Box::new(x()));
@@ -1717,7 +1787,6 @@ mod tests {
                 SignedArithmeticNode::IntervalBitwiseAnd {
                     operand: 6,
                     mask: 255,
-                    defined: 2,
                     result: SignedArithmeticInterval {
                         carrier: SignedArithmeticCarrier::SignedInt32,
                         lower: 0,
@@ -1741,17 +1810,127 @@ mod tests {
         };
         let premises = vec![lower_premise, upper_premise, defined];
         certificate.check(&goal, &premises).unwrap();
+    }
 
-        let mut missing_definedness = certificate.clone();
-        if let SignedArithmeticNode::IntervalBitwiseAnd { defined, .. } =
-            &mut missing_definedness.nodes[7]
-        {
-            *defined = 6;
-        }
-        assert_eq!(
-            missing_definedness.check(&goal, &premises),
-            Err(SignedArithmeticCheckError::InvalidDefinedness(7))
+    #[test]
+    fn bitwise_and_accepts_safe_atoms_and_rejects_undefined_affine_interval_reuse() {
+        let masked_term =
+            Bitvector32Term::BitwiseAnd(Box::new(x()), Box::new(Bitvector32Term::Constant(255)));
+        let goal = le(masked_term.clone(), Bitvector32Term::Constant(255));
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![
+                SignedArithmeticNode::IntervalAtom {
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    term: x(),
+                    lower: SIGNED_MIN,
+                    upper: SIGNED_MAX,
+                },
+                SignedArithmeticNode::IntervalBitwiseAnd {
+                    operand: 0,
+                    mask: 255,
+                    result: SignedArithmeticInterval {
+                        carrier: SignedArithmeticCarrier::SignedInt32,
+                        lower: 0,
+                        upper: 255,
+                    },
+                },
+                SignedArithmeticNode::IntervalAtom {
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    term: Bitvector32Term::Constant(255),
+                    lower: 255,
+                    upper: 255,
+                },
+                SignedArithmeticNode::IntervalCompare {
+                    left: 1,
+                    right: 2,
+                    comparison: SignedArithmeticComparison::LessEqual,
+                    result: goal.clone(),
+                },
+            ],
+            conclusion: 3,
+        };
+        certificate.check(&goal, &[]).unwrap();
+
+        let compound = Bitvector32Term::Add(Box::new(x()), Box::new(x()));
+        let unsafe_reuse = SignedArithmeticCertificate {
+            nodes: vec![
+                SignedArithmeticNode::Premise {
+                    index: 0,
+                    result: claim(&le(compound.clone(), Bitvector32Term::Constant(200))),
+                },
+                SignedArithmeticNode::IntervalFromAffine {
+                    source: 0,
+                    term: compound,
+                    lower: SIGNED_MIN,
+                    upper: 200,
+                },
+            ],
+            conclusion: 1,
+        };
+        let premise = le(
+            Bitvector32Term::Add(Box::new(x()), Box::new(x())),
+            Bitvector32Term::Constant(200),
         );
+        assert_eq!(
+            unsafe_reuse.check(&premise, std::slice::from_ref(&premise)),
+            Err(SignedArithmeticCheckError::InvalidOperator(1))
+        );
+    }
+
+    #[test]
+    fn repeated_deep_term_equivalence_has_linear_work_scaling() {
+        let mut measurements = Vec::new();
+        for depth in [8usize, 16, 32, 64] {
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut arena = TermArena::default();
+                let mut left = arena.atom(x());
+                let mut right = arena.atom(x());
+                for index in 0..depth {
+                    let left_atom =
+                        arena.atom(Bitvector32Term::Variable(Variable(1000 + index as u64)));
+                    let right_atom =
+                        arena.atom(Bitvector32Term::Variable(Variable(1000 + index as u64)));
+                    left = arena.binary(CheckedBinaryOperator::Add, left, left_atom);
+                    right = arena.binary(CheckedBinaryOperator::Add, right, right_atom);
+                }
+                for _ in 0..depth {
+                    assert!(arena.equivalent(left, right));
+                }
+            });
+            measurements.push(work);
+        }
+        for pair in measurements.windows(2) {
+            assert!(
+                pair[1] <= 3 * pair[0] + 8,
+                "memoized deep equivalence should scale linearly: {measurements:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn opaque_payload_work_scales_with_application_identity() {
+        let mut measurements = Vec::new();
+        for payload_size in [8usize, 16, 32, 64] {
+            let term = Bitvector32Term::PureFunctionApplication {
+                name: "opaque".repeat(payload_size),
+                arguments: (0..payload_size)
+                    .map(|index| Bitvector32Term::Variable(Variable(index as u64)))
+                    .collect(),
+            };
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(!crate::instrumentation::deadline_exceeded_with_work(
+                    signed_term_work(&term,)
+                ));
+            });
+            measurements.push(work);
+        }
+        for pair in measurements.windows(2) {
+            assert!(
+                pair[1] > pair[0],
+                "opaque payloads must be charged by their full identity: {measurements:?}"
+            );
+            assert!(pair[1] <= 5 * pair[0], "{measurements:?}");
+        }
     }
 
     #[test]
