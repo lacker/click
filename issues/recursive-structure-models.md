@@ -480,6 +480,21 @@ enough to become the first regression of the package that fixes them.
     == p` as a pure function's outermost test unfolds to one opaque
     bitvector operation, so every predicate test is written `if <int32
     test> == 1`.
+46. **`rb_replace_node_with_children` takes 17 s.** A18's fixture with a
+    two-child victim (three nested proof matches, two child refolds)
+    verifies and audits but takes 17 s against 0.6 s for the childless
+    version and 3.4 s for A18's two-node reduction, close to the mdtest
+    limit and the shape of every fixup step. A slowness on a passing
+    target under `AGENTS.md`; package T7 profiles it before C3 builds on
+    the shape.
+47. **Smaller A18 findings, not scheduled.** An unfold of an unmatched
+    composite instance still leaves its cells unnamed (the projection only
+    fires for matched instances); adding `have color_bit(Color::Red) == 0`
+    before a refold breaks the fold's exact body-fact check because the
+    goal is reduced through the equality while the child's premise keeps
+    the opaque application; `mdtests/rb_replace_node.md` still says a
+    victim with children cannot be contracted, which
+    `rb_replace_node_with_children.md` now contradicts.
 
 ## Design decisions
 
@@ -765,6 +780,11 @@ appears to need one reports the need instead of adding it.
   insertion, and both splices, and `plug` with `plug_inorder_transport`
   and `plug_parent_consistent_transport`; audit 161 of 161 sites. A18 in
   progress; A20 after it; then C3.
+- 2026-09-12: A18 (b8014f05) is on master: an `unfold` names the cells it
+  exposes as contract lowering does, and the verbatim `rb_replace_node`
+  with both children verifies and audits on the node-keyed model with the
+  frame at the root. Gap 46 found on integration; T7 dispatched. A20 in
+  progress; C3 after A20 and T7.
 
 ## Work packages
 
