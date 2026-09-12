@@ -1802,6 +1802,7 @@ impl PureFactContext {
         self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
         self.algebraic_variable_constructors = crate::persistent::PersistentMap::default();
+        self.algebraic_variable_variant_evidence = crate::persistent::PersistentMap::default();
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
@@ -2019,6 +2020,125 @@ impl PureFactContext {
         };
     }
 
+    /// The variant a premise rules out or witnesses for one symbolic
+    /// algebraic value, with the scrutinee it speaks about.
+    ///
+    /// Only the two shapes arm selection can act on are recognized: a
+    /// disequality against a field-free constructor, which rules that variant
+    /// out, and an existential equality against a constructor, which witnesses
+    /// it. Anything else indexes nothing.
+    fn proposition_variant_evidence(
+        proposition: &Proposition,
+    ) -> Option<(Variable, AlgebraicVariantEvidence)> {
+        fn scrutinee_and_constructor(
+            proposition: &Proposition,
+            bound: &BTreeSet<Variable>,
+        ) -> Option<(Variable, String, usize)> {
+            let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = proposition
+            else {
+                return None;
+            };
+            if left.algebraic_type != right.algebraic_type
+                || !left.is_well_formed()
+                || !right.is_well_formed()
+            {
+                return None;
+            }
+            let (variable, constructor) = match (&left.node, &right.node) {
+                (AlgebraicTermNode::Variable(variable), AlgebraicTermNode::Constructor { .. }) => {
+                    (*variable, right)
+                }
+                (AlgebraicTermNode::Constructor { .. }, AlgebraicTermNode::Variable(variable)) => {
+                    (*variable, left)
+                }
+                _ => return None,
+            };
+            if bound.contains(&variable) {
+                return None;
+            }
+            let AlgebraicTermNode::Constructor { variant, fields } = &constructor.node else {
+                return None;
+            };
+            Some((variable, variant.clone(), fields.len()))
+        }
+
+        match proposition {
+            Proposition::Not(body) => {
+                let (variable, variant, arity) = scrutinee_and_constructor(body, &BTreeSet::new())?;
+                // `model != Some(3)` leaves `Some` possible; only a field-free
+                // constructor names the whole variant.
+                (arity == 0).then_some((
+                    variable,
+                    AlgebraicVariantEvidence {
+                        kind: AlgebraicVariantEvidenceKind::Excluded,
+                        variant,
+                    },
+                ))
+            }
+            Proposition::Exists { .. } => {
+                let mut bound = BTreeSet::new();
+                let mut body = proposition;
+                while let Proposition::Exists {
+                    var, body: inner, ..
+                } = body
+                {
+                    bound.insert(*var);
+                    body = inner;
+                }
+                let (variable, variant, _) = scrutinee_and_constructor(body, &bound)?;
+                Some((
+                    variable,
+                    AlgebraicVariantEvidence {
+                        kind: AlgebraicVariantEvidenceKind::Witnessed,
+                        variant,
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn adjust_algebraic_variable_variant_evidence(
+        &mut self,
+        proposition: &Proposition,
+        insert: bool,
+    ) {
+        let Some((variable, evidence)) = Self::proposition_variant_evidence(proposition) else {
+            return;
+        };
+        let entries = self
+            .algebraic_variable_variant_evidence
+            .get(&variable)
+            .cloned()
+            .unwrap_or_default();
+        let entries = if insert {
+            entries.with_inserted(proposition.clone(), evidence)
+        } else {
+            entries.without_key(proposition)
+        };
+        self.algebraic_variable_variant_evidence = if entries.is_empty() {
+            self.algebraic_variable_variant_evidence
+                .without_key(&variable)
+        } else {
+            self.algebraic_variable_variant_evidence
+                .with_inserted(variable, entries)
+        };
+    }
+
+    /// Every premise of this context that rules out or witnesses a variant of
+    /// `variable`, with the premise itself so a selection can cite it.
+    pub(in crate::kernel) fn algebraic_variant_evidence(
+        &self,
+        variable: Variable,
+    ) -> impl Iterator<Item = (&Proposition, &AlgebraicVariantEvidence)> {
+        crate::instrumentation::record_deterministic_work(1);
+        self.algebraic_variable_variant_evidence
+            .get(&variable)
+            .into_iter()
+            .flat_map(crate::persistent::PersistentMap::iter)
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+    }
+
     pub(in crate::kernel) fn known_algebraic_constructor(
         &self,
         value: &AlgebraicTerm,
@@ -2041,6 +2161,7 @@ impl PureFactContext {
 
     fn rebuild_algebraic_constructor_field_equalities(&mut self) {
         self.algebraic_variable_constructors = crate::persistent::PersistentMap::default();
+        self.algebraic_variable_variant_evidence = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
@@ -2048,6 +2169,7 @@ impl PureFactContext {
             self.adjust_algebraic_constructor_field_equalities(&proposition, true);
             self.adjust_algebraic_constructor_conflict(&proposition, true);
             self.adjust_algebraic_variable_constructor(&proposition, true);
+            self.adjust_algebraic_variable_variant_evidence(&proposition, true);
         }
     }
 
@@ -2257,6 +2379,7 @@ impl PureFactContext {
             self.adjust_algebraic_constructor_field_equalities(&proposition, true);
             self.adjust_algebraic_constructor_conflict(&proposition, true);
             self.adjust_algebraic_variable_constructor(&proposition, true);
+            self.adjust_algebraic_variable_variant_evidence(&proposition, true);
             self.adjust_memory_loadable_fact(&proposition, true);
             self.adjust_memory_separation_fact(&proposition, true);
             self.adjust_nonmemory_separation_fact(&proposition, true);
@@ -2274,6 +2397,7 @@ impl PureFactContext {
             self.adjust_algebraic_constructor_field_equalities(proposition, false);
             self.adjust_algebraic_constructor_conflict(proposition, false);
             self.adjust_algebraic_variable_constructor(proposition, false);
+            self.adjust_algebraic_variable_variant_evidence(proposition, false);
             self.adjust_memory_loadable_fact(proposition, false);
             self.adjust_memory_separation_fact(proposition, false);
             self.adjust_nonmemory_separation_fact(proposition, false);

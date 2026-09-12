@@ -4859,6 +4859,25 @@ pub(crate) enum AtomicPropositionDerivationEvidence {
     Legacy,
 }
 
+/// What one premise says about which variant a symbolic model value has.
+///
+/// `Excluded` comes from a disequality against a field-free constructor, the
+/// only disequality that rules a whole variant out: `model != Some(3)` leaves
+/// `Some` possible. `Witnessed` comes from an existential equality such as
+/// `exists (v) { model == Some(v) }`, which names the variant without naming
+/// its fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum AlgebraicVariantEvidenceKind {
+    Excluded,
+    Witnessed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct AlgebraicVariantEvidence {
+    pub kind: AlgebraicVariantEvidenceKind,
+    pub variant: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
     /// True 64-bit equalities as an undirected adjacency map, derived
@@ -4920,6 +4939,15 @@ pub struct PureFactContext {
     pub(super) algebraic_variable_constructors: crate::persistent::PersistentMap<
         Variable,
         crate::persistent::PersistentMap<Proposition, AlgebraicTerm>,
+    >,
+    /// Weaker constructor evidence indexed by the symbolic value it describes:
+    /// a premise that rules one variant out, or one that witnesses a variant
+    /// without naming its fields. Arm selection reads only the entries for the
+    /// value it decides, so a section with many unrelated premises costs what
+    /// a section with none costs.
+    pub(super) algebraic_variable_variant_evidence: crate::persistent::PersistentMap<
+        Variable,
+        crate::persistent::PersistentMap<Proposition, AlgebraicVariantEvidence>,
     >,
     /// Exact disjunctive proposition facts. This derived index keeps bounded
     /// case search proportional to possible case splits rather than every

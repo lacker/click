@@ -4306,3 +4306,152 @@ fn resource_clauses_with_no_evaluable_order_name_two_positions() {
         "could not evaluate an owned memory resource segment (resource clause 1 of 1)"
     );
 }
+
+/// A datatype with field-free variants plus one that carries an `int32`, so a
+/// test can vary how many arms exclusion has to rule out.
+fn arm_selection_type(nullary: &[&str], payload: &str) -> AlgebraicType {
+    let variants: std::sync::Arc<[AlgebraicVariantType]> = nullary
+        .iter()
+        .map(|name| AlgebraicVariantType {
+            name: (*name).into(),
+            fields: vec![],
+        })
+        .chain([AlgebraicVariantType {
+            name: payload.into(),
+            fields: vec![AlgebraicValueType::C(CType::Int32)],
+        }])
+        .collect::<Vec<_>>()
+        .into();
+    let value_type = AlgebraicValueType::Algebraic {
+        name: "Slot".into(),
+        arguments: vec![],
+    };
+    AlgebraicType {
+        rigid: false,
+        name: "Slot".into(),
+        arguments: vec![],
+        variants: variants.clone(),
+        schemas: std::sync::Arc::new(AlgebraicSchemas::new(BTreeMap::from([(
+            value_type, variants,
+        )]))),
+    }
+}
+
+fn arm_selection_constructor(
+    ty: &AlgebraicType,
+    variant: &str,
+    fields: Vec<AlgebraicValue>,
+) -> AlgebraicTerm {
+    AlgebraicTerm {
+        algebraic_type: ty.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: variant.into(),
+            fields,
+        },
+    }
+}
+
+#[test]
+fn resource_model_arm_selection_decides_only_entailed_arms() {
+    let ty = arm_selection_type(&["Empty"], "Filled");
+    let model = resource_index_variable(&ty, 11);
+    let empty = arm_selection_constructor(&ty, "Empty", vec![]);
+    let filled = |value: u32| {
+        arm_selection_constructor(
+            &ty,
+            "Filled",
+            vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Constant(
+                value,
+            )))],
+        )
+    };
+    let equal = |left: &AlgebraicTerm, right: &AlgebraicTerm| {
+        Proposition::Equal(
+            Term::Algebraic(left.clone()),
+            Term::Algebraic(right.clone()),
+        )
+    };
+
+    // No evidence selects nothing: the resource stays folded.
+    assert!(select_resource_model_arm(&model, &PureFactContext::new()).is_none());
+
+    // A constructor premise answers with the fields the arm binds.
+    let known = PureFactContext::new().assume_proposition(equal(&model, &filled(3)));
+    assert_eq!(
+        select_resource_model_arm(&model, &known),
+        Some(ResourceModelArmSelection::Constructor(filled(3)))
+    );
+
+    // Ruling out the only other variant leaves one arm, with no field values.
+    let excluded = PureFactContext::new()
+        .assume_proposition(Proposition::Not(Box::new(equal(&model, &empty))));
+    assert_eq!(
+        select_resource_model_arm(&model, &excluded),
+        Some(ResourceModelArmSelection::Variant("Filled".to_string()))
+    );
+
+    // A disequality against a constructor that carries fields rules out
+    // nothing: `model != Filled(3)` still leaves `Filled` possible.
+    let unexcluded = PureFactContext::new()
+        .assume_proposition(Proposition::Not(Box::new(equal(&model, &filled(3)))));
+    assert!(select_resource_model_arm(&model, &unexcluded).is_none());
+
+    // An existential names the arm without naming its payload.
+    let witness = arm_selection_constructor(
+        &ty,
+        "Filled",
+        vec![AlgebraicValue::C(CValue::Int32(Bitvector32Term::Variable(
+            Variable(77),
+        )))],
+    );
+    let witnessed = PureFactContext::new().assume_proposition(Proposition::Exists {
+        name: "v".to_string(),
+        var: Variable(77),
+        sort: Sort::CInt32,
+        body: Box::new(equal(&model, &witness)),
+    });
+    assert_eq!(
+        select_resource_model_arm(&model, &witnessed),
+        Some(ResourceModelArmSelection::Variant("Filled".to_string()))
+    );
+
+    // Three constructors and one exclusion leave two arms, so nothing is
+    // selected and no proof by cases happens.
+    let wide = arm_selection_type(&["Empty", "Reserved"], "Filled");
+    let wide_model = resource_index_variable(&wide, 11);
+    let wide_empty = arm_selection_constructor(&wide, "Empty", vec![]);
+    let wide_excluded = PureFactContext::new()
+        .assume_proposition(Proposition::Not(Box::new(equal(&wide_model, &wide_empty))));
+    assert!(select_resource_model_arm(&wide_model, &wide_excluded).is_none());
+}
+
+#[test]
+fn resource_model_arm_selection_ignores_unrelated_premises() {
+    let ty = arm_selection_type(&["Empty"], "Filled");
+    let model = resource_index_variable(&ty, 11);
+    let empty = arm_selection_constructor(&ty, "Empty", vec![]);
+    let exclusion = |value: &AlgebraicTerm| {
+        Proposition::Not(Box::new(Proposition::Equal(
+            Term::Algebraic(value.clone()),
+            Term::Algebraic(empty.clone()),
+        )))
+    };
+    let mut samples = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut assumptions = PureFactContext::new().assume_proposition(exclusion(&model));
+        for index in 100..100 + size {
+            assumptions.insert_proposition_fact(exclusion(&resource_index_variable(&ty, index)));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(
+                select_resource_model_arm(&model, &assumptions),
+                Some(ResourceModelArmSelection::Variant("Filled".to_string()))
+            );
+        });
+        assert!(work > 0, "arm selection must count the premises it visits");
+        samples.push(work);
+    }
+    for pair in samples.windows(2) {
+        assert!(pair[1] <= pair[0] + 32, "{samples:?}");
+    }
+}

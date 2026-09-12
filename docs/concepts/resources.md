@@ -458,6 +458,40 @@ important after reading a next pointer: if the context proves
 `node->next == tail`, ownership of `list(node->next)` is ownership of
 `list(tail)` as well.
 
+### Modeled bodies and arm selection
+
+A body may instead branch on one algebraic field, so which cells the resource
+owns depends on its model:
+
+<!-- verified-example: mdtests/resource_match_arm_selected_at_contract.md -->
+```click
+resource cell(p: struct cell*) {
+    field model: Maybe;
+    match model {
+        Maybe::None => { fact p == 0; },
+        Maybe::Some(value) => { owns p->value; fact p->value == value; },
+    }
+}
+```
+
+An `if` guard is decided from the section's assumptions, and a matched field is
+decided the same way. When a contract's requirements together with constructor
+exhaustiveness leave exactly one arm possible, lowering exposes that arm's
+cells as read authority, so `requires p->value >= 0` or `owns p->value->tag`
+can address memory the folded resource owns. `c.model != Maybe::None` on a
+two-constructor model selects `Some`, and so does
+`exists (v: int32) { c.model == Maybe::Some(v) }`.
+
+Selection is entailment, not search. A disequality against a constructor with
+fields rules out nothing, and requirements that leave two arms possible select
+neither: the resource stays folded, the read is refused, and the diagnostic
+names the instance rather than leaving an unexplained missing loadability.
+Click does not split the contract into cases to find out which arm the caller
+meant. Selection also grants nothing but reading: ownership of the arm's cells,
+and its contained child resources, still come only from an explicit `unfold`.
+A loop head selects an arm the same way, with its invariants playing the part
+the requirements play in a contract.
+
 If a fact reads mutable memory, the composite body must contain an owned memory
 resource covering that memory. This is what makes the fact stable while the
 resource is folded:

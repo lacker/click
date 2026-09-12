@@ -51,6 +51,7 @@ pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_ca
 pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::initialize_c_program_storage;
 pub(crate) use functions::modified_by_value_aggregate_parameter_with_current_ensure_in_source;
+pub(crate) use functions::select_resource_model_arm;
 pub(crate) use functions::stable_symbolic_pointer_cell_value;
 pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;

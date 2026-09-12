@@ -8670,12 +8670,24 @@ fn evaluate_contract_return_resource_context(
             CResourceSnapshot::Entry => entry_state,
             CResourceSnapshot::Current | CResourceSnapshot::Post => post_state,
         };
-        let evaluation_state = state.clone().with_resource_context(
-            state
-                .resources()
-                .clone()
-                .unchecked_with_facts(context.facts().iter().cloned()),
+        // A returned borrow is addressed through the cells the contract
+        // already holds, including those a folded matched instance publishes
+        // for its selected arm (D7). Without that read authority
+        // `owns node->right->augmented` could be required at entry and then
+        // fail to be evaluated at the very same state on return.
+        let supply = state
+            .resources()
+            .clone()
+            .unchecked_with_facts(context.facts().iter().cloned());
+        let views = selected_instance_arm_views(
+            &supply,
+            interface.composite_resource_definitions(),
+            state,
+            assumptions,
         );
+        let evaluation_state = state
+            .clone()
+            .with_resource_context(supply.unchecked_with_facts(views));
         let resource = match evaluate_function_resource_spec(
             &evaluation_state,
             resource,
@@ -10282,9 +10294,14 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
     let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
         return Err("resource match field is not algebraic");
     };
-    let constructor = assumptions
-        .known_algebraic_constructor(model)
-        .ok_or("resource match requires constructor evidence for the instance field")?;
+    // Fold and unfold bind the arm's fields, so they need the constructor
+    // itself: an arm merely entailed by the premises (D7) grants reading, not
+    // the values a rewrite would substitute.
+    let Some(ResourceModelArmSelection::Constructor(constructor)) =
+        select_resource_model_arm(model, assumptions)
+    else {
+        return Err("resource match requires constructor evidence for the instance field");
+    };
     let AlgebraicTermNode::Constructor { variant, .. } = &constructor.node else {
         unreachable!()
     };
@@ -10294,6 +10311,104 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
         .find(|arm| &arm.variant == variant)
         .ok_or("unknown resource match constructor")?;
     Ok((arm, constructor))
+}
+
+/// Which arm of a matched resource model one section's premises select.
+///
+/// `Constructor` carries the model's own constructor application, so the arm's
+/// bindings have values. `Variant` names the arm without naming its fields:
+/// the premises rule out every other variant, or witness this one, but no
+/// premise says what it holds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceModelArmSelection {
+    Constructor(AlgebraicTerm),
+    Variant(String),
+}
+
+impl ResourceModelArmSelection {
+    pub fn variant(&self) -> &str {
+        match self {
+            Self::Constructor(constructor) => match &constructor.node {
+                AlgebraicTermNode::Constructor { variant, .. } => variant,
+                _ => unreachable!("a selected constructor term is a constructor application"),
+            },
+            Self::Variant(variant) => variant,
+        }
+    }
+}
+
+/// The one arm-selection decision in Click: premises plus constructor
+/// exhaustiveness against one matched model value.
+///
+/// Contract lowering asks it for a `requires`-selected arm; a loop head asks
+/// the same question with its invariants playing the part of the requirements,
+/// and a fold or unfold asks it through [`selected_instance_match_arm`], which
+/// needs the stronger `Constructor` answer because it binds the arm's fields.
+///
+/// Selection is decided, never searched: a constructor premise answers
+/// outright, an existential premise witnesses one variant, and disequalities
+/// against field-free constructors rule variants out until one is left. Any
+/// other state of evidence is `None` — the caller keeps the model folded
+/// rather than proving by cases.
+///
+/// Cost is the number of premises about this exact value plus the declared
+/// variants of its type. Unrelated premises are never visited.
+pub fn select_resource_model_arm(
+    model: &AlgebraicTerm,
+    assumptions: &PureFactContext,
+) -> Option<ResourceModelArmSelection> {
+    if let Some(constructor) = assumptions.known_algebraic_constructor(model) {
+        return Some(ResourceModelArmSelection::Constructor(constructor));
+    }
+    let AlgebraicTermNode::Variable(variable) = &model.node else {
+        return None;
+    };
+    let declared = model
+        .algebraic_type
+        .variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if declared.is_empty() {
+        return None;
+    }
+    let mut witnessed = BTreeMap::new();
+    let mut excluded = BTreeMap::new();
+    for (premise, evidence) in assumptions.algebraic_variant_evidence(*variable) {
+        if !declared.contains(evidence.variant.as_str()) {
+            continue;
+        }
+        match evidence.kind {
+            AlgebraicVariantEvidenceKind::Witnessed => {
+                witnessed.insert(evidence.variant.as_str(), premise);
+            }
+            AlgebraicVariantEvidenceKind::Excluded => {
+                excluded.insert(evidence.variant.as_str(), premise);
+            }
+        }
+    }
+    // A witness names its arm directly. Two witnesses would need the context
+    // to be inconsistent, which is not this decision's business to exploit.
+    // Cite what decided the arm, so an expansion of the selected arm names the
+    // premises a reader would look for.
+    let selected = if let [(variant, premise)] = witnessed.iter().collect::<Vec<_>>().as_slice() {
+        super::assumptions::record_reasoning_provenance(assumptions, premise);
+        **variant
+    } else if witnessed.is_empty() {
+        let excluded_variants = excluded.keys().copied().collect::<BTreeSet<_>>();
+        let mut remaining = declared.difference(&excluded_variants);
+        let first = *remaining.next()?;
+        if remaining.next().is_some() {
+            return None;
+        }
+        for premise in excluded.values() {
+            super::assumptions::record_reasoning_provenance(assumptions, premise);
+        }
+        first
+    } else {
+        return None;
+    };
+    Some(ResourceModelArmSelection::Variant(selected.to_string()))
 }
 
 fn instance_body_evaluation(
@@ -11896,20 +12011,118 @@ fn resource_clause_section_supply(
     if definitions.is_empty() {
         return base;
     }
+    // A matched instance supplies the cells of the arm this section's
+    // premises select, and nothing when they select none (D7). The arm stays
+    // folded either way: only its read authority is published here.
+    let mut views = selected_instance_arm_views(&base, definitions, state, assumptions);
     let Some(expanded) =
         expand_all_composite_resource_facts(&base, definitions, state.memory(), assumptions)
     else {
-        return base;
+        return base.unchecked_with_facts(views);
     };
-    let views = expanded
+    views.extend(
+        expanded
+            .facts()
+            .iter()
+            .filter_map(|fact| match fact.resource() {
+                CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
+                _ => None,
+            }),
+    );
+    base.unchecked_with_facts(views)
+}
+
+/// The read authority every folded matched instance of `context` publishes
+/// for the arm this context's premises select.
+pub(super) fn selected_instance_arm_views(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Vec<CResourceFact> {
+    if definitions.is_empty() {
+        return Vec::new();
+    }
+    context
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.resource() {
+            CResource::Instance(instance) => Some(instance),
+            _ => None,
+        })
+        .flat_map(|instance| {
+            selected_instance_arm_read_authority(instance, definitions, state, assumptions)
+        })
+        .collect()
+}
+
+/// The cells owned by the match arm this context's premises select for
+/// `instance`, as views.
+///
+/// This is the kernel half of decision D7. The decision is
+/// [`select_resource_model_arm`]; what it selects is published as read
+/// authority only, so a contract clause or requirement may read a cell a
+/// folded matched instance owns exactly as it may read one a folded
+/// `if`-bodied composite owns. Ownership is untouched: only an explicit
+/// `unfold` moves the arm's cells into the proof state.
+///
+/// Cost is the selected arm's own clauses. An instance whose arm is not
+/// selected, or whose arm names a constructor binding in a memory clause,
+/// publishes nothing.
+fn selected_instance_arm_read_authority(
+    instance: &ResourceInstance,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Vec<CResourceFact> {
+    let Some(definition) = definitions
+        .iter()
+        .find(|definition| definition.name() == instance.name())
+    else {
+        return Vec::new();
+    };
+    let Some(body) = definition.matched.as_ref() else {
+        return Vec::new();
+    };
+    let Some(AlgebraicValue::Algebraic(model)) = instance.fields().get(body.field_index) else {
+        return Vec::new();
+    };
+    let Some(selection) = select_resource_model_arm(model, assumptions) else {
+        return Vec::new();
+    };
+    let Some(arm) = body
+        .arms
+        .iter()
+        .find(|arm| arm.variant == selection.variant())
+    else {
+        return Vec::new();
+    };
+    let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
+        return Vec::new();
+    };
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    let mut budget = ExecutionBudget::default();
+    let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
+        &evaluation,
+        &arm.contains,
+        &[],
+        &evaluation_assumptions,
+        &mut budget,
+        false,
+    ) else {
+        return Vec::new();
+    };
+    body_resources
         .facts()
         .iter()
         .filter_map(|fact| match fact.resource() {
             CResource::Memory(range) => Some(CResourceFact::view_memory(range.clone())),
             _ => None,
         })
-        .collect::<Vec<_>>();
-    base.unchecked_with_facts(views)
+        .collect()
 }
 
 /// Names which resource clause of a contract section could not be addressed.
