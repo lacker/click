@@ -518,6 +518,21 @@ enough to become the first regression of the package that fixes them.
     genuine proving in the unfold's re-lowering of each arm clause's C
     expressions, about twenty times the childless sibling; reducing that is
     a resource-lowering redesign, not scheduled.
+51. **Owned cells do not follow a proved pointer equality between two
+    blocks.** A21: the node-keyed ascent proves `identity == parent` (a
+    `ctx_reroot` invariant plus `extract`) and both refutations work, but
+    the unfolded frame owns the arm binding's symbolic block while `node =
+    parent; parent = rb_parent(node);` reads the parameter's block:
+    `missing resource fact views symbolic-pointer:1000001@0[0..1]`.
+    Declared resource identity already respects proved argument equality;
+    memory ownership through a binding must too. Every node-keyed fixup
+    loop needs it. Package A22.
+52. **Smaller A21 findings, not scheduled.** `extract` directly inside
+    `preserve` is declined (works in a `have` body); a `preserve` match arm
+    cannot combine a short script with `contradiction` (the exclusion is
+    decided at plan time; no regression needs it now); `if identity == node
+    { 1 } else { 0 }` in a `have` goal lowers to one opaque operation (gap
+    45 in a C proof).
 
 ## Design decisions
 
@@ -814,6 +829,10 @@ appears to need one reports the need instead of adding it.
   the arm's constructor bindings, so `rb_replace_node` verifies in all
   three frames. A21 dispatched; T7 in progress; C3 after both.
 - 2026-09-12: T7 (b3cfc86a) is on master. A21 in progress; C3 after it.
+- 2026-09-12: A21 (cbf19069) is on master: an arm is refuted from a
+  predicate fact by exact evaluation at each constructor, and expansion
+  descends into `both` and `close_invariants` bodies. The node-keyed ascent
+  stops on gap 51; A22 dispatched; C3 after it.
 
 ## Work packages
 
@@ -1099,6 +1118,16 @@ predicate at the constructor, no search); and let a `contradiction` arm in
 closing. Regressions: `mdtests/rb_ascending_walk_to_root.md` ported to
 `rb_at(p)`/`ctx_at(child, root)` with `decreases`; a negative where the
 predicate does not decide the arm. Depends on A20. C3 depends on it.
+
+**A22. Ownership across a proved pointer equality (gap 51).** Scope: when
+an exact fact equates a cell's owner (a symbolic block introduced by an
+arm binding or witness) with a C pointer, reads and writes through the C
+pointer are authorized by the resource held on the binding, and folds and
+back-edge rebinding treat the two spellings as one, as declared resource
+identity already does for arguments. Bounded to exact equalities. Acceptance:
+`mdtests/rb_ascending_walk_to_root.md` ported to `rb_at(p)`/`ctx_at(child,
+root)` with `decreases`, verified and audited; a negative where the
+equality is not exact. Depends on A21. C3 depends on it.
 
 **C2b. Port the pure red-black library to the re-keyed model.** Scope:
 `examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
