@@ -391,6 +391,70 @@ authority/guard/cycle diagnostics, no free unfolding, and no forward-language
 change. The manager should record the final commit hash when integrating; W3
 did not merge or push from this worktree.
 
+## W3 follow-up handoff (2026-09-11)
+
+The follow-up started at `09267e5a` (the W3 handoff above) and is committed as
+`8b260cc9` on `codex/mvr-w3`, still unmerged and unpushed. It was prompted by
+review reductions, not by a new language rule. The entry evaluator now takes
+an authority-only snapshot before folded composite cells and observable body
+facts are projected. It receives only explicit entry memory clauses and
+instance identities, plus pure facts from explicit `requires loadable(...)`
+clauses; projection-derived loadability, composite bodies, postconditions,
+and concrete function bodies cannot seed entry authority. Direct memory
+clauses remain available because they are themselves explicit authority (and
+are needed for checked quantities such as `pool->capacity of pool_slot(pool)`).
+
+The kernel evaluator remains the single acceptance path for direct and named
+contract clauses. The surface segment-base check runs only after a kernel
+refusal to retain source-rich diagnostics. Symbolic loadability ranges such
+as `node[0..n]` are represented as checked symbolic read views (including the
+`4*n` int32 footprint) without materializing fake cells. The three new
+regressions are `contract_dynamic_loadable_composite_argument.md`, its
+`_rejects_missing` negative, and
+`contract_owns_composite_argument_rejects_body_bootstrap.md`; together they
+cover the dynamic positive, missing-authority negative, and the body-bootstrap
+negative.
+
+The pending-clause implementation now captures checked `MissingResource`
+dependencies and indexes waiters by resource fact, memory base, and memory
+block. After the one initial source pass and one section-supply expansion,
+newly supplied facts enqueue only dependent clauses; the old repeated
+whole-pending fixed-point scans are gone. The adversarial dependency test
+uses sizes `4, 8, 16, 32`, observed deterministic work `70, 168, 412, 1092`,
+and exact clause-attempt counters `7, 15, 31, 63` (`2*n-1`). Independent
+clauses and multiple dependency depths remain covered by the existing focused
+resource tests.
+
+Files/interfaces changed in this follow-up are
+`src/surface/proof.rs`, `src/kernel/functions.rs`, `src/kernel/loops.rs`,
+`src/kernel/mod.rs`, `src/kernel/tests/resource_tests.rs`, and the three
+`mdtests/` files named above. Existing direct/callback, explicit execution
+theorem, automatic-formation, and certification paths remain covered by the
+same shared evaluator and their bounded applicability rules are unchanged.
+The earlier W3 classification still stands: G2 was already fixed upstream by
+`7e55fdc7`; G3 is fixed by W3, including named dependent/composite entry
+evaluation, with the kernel authoritative and surface diagnostics secondary.
+The MemoryAggregate source-position and surface/kernel numbering residual is
+also fixed by the preceding W3 commit and was not regressed here.
+
+Checks: `cargo check --all-targets`, `cargo fmt --check`, `cargo clippy
+--all-targets -- -D warnings`, and `git diff --check` passed; focused
+`cargo nextest run --lib resource_tests contract_execution_tests
+callback_contract_tests` passed `172/172`; the composite and dynamic fixture
+filters passed; `cargo nextest run --test examples example_projects
+--no-capture` passed; and unfiltered `scripts/check.sh` exited 0 with `2584`
+tests and all `14` fixture/example checks passing. Only the repository's
+pre-existing quarantined example is skipped. No tooling-stop condition or
+stale verifier process was observed.
+
+The replaced paths are projection-derived body facts as entry authority, the
+constant-only loadability-view shortcut, and whole-context pending-clause
+rescans. No blocker remains. No C source, Click syntax, budgets, quarantine,
+or excluded semantics changed; no free unfolding or forward-language change
+was introduced. W3 did not merge or push; the manager should cherry-pick
+`09267e5a` and then `8b260cc9` (or the coherent range) after checking the
+primary branch base.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different
