@@ -1076,8 +1076,9 @@ semantics changed.
 
 #### W5 checkpoint E handoff (2026-09-12)
 
-Checkpoint E starts from the pushed D/master head and is implemented by
-`a5ec4580` on `codex/mvr-w5e`. The callback evidence in this checkpoint is
+Checkpoint E starts from the pushed D/master head; the E1 implementation and
+tests are at `49ed348b` on `codex/mvr-w5e` (building on `a5ec4580`). The
+callback evidence in this checkpoint is
 limited to the exact-pointer `PureFactContext` lookup curve; it is not an
 end-to-end callback application or invalidation test, and it does not close
 the full W5 callback claim. That curve varies calls `1, 2, 4, 8, 16`
