@@ -73,6 +73,7 @@ mod resource_frame_substitution_tests {
             effect_checks: vec![inherited_check(range)],
             resource_specs: Vec::new(),
             ranking_measures: Vec::new(),
+            structural_measure: None,
             body: Box::new(CStatement::Skip),
             do_while: false,
         };
@@ -114,6 +115,7 @@ mod resource_frame_substitution_tests {
             effect_checks: vec![inherited_check(range)],
             resource_specs: Vec::new(),
             ranking_measures: Vec::new(),
+            structural_measure: None,
             body: Box::new(CStatement::Skip),
             do_while: false,
         };

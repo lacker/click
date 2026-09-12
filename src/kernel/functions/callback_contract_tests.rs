@@ -987,6 +987,7 @@ fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
         effect_checks: vec![wrong_loop_frame],
         resource_specs: vec![],
         ranking_measures: vec![],
+        structural_measure: None,
         do_while: false,
         body: Box::new(CStatement::Skip),
     };
@@ -1058,6 +1059,7 @@ fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
             effect_checks: vec![inherited],
             resource_specs: vec![],
             ranking_measures: vec![],
+            structural_measure: None,
             do_while: false,
             body: Box::new(CStatement::Skip),
         },
