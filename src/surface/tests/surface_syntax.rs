@@ -964,6 +964,66 @@ fn signed_int32_arithmetic_certificate_applies_and_rejects_tampering() {
 }
 
 #[test]
+fn signed_int32_certificate_rejects_duplicate_premises_and_forward_nodes() {
+    let duplicate = r#"
+        theorem signed_certificate_duplicate(x: int32) {
+            requires x <= 1;
+            ensures x <= 1 by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: x <= 1 => x <= 1;
+                    premise 0: x <= 1 => x <= 1;
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    let (duplicate_result, duplicate_planning) =
+        crate::surface::proof::count_planning_statement_transitions(|| {
+            verify_click_theorems(duplicate)
+        });
+    assert_eq!(
+        duplicate_planning, 0,
+        "explicit certificate rejection must not invoke planning"
+    );
+    let duplicate_error = duplicate_result
+        .expect_err("duplicate signed certificate premise indices must be rejected");
+    assert!(
+        duplicate_error
+            .message()
+            .contains("declared more than once"),
+        "{duplicate_error:?}"
+    );
+
+    let forward = r#"
+        theorem signed_certificate_forward(x: int32) {
+            requires x <= 1;
+            ensures x <= 1 by {
+                arithmetic_certificate signed_int32 {
+                    scale 1 by 1 => x <= 1;
+                    premise 0: x <= 1 => x <= 1;
+                    conclusion 0;
+                }
+            }
+        }
+    "#;
+    let (forward_result, forward_planning) =
+        crate::surface::proof::count_planning_statement_transitions(|| {
+            verify_click_theorems(forward)
+        });
+    assert_eq!(
+        forward_planning, 0,
+        "explicit certificate rejection must not invoke planning"
+    );
+    let forward_error =
+        forward_result.expect_err("forward signed certificate node references must be rejected");
+    assert!(
+        forward_error.message().contains("out of range")
+            || forward_error.message().contains("forward"),
+        "{forward_error:?}"
+    );
+}
+
+#[test]
 fn signed_arithmetic_smart_planner_expands_to_structural_certificate() {
     let source = r#"
         theorem signed_smart_double(n: int32) {

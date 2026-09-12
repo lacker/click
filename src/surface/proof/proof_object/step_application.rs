@@ -740,12 +740,10 @@ impl<'a> Proof<'a> {
                 std::collections::btree_map::Entry::Vacant(entry) => {
                     entry.insert(lowered);
                 }
-                std::collections::btree_map::Entry::Occupied(entry) => {
-                    if !same_signed_claim(entry.get(), &lowered) {
-                        return Err(self.step_error(format!(
-                            "signed_int32 premise {index} is declared twice with different propositions"
-                        )));
-                    }
+                std::collections::btree_map::Entry::Occupied(_entry) => {
+                    return Err(self.step_error(format!(
+                        "signed_int32 premise {index} is declared more than once"
+                    )));
                 }
             }
         }
