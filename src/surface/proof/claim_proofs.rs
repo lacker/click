@@ -1197,6 +1197,11 @@ pub(super) fn finish_ordered_proof<'a>(
         direct_view.context,
         direct_view.branch_path,
     );
+    // Frontier-loop frame authority is established from the proof's original
+    // entry context.  The terminal fact vector also contains body/post
+    // observations, which may legitimately discharge later obligations but
+    // must never make an entry-dependent resource transition evaluable.
+    let entry_pure_facts = proof_context.constants.execution_start_facts.clone();
     proof_execution
         .core
         .validate_execution_evidence_shapes()
@@ -1233,7 +1238,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 predicate_environment,
                 click_function_environment,
                 resource_environment,
-                Some(&assumptions_from_propositions(&pure_facts)),
+                Some(&assumptions_from_propositions(entry_pure_facts.as_slice())),
             )
         })
         .transpose()?;
