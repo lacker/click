@@ -84,6 +84,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             effect_checks,
             resource_specs,
             ranking_measures,
+            structural_measure,
             body,
             do_while,
             ..
@@ -162,6 +163,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         invariant_checks,
                         effect_checks,
                         resource_specs,
+                        environment.function.composite_resource_definitions(),
                         body,
                         &assumptions,
                     )
@@ -172,6 +174,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         invariant_checks,
                         effect_checks,
                         resource_specs,
+                        environment.function.composite_resource_definitions(),
                         body,
                         &assumptions,
                     )
@@ -223,6 +226,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             &pure_facts,
                             invariant_checks,
                             ranking_measures,
+                            structural_measure.as_deref(),
                             condition,
                             body,
                             *do_while,

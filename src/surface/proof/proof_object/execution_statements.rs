@@ -706,6 +706,7 @@ impl<'a> Proof<'a> {
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
         binders: &[crate::kernel::CLoopBinder],
+        structural_measure: Option<&str>,
         composite_resource_definitions: &[CCompositeResourceDefinition],
     ) -> Result<(), ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
@@ -741,6 +742,21 @@ impl<'a> Proof<'a> {
             &assumptions,
         )
         .map_err(|message| self.step_error(format!("loop state join: {message}")))?;
+        // D6: a structural `decreases` is decided here, against the instance
+        // the binder held at the loop head. It is not a bundle member, so a
+        // back edge that does not descend is named at the join.
+        if let Some(measure) = structural_measure
+            && let Some(failure) = crate::kernel::loop_structural_descent_failure(
+                loop_head_state,
+                &back_edge_state,
+                binders,
+                measure,
+                composite_resource_definitions,
+                &assumptions,
+            )
+        {
+            return Err(self.step_error(format!("loop state join: {failure}")));
+        }
         let invariant_obligations = crate::kernel::c_loop_invariant_obligations_at_back_edge(
             &back_edge_state,
             loop_entry_state,
@@ -794,6 +810,7 @@ impl<'a> Proof<'a> {
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
         ranking_measures: &[CExpression],
+        structural_measure: Option<&str>,
         invariant_surfaces: &[ClickProposition],
         binders: &[crate::kernel::CLoopBinder],
         composite_resource_definitions: &[CCompositeResourceDefinition],
@@ -805,6 +822,7 @@ impl<'a> Proof<'a> {
             condition,
             invariant_checks,
             binders,
+            structural_measure,
             composite_resource_definitions,
         )?;
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {

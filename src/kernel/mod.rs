@@ -68,6 +68,7 @@ pub use loops::CLoopBinder;
 pub(crate) use loops::{
     c_loop_binders, c_loop_condition_may_continue, c_loop_state_components_match_at_back_edge,
     c_loop_state_with_head_binder_models, c_loop_state_with_loop_binders_rebound,
+    loop_structural_descent_failure,
 };
 pub use memory_provenance::*;
 pub(crate) use primitives::resource_context_has_symbolic_int32_range_read;

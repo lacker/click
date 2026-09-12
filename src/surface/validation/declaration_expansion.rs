@@ -262,16 +262,30 @@ fn expand_declared_resources_in_function_block(
     function: &mut FunctionBlock,
     resource_definitions: &DeclaredResourceScope,
 ) -> Result<(), ClickError> {
+    let declared_binders = function
+        .requires
+        .iter()
+        .filter_map(|requirement| match requirement.inner() {
+            Requirement::Resource(ResourceClause::Named { binding, .. }) => {
+                Some(binding.name.clone())
+            }
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
     function.decreases = function
         .decreases
         .take()
         .map(|decreases| match decreases {
+            CFunctionDecrease::Unresolved(expression) => {
+                classify_function_decrease(expression, &declared_binders, resource_definitions)
+            }
             CFunctionDecrease::Numeric(expression) => Ok(CFunctionDecrease::Numeric(
                 expand_declared_resource_expression(expression, resource_definitions)?,
             )),
             CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
                 expand_declared_resource_clause(resource, resource_definitions)?,
             )),
+            CFunctionDecrease::Binder(name) => Ok(CFunctionDecrease::Binder(name)),
         })
         .transpose()?;
     function.requires = function
@@ -824,6 +838,50 @@ fn expand_declared_resource_tactic_with_nested_proofs(
             expand_declared_resource_structural_clause(clause, resource_definitions)?,
         )),
         _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
+    }
+}
+
+/// Decides what a C function's parsed `decreases` expression names (D6).
+///
+/// Functions and resources share one namespace and declaration order creates
+/// no scope, so the parser cannot make this decision; this pass can, because
+/// it holds every declared resource and the function's own contract binders.
+/// An application of a declared resource is a structural measure over that
+/// entry resource, a bare contract resource binder is a structural measure
+/// over the instance that binder names, and everything else stays the
+/// existing numeric measure over an int32 parameter.
+///
+/// Cost is the one expression's head, not a search.
+fn classify_function_decrease(
+    expression: ContractExpression,
+    declared_binders: &BTreeSet<String>,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<CFunctionDecrease, ClickError> {
+    match &expression {
+        ContractExpression::Call { name, arguments } if resource_definitions.contains_key(name) => {
+            Ok(CFunctionDecrease::Resource(
+                expand_declared_resource_clause(
+                    ResourceClause::Declared {
+                        access: ResourceAccessMode::View,
+                        kind: ResourceKind::Token,
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                        parameter_types: Vec::new(),
+                    },
+                    resource_definitions,
+                )?,
+            ))
+        }
+        ContractExpression::Binding(name)
+        | ContractExpression::CBinding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name))
+            if declared_binders.contains(name) =>
+        {
+            Ok(CFunctionDecrease::Binder(name.clone()))
+        }
+        _ => Ok(CFunctionDecrease::Numeric(
+            expand_declared_resource_expression(expression, resource_definitions)?,
+        )),
     }
 }
 

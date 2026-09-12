@@ -28,7 +28,7 @@ resource zero_list(node: struct node*) {
 verifying "c_decreases_resource_rejects_unrelated.c";
 
 int32 swap_repeat(struct node* node, struct node* other) {
-    decreases resource zero_list(node);
+    decreases zero_list(node);
     requires node != 0;
     requires other != 0;
     requires node != other;

@@ -9518,6 +9518,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
                 &CExpression::Value(int32(1)),
                 &checks,
                 &[],
+                None,
                 &[surface.clone(), legacy_surface.clone()],
                 &[],
                 &[],

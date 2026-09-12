@@ -1744,19 +1744,19 @@ fn verify_c0_sources_with_context(
             if let Some(verified) = frontier_loop_artifacts {
                 let mut loop_measures = BTreeMap::new();
                 for clause in &verified.frontier_loop_clauses {
-                    let Some(measure) = clause.decreases() else {
-                        continue;
-                    };
                     let CodeRegion::Loop(loop_index) = clause.region() else {
                         continue;
                     };
-                    let expressions = termination_measure_expressions(
-                        measure,
+                    let Some(expressions) = loop_termination_measure(
+                        clause,
                         &format!(
                             "frontier-local loop {loop_index} `decreases` in `{}`",
                             function_block.signature.name()
                         ),
-                    )?;
+                    )?
+                    else {
+                        continue;
+                    };
                     if let Some(previous) = loop_measures.insert(*loop_index, expressions.clone())
                         && previous != expressions
                     {
@@ -2550,6 +2550,46 @@ pub(in crate::surface) fn termination_measure_expressions(
         .collect()
 }
 
+/// The bare source name a one-component `decreases` clause spells, if any.
+fn termination_measure_binder_name(measure: &TerminationMeasure) -> Option<&str> {
+    let [component] = measure.components() else {
+        return None;
+    };
+    match component {
+        ContractExpression::Binding(name)
+        | ContractExpression::CBinding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name)) => Some(name),
+        _ => None,
+    }
+}
+
+/// Classifies one loop's `decreases` clause (D6).
+///
+/// The clause is one expression, and a loop's own `owns name: resource(args);`
+/// binders are the names that make it a structural measure; anything else is
+/// the existing int32 ranking measure. The decision reads this loop's own
+/// declarations, so it costs the clause and the loop header.
+pub(in crate::surface) fn loop_termination_measure(
+    clause: &StructuralClause,
+    context: &str,
+) -> Result<Option<crate::kernel::CLoopTerminationMeasure>, ClickError> {
+    let Some(measure) = clause.decreases() else {
+        return Ok(None);
+    };
+    if let Some(name) = termination_measure_binder_name(measure)
+        && clause.resources().iter().any(|resource| {
+            matches!(resource, ResourceClause::Named { binding, .. } if binding.name == name)
+        })
+    {
+        return Ok(Some(crate::kernel::CLoopTerminationMeasure::Structural(
+            name.to_string(),
+        )));
+    }
+    Ok(Some(crate::kernel::CLoopTerminationMeasure::Ranking(
+        termination_measure_expressions(measure, context)?,
+    )))
+}
+
 pub(in crate::surface) fn c_function_termination_plans(
     file: &ClickFile,
     selected_functions: Option<&BTreeSet<String>>,
@@ -2571,6 +2611,38 @@ pub(in crate::surface) fn c_function_termination_plans(
         let recursive_measure = function
             .decreases()
             .map(|measure| match measure {
+                CFunctionDecrease::Unresolved(_) => Err(ClickError::new(format!(
+                    "function-level `decreases` in `{}` was never classified; declared-resource expansion did not run",
+                    function.signature().name()
+                ))),
+                CFunctionDecrease::Binder(binder) => {
+                    // `decreases t;` names one of this contract's own resource
+                    // binders. The kernel measure is an index into the entry
+                    // resource requirements, so find the clause that declares
+                    // the binder and count the resource requirements before it.
+                    let mut resource_index = 0;
+                    let mut matched = None;
+                    for requirement in function.requires() {
+                        let Requirement::Resource(required) = requirement.inner() else {
+                            continue;
+                        };
+                        if matches!(
+                            required,
+                            ResourceClause::Named { binding, .. } if &binding.name == binder
+                        ) {
+                            matched = Some(resource_index);
+                            break;
+                        }
+                        resource_index += 1;
+                    }
+                    let index = matched.ok_or_else(|| {
+                        ClickError::new(format!(
+                            "function-level `decreases {binder}` in `{}` must name an owned or viewed entry resource binder",
+                            function.signature().name()
+                        ))
+                    })?;
+                    Ok(crate::kernel::CFunctionTerminationMeasure::ResourceRequirement(index))
+                }
                 CFunctionDecrease::Numeric(measure) => {
                     let name = termination_measure_name(
                         measure,
@@ -2607,7 +2679,7 @@ pub(in crate::surface) fn c_function_termination_plans(
                     } = measure
                     else {
                         return Err(ClickError::new(format!(
-                            "function-level `decreases resource` in `{}` must name one composite resource",
+                            "function-level `decreases` in `{}` must name one composite resource",
                             function.signature().name()
                         )));
                     };
@@ -2633,7 +2705,7 @@ pub(in crate::surface) fn c_function_termination_plans(
                     }
                     let index = matched.ok_or_else(|| {
                         ClickError::new(format!(
-                            "function-level `decreases resource {measure_name}(...)` in `{}` must exactly match an owned or viewed entry resource",
+                            "function-level `decreases {measure_name}(...)` in `{}` must exactly match an owned or viewed entry resource",
                             function.signature().name()
                         ))
                     })?;
@@ -2643,9 +2715,9 @@ pub(in crate::surface) fn c_function_termination_plans(
             .transpose()?;
         let mut loop_measures = BTreeMap::new();
         for clause in function.structural_clauses() {
-            let Some(measure) = clause.decreases() else {
+            if clause.decreases().is_none() {
                 continue;
-            };
+            }
             let CodeRegion::Loop(index) = clause.region() else {
                 return Err(ClickError::new(format!(
                     "`decreases` is supported only for loop regions, not {:?} in `{}`",
@@ -2653,13 +2725,16 @@ pub(in crate::surface) fn c_function_termination_plans(
                     function.signature().name()
                 )));
             };
-            let expressions = termination_measure_expressions(
-                measure,
+            let Some(expressions) = loop_termination_measure(
+                clause,
                 &format!(
                     "loop {index} `decreases` in `{}`",
                     function.signature().name()
                 ),
-            )?;
+            )?
+            else {
+                continue;
+            };
             if loop_measures.insert(*index, expressions).is_some() {
                 return Err(ClickError::new(format!(
                     "duplicate `decreases` measure for loop {index} in `{}`",
@@ -2678,20 +2753,18 @@ pub(in crate::surface) fn c_function_termination_plans(
             let mut grouped_clauses = Vec::new();
             proof.collect_termination_loop_clauses(&mut grouped_clauses);
             for (index, clause) in grouped_clauses.into_iter().enumerate() {
-                if let Some(measure) = clause.decreases() {
-                    let expressions = termination_measure_expressions(
-                        measure,
-                        &format!(
-                            "loop {index} `decreases` in `{}`",
-                            function.signature().name()
-                        ),
-                    )?;
-                    if loop_measures.insert(index, expressions).is_some() {
-                        return Err(ClickError::new(format!(
-                            "duplicate `decreases` measure for loop {index} in `{}`",
-                            function.signature().name()
-                        )));
-                    }
+                if let Some(expressions) = loop_termination_measure(
+                    clause,
+                    &format!(
+                        "loop {index} `decreases` in `{}`",
+                        function.signature().name()
+                    ),
+                )? && loop_measures.insert(index, expressions).is_some()
+                {
+                    return Err(ClickError::new(format!(
+                        "duplicate `decreases` measure for loop {index} in `{}`",
+                        function.signature().name()
+                    )));
                 }
             }
         }

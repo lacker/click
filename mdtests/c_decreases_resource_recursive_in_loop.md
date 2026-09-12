@@ -34,7 +34,7 @@ resource zero_list(node: struct node*) {
 verifying "c_decreases_resource_recursive_in_loop.c";
 
 void zero_walk_loop(struct node* node) {
-    decreases resource zero_list(node);
+    decreases zero_list(node);
     requires node != 0;
     views zero_list(node);
 

@@ -217,6 +217,7 @@ pub fn c_loop_preservation_contexts(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
@@ -226,6 +227,7 @@ pub fn c_loop_preservation_contexts(
         invariant_checks,
         effect_checks,
         resource_specs,
+        definitions,
         body,
         assumptions,
         false,
@@ -241,6 +243,7 @@ pub fn c_do_while_preservation_contexts(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
@@ -250,6 +253,7 @@ pub fn c_do_while_preservation_contexts(
         invariant_checks,
         effect_checks,
         resource_specs,
+        definitions,
         body,
         assumptions,
         true,
@@ -263,6 +267,7 @@ fn c_loop_preservation_contexts_with_mode(
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
     do_while: bool,
@@ -284,7 +289,9 @@ fn c_loop_preservation_contexts_with_mode(
     let head = prepare_loop_top_state(
         loop_entry_state,
         effect_checks,
+        invariant_checks,
         resource_specs,
+        definitions,
         body,
         assumptions,
         &mut budget,
@@ -1249,6 +1256,7 @@ pub fn c_while_with_invariant_and_effect_checks(
         effect_checks,
         resource_specs: Vec::new(),
         ranking_measures: Vec::new(),
+        structural_measure: None,
         do_while: false,
         body: Box::new(body),
     }
@@ -1289,6 +1297,25 @@ impl CStatement {
         }
         self
     }
+
+    /// Declares the loop's structural `decreases` binder (D6).
+    ///
+    /// `None` leaves the loop with whatever numeric components it declared.
+    /// The binder name travels with the loop head for the same reason the
+    /// ranking components do: the back edge, the verified loop rule, and the
+    /// whole-function termination pass read one declared clause.
+    pub fn with_loop_structural_measure(mut self, measure: Option<String>) -> Self {
+        if measure.is_none() {
+            return self;
+        }
+        if let Self::While {
+            structural_measure, ..
+        } = &mut self
+        {
+            *structural_measure = measure;
+        }
+        self
+    }
 }
 
 pub fn c_do_while(condition: CExpression, body: CStatement) -> CStatement {
@@ -1308,6 +1335,7 @@ pub fn c_do_while_with_invariant_and_effect_checks(
         effect_checks,
         resource_specs: Vec::new(),
         ranking_measures: Vec::new(),
+        structural_measure: None,
         do_while: true,
         body: Box::new(body),
     }
@@ -2357,6 +2385,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure,
         body,
         do_while,
     } = &statement
@@ -2384,6 +2413,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure.as_deref(),
         body,
         &assumptions,
         &environment,

@@ -36,7 +36,7 @@ resource marked_list(node: struct node*) {
 verifying "c_decreases_resource_witness_child.c";
 
 uint32 count_nodes(struct node* node) {
-    decreases resource marked_list(node);
+    decreases marked_list(node);
     owns marked_list(node);
 } by {
     if node == 0 {

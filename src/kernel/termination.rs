@@ -215,12 +215,27 @@ struct StructuralRecursionPath {
 
 struct StructuralResourceMeasure {
     arguments: Vec<CExpression>,
+    /// One entry per body the definition can take. An `if`-guarded body is
+    /// the single arm, guarded by the definition's own condition; a
+    /// `match model` body contributes one arm per matched variant whose own
+    /// facts separate it from every other variant (gap 7).
+    arms: Vec<StructuralResourceArm>,
+}
+
+/// One body of the measured definition, with the conditions that select it
+/// and the direct recursive children it names.
+struct StructuralResourceArm {
+    /// Any one of these, established on the path, selects this arm. They are
+    /// instantiated at the measure's arguments, so they are conditions about
+    /// this call's own C expressions.
+    guards: Vec<CExpression>,
+    /// Whether the function's own `requires` already establishes a guard, so
+    /// every path into the body starts inside this arm.
+    guard_is_precondition: bool,
     children: Vec<Vec<CExpression>>,
     /// Direct recursive children named through a `let` witness of the
     /// definition rather than a C expression of its parameters.
     witness_children: Vec<WitnessChildMeasure>,
-    guard: CExpression,
-    guard_is_precondition: bool,
 }
 
 struct WitnessChildMeasure {
@@ -323,9 +338,22 @@ fn check_structural_recursive_call(
     if function_name != function.name() {
         return Ok(());
     }
-    if !path.conditions.iter().any(|(condition, value)| {
-        branch_establishes_structural_guard(condition, *value, &measure.guard)
-    }) {
+    // An arm is active on this path when the path establishes one of the
+    // conditions that selects it, or when the function's own requirements
+    // already did. Cost is the arm's own guards, not a search.
+    let active = measure
+        .arms
+        .iter()
+        .filter(|arm| {
+            arm.guard_is_precondition
+                || arm.guards.iter().any(|guard| {
+                    path.conditions.iter().any(|(condition, value)| {
+                        branch_establishes_structural_guard(condition, *value, guard)
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    if active.is_empty() {
         return Err(error(format!(
             "recursive call to `{function_name}` is reachable without establishing the active structural resource guard"
         )));
@@ -346,9 +374,10 @@ fn check_structural_recursive_call(
         .iter()
         .map(|argument| substitute_c_expression_variables(argument, &parameter_substitutions))
         .collect::<Vec<_>>();
-    if !measure.children.contains(&call_measure_arguments)
-        && !call_passes_witness_child(function, measure, &call_measure_arguments)
-    {
+    if !active.iter().any(|arm| {
+        arm.children.contains(&call_measure_arguments)
+            || call_passes_witness_child(function, measure, arm, &call_measure_arguments)
+    }) {
         return Err(error(format!(
             "recursive call to `{function_name}` does not pass a direct contained child of its structural resource measure"
         )));
@@ -564,11 +593,12 @@ fn evaluate_structural_c_expression(
 fn call_passes_witness_child(
     function: &CFunction,
     measure: &StructuralResourceMeasure,
+    arm: &StructuralResourceArm,
     call_measure_arguments: &[CExpression],
 ) -> bool {
     const PARAMETER_VARIABLE_BASE: u64 = 4_200_000_000;
     const WITNESS_VARIABLE_BASE: u64 = 4_250_000_000;
-    if measure.witness_children.is_empty() {
+    if arm.witness_children.is_empty() {
         return false;
     }
     let mut budget = ExecutionBudget::default();
@@ -593,7 +623,7 @@ fn call_passes_witness_child(
             .locals
             .set_typed(parameter.name().to_string(), value, parameter.c_type());
     }
-    'children: for child in &measure.witness_children {
+    'children: for child in &arm.witness_children {
         let definition = &child.definition;
         if child.arguments.len() != call_measure_arguments.len() {
             continue;
@@ -678,6 +708,19 @@ fn call_passes_witness_child(
     false
 }
 
+/// The bodies and direct recursive children of a measured entry resource.
+///
+/// An `if`-guarded body is one arm selected by the definition's own condition.
+/// A `match model` body (gap 7) contributes one arm per matched variant: its
+/// named and unnamed children of the same family are the arm's structural
+/// children, and the arm is selected by a fact of its own that every other
+/// variant's facts explicitly deny. That denial is what makes the guard an
+/// arm selection rather than an unrelated condition, and it is the syntactic
+/// form of the same decision `select_resource_model_arm` makes from premises
+/// at a loop head.
+///
+/// Work is the definition's own clauses: each arm's facts are compared only
+/// with the other arms' facts of this one definition.
 fn structural_resource_children(
     function: &CFunction,
     requirement_index: usize,
@@ -688,8 +731,13 @@ fn structural_resource_children(
             function.name()
         )));
     };
-    let (Some(name), Some(arguments)) = (resource.declared_name(), resource.declared_arguments())
-    else {
+    // `owns t: tree_at(root);` measures the instance the binder names, so the
+    // measured family is the instance spec's own resource.
+    let term = resource
+        .term()
+        .instance_resource()
+        .unwrap_or_else(|| resource.term());
+    let (Some(name), Some(arguments)) = (term.declared_name(), term.declared_arguments()) else {
         return Err(error(format!(
             "structural resource measure index is invalid for `{}`",
             function.name()
@@ -700,7 +748,10 @@ fn structural_resource_children(
         .iter()
         .find(|definition| definition.name() == name)
         .ok_or_else(|| error(format!("resource measure `{name}` has no definition")))?;
-    if !definition.is_recursive() {
+    // A matched definition carries its children inside its arms, so the
+    // definition-level recursion flag does not see them; the arm walk below
+    // reports "no direct recursive child" when there really is none.
+    if definition.matched.is_none() && !definition.is_recursive() {
         return Err(error(format!(
             "resource measure `{name}` is not directly recursive"
         )));
@@ -716,62 +767,159 @@ fn structural_resource_children(
         .zip(arguments)
         .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
         .collect::<BTreeMap<_, _>>();
-    let guard = definition
-        .condition()
-        .and_then(|condition| instantiate_structural_guard(condition, &substitutions))
-        .ok_or_else(|| {
-            error(format!(
-                "resource measure `{name}` currently requires a simple comparison guard"
-            ))
-        })?;
-    let guard_is_precondition = function.contract_requires().contains(&guard);
-    let guard = structural_guard_expression(&guard).ok_or_else(|| {
-        error(format!(
-            "resource measure `{name}` currently requires a simple comparison guard"
-        ))
-    })?;
     let mentions_witness = |expression: &CExpression| {
         definition
             .witnesses()
             .iter()
             .any(|witness| c_expression_mentions_variable(expression, witness.name()))
     };
-    let mut children = Vec::new();
-    let mut witness_children = Vec::new();
-    for contained in definition.contains() {
-        let (Some(child_name), Some(child_arguments)) =
-            (contained.declared_name(), contained.declared_arguments())
-        else {
-            continue;
-        };
-        if child_name != name {
-            continue;
+    let mentions_binding = |expression: &CExpression, bound: &BTreeSet<String>| {
+        bound
+            .iter()
+            .any(|binding| c_expression_mentions_variable(expression, binding))
+    };
+    let structural_children = |contained: &[CResourceSpec],
+                               bound: &BTreeSet<String>|
+     -> (Vec<Vec<CExpression>>, Vec<WitnessChildMeasure>) {
+        let mut children = Vec::new();
+        let mut witness_children = Vec::new();
+        for spec in contained {
+            let (Some(child_name), Some(child_arguments)) =
+                (spec.declared_name(), spec.declared_arguments())
+            else {
+                continue;
+            };
+            if child_name != name {
+                continue;
+            }
+            if child_arguments
+                .iter()
+                .any(|argument| mentions_binding(argument, bound))
+            {
+                continue;
+            }
+            if child_arguments.iter().any(mentions_witness) {
+                witness_children.push(WitnessChildMeasure {
+                    definition: definition.clone(),
+                    arguments: child_arguments.to_vec(),
+                });
+            } else {
+                children.push(
+                    child_arguments
+                        .iter()
+                        .map(|argument| substitute_c_expression_variables(argument, &substitutions))
+                        .collect::<Vec<_>>(),
+                );
+            }
         }
-        if child_arguments.iter().any(mentions_witness) {
-            witness_children.push(WitnessChildMeasure {
-                definition: definition.clone(),
-                arguments: child_arguments.to_vec(),
+        (children, witness_children)
+    };
+    let mut arms = Vec::new();
+    if let Some(body) = definition.matched.as_ref() {
+        for (index, arm) in body.arms.iter().enumerate() {
+            let bound = arm.bindings.iter().cloned().collect::<BTreeSet<_>>();
+            let (mut children, witness_children) = structural_children(&arm.contains, &bound);
+            for child in &arm.children {
+                if child.resource != name {
+                    continue;
+                }
+                if child.arguments.iter().any(|argument| {
+                    mentions_binding(argument, &bound) || mentions_witness(argument)
+                }) {
+                    continue;
+                }
+                children.push(
+                    child
+                        .arguments
+                        .iter()
+                        .map(|argument| substitute_c_expression_variables(argument, &substitutions))
+                        .collect::<Vec<_>>(),
+                );
+            }
+            if children.is_empty() && witness_children.is_empty() {
+                continue;
+            }
+            // A fact of this arm selects it only when every other arm denies
+            // that same fact. `fact p != 0` in a `Node` arm selects it because
+            // the `Empty` arm states `fact p == 0`.
+            let mut guards = Vec::new();
+            let mut guard_is_precondition = false;
+            for fact in &arm.facts {
+                let Some(instantiated) = instantiate_structural_guard(fact, &substitutions) else {
+                    continue;
+                };
+                let Some(guard) = structural_guard_expression(&instantiated) else {
+                    continue;
+                };
+                if mentions_binding(&guard, &bound) || mentions_witness(&guard) {
+                    continue;
+                }
+                let denied_elsewhere = body.arms.iter().enumerate().all(|(other, candidate)| {
+                    other == index
+                        || candidate.facts.iter().any(|other_fact| {
+                            instantiate_structural_guard(other_fact, &substitutions)
+                                .as_ref()
+                                .and_then(structural_guard_expression)
+                                .is_some_and(|other_guard| {
+                                    branch_establishes_structural_guard(&other_guard, false, &guard)
+                                })
+                        })
+                });
+                if !denied_elsewhere {
+                    continue;
+                }
+                if function.contract_requires().contains(&instantiated) {
+                    guard_is_precondition = true;
+                }
+                guards.push(guard);
+            }
+            if guards.is_empty() {
+                return Err(error(format!(
+                    "resource measure `{name}` arm `{}` names children but no fact of its own that the other arms deny, so no condition selects it",
+                    arm.variant
+                )));
+            }
+            arms.push(StructuralResourceArm {
+                guards,
+                guard_is_precondition,
+                children,
+                witness_children,
             });
-        } else {
-            children.push(
-                child_arguments
-                    .iter()
-                    .map(|argument| substitute_c_expression_variables(argument, &substitutions))
-                    .collect::<Vec<_>>(),
-            );
+        }
+    } else {
+        let guard = definition
+            .condition()
+            .and_then(|condition| instantiate_structural_guard(condition, &substitutions))
+            .ok_or_else(|| {
+                error(format!(
+                    "resource measure `{name}` currently requires a simple comparison guard"
+                ))
+            })?;
+        let guard_is_precondition = function.contract_requires().contains(&guard);
+        let guard = structural_guard_expression(&guard).ok_or_else(|| {
+            error(format!(
+                "resource measure `{name}` currently requires a simple comparison guard"
+            ))
+        })?;
+        let (children, witness_children) =
+            structural_children(definition.contains(), &BTreeSet::new());
+        if !children.is_empty() || !witness_children.is_empty() {
+            arms.push(StructuralResourceArm {
+                guards: vec![guard],
+                guard_is_precondition,
+                children,
+                witness_children,
+            });
         }
     }
-    if children.is_empty() && witness_children.is_empty() {
+    if arms.is_empty() {
         return Err(error(format!(
             "resource measure `{name}` has no direct recursive child"
         )));
     }
     Ok(StructuralResourceMeasure {
         arguments: arguments.to_vec(),
-        children,
-        witness_children,
-        guard,
-        guard_is_precondition,
+        arms,
     })
 }
 
@@ -1448,6 +1596,14 @@ pub(super) fn c_ranking_measures_display(measures: &[CExpression]) -> String {
     termination_measures_display(measures)
 }
 
+/// The display form of one loop's declared measure, for plan diagnostics.
+fn loop_termination_measure_display(measure: &CLoopTerminationMeasure) -> String {
+    match measure {
+        CLoopTerminationMeasure::Ranking(measures) => termination_measures_display(measures),
+        CLoopTerminationMeasure::Structural(binder) => binder.clone(),
+    }
+}
+
 fn termination_measures_display(measures: &[CExpression]) -> String {
     let components = measures
         .iter()
@@ -1568,8 +1724,8 @@ fn verified_loop_ranking_measures(
     function_name: &str,
     source_body: &CStatement,
     rules: &[CVerifiedLoopRule],
-) -> Result<BTreeMap<usize, Vec<CExpression>>, CTerminationError> {
-    let mut certified: BTreeMap<usize, Vec<CExpression>> = BTreeMap::new();
+) -> Result<BTreeMap<usize, CLoopTerminationMeasure>, CTerminationError> {
+    let mut certified: BTreeMap<usize, CLoopTerminationMeasure> = BTreeMap::new();
     for rule in rules {
         let Some(index) = rule.loop_index else {
             continue;
@@ -1586,24 +1742,28 @@ fn verified_loop_ranking_measures(
             )));
         }
         let CStatement::While {
-            ranking_measures, ..
+            ranking_measures,
+            structural_measure,
+            ..
         } = &rule.loop_statement
         else {
             return Err(error(format!(
                 "verified loop rule for `{function_name}` is not a while loop"
             )));
         };
-        if ranking_measures.is_empty() {
-            continue;
-        }
+        let measure = match structural_measure {
+            Some(binder) => CLoopTerminationMeasure::Structural(binder.clone()),
+            None if ranking_measures.is_empty() => continue,
+            None => CLoopTerminationMeasure::Ranking(ranking_measures.clone()),
+        };
         if let Some(existing) = certified.get(&index) {
-            if existing != ranking_measures {
+            if existing != &measure {
                 return Err(error(format!(
                     "verified loop rules for `{function_name}` disagree on loop {index} `decreases`"
                 )));
             }
         } else {
-            certified.insert(index, ranking_measures.clone());
+            certified.insert(index, measure);
         }
     }
     Ok(certified)
@@ -1722,8 +1882,8 @@ fn canonical_ranking_term(term: &Bitvector32Term) -> Bitvector32Term {
 /// whole of the check here.
 fn check_loops(
     statement: &CStatement,
-    supplied: &BTreeMap<usize, Vec<CExpression>>,
-    certified: &BTreeMap<usize, Vec<CExpression>>,
+    supplied: &BTreeMap<usize, CLoopTerminationMeasure>,
+    certified: &BTreeMap<usize, CLoopTerminationMeasure>,
     function_name: &str,
     next_index: &mut usize,
 ) -> Result<bool, CTerminationError> {
@@ -1750,7 +1910,8 @@ fn check_loops(
             let Some(measures) = supplied.get(&index) else {
                 return Ok(false);
             };
-            if measures.is_empty() {
+            if matches!(measures, CLoopTerminationMeasure::Ranking(components) if components.is_empty())
+            {
                 return Err(error(format!(
                     "loop {index} has an empty termination measure"
                 )));
@@ -1759,8 +1920,8 @@ fn check_loops(
                 Some(checked) if checked == measures => Ok(nested_terminate),
                 Some(checked) => Err(error(format!(
                     "loop {index} in `{function_name}` was certified for `{}`, not the planned `{}`",
-                    termination_measures_display(checked),
-                    termination_measures_display(measures)
+                    loop_termination_measure_display(checked),
+                    loop_termination_measure_display(measures)
                 ))),
                 None => Err(error(format!(
                     "loop {index} in `{function_name}` has no verified loop rule carrying its \
@@ -1953,6 +2114,9 @@ pub fn c_verified_function_termination_rules(
             let empty = BTreeMap::new();
             let loop_measures = plans.get(name).map_or(&empty, |plan| &plan.loop_measures);
             for measures in loop_measures.values() {
+                let CLoopTerminationMeasure::Ranking(measures) = measures else {
+                    continue;
+                };
                 for measure in measures {
                     reject_address_escaped_expression_measure(
                         name,
@@ -1981,18 +2145,16 @@ pub fn c_verified_function_termination_rules(
             if recursive {
                 if let Some(requirement_index) = structural_requirement {
                     let measure = structural_resource_children(function, requirement_index)?;
-                    let conditions = if measure.guard_is_precondition {
-                        vec![(measure.guard.clone(), true)]
-                    } else {
-                        Vec::new()
-                    };
+                    // An arm the function's own requirements already select is
+                    // active on every path; the check reads that from the arm
+                    // rather than seeding a synthetic path condition.
                     structural_recursion_paths(
                         &function.source_body,
                         function,
                         &measure,
                         vec![StructuralRecursionPath {
                             aliases: BTreeMap::new(),
-                            conditions,
+                            conditions: Vec::new(),
                         }],
                     )?;
                 } else {
@@ -2096,6 +2258,7 @@ mod address_escape_tests {
         };
         let body = CStatement::While {
             ranking_measures: Vec::new(),
+            structural_measure: None,
             condition: variable("c"),
             invariant: Vec::new(),
             invariant_checks: Vec::new(),

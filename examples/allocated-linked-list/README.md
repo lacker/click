@@ -15,7 +15,7 @@ requiring the C implementation to expose proof-oriented control flow.
 exactly one node, returning ownership of the still-live tail. `list_destroy`
 is an ordinary `void` postorder destructor: its null arm is empty, while its
 nonnull arm passes the direct contained tail to a standalone recursive call
-and then frees the parent. `decreases resource allocated_list(node)` proves
+and then frees the parent. `decreases allocated_list(node)` proves
 termination from that finite ownership witness even though the function
 consumes and deallocates it. Its `if (!node)` spelling also demonstrates that
 termination uses the meaning of a guard rather than requiring one exact syntax.

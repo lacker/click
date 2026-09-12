@@ -826,10 +826,22 @@ pub struct FunctionBlock {
     grouped_proof: Option<SourceProof>,
 }
 
+/// A C function's `decreases` measure.
+///
+/// Decision D6: the clause is one expression, and functions and resources
+/// share one namespace, so the parser cannot tell which kind of measure it
+/// read. It stores [`CFunctionDecrease::Unresolved`], and declared-resource
+/// expansion — the pass that knows every declared resource and every contract
+/// binder — classifies it into one of the resolved forms below.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CFunctionDecrease {
+    /// The parsed expression, before resolution decides what it names.
+    Unresolved(ContractExpression),
     Numeric(ContractExpression),
     Resource(ResourceClause),
+    /// A contract resource binder named without arguments, as in
+    /// `owns t: tree_at(root); decreases t;`.
+    Binder(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

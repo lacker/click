@@ -8,7 +8,7 @@ value is zero, and contains the still-folded resource for `node->next`.
 `zero_list_sum` accepts a nonempty list, views one resource layer at a time, and
 calls its own verified contract opaquely on a nonempty tail. Its ordinary
 contract proves that every returning execution yields zero. Its separate
-`decreases resource zero_list(node)` declaration proves termination because
+`decreases zero_list(node)` declaration proves termination because
 the recursive call receives the direct contained tail witness.
 
 `zero_list_sum_bounded` also takes numeric fuel and declares `decreases fuel`.

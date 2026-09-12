@@ -1047,11 +1047,13 @@ pub(super) fn execute_c_statement_verification_paths(
             effect_checks,
             resource_specs,
             ranking_measures,
+            structural_measure,
             body,
             do_while,
         } if !invariant_checks.is_empty()
             || !effect_checks.is_empty()
-            || !ranking_measures.is_empty() =>
+            || !ranking_measures.is_empty()
+            || structural_measure.is_some() =>
         {
             execute_c_while_verification_paths(
                 state,
@@ -1061,6 +1063,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 effect_checks,
                 resource_specs,
                 ranking_measures,
+                structural_measure.as_deref(),
                 body,
                 assumptions,
                 environment,
@@ -1174,6 +1177,7 @@ pub(super) fn execute_c_while_verification_paths(
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
     ranking_measures: &[CExpression],
+    structural_measure: Option<&str>,
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1190,8 +1194,10 @@ pub(super) fn execute_c_while_verification_paths(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure,
         body,
         assumptions,
+        environment,
         Some(environment),
         &[],
         execution_semantics,
@@ -1375,6 +1381,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
     ranking_measures: &[CExpression],
+    structural_measure: Option<&str>,
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1394,8 +1401,10 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         effect_checks,
         resource_specs,
         ranking_measures,
+        structural_measure,
         body,
         assumptions,
+        environment,
         (!preservation_proven).then_some(environment),
         final_exit_candidates,
         execution_semantics,
@@ -1415,8 +1424,10 @@ fn execute_c_while_exit_paths(
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
     ranking_measures: &[CExpression],
+    structural_measure: Option<&str>,
     body: &CStatement,
     assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
     preservation_environment: Option<&CExecutionEnvironment>,
     final_exit_candidates: &[CLoopFinalExitCandidate],
     execution_semantics: CExecutionSemantics,
@@ -1432,10 +1443,13 @@ fn execute_c_while_exit_paths(
         }
     }
 
+    let composite_resource_definitions = environment_composite_resource_definitions(environment);
     let head = prepare_loop_top_state(
         state,
         effect_checks,
+        invariant_checks,
         resource_specs,
+        &composite_resource_definitions,
         body,
         assumptions,
         budget,
@@ -1458,6 +1472,10 @@ fn execute_c_while_exit_paths(
         )?
     };
     let top_state = head.top.clone();
+    // The guard and the invariants are read with the selected arm's cells
+    // published (D7); the loop's exit outcome stays `top_state`, so that read
+    // authority never leaves the head.
+    let guard_state = head.guard.clone();
     let whole_loop_effect_summaries = head.summaries.clone();
     let (preservation_obligations, mut final_exit_paths) =
         if let Some(environment) = preservation_environment {
@@ -1469,6 +1487,8 @@ fn execute_c_while_exit_paths(
                 effect_checks,
                 resource_specs,
                 ranking_measures,
+                structural_measure,
+                &composite_resource_definitions,
                 &whole_loop_effect_summaries,
                 body,
                 assumptions,
@@ -1555,7 +1575,7 @@ fn execute_c_while_exit_paths(
         }
     }
     let invariant_contexts = assume_invariant_checks(
-        &top_state,
+        &guard_state,
         state,
         invariant_checks,
         assumptions,
@@ -1567,7 +1587,7 @@ fn execute_c_while_exit_paths(
     for (invariant_facts, invariant_obligations) in &invariant_contexts {
         if do_while
             || !assume_condition_truthiness(
-                &top_state,
+                &guard_state,
                 condition,
                 assumptions,
                 invariant_facts,
@@ -1584,7 +1604,7 @@ fn execute_c_while_exit_paths(
     if initial_may_exit {
         for (invariant_facts, invariant_obligations) in invariant_contexts {
             let condition_contexts = assume_condition_truthiness(
-                &top_state,
+                &guard_state,
                 condition,
                 assumptions,
                 &invariant_facts,
@@ -1884,6 +1904,8 @@ pub(super) fn collect_loop_preservation_summary(
     effect_checks: &[CLoopEffectCheck],
     resource_specs: &[CResourceSpec],
     ranking_measures: &[CExpression],
+    structural_measure: Option<&str>,
+    composite_resource_definitions: &[CCompositeResourceDefinition],
     whole_loop_effect_summaries: &[Proposition],
     body: &CStatement,
     assumptions: &PureFactContext,
@@ -1899,16 +1921,6 @@ pub(super) fn collect_loop_preservation_summary(
     // enclosing frame withheld is returned on the way out.
     let top_state = &head.body;
     let binders = c_loop_binders(resource_specs);
-    let composite_resource_definitions = environment
-        .functions
-        .values()
-        .flat_map(|function| function.composite_resource_definitions().iter().cloned())
-        .fold(Vec::new(), |mut definitions, definition| {
-            if !definitions.contains(&definition) {
-                definitions.push(definition);
-            }
-            definitions
-        });
     let whole_loop_effect_facts = whole_loop_effect_summaries
         .iter()
         .cloned()
@@ -2033,6 +2045,27 @@ pub(super) fn collect_loop_preservation_summary(
                                         top_state,
                                         ranking_measures,
                                     ));
+                                    // A structural measure is not a ranking
+                                    // member: the kernel decides the descent
+                                    // here and reports a refusal obligation
+                                    // naming the binder when it does not hold.
+                                    if let Some(measure) = structural_measure
+                                        && let Some(failure) = loop_structural_descent_failure(
+                                            top_state,
+                                            &next_state,
+                                            &binders,
+                                            measure,
+                                            composite_resource_definitions,
+                                            &path_assumptions,
+                                        )
+                                    {
+                                        path_obligations.push(
+                                            ProofObligation::verification_condition(
+                                                false_equals_true_proposition(),
+                                            )
+                                            .with_context(failure),
+                                        );
+                                    }
                                 }
                                 let mut state_obligations = condition_obligations.clone();
                                 // A binder the body did not hand back is the
@@ -2050,7 +2083,7 @@ pub(super) fn collect_loop_preservation_summary(
                                             top_state,
                                             &binders,
                                         ),
-                                        &composite_resource_definitions,
+                                        composite_resource_definitions,
                                         &path_assumptions,
                                     )
                                     .err()
@@ -2268,6 +2301,11 @@ pub(super) fn collect_whole_loop_effect_summaries(
 pub(super) struct CLoopHead {
     pub(super) top: CState,
     pub(super) body: CState,
+    /// The head state the loop reads its guard and invariants from: `top`
+    /// with the cells of each folded matched instance's selected arm
+    /// published as views (D7). Ownership is untouched, and the loop's exit
+    /// outcome is `top`, so the extra read authority never leaves the head.
+    pub(super) guard: CState,
     /// The loop's entry state with each binder bound to the instance it
     /// names. Entry invariant checks read binder fields from here, so a loop
     /// binder that renames an enclosing instance is available at entry too.
@@ -2299,10 +2337,29 @@ impl CLoopHead {
     }
 }
 
+/// Every composite resource definition this environment's functions declare,
+/// in first-seen order and without repeats.
+pub(super) fn environment_composite_resource_definitions(
+    environment: &CExecutionEnvironment,
+) -> Vec<CCompositeResourceDefinition> {
+    environment
+        .functions
+        .values()
+        .flat_map(|function| function.composite_resource_definitions().iter().cloned())
+        .fold(Vec::new(), |mut definitions, definition| {
+            if !definitions.contains(&definition) {
+                definitions.push(definition);
+            }
+            definitions
+        })
+}
+
 pub(super) fn prepare_loop_top_state(
     entry_state: &CState,
     effect_checks: &[CLoopEffectCheck],
+    invariant_checks: &[CLoopInvariantCheck],
     resource_specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     body: &CStatement,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
@@ -2382,8 +2439,19 @@ pub(super) fn prepare_loop_top_state(
     let (entry_state, head_state, top_state, mut resource_failures) =
         match rebind_loop_binder_instances(entry_state, resource_specs, assumptions, budget)? {
             Ok(rebound) => {
-                let head_state =
-                    havoc_loop_binder_instance_fields(&rebound, resource_specs, budget);
+                // The head is an arbitrary visit, so the binder's arguments
+                // are read from the havocked locals rather than from the
+                // values the loop was entered with (D5). That is what lets a
+                // body that advances its cursor find its binder again.
+                let head_carrier = top_state
+                    .clone()
+                    .with_resource_context(rebound.resources().clone());
+                let head_state = havoc_loop_binder_instance_fields(
+                    &head_carrier,
+                    resource_specs,
+                    assumptions,
+                    budget,
+                )?;
                 let top_state = top_state.with_resource_context(head_state.resources().clone());
                 (rebound, head_state, top_state, Vec::new())
             }
@@ -2400,13 +2468,85 @@ pub(super) fn prepare_loop_top_state(
     let (body_state, body_failures) =
         loop_body_resource_context(&head_state, &top_state, resource_specs, assumptions, budget)?;
     resource_failures.extend(body_failures);
+    // D7 at a loop head: the invariants play the part of a contract's
+    // requirements, so a folded matched instance publishes the cells of the
+    // arm they select. That is what lets a guard such as `root->left != 0`
+    // read through the focused subtree the binder holds.
+    let guard_state = with_selected_arm_views(
+        &top_state,
+        &top_state,
+        invariant_checks,
+        definitions,
+        assumptions,
+        budget,
+    )?;
+    let body_state = with_selected_arm_views(
+        &body_state,
+        &top_state,
+        invariant_checks,
+        definitions,
+        assumptions,
+        budget,
+    )?;
     Ok(CLoopHead {
         top: top_state,
         body: body_state,
+        guard: guard_state,
         entry: entry_state,
         summaries,
         resource_failures,
     })
+}
+
+/// `state` with the cells of every folded matched instance's selected arm
+/// published as read authority (D7).
+///
+/// The premises are this loop's own invariants, assumed at `premise_state`.
+/// The decision itself is [`crate::kernel::select_resource_model_arm`], the
+/// one arm-selection mechanism; nothing here proves by cases, and ownership
+/// is untouched. An instance whose arm the invariants do not select publishes
+/// nothing, exactly as a contract clause's would.
+///
+/// Cost is the selected arms' own clauses plus one lowering of each invariant.
+fn with_selected_arm_views(
+    state: &CState,
+    premise_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<CState> {
+    if definitions.is_empty() {
+        return Ok(state.clone());
+    }
+    let contexts = assume_invariant_checks(
+        premise_state,
+        premise_state,
+        invariant_checks,
+        assumptions,
+        &[],
+        &[],
+        budget,
+    )?;
+    // Two invariant readings would be two different premise sets, and a
+    // published arm must be the one every reading selects. One reading is the
+    // ordinary case; anything else publishes nothing.
+    let [(facts, obligations)] = contexts.as_slice() else {
+        return Ok(state.clone());
+    };
+    let head_assumptions = assumptions_with_path_context(assumptions, facts, obligations);
+    let views = crate::kernel::functions::selected_instance_arm_views(
+        state.resources(),
+        definitions,
+        state,
+        &head_assumptions,
+    );
+    if views.is_empty() {
+        return Ok(state.clone());
+    }
+    Ok(state
+        .clone()
+        .with_resource_context(state.resources().clone().unchecked_with_facts(views)))
 }
 
 /// Builds the resource context a declaring loop's body executes with.
@@ -2496,6 +2636,10 @@ fn resource_spec_is_view(spec: &CResourceSpec) -> bool {
 pub struct CLoopBinder {
     identity: Variable,
     name: String,
+    /// The declared resource the binder names. The back edge re-evaluates its
+    /// arguments in the state the body reached (D5), so a body that advances
+    /// its cursor hands the loop the instance at the new arguments.
+    spec: Option<CResourceSpec>,
 }
 
 /// The binders a loop's `owns name: resource(args);` clauses declare.
@@ -2506,6 +2650,7 @@ pub(crate) fn c_loop_binders(resource_specs: &[CResourceSpec]) -> Vec<CLoopBinde
             Some(CLoopBinder {
                 identity: spec.instance_identity()?,
                 name: spec.instance_binder().unwrap_or("<unnamed>").to_string(),
+                spec: Some(spec.clone()),
             })
         })
         .collect()
@@ -2595,10 +2740,25 @@ pub(crate) fn c_loop_state_with_loop_binders_rebound(
     let mut rebound = state.clone();
     let mut claimed: BTreeSet<Variable> = BTreeSet::new();
     for binder in binders {
-        let Some(head) = loop_head_state.resources().owned_instance(binder.identity) else {
-            continue;
+        // D5: the back edge selects the instance the same way the head did,
+        // with the clause's arguments re-evaluated in the current state. A
+        // body that assigned `root = root->left` therefore hands the loop the
+        // `tree_at(root)` at the new cursor, not the one it started from.
+        let declared = binder.spec.as_ref().and_then(|spec| {
+            let mut budget = ExecutionBudget::default();
+            loop_binder_declared_arguments(state, spec, assumptions, &mut budget)
+                .ok()
+                .flatten()
+        });
+        let (name, arguments) = match declared {
+            Some(declared) => declared,
+            None => {
+                let Some(head) = loop_head_state.resources().owned_instance(binder.identity) else {
+                    continue;
+                };
+                (head.name.clone(), head.arguments.clone())
+            }
         };
-        let (name, arguments) = (head.name.clone(), head.arguments.clone());
         rebound = rebind_one_loop_binder_instance(
             &rebound,
             binder.identity,
@@ -2694,6 +2854,116 @@ fn rebind_one_loop_binder_instance(
     ))
 }
 
+/// Whether a loop's structural `decreases` binder descends at this back edge,
+/// and why not when it does not (D6).
+///
+/// The rule is the function-level one. The instance the binder ends holding
+/// must be a direct contained child, in the exact resource definition, of the
+/// instance it held at the loop head: the loop head's model selects one arm,
+/// that arm names its children, and the back-edge instance must be one of them
+/// with the submodel that child carries. A model is a finite inductive term,
+/// so a strictly smaller submodel at every back edge is well-founded; no
+/// counter, size function, or automatic unfolding takes part.
+///
+/// The evidence is the unfold that exposed the child: the arm comes from
+/// [`crate::kernel::select_resource_model_arm`] over the premises this path
+/// already carries, which is the one arm-selection decision in Click. Cost is
+/// the selected arm's own children and the constructor's own fields; the
+/// surrounding resource context is never scanned.
+pub(crate) fn loop_structural_descent_failure(
+    loop_head_state: &CState,
+    back_edge_state: &CState,
+    binders: &[CLoopBinder],
+    measure: &str,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> Option<String> {
+    let Some(binder) = binders.iter().find(|binder| binder.name == measure) else {
+        return Some(format!(
+            "loop `decreases {measure}` does not name a resource binder this loop declares"
+        ));
+    };
+    let Some(head) = loop_head_state.resources().owned_instance(binder.identity) else {
+        return Some(format!(
+            "loop `decreases {measure}` has no owned instance at the loop head"
+        ));
+    };
+    let Some(next) = back_edge_state.resources().owned_instance(binder.identity) else {
+        return Some(format!(
+            "loop `decreases {measure}` has no owned instance at the back edge"
+        ));
+    };
+    let Some(definition) = definitions
+        .iter()
+        .find(|definition| definition.name() == head.name)
+    else {
+        return Some(format!(
+            "resource measure `{}` has no definition",
+            head.name
+        ));
+    };
+    let Some(body) = definition.matched.as_ref() else {
+        return Some(format!(
+            "loop `decreases {measure}` needs a resource with a `match` body; `{}` has none",
+            head.name
+        ));
+    };
+    let Some(AlgebraicValue::Algebraic(model)) = head.fields.get(body.field_index) else {
+        return Some(format!(
+            "loop `decreases {measure}` names an instance whose matched field is not algebraic"
+        ));
+    };
+    let Some(ResourceModelArmSelection::Constructor(constructor)) =
+        crate::kernel::select_resource_model_arm(model, assumptions)
+    else {
+        return Some(format!(
+            "loop `decreases {measure}` cannot name a child: the invariants do not say which `{}` constructor the instance at the loop head carries",
+            head.name
+        ));
+    };
+    let AlgebraicTermNode::Constructor { variant, fields } = &constructor.node else {
+        return Some(format!(
+            "loop `decreases {measure}` selected a non-constructor model"
+        ));
+    };
+    let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
+        return Some(format!(
+            "loop `decreases {measure}` selected the unknown constructor `{variant}`"
+        ));
+    };
+    for child in &arm.children {
+        if child.resource != next.name {
+            continue;
+        }
+        let Some(child_definition) = definitions
+            .iter()
+            .find(|definition| definition.name() == child.resource)
+        else {
+            continue;
+        };
+        let Some(child_body) = child_definition.matched.as_ref() else {
+            continue;
+        };
+        let Some(submodel) = child
+            .field_bindings
+            .get(child_body.field_index)
+            .and_then(|index| fields.get(*index))
+        else {
+            continue;
+        };
+        let Some(held) = next.fields.get(child_body.field_index) else {
+            continue;
+        };
+        if crate::kernel::resource_arguments_proven_equal(held, submodel, assumptions) {
+            return None;
+        }
+    }
+    Some(format!(
+        "loop `decreases {measure}` does not descend: the `{}` the binder holds at the back edge is not a direct contained child of the `{}` it held at the loop head, in the `{variant}` arm of `{}`",
+        next.name, head.name, head.name
+    ))
+}
+
 /// The back-edge state as the ownership join compares it: each loop binder
 /// carrying the model it had at the head.
 ///
@@ -2715,13 +2985,13 @@ pub(crate) fn c_loop_state_with_head_binder_models(
         let Some(held) = state.resources().owned_instance(identity).cloned() else {
             continue;
         };
-        if held.fields == head.fields {
+        if held.fields == head.fields && held.arguments == head.arguments {
             continue;
         }
         let Some(compared) = ResourceInstance::new(
             identity,
             held.name.clone(),
-            held.arguments.clone(),
+            head.arguments.clone(),
             held.schema.clone(),
             head.fields.clone(),
         ) else {
@@ -2749,8 +3019,9 @@ pub(crate) fn c_loop_state_with_head_binder_models(
 fn havoc_loop_binder_instance_fields(
     state: &CState,
     resource_specs: &[CResourceSpec],
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> CState {
+) -> ExecutionResult<CState> {
     let mut state = state.clone();
     for spec in resource_specs {
         let Some(identity) = spec.instance_identity() else {
@@ -2759,12 +3030,16 @@ fn havoc_loop_binder_instance_fields(
         let Some(instance) = state.resources().owned_instance(identity).cloned() else {
             continue;
         };
+        let arguments = match loop_binder_declared_arguments(&state, spec, assumptions, budget)? {
+            Some((_, arguments)) => arguments,
+            None => instance.arguments.clone(),
+        };
         let fields =
             crate::kernel::functions::arbitrary_resource_instance_fields(&instance.schema, budget);
         let Some(havoced) = ResourceInstance::new(
             identity,
             instance.name.clone(),
-            instance.arguments.clone(),
+            arguments,
             instance.schema.clone(),
             fields,
         ) else {
@@ -2782,7 +3057,33 @@ fn havoc_loop_binder_instance_fields(
             resources.unchecked_with_fact(CResourceFact::own(CResource::Instance(havoced))),
         );
     }
-    state
+    Ok(state)
+}
+
+/// The family and arguments one `owns name: resource(args);` clause denotes
+/// in `state`.
+///
+/// `None` means the clause could not be read here; the caller keeps whatever
+/// the instance already carries rather than inventing arguments.
+fn loop_binder_declared_arguments(
+    state: &CState,
+    spec: &CResourceSpec,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<(String, ResourceArguments)>> {
+    let Some(inner) = spec.instance_resource_spec() else {
+        return Ok(None);
+    };
+    Ok(
+        match evaluate_function_resource_spec(state, &inner, assumptions, budget)? {
+            Ok(CResourceFact::Own(CResource::Composite { name, arguments }, quantity))
+                if quantity.as_const() == Some(1) =>
+            {
+                Some((name, arguments))
+            }
+            _ => None,
+        },
+    )
 }
 
 /// The read-only form of a resource the loop did not declare. Memory and

@@ -342,7 +342,8 @@ one-step behavior is intentional: large composite resources should not be
 recursively expanded by default proof automation.
 
 A guarded directly recursive resource also has a finite inductive witness.
-`decreases resource list(node)` can use a direct contained child as a hidden
+`decreases list(node)`, or `decreases n;` naming the binder of an
+`owns n: list(node);` clause, can use a direct contained child as a hidden
 structural rank for a directly recursive C traversal. This does not turn
 pointers into sizes and does not automatically unfold the resource: the proof
 still uses `observe` or `unfold` to expose the layer it needs, while the

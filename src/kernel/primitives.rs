@@ -1748,6 +1748,12 @@ pub enum CStatement {
         /// nonnegativity obligation per component and one lexicographic
         /// decrease obligation over them.
         ranking_measures: Vec<CExpression>,
+        /// The loop's declared structural `decreases` binder, when the clause
+        /// named a loop resource binder instead of int32 components (D6).
+        /// The back edge checks that the instance the binder ends holding is
+        /// a direct contained child, in the exact resource definition, of the
+        /// instance it held at the loop head.
+        structural_measure: Option<String>,
         /// Whether the body runs before the first condition check, as in C's
         /// `do ... while` statement.
         do_while: bool,
@@ -2478,7 +2484,22 @@ pub struct CVerifiedFunctionTerminationRule {
 pub struct CFunctionTerminationPlan {
     pub(super) function_name: String,
     pub(super) recursive_measure: Option<CFunctionTerminationMeasure>,
-    pub(super) loop_measures: BTreeMap<usize, Vec<CExpression>>,
+    pub(super) loop_measures: BTreeMap<usize, CLoopTerminationMeasure>,
+}
+
+/// One loop's declared `decreases` measure (D6).
+///
+/// The clause is one expression at the surface; what it names decides which
+/// of these the loop carries, and the loop head carries the same choice, so
+/// the back-edge check and this plan cannot describe different measures.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CLoopTerminationMeasure {
+    /// Scalar int32 components, in source order, ranked lexicographically by
+    /// the back-edge invariant bundle.
+    Ranking(Vec<CExpression>),
+    /// A loop resource binder whose instance must descend to a direct
+    /// contained child of the instance it held at the loop head.
+    Structural(String),
 }
 
 impl CFunctionTerminationPlan {
@@ -2488,7 +2509,7 @@ impl CFunctionTerminationPlan {
 
     pub fn extend_loop_measures(
         &mut self,
-        measures: impl IntoIterator<Item = (usize, Vec<CExpression>)>,
+        measures: impl IntoIterator<Item = (usize, CLoopTerminationMeasure)>,
     ) {
         self.loop_measures.extend(measures);
     }

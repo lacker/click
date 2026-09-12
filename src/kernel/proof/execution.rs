@@ -3242,6 +3242,7 @@ fn checked_condition_event(
             effect_checks,
             resource_specs,
             ranking_measures,
+            structural_measure,
             body,
             ..
         } if &condition == proved_condition => {
@@ -3253,6 +3254,7 @@ fn checked_condition_event(
                     effect_checks,
                     resource_specs,
                     ranking_measures,
+                    structural_measure,
                     do_while: false,
                     body: body.clone(),
                 };
@@ -4157,6 +4159,7 @@ impl ExecutionProofCore {
                     effect_checks,
                     resource_specs,
                     ranking_measures,
+                    structural_measure,
                     do_while: true,
                     body,
                 } if !matches!(proved_statement, CStatement::While { .. }) => {
@@ -4176,6 +4179,7 @@ impl ExecutionProofCore {
                         effect_checks: effect_checks.clone(),
                         resource_specs: resource_specs.clone(),
                         ranking_measures: ranking_measures.clone(),
+                        structural_measure: structural_measure.clone(),
                         do_while: false,
                         body: body.clone(),
                     };
@@ -4284,6 +4288,7 @@ impl ExecutionProofCore {
                 effect_checks,
                 resource_specs,
                 ranking_measures,
+                structural_measure,
                 body,
                 ..
             } => {
@@ -4295,6 +4300,7 @@ impl ExecutionProofCore {
                         effect_checks: effect_checks.clone(),
                         resource_specs: resource_specs.clone(),
                         ranking_measures: ranking_measures.clone(),
+                        structural_measure: structural_measure.clone(),
                         do_while: false,
                         body: body.clone(),
                     };

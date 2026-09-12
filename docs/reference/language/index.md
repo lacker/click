@@ -77,7 +77,12 @@ component requires a checked `decreases` measure.
 ### Optional C termination
 
 Use `decreases` only when a caller needs separate evidence that a C function
-returns. A function-level measure ranks recursive calls:
+returns. A `decreases` clause is always one expression, and what it names
+decides which measure it is: an `int32` parameter, a resource application such
+as `list(node)`, or a contract or loop resource binder such as `t`. Functions
+and resources share one namespace, so that classification happens after name
+resolution rather than from a keyword; there is no `decreases resource`
+spelling. A function-level measure ranks recursive calls:
 
 <!-- verified-example: mdtests/c_decreases_recursive.md -->
 ```click
@@ -105,15 +110,32 @@ structural rank:
 <!-- verified-example: mdtests/c_decreases_resource_recursive.md -->
 ```click
 int32 list_destroy(struct node* node) {
-    decreases resource list(node);
+    decreases list(node);
     consumes list(node);
     ensures result == 0;
 }
 ```
 
-The declaration must exactly name an owned or viewed entry resource. The
-current structural slice supports direct recursion, a guarded directly
-recursive composite definition, and a simple resource guard. Every recursive
+A binder the contract already declares names the same measure without
+repeating its arguments:
+
+<!-- verified-example: mdtests/c_decreases_matched_arm_child.md -->
+```click
+int32 tree_depth_ok(struct node* root) {
+    owns t: tree_at(root);
+    decreases t;
+    ensures t.model == old(t.model);
+}
+```
+
+The declaration must exactly name an owned or viewed entry resource, or one of
+the contract's own resource binders. The current structural slice supports
+direct recursion, a directly recursive composite definition, and a simple
+resource guard. The definition may be `if`-guarded or `match model`-bodied: a
+matched body's named and unnamed children of the same family are its direct
+contained children, and the arm is selected by a fact of its own that every
+other arm's facts deny, as `fact p != 0` is denied by an `Empty` arm's
+`fact p == 0`. Every recursive
 call path must establish that guard, either from a function precondition or
 ordinary C control flow. Guard matching uses C meaning rather than one
 spelling: negation, branch polarity, symmetric equality, and corresponding
@@ -175,7 +197,22 @@ parameter. Every variable mentioned by a numeric measure must also remain
 unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
 ranked update, so the plan is rejected. Structural measures do not yet support
-mutual C recursion. Loop-local lexicographic tuples are supported; nested-loop
+mutual C recursion.
+
+A loop may name one of its own resource binders instead of int32 components:
+`decreases sub;` on a loop that declares `owns sub: tree_at(cur);`. The rule is
+the function-level one, applied at the back edge: the instance the binder ends
+holding must be a direct contained child, in the exact resource definition, of
+the instance it held at the loop head, with the submodel that child carries.
+Models are finite inductive terms, so a strictly smaller submodel at every back
+edge is well-founded; there is no counter, size function, or automatic
+unfolding. Which arm names the children is decided by the loop's invariants
+playing the part of a contract's requirements, the same arm selection contract
+lowering uses, so a structural loop measure needs a `match model` resource
+whose constructor the invariants pin down. Unlike the numeric components, the
+structural descent is not a member of the invariant bundle: the back edge
+decides it and names the binder when it does not descend. See
+`mdtests/loop_decreases_rejects_same_instance.md`. Loop-local lexicographic tuples are supported; nested-loop
 propagation treats a separately ranked inner loop as an opaque terminating
 phase. If it writes a variable mentioned by the enclosing tuple, the kernel
 forgets that variable's scalar alias and relies on the enclosing invariants for
@@ -521,7 +558,13 @@ enclosing owned instance of that family and arguments, the invariants may read
 `name.field`, and `close_invariants()` binds the name again at the back edge
 from the family and arguments rather than from whatever the body called the
 instance. Instances the loop does not declare are unavailable in the body and
-returned after it. The rules are in
+returned after it. A declared binder's arguments are read where they are used:
+the head builds the binder's instance at the loop's own havocked values, and
+the back edge reads the clause again in the state the body reached, so a body
+that assigns `root = root->left` hands the loop the instance at the new cursor.
+A loop's `decreases` may name one of its binders, which is the structural
+measure below. Instances the loop does not declare are unavailable in the body
+and returned after it. The rules are in
 [loops and invariants](../../concepts/loops-and-invariants.md).
 
 When the two arms need to expose facts or resources about changed state, add an

@@ -63,6 +63,10 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     pub(in crate::surface::proof) iteration_entry_selector: Option<SnapshotSelector>,
     pub(in crate::surface::proof) checks: Vec<CLoopInvariantCheck>,
     pub(in crate::surface::proof) ranking_measures: Vec<CExpression>,
+    /// The loop's structural `decreases` binder, when the clause named one
+    /// instead of int32 components (D6). It is not a bundle member: the back
+    /// edge decides the descent against the loop head.
+    pub(in crate::surface::proof) structural_measure: Option<String>,
     /// The declared invariant spellings in the same order as the checked
     /// invariant list. This is the only source list used to attach a
     /// presentation to a two-obligation body; broader loop-head premises are

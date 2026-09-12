@@ -1848,25 +1848,19 @@ impl Parser {
                             signature.name()
                         )));
                     }
-                    decreases = Some(if self.peek_ident() == Some("resource") {
-                        self.position += 1;
-                        let resource = self.parse_resource_target(ResourceAccessMode::View)?;
-                        self.expect(Token::Semicolon)?;
-                        CFunctionDecrease::Resource(
-                            apply_contract_lets_to_resource_clause(resource, &contract_lets)
-                                .map_err(|message| self.error(message))?,
+                    // D6: one expression, classified after resolution.
+                    // `decreases n;`, `decreases list(node);`, and
+                    // `decreases sub;` are the same syntax here; declared
+                    // resource expansion decides which measure each one is.
+                    let measure = self.parse_contract_expression()?;
+                    self.expect(Token::Semicolon)?;
+                    decreases = Some(CFunctionDecrease::Unresolved(
+                        substitute_contract_expression(
+                            &measure,
+                            &contract_let_substitutions(&contract_lets),
                         )
-                    } else {
-                        let measure = self.parse_contract_expression()?;
-                        self.expect(Token::Semicolon)?;
-                        CFunctionDecrease::Numeric(
-                            substitute_contract_expression(
-                                &measure,
-                                &contract_let_substitutions(&contract_lets),
-                            )
-                            .map_err(|message| self.error(message))?,
-                        )
-                    });
+                        .map_err(|message| self.error(message))?,
+                    ));
                 }
                 Some("owns") => {
                     self.position += 1;

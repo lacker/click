@@ -348,7 +348,7 @@ struct node* tree_rotate_left(struct node* node) {
 }
 
 int32 tree_walk(struct node* node) {
-    decreases resource tree(node);
+    decreases tree(node);
     requires node != 0;
     views tree(node);
 

@@ -34,7 +34,7 @@ resource zero_tree(node: struct node*) {
 verifying "c_decreases_resource_tree_child.c";
 
 int32 leftmost_zero(struct node* node) {
-    decreases resource zero_tree(node);
+    decreases zero_tree(node);
     requires node != 0;
     views zero_tree(node);
 

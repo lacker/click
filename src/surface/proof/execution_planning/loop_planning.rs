@@ -660,6 +660,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     ranking_measures: &[CExpression],
+    structural_measure: Option<&str>,
     condition: &CExpression,
     body: &CStatement,
     do_while: bool,
@@ -735,6 +736,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })),
             checks: invariant_checks.to_vec(),
             ranking_measures: ranking_measures.to_vec(),
+            structural_measure: structural_measure.map(str::to_string),
             declared_invariant_surfaces: invariant_surfaces.clone(),
             loop_head_premises: Vec::new(),
             binders: preservation.binders().to_vec(),
@@ -980,13 +982,17 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 leaf = proved.join()?;
             }
         }
-        let checked = if invariant_checks.is_empty() && ranking_measures.is_empty() {
+        let checked = if invariant_checks.is_empty()
+            && ranking_measures.is_empty()
+            && structural_measure.is_none()
+        {
             leaf.check_loop_state_join(
                 preservation.loop_entry_state(),
                 preservation.state(),
                 condition,
                 &[],
                 preservation.binders(),
+                structural_measure,
                 environment.function.composite_resource_definitions(),
             )
             .map_err(|error| {
@@ -1003,6 +1009,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 condition,
                 invariant_checks,
                 ranking_measures,
+                structural_measure,
                 &invariant_surfaces,
                 preservation.binders(),
                 environment.function.composite_resource_definitions(),
@@ -1065,7 +1072,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 final_exit_candidates.push(candidate);
             }
         }
-        let closer_tactics = if (invariant_checks.is_empty() && ranking_measures.is_empty())
+        let closer_tactics = if (invariant_checks.is_empty()
+            && ranking_measures.is_empty()
+            && structural_measure.is_none())
             || invariants_close_requested
         {
             Vec::new()

@@ -1,6 +1,6 @@
 # a recursive resource child proves C termination
 
-`decreases resource` ranks the hidden finite witness for a guarded recursive
+A structural `decreases` ranks the hidden finite witness for a guarded recursive
 resource. The recursive call must receive a direct contained child; pointer
 inequality alone is not the ranking argument.
 
@@ -35,7 +35,7 @@ resource zero_list(node: struct node*) {
 verifying "c_decreases_resource_recursive.c";
 
 int32 zero_walk(struct node* node) {
-    decreases resource zero_list(node);
+    decreases zero_list(node);
     requires node != 0;
     views zero_list(node);
 

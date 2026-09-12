@@ -422,6 +422,7 @@ struct tree_node* tree_rotate_right(struct tree_node* root) {
 
 int tree_contains(struct tree_node* root, struct tree_node* target) {
     owns t: tree_at(root);
+    decreases t;
     ensures t.model == old(t.model);
     ensures result == heap_member(old(t.model), target);
 } by {

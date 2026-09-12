@@ -38,7 +38,7 @@ documentation inventory keep the following accepted words synchronized.
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
 | `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`, `short`, `int`, `long`, `long long`, `int16_t`, `int32_t`, `int64_t`, `ssize_t`, `unsigned char`, `unsigned short`, `unsigned int`, `unsigned long`, `unsigned long long`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`, `size_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
 | `let`, `where` | Value abbreviation and existential-binding forms. |
-| `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
+| `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. A `decreases` clause is one expression, classified after name resolution as an int32 measure, a resource application, or a resource binder; there is no `decreases resource` spelling. |
 | `owns`, `views`, `consumes`, `produces` | Resource transfer clauses, in a contract and in a loop header. |
 | `constructs` | Authorizes one function to create an abstract resource token. |
 | `invariant`, `initialize`, `preserve` | Loop structural items and phase proofs; a loop header also takes `owns` and `views` clauses of its own. |

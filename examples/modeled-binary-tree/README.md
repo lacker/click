@@ -168,10 +168,11 @@ the then arm combines `found_left != 0` with the callee's
 `return tree_contains(root->right, target);` is named the same way, and
 `result` is that value.
 
-One claim remains unverified. Structural termination is refused: `decreases
-resource tree_at(root);` does not accept a resource with fields, which is
-recorded in
-[`recursive-structure-models.md`](../../issues/recursive-structure-models.md).
+Structural termination is verified too. `decreases t;` names the contract's
+own `owns t: tree_at(root)` binder, and the `HeapTree::Node` arm's `left` and
+`right` children are the direct contained children each recursive call must
+pass, so the measure is the modeled resource rather than a pointer or a
+counter.
 
 ## Negative rotation regressions
 
@@ -195,8 +196,9 @@ the case ownership alone cannot catch.
 ## Remaining C proofs
 
 The generic `Tree<T>` theorems above remain pure model exercises; mirroring
-is not a C operation. Traversal termination is not yet verified, and the
-iterative walks `tree_leftmost` and `tree_rightmost` have no contracts yet.
+is not a C operation. `tree_contains` terminates by its structural measure;
+the iterative walks `tree_leftmost` and `tree_rightmost` have no contracts
+yet.
 
 Further recursive-model algorithms are tracked by
 [`recursive-structure-models.md`](../../issues/recursive-structure-models.md),
