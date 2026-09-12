@@ -302,6 +302,138 @@ fn bitvector_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
     true
 }
 
+/// Recognize the kernel's alignment proposition only after its complete
+/// bitvector payload has been walked and charged.  `as_pointer_alignment`
+/// uses the convenience `uint64_as_const` recognizer, whose implementation is
+/// recursive for constant expressions; keeping it behind this bounded walk
+/// makes attacker-controlled depth fail before that helper is reached.
+fn checked_pointer_alignment(condition: &ConditionTerm) -> Option<(&Pointer, u64)> {
+    let ConditionTerm::Bitvector64Equal(left, right) = condition else {
+        return None;
+    };
+    if !charge_bitvector(left) || !charge_bitvector(right) {
+        return None;
+    }
+    condition.as_pointer_alignment()
+}
+
+fn condition_identity(left: &ConditionTerm, right: &ConditionTerm) -> bool {
+    match (left, right) {
+        (ConditionTerm::Constant(left), ConditionTerm::Constant(right)) => left == right,
+        (
+            ConditionTerm::PointerEqual(left_first, left_second),
+            ConditionTerm::PointerEqual(right_first, right_second),
+        ) => {
+            charge_pointer(left_first)
+                && charge_pointer(left_second)
+                && charge_pointer(right_first)
+                && charge_pointer(right_second)
+                && pointer_equal(left_first, right_first)
+                && pointer_equal(left_second, right_second)
+        }
+        (
+            ConditionTerm::PointerOffsetEqual(left_first, left_second),
+            ConditionTerm::PointerOffsetEqual(right_first, right_second),
+        ) => {
+            charge_pointer_offset(left_first)
+                && charge_pointer_offset(left_second)
+                && charge_pointer_offset(right_first)
+                && charge_pointer_offset(right_second)
+                && pointer_offset_equal(left_first, right_first)
+                && pointer_offset_equal(left_second, right_second)
+        }
+        (
+            ConditionTerm::Bitvector32Equal(left_first, left_second),
+            ConditionTerm::Bitvector32Equal(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector64Equal(left_first, left_second),
+            ConditionTerm::Bitvector64Equal(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedLessThan(left_first, left_second),
+            ConditionTerm::Bitvector32SignedLessThan(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedLessEqual(left_first, left_second),
+            ConditionTerm::Bitvector32SignedLessEqual(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterThan(left_first, left_second),
+            ConditionTerm::Bitvector32SignedGreaterThan(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterEqual(left_first, left_second),
+            ConditionTerm::Bitvector32SignedGreaterEqual(right_first, right_second),
+        ) => {
+            charge_bitvector(left_first)
+                && charge_bitvector(left_second)
+                && charge_bitvector(right_first)
+                && charge_bitvector(right_second)
+                && bitvector_equal(left_first, right_first)
+                && bitvector_equal(left_second, right_second)
+        }
+        (ConditionTerm::Float32(left), ConditionTerm::Float32(right))
+        | (ConditionTerm::Float64(left), ConditionTerm::Float64(right)) => {
+            float_condition_identity(left, right)
+        }
+        _ => false,
+    }
+}
+
+fn float_condition_identity(left: &CFloatCondition, right: &CFloatCondition) -> bool {
+    match (left, right) {
+        (
+            CFloatCondition::Comparison {
+                operator: left_operator,
+                left: left_first,
+                right: left_second,
+            },
+            CFloatCondition::Comparison {
+                operator: right_operator,
+                left: right_first,
+                right: right_second,
+            },
+        ) => {
+            left_operator == right_operator
+                && charge_bitvector(left_first)
+                && charge_bitvector(left_second)
+                && charge_bitvector(right_first)
+                && charge_bitvector(right_second)
+                && bitvector_equal(left_first, right_first)
+                && bitvector_equal(left_second, right_second)
+        }
+        (
+            CFloatCondition::Classification {
+                classification: left_classification,
+                value: left_value,
+            },
+            CFloatCondition::Classification {
+                classification: right_classification,
+                value: right_value,
+            },
+        ) => {
+            left_classification == right_classification
+                && charge_bitvector(left_value)
+                && charge_bitvector(right_value)
+                && bitvector_equal(left_value, right_value)
+        }
+        _ => false,
+    }
+}
+
+/// Compare the selected certificate result with the requested goal without
+/// invoking recursive `Proposition`/`ConditionTerm` equality.
+fn proposition_identity(left: &Proposition, right: &Proposition) -> bool {
+    let Proposition::ConditionIs(left_condition, left_expected) = left else {
+        return false;
+    };
+    let Proposition::ConditionIs(right_condition, right_expected) = right else {
+        return false;
+    };
+    left_expected == right_expected && condition_identity(left_condition, right_condition)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SpecialArithmeticNode {
     /// Translate one exact pointer equality using explicitly listed scalar
@@ -392,7 +524,7 @@ impl SpecialArithmeticCertificate {
                         self.conclusion,
                     ));
                 }
-                (result == goal)
+                proposition_identity(result, goal)
                     .then_some(())
                     .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
             }
@@ -412,7 +544,7 @@ impl SpecialArithmeticCertificate {
                         self.conclusion,
                     ));
                 }
-                (result == goal)
+                proposition_identity(result, goal)
                     .then_some(())
                     .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
             }
@@ -442,7 +574,7 @@ impl SpecialArithmeticCertificate {
                         self.conclusion,
                     ));
                 }
-                (result == goal)
+                proposition_identity(result, goal)
                     .then_some(())
                     .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
             }
@@ -458,7 +590,7 @@ impl SpecialArithmeticCertificate {
                         self.conclusion,
                     ));
                 }
-                (result == goal)
+                proposition_identity(result, goal)
                     .then_some(())
                     .ok_or(SpecialArithmeticCheckError::DoesNotFollow)
             }
@@ -719,7 +851,7 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
     let Proposition::ConditionIs(condition, expected) = result else {
         return false;
     };
-    let Some((goal_pointer, goal_alignment)) = condition.as_pointer_alignment() else {
+    let Some((goal_pointer, goal_alignment)) = checked_pointer_alignment(condition) else {
         return false;
     };
     if !charge_pointer(goal_pointer) {
@@ -729,7 +861,7 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         let Proposition::ConditionIs(condition, true) = proposition else {
             return None;
         };
-        condition.as_pointer_alignment()
+        checked_pointer_alignment(condition)
     });
     if premise.is_some() && premise_alignment.is_none() {
         return false;
@@ -917,7 +1049,7 @@ fn pointer_word_equality(
         let Proposition::ConditionIs(condition, true) = premise else {
             return false;
         };
-        let Some((pointer, alignment)) = condition.as_pointer_alignment() else {
+        let Some((pointer, alignment)) = checked_pointer_alignment(condition) else {
             return false;
         };
         if !charge_pointer(pointer) {
@@ -1574,6 +1706,105 @@ mod tests {
             }
             .check(&goal, &[finite]),
             Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
+    fn alignment_masks_are_bounded_before_constant_recognition() {
+        let mut mask = Bitvector32Term::UInt64Constant(7);
+        for _ in 0..=MAX_TERM_PAYLOAD {
+            mask = Bitvector32Term::UInt64BitwiseOr(
+                Box::new(mask),
+                Box::new(Bitvector32Term::UInt64Constant(0)),
+            );
+        }
+        let deep_alignment = Proposition::ConditionIs(
+            ConditionTerm::Bitvector64Equal(
+                Box::new(Bitvector32Term::UInt64BitwiseAnd(
+                    Box::new(Bitvector32Term::PointerAddress(Box::new(heap_pointer(
+                        PointerOffsetTerm::Constant(0),
+                    )))),
+                    Box::new(mask),
+                )),
+                Box::new(Bitvector32Term::UInt64Constant(0)),
+            ),
+            true,
+        );
+
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: None,
+                    result: deep_alignment.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&deep_alignment, &[]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+
+        let word = Bitvector32Term::Variable(crate::kernel::Variable(93));
+        let address =
+            Bitvector32Term::PointerAddress(Box::new(pointer(PointerOffsetTerm::Constant(0))));
+        let relation = Proposition::ConditionIs(
+            ConditionTerm::Bitvector64Equal(
+                Box::new(word.clone()),
+                Box::new(Bitvector32Term::uint64_add(
+                    address.clone(),
+                    Bitvector32Term::UInt64Constant(1),
+                )),
+            ),
+            true,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                    relation: 0,
+                    alignments: vec![1],
+                    result: relation.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&relation, &[relation.clone(), deep_alignment]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
+    fn final_goal_identity_is_bounded_before_structural_equality() {
+        let result = Proposition::ConditionIs(
+            ConditionTerm::pointer_aligned(heap_pointer(PointerOffsetTerm::Constant(0)), 8),
+            true,
+        );
+        let mut mask = Bitvector32Term::UInt64Constant(7);
+        for _ in 0..=MAX_TERM_PAYLOAD {
+            mask = Bitvector32Term::UInt64BitwiseOr(
+                Box::new(mask),
+                Box::new(Bitvector32Term::UInt64Constant(0)),
+            );
+        }
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector64Equal(
+                Box::new(Bitvector32Term::UInt64BitwiseAnd(
+                    Box::new(Bitvector32Term::PointerAddress(Box::new(heap_pointer(
+                        PointerOffsetTerm::Constant(0),
+                    )))),
+                    Box::new(mask),
+                )),
+                Box::new(Bitvector32Term::UInt64Constant(0)),
+            ),
+            true,
+        );
+        assert!(matches!(
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: None,
+                    result,
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, &[]),
+            Err(SpecialArithmeticCheckError::DoesNotFollow)
         ));
     }
 
