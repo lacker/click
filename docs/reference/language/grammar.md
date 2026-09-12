@@ -65,6 +65,9 @@ documentation inventory keep the following accepted words synchronized.
 | `eq_to_le` | Converts an equality certificate node to a non-strict bound. |
 | `eq_from_bounds` | Closes an equality from opposite non-strict bounds. |
 | `trivial` | Checks a context-free affine identity. |
+| `interval_from_affine`, `interval_atom`, `interval_intersect` | Introduce, or intersect, checked signed-machine intervals. |
+| `defined`, `interval_add`, `interval_add_bounded`, `interval_subtract`, `interval_multiply`, `interval_remainder`, `interval_shift_left`, `interval_arithmetic_shift_right`, `interval_bitwise_and`, `interval_sign_bit_flip`, `interval_compare` | Record exact definedness premises and bounded interval-operation evidence for signed-machine expressions. |
+| `affine_conclusion` | Bridges an affine claim to a machine proposition using the cited interval/definedness evidence. |
 | `conclusion` | Selects the final node of an arithmetic certificate. |
 | `reverse` | Selects the reverse equality direction for `eq_to_le`. |
 | `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |

@@ -2637,6 +2637,7 @@ pub enum SmartTacticKind {
     CloseInvariants,
     Auto,
     ApplyTheorem,
+    Arithmetic,
     FactTransport,
     SmartExecute,
     ExecuteUntil,
@@ -2843,12 +2844,12 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "arithmetic",
         syntax: "arithmetic()",
-        class: "simple",
+        class: "smart",
     },
     PublicTacticForm {
         id: "arithmetic-using",
         syntax: "arithmetic() using",
-        class: "simple",
+        class: "smart",
     },
     PublicTacticForm {
         id: "arithmetic-certificate",
@@ -3578,9 +3579,8 @@ fn certificate_step_class(step: &ProofStep) -> TacticClass {
         ProofStep::Normalize | ProofStep::NormalizeUsing(_) => {
             TacticClass::Simple(SimpleTactic::Normalize)
         }
-        ProofStep::ArithmeticUsing(_) | ProofStep::ArithmeticCertificate(_) => {
-            TacticClass::Simple(SimpleTactic::Arithmetic)
-        }
+        ProofStep::ArithmeticUsing(_) => TacticClass::Smart(SmartTacticKind::Arithmetic),
+        ProofStep::ArithmeticCertificate(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
         ProofStep::Intro => TacticClass::Simple(SimpleTactic::Intro),
         ProofStep::Split => TacticClass::Simple(SimpleTactic::Split),
         ProofStep::Left => TacticClass::Simple(SimpleTactic::Left),
@@ -3859,7 +3859,7 @@ impl ProofTactic {
             Self::Normalize | Self::NormalizeUsing(_) => {
                 TacticClass::Simple(SimpleTactic::Normalize)
             }
-            Self::ArithmeticUsing(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
+            Self::ArithmeticUsing(_) => TacticClass::Smart(SmartTacticKind::Arithmetic),
             Self::ArithmeticCertificate(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
             Self::Split => TacticClass::Simple(SimpleTactic::Split),
@@ -4050,6 +4050,11 @@ pub enum SignedArithmeticStep {
         term: ContractExpression,
         lower: i64,
         upper: i64,
+    },
+    IntervalIntersect {
+        left: usize,
+        right: usize,
+        result: SignedInt32Interval,
     },
     DefinedPremise {
         index: usize,

@@ -5,14 +5,142 @@ use crate::kernel::proof::integer_arithmetic::{
     IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
     integer_affine_claim,
 };
+use crate::kernel::proof::signed_arithmetic::{
+    SignedArithmeticClaim, SignedArithmeticComparison, SignedArithmeticNode,
+    SignedArithmeticRelation,
+};
 use crate::kernel::proof::{
     PropositionIdentityKey, proposition_identity_key, propositions_are_alpha_equal,
 };
 use crate::kernel::{CFloatClassification, CFloatCondition};
+use crate::surface::checking::plan_signed_arithmetic_certificate;
 use crate::surface::planning::proposition_search::PropositionSearch;
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
+
+fn collect_signed_surface_terms(
+    expression: &ContractExpression,
+    terms: &mut Vec<ContractExpression>,
+) {
+    terms.push(expression.clone());
+    match expression {
+        ContractExpression::Negate(inner)
+        | ContractExpression::Old(inner)
+        | ContractExpression::At {
+            expression: inner, ..
+        }
+        | ContractExpression::BitwiseNot(inner) => collect_signed_surface_terms(inner, terms),
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::SequenceConcat(left, right)
+        | ContractExpression::Index(left, right) => {
+            collect_signed_surface_terms(left, terms);
+            collect_signed_surface_terms(right, terms);
+        }
+        ContractExpression::AlgebraicConstructor { arguments, .. }
+        | ContractExpression::Call { arguments, .. }
+        | ContractExpression::SequenceLiteral(arguments) => {
+            for argument in arguments {
+                collect_signed_surface_terms(argument, terms);
+            }
+        }
+        ContractExpression::Field { base, .. } => collect_signed_surface_terms(base, terms),
+        ContractExpression::ArrayIndex { base, .. } => collect_signed_surface_terms(base, terms),
+        ContractExpression::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_signed_surface_proposition_terms(condition, terms);
+            collect_signed_surface_terms(then_branch, terms);
+            collect_signed_surface_terms(else_branch, terms);
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_signed_surface_terms(start, terms);
+            collect_signed_surface_terms(end, terms);
+            collect_signed_surface_terms(initial, terms);
+            collect_signed_surface_terms(body, terms);
+        }
+        ContractExpression::Let { value, body, .. } => {
+            collect_signed_surface_terms(value, terms);
+            collect_signed_surface_terms(body, terms);
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            collect_signed_surface_terms(scrutinee, terms);
+            for arm in arms {
+                collect_signed_surface_terms(&arm.body, terms);
+            }
+        }
+        ContractExpression::QualifiedC { .. }
+        | ContractExpression::ResourceField(_)
+        | ContractExpression::AlgebraicVariable { .. }
+        | ContractExpression::Binding(_)
+        | ContractExpression::CFragment(_)
+        | ContractExpression::CBinding(_)
+        | ContractExpression::ResourceCount(_)
+        | ContractExpression::ResourceWildcard
+        | ContractExpression::IntegerLiteral(_) => {}
+    }
+}
+
+fn collect_signed_surface_proposition_terms(
+    proposition: &ClickProposition,
+    terms: &mut Vec<ContractExpression>,
+) {
+    match proposition {
+        ClickProposition::Comparison { left, right, .. } => {
+            collect_signed_surface_terms(left, terms);
+            collect_signed_surface_terms(right, terms);
+        }
+        ClickProposition::Defined { expression }
+        | ClickProposition::FloatClassification { expression, .. } => {
+            collect_signed_surface_terms(expression, terms)
+        }
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        } => collect_signed_surface_proposition_terms(proposition, terms),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_signed_surface_proposition_terms(left, terms);
+            collect_signed_surface_proposition_terms(right, terms);
+        }
+        ClickProposition::RangeAll {
+            start, end, body, ..
+        }
+        | ClickProposition::RangeAny {
+            start, end, body, ..
+        } => {
+            collect_signed_surface_terms(start, terms);
+            collect_signed_surface_terms(end, terms);
+            collect_signed_surface_proposition_terms(body, terms);
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::PredicateCall { .. } => {}
+    }
+}
 
 fn integer_plan_to_surface_certificate(
     plan: &IntegerArithmeticCertificate,
@@ -396,6 +524,346 @@ fn surface_split_disequality(proposition: &ClickProposition) -> Option<ClickProp
 }
 
 impl<'a> Proof<'a> {
+    fn signed_surface_term(
+        &self,
+        term: &crate::kernel::Bitvector32Term,
+        candidates: &[ContractExpression],
+    ) -> Option<ContractExpression> {
+        for candidate in candidates {
+            let probe = ClickProposition::Comparison {
+                left: candidate.clone(),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::IntegerLiteral("0".into()),
+            };
+            let Ok(lowered) =
+                self.lower_surface_proposition_direct(&probe, "signed arithmetic certificate term")
+            else {
+                continue;
+            };
+            let Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::Bitvector32Equal(left, right),
+                true,
+            ) = lowered
+            else {
+                continue;
+            };
+            if right.as_ref() == &crate::kernel::Bitvector32Term::Constant(0)
+                && left.as_ref() == term
+            {
+                return Some(candidate.clone());
+            }
+            if left.as_ref() == &crate::kernel::Bitvector32Term::Constant(0)
+                && right.as_ref() == term
+            {
+                return Some(candidate.clone());
+            }
+        }
+        None
+    }
+
+    pub(super) fn signed_plan_to_surface_certificate(
+        &self,
+        plan: &crate::kernel::proof::signed_arithmetic::SignedArithmeticCertificate,
+        premise_pairs: &[(Proposition, ClickProposition)],
+        surface_goal: &ClickProposition,
+    ) -> Option<SignedInt32Certificate> {
+        let mut used = BTreeSet::new();
+        for node in &plan.nodes {
+            match node {
+                SignedArithmeticNode::Premise { index, .. }
+                | SignedArithmeticNode::DefinedPremise { index, .. } => {
+                    used.insert(*index);
+                }
+                _ => {}
+            }
+        }
+        let mut source_indices = BTreeMap::new();
+        let mut generated = Vec::new();
+        for original in used {
+            let surface = premise_pairs.get(original)?.1.clone();
+            let local = generated.len();
+            source_indices.insert(original, local);
+            generated.push(SignedArithmeticStep::Premise {
+                index: local,
+                proposition: surface.clone(),
+                result: surface,
+            });
+        }
+        let mut mapped = Vec::with_capacity(plan.nodes.len());
+        let operation_offset = generated.len();
+        let mut operation_count = 0;
+        for node in &plan.nodes {
+            if let SignedArithmeticNode::Premise { index, .. } = node {
+                mapped.push(*source_indices.get(index)?);
+            } else {
+                mapped.push(operation_offset + operation_count);
+                operation_count += 1;
+            }
+        }
+        let mut terms = Vec::new();
+        collect_signed_surface_proposition_terms(surface_goal, &mut terms);
+        for (_, surface) in premise_pairs {
+            collect_signed_surface_proposition_terms(surface, &mut terms);
+        }
+        let term = |term: &crate::kernel::Bitvector32Term| self.signed_surface_term(term, &terms);
+        let interval =
+            |value: crate::kernel::proof::signed_arithmetic::SignedArithmeticInterval| {
+                SignedInt32Interval {
+                    lower: value.lower,
+                    upper: value.upper,
+                }
+            };
+        let comparison = |value: SignedArithmeticComparison| match value {
+            SignedArithmeticComparison::LessThan => SignedInt32Comparison::LessThan,
+            SignedArithmeticComparison::LessEqual => SignedInt32Comparison::LessEqual,
+            SignedArithmeticComparison::Equal => SignedInt32Comparison::Equal,
+            SignedArithmeticComparison::Disequal => SignedInt32Comparison::Disequal,
+        };
+        let mut surfaces: Vec<Option<ClickProposition>> = Vec::with_capacity(plan.nodes.len());
+        let claim_surface = |claim: &SignedArithmeticClaim| {
+            (claim.terms.is_empty()).then(|| ClickProposition::Comparison {
+                left: ContractExpression::IntegerLiteral(claim.constant.to_string()),
+                operator: match claim.relation {
+                    SignedArithmeticRelation::LessEqual => ComparisonOperator::LessEqual,
+                    SignedArithmeticRelation::Equal => ComparisonOperator::Equal,
+                    SignedArithmeticRelation::Disequal => ComparisonOperator::NotEqual,
+                },
+                right: ContractExpression::IntegerLiteral("0".into()),
+            })
+        };
+        for node in &plan.nodes {
+            let value = match node {
+                SignedArithmeticNode::Premise { index, .. } => {
+                    Some(premise_pairs.get(*index)?.1.clone())
+                }
+                SignedArithmeticNode::Scale {
+                    source,
+                    coefficient,
+                    result,
+                } => integer_surface_scale(surfaces.get(*source)?.as_ref()?, coefficient)
+                    .or_else(|| claim_surface(result)),
+                SignedArithmeticNode::Add {
+                    left,
+                    right,
+                    result,
+                } => integer_surface_add(
+                    surfaces.get(*left)?.as_ref()?,
+                    surfaces.get(*right)?.as_ref()?,
+                )
+                .or_else(|| claim_surface(result)),
+                SignedArithmeticNode::EqualityToLessEqual {
+                    source,
+                    reverse,
+                    result,
+                } => integer_surface_equality_to_less_equal(
+                    surfaces.get(*source)?.as_ref()?,
+                    *reverse,
+                )
+                .or_else(|| claim_surface(result)),
+                SignedArithmeticNode::EqualityFromBounds {
+                    lower,
+                    upper,
+                    result,
+                } => integer_surface_equality_from_bounds(
+                    surfaces.get(*lower)?.as_ref()?,
+                    surfaces.get(*upper)?.as_ref()?,
+                )
+                .or_else(|| claim_surface(result)),
+                SignedArithmeticNode::Trivial { result } => claim_surface(result),
+                SignedArithmeticNode::IntervalCompare { .. }
+                | SignedArithmeticNode::AffineConclusion { .. } => Some(surface_goal.clone()),
+                _ => None,
+            };
+            surfaces.push(value);
+        }
+        for (node_index, node) in plan.nodes.iter().enumerate() {
+            let r = |index: usize| mapped[index];
+            let result = || surfaces.get(node_index)?.as_ref().cloned();
+            let surface_node = match node {
+                SignedArithmeticNode::Premise { .. } => continue,
+                SignedArithmeticNode::Scale {
+                    source,
+                    coefficient,
+                    ..
+                } => SignedArithmeticStep::Scale {
+                    source: r(*source),
+                    coefficient: ContractExpression::IntegerLiteral(coefficient.to_string()),
+                    result: result()?,
+                },
+                SignedArithmeticNode::Add { left, right, .. } => SignedArithmeticStep::Add {
+                    left: r(*left),
+                    right: r(*right),
+                    result: result()?,
+                },
+                SignedArithmeticNode::EqualityToLessEqual {
+                    source, reverse, ..
+                } => SignedArithmeticStep::EqualityToLessEqual {
+                    source: r(*source),
+                    reverse: *reverse,
+                    result: result()?,
+                },
+                SignedArithmeticNode::EqualityFromBounds { lower, upper, .. } => {
+                    SignedArithmeticStep::EqualityFromBounds {
+                        lower: r(*lower),
+                        upper: r(*upper),
+                        result: result()?,
+                    }
+                }
+                SignedArithmeticNode::Trivial { .. } => {
+                    SignedArithmeticStep::Trivial { result: result()? }
+                }
+                SignedArithmeticNode::IntervalFromAffine {
+                    source,
+                    term: machine_term,
+                    lower,
+                    upper,
+                } => SignedArithmeticStep::IntervalFromAffine {
+                    source: r(*source),
+                    term: term(machine_term)?,
+                    lower: *lower,
+                    upper: *upper,
+                },
+                SignedArithmeticNode::IntervalIntersect {
+                    left,
+                    right,
+                    result,
+                } => SignedArithmeticStep::IntervalIntersect {
+                    left: r(*left),
+                    right: r(*right),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalAtom {
+                    term: machine_term,
+                    lower,
+                    upper,
+                    ..
+                } => SignedArithmeticStep::IntervalAtom {
+                    term: term(machine_term)?,
+                    lower: *lower,
+                    upper: *upper,
+                },
+                SignedArithmeticNode::DefinedPremise {
+                    index,
+                    term: machine_term,
+                    ..
+                } => SignedArithmeticStep::DefinedPremise {
+                    index: *source_indices.get(index)?,
+                    term: term(machine_term)?,
+                },
+                SignedArithmeticNode::IntervalAdd {
+                    left,
+                    right,
+                    defined,
+                    result,
+                } => SignedArithmeticStep::IntervalAdd {
+                    left: r(*left),
+                    right: r(*right),
+                    defined: r(*defined),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalAddBounded {
+                    left,
+                    right,
+                    result,
+                } => SignedArithmeticStep::IntervalAddBounded {
+                    left: r(*left),
+                    right: r(*right),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalSubtract {
+                    left,
+                    right,
+                    defined,
+                    result,
+                } => SignedArithmeticStep::IntervalSubtract {
+                    left: r(*left),
+                    right: r(*right),
+                    defined: r(*defined),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalMultiply {
+                    left,
+                    right,
+                    defined,
+                    result,
+                } => SignedArithmeticStep::IntervalMultiply {
+                    left: r(*left),
+                    right: r(*right),
+                    defined: r(*defined),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalRemainder {
+                    operand,
+                    divisor,
+                    defined,
+                    result,
+                } => SignedArithmeticStep::IntervalRemainder {
+                    operand: r(*operand),
+                    divisor: *divisor,
+                    defined: r(*defined),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalShiftLeft {
+                    operand,
+                    shift,
+                    defined,
+                    result,
+                } => SignedArithmeticStep::IntervalShiftLeft {
+                    operand: r(*operand),
+                    shift: *shift,
+                    defined: r(*defined),
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalArithmeticShiftRight {
+                    operand,
+                    shift,
+                    result,
+                } => SignedArithmeticStep::IntervalArithmeticShiftRight {
+                    operand: r(*operand),
+                    shift: *shift,
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalBitwiseAnd {
+                    operand,
+                    mask,
+                    result,
+                } => SignedArithmeticStep::IntervalBitwiseAnd {
+                    operand: r(*operand),
+                    mask: *mask,
+                    result: interval(result.clone()),
+                },
+                SignedArithmeticNode::IntervalSignBitFlip { operand, result } => {
+                    SignedArithmeticStep::IntervalSignBitFlip {
+                        operand: r(*operand),
+                        result: interval(result.clone()),
+                    }
+                }
+                SignedArithmeticNode::IntervalCompare {
+                    left,
+                    right,
+                    comparison: comparison_kind,
+                    ..
+                } => SignedArithmeticStep::IntervalCompare {
+                    left: r(*left),
+                    right: r(*right),
+                    comparison: comparison(*comparison_kind),
+                    result: surface_goal.clone(),
+                },
+                SignedArithmeticNode::AffineConclusion {
+                    source, evidence, ..
+                } => SignedArithmeticStep::AffineConclusion {
+                    source: r(*source),
+                    evidence: r(*evidence),
+                    result: surface_goal.clone(),
+                },
+            };
+            generated.push(surface_node);
+        }
+        Some(SignedInt32Certificate {
+            nodes: generated,
+            conclusion: *mapped.get(plan.conclusion)?,
+        })
+    }
     /// A small shared search combinator for structural proposition closure.
     /// Every candidate is accepted only through `apply_step`; `intro` is the
     /// sole nonterminal move and strictly removes one outer goal connective.
@@ -569,6 +1037,24 @@ impl<'a> Proof<'a> {
         })();
         if let Some(atomic) = atomic {
             return Ok(Some(atomic));
+        }
+        if let Some(surface_goal) = self.surface_goal()
+            && let Some(goal) = self.goal()
+            && let Some(plan) = plan_signed_arithmetic_certificate(
+                goal,
+                &anchored_pairs
+                    .iter()
+                    .map(|(kernel, _)| kernel.clone())
+                    .collect::<Vec<_>>(),
+            )
+            && let Some(certificate) =
+                self.signed_plan_to_surface_certificate(&plan, &anchored_pairs, surface_goal)
+            && let Ok(proof) =
+                self.apply_step(ProofStep::ArithmeticCertificate(ArithmeticCertificate {
+                    family: ArithmeticCertificateFamily::SignedInt32(certificate),
+                }))
+        {
+            return Ok(Some(proof));
         }
         if let Some(surface_goal) = self.surface_goal()
             && let Some(goal) = self.goal()

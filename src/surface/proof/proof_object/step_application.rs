@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::kernel::LoweringIntroduction;
+use num_traits::ToPrimitive;
 
 fn signed_constant_expression(expression: &ContractExpression) -> Option<num_bigint::BigInt> {
     match expression {
@@ -9,6 +10,116 @@ fn signed_constant_expression(expression: &ContractExpression) -> Option<num_big
         ContractExpression::Negate(inner) => signed_constant_expression(inner).map(|value| -value),
         _ => None,
     }
+}
+
+fn signed_step_result_surface(step: &SignedArithmeticStep) -> Option<&ClickProposition> {
+    match step {
+        SignedArithmeticStep::Premise { result, .. }
+        | SignedArithmeticStep::Scale { result, .. }
+        | SignedArithmeticStep::Add { result, .. }
+        | SignedArithmeticStep::EqualityToLessEqual { result, .. }
+        | SignedArithmeticStep::EqualityFromBounds { result, .. }
+        | SignedArithmeticStep::Trivial { result }
+        | SignedArithmeticStep::IntervalCompare { result, .. }
+        | SignedArithmeticStep::AffineConclusion { result, .. } => Some(result),
+        _ => None,
+    }
+}
+
+fn signed_atom_matches(
+    left: &crate::kernel::Bitvector32Term,
+    right: &crate::kernel::Bitvector32Term,
+) -> bool {
+    match (
+        crate::kernel::proof::signed_arithmetic::SignedArithmeticAtom::from_term(left),
+        crate::kernel::proof::signed_arithmetic::SignedArithmeticAtom::from_term(right),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn signed_scaled_term_matches(
+    target: &crate::kernel::Bitvector32Term,
+    source: &crate::kernel::Bitvector32Term,
+    coefficient: &num_bigint::BigInt,
+) -> bool {
+    if let (
+        crate::kernel::Bitvector32Term::Constant(value),
+        crate::kernel::Bitvector32Term::Constant(source_value),
+        Some(coefficient),
+    ) = (target, source, coefficient.to_i32())
+        && (*source_value as i64).saturating_mul(i64::from(coefficient)) == i64::from(*value as i32)
+    {
+        return true;
+    }
+    let crate::kernel::Bitvector32Term::Multiply(left, right) = target else {
+        return false;
+    };
+    let coefficient_i32 = coefficient.to_i32();
+    match (left.as_ref(), right.as_ref(), coefficient_i32) {
+        (crate::kernel::Bitvector32Term::Constant(value), term, Some(expected))
+            if *value as i32 == expected =>
+        {
+            signed_atom_matches(term, source)
+        }
+        (term, crate::kernel::Bitvector32Term::Constant(value), Some(expected))
+            if *value as i32 == expected =>
+        {
+            signed_atom_matches(term, source)
+        }
+        (crate::kernel::Bitvector32Term::Constant(value), _, Some(expected))
+            if matches!(
+                source,
+                crate::kernel::Bitvector32Term::Constant(source_value)
+                    if (*source_value as i64).saturating_mul(i64::from(expected))
+                        == i64::from(*value as i32)
+            ) =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
+fn signed_scaled_surface_shape(
+    source: &crate::kernel::Proposition,
+    target: &crate::kernel::Proposition,
+    coefficient: &num_bigint::BigInt,
+) -> bool {
+    let (source_condition, source_value, target_condition, target_value) = match (source, target) {
+        (
+            crate::kernel::Proposition::ConditionIs(source_condition, source_value),
+            crate::kernel::Proposition::ConditionIs(target_condition, target_value),
+        ) => (
+            source_condition,
+            source_value,
+            target_condition,
+            target_value,
+        ),
+        _ => return false,
+    };
+    if source_value != target_value {
+        return false;
+    }
+    let (source_left, source_right, target_left, target_right) =
+        match (source_condition, target_condition) {
+            (
+                crate::kernel::ConditionTerm::Bitvector32SignedLessThan(source_left, source_right),
+                crate::kernel::ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
+            )
+            | (
+                crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(source_left, source_right),
+                crate::kernel::ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+            )
+            | (
+                crate::kernel::ConditionTerm::Bitvector32Equal(source_left, source_right),
+                crate::kernel::ConditionTerm::Bitvector32Equal(target_left, target_right),
+            ) => (source_left, source_right, target_left, target_right),
+            _ => return false,
+        };
+    signed_scaled_term_matches(target_left, source_left, coefficient)
+        && signed_scaled_term_matches(target_right, source_right, coefficient)
 }
 
 fn signed_interval(
@@ -91,11 +202,21 @@ impl<'a> Proof<'a> {
             return self.apply_execution_statement_step(step);
         }
 
+        let mut provenance_step = step.clone();
         let checked_proposition_successor = match &step {
             ProofStep::Assumption => Some(self.apply_assumption()),
             ProofStep::Normalize => Some(self.apply_normalize()),
             ProofStep::NormalizeUsing(premises) => Some(self.apply_normalize_using(premises)),
-            ProofStep::ArithmeticUsing(premises) => Some(self.apply_arithmetic_using(premises)),
+            ProofStep::ArithmeticUsing(premises) => {
+                Some(self.apply_arithmetic_using_with_certificate(premises).map(
+                    |(handle, certificate)| {
+                        if let Some(certificate) = certificate {
+                            provenance_step = ProofStep::ArithmeticCertificate(certificate);
+                        }
+                        handle
+                    },
+                ))
+            }
             ProofStep::ArithmeticCertificate(certificate) => {
                 Some(self.apply_arithmetic_certificate(certificate))
             }
@@ -121,7 +242,7 @@ impl<'a> Proof<'a> {
                 state: successor?,
                 node: Arc::new(ProofNode {
                     parent: Some(self.node.clone()),
-                    step: Some(Arc::new(step)),
+                    step: Some(Arc::new(provenance_step)),
                     focused_branch: self.focused_branch_id(),
                     depth: self.node.depth + 1,
                 }),
@@ -301,18 +422,41 @@ impl<'a> Proof<'a> {
     }
 
     #[inline(never)]
-    pub(super) fn apply_arithmetic_using(
+    fn apply_arithmetic_using_with_certificate(
         &self,
         surface_premises: &[ClickProposition],
-    ) -> Result<KernelProofHandle, ClickError> {
+    ) -> Result<(KernelProofHandle, Option<ArithmeticCertificate>), ClickError> {
         let premises = surface_premises
             .iter()
             .map(|premise| {
                 self.lower_cited_surface_proposition(premise, "`arithmetic using` premise")
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(goal) = self.goal()
+            && let Some(plan) =
+                crate::surface::checking::plan_signed_arithmetic_certificate(goal, &premises)
+            && let Some(surface_goal) = self.surface_goal()
+            && let Some(certificate) = self.signed_plan_to_surface_certificate(
+                &plan,
+                &premises
+                    .iter()
+                    .cloned()
+                    .zip(surface_premises.iter().cloned())
+                    .collect::<Vec<_>>(),
+                surface_goal,
+            )
+        {
+            let handle = self.apply_signed_int32_certificate(&certificate)?;
+            return Ok((
+                handle,
+                Some(ArithmeticCertificate {
+                    family: ArithmeticCertificateFamily::SignedInt32(certificate),
+                }),
+            ));
+        }
         self.state
             .apply_arithmetic(&premises)
+            .map(|handle| (handle, None))
             .map_err(|error| match error {
                 PropositionCloseError::NotProposition => {
                     self.step_error("`arithmetic` requires a proposition goal")
@@ -366,10 +510,21 @@ impl<'a> Proof<'a> {
     ) -> Result<KernelProofHandle, ClickError> {
         use crate::kernel::proof::signed_arithmetic::{
             SignedArithmeticAtom, SignedArithmeticCarrier,
-            SignedArithmeticCertificate as KernelCertificate, SignedArithmeticNode,
+            SignedArithmeticCertificate as KernelCertificate, SignedArithmeticNode, scale_claim,
             signed_arithmetic_claim,
         };
         let mut source_premises = std::collections::BTreeMap::new();
+        let same_signed_claim =
+            |left: &crate::kernel::Proposition, right: &crate::kernel::Proposition| match (
+                signed_arithmetic_claim(left),
+                signed_arithmetic_claim(right),
+            ) {
+                (Some(left), Some(right)) => {
+                    crate::kernel::proof::signed_arithmetic::charge_claim_pair_work(&left, &right)
+                        && left == right
+                }
+                _ => false,
+            };
         for node in &certificate.nodes {
             let (index, lowered) = match node {
                 SignedArithmeticStep::Premise {
@@ -392,12 +547,17 @@ impl<'a> Proof<'a> {
                 ),
                 _ => continue,
             };
-            if let Some(previous) = source_premises.insert(index, lowered.clone())
-                && previous != lowered
-            {
-                return Err(self.step_error(format!(
-                    "signed_int32 premise {index} is declared twice with different propositions"
-                )));
+            match source_premises.entry(index) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(lowered);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    if !same_signed_claim(entry.get(), &lowered) {
+                        return Err(self.step_error(format!(
+                            "signed_int32 premise {index} is declared twice with different propositions"
+                        )));
+                    }
+                }
             }
         }
         let mut premises = Vec::with_capacity(source_premises.len());
@@ -469,7 +629,7 @@ impl<'a> Proof<'a> {
                         self.step_error(format!("signed_int32 premise {index} is out of range"))
                     })?;
                     let declared = lower_prop(self, proposition, "signed_int32 premise")?;
-                    if supplied != &declared {
+                    if !same_signed_claim(supplied, &declared) {
                         return Err(self.step_error(format!(
                             "signed_int32 premise {index} does not match its source proposition"
                         )));
@@ -484,18 +644,49 @@ impl<'a> Proof<'a> {
                     source,
                     coefficient,
                     result,
-                } => SignedArithmeticNode::Scale {
-                    source: *source,
-                    coefficient: signed_constant_expression(coefficient).ok_or_else(|| {
+                } => {
+                    let coefficient = signed_constant_expression(coefficient).ok_or_else(|| {
                         self.step_error(
                             "signed_int32 scale coefficient must be a constant int32 expression",
                         )
-                    })?,
-                    result: claim(
-                        &lower_prop(self, result, "signed_int32 scale result")?,
-                        "signed_int32 scale result",
-                    )?,
-                },
+                    })?;
+                    let source_result = signed_step_result_surface(
+                        certificate.nodes.get(*source).ok_or_else(|| {
+                            self.step_error("signed_int32 scale source is out of range")
+                        })?,
+                    )
+                    .ok_or_else(|| {
+                        self.step_error("signed_int32 scale source must produce an affine result")
+                    })?;
+                    let source_proposition =
+                        lower_prop(self, source_result, "signed_int32 scale source")?;
+                    let source_claim = claim(&source_proposition, "signed_int32 scale source")?;
+                    let expected = scale_claim(&source_claim, &coefficient).ok_or_else(|| {
+                        self.step_error("signed_int32 scale exceeds the verification budget")
+                    })?;
+                    let result_proposition = lower_prop(self, result, "signed_int32 scale result")?;
+                    let actual = claim(&result_proposition, "signed_int32 scale result")?;
+                    let claims_match =
+                        crate::kernel::proof::signed_arithmetic::charge_claim_pair_work(
+                            &actual, &expected,
+                        ) && actual == expected;
+                    if !claims_match
+                        && !signed_scaled_surface_shape(
+                            &source_proposition,
+                            &result_proposition,
+                            &coefficient,
+                        )
+                    {
+                        return Err(self.step_error(
+                            "signed_int32 scale result does not encode the selected coefficient",
+                        ));
+                    }
+                    SignedArithmeticNode::Scale {
+                        source: *source,
+                        coefficient,
+                        result: expected,
+                    }
+                }
                 SignedArithmeticStep::Add {
                     left,
                     right,
@@ -564,6 +755,15 @@ impl<'a> Proof<'a> {
                         term: lower_term(self, term)?,
                     }
                 }
+                SignedArithmeticStep::IntervalIntersect {
+                    left,
+                    right,
+                    result,
+                } => SignedArithmeticNode::IntervalIntersect {
+                    left: *left,
+                    right: *right,
+                    result: signed_interval(*result),
+                },
                 SignedArithmeticStep::IntervalAdd {
                     left,
                     right,
@@ -713,6 +913,22 @@ impl<'a> Proof<'a> {
         // Keep their explicit indices and reject holes or conflicting duplicate
         // declarations before handing anything to the kernel checker.
         let mut source_premises = std::collections::BTreeMap::new();
+        let same_integer_claim =
+            |left: &crate::kernel::Proposition, right: &crate::kernel::Proposition| match (
+                integer_affine_claim(left),
+                integer_affine_claim(right),
+            ) {
+                (Some(left), Some(right)) => {
+                    !crate::instrumentation::deadline_exceeded_with_work(
+                        left.terms
+                            .len()
+                            .saturating_add(right.terms.len())
+                            .saturating_add(left.constant.bits() as usize + 1)
+                            .saturating_add(right.constant.bits() as usize + 1),
+                    ) && left == right
+                }
+                _ => false,
+            };
         for node in &certificate.nodes {
             let IntegerCertificateNode::Premise {
                 index, proposition, ..
@@ -722,12 +938,17 @@ impl<'a> Proof<'a> {
             };
             let lowered =
                 self.lower_integer_surface_proposition(proposition, "integer certificate premise")?;
-            if let Some(previous) = source_premises.insert(*index, lowered.clone())
-                && previous != lowered
-            {
-                return Err(self.step_error(format!(
-                    "integer certificate premise {index} is declared with two different propositions"
-                )));
+            match source_premises.entry(*index) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(lowered);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    if !same_integer_claim(entry.get(), &lowered) {
+                        return Err(self.step_error(format!(
+                            "integer certificate premise {index} is declared with two different propositions"
+                        )));
+                    }
+                }
             }
         }
         let mut premises = Vec::with_capacity(source_premises.len());
@@ -774,7 +995,7 @@ impl<'a> Proof<'a> {
                         proposition,
                         "integer certificate premise",
                     )?;
-                    if supplied != &declared {
+                    if !same_integer_claim(supplied, &declared) {
                         return Err(self.step_error(format!(
                             "integer certificate premise {index} does not match its declared source proposition"
                         )));

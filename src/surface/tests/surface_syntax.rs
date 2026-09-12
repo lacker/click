@@ -911,6 +911,36 @@ fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
 }
 
 #[test]
+fn signed_int32_interval_intersect_round_trips() {
+    let source = r#"
+        theorem signed_intersect_forms(n: int32) {
+            ensures n == n by {
+                arithmetic_certificate signed_int32 {
+                    interval_atom (n) (-10) (10);
+                    interval_atom (n) (0) (20);
+                    interval_intersect 0, 1 (0) (10);
+                    conclusion 2;
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("interval intersection should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(printed.contains("interval_intersect"), "{printed}");
+    let reparsed = parse(&format!(
+        "theorem signed_intersect_forms(n: int32) {{ ensures n == n by {{ {printed} }} }}"
+    ))
+    .expect("printed interval intersection should reparse");
+    assert_eq!(
+        reparsed.theorem_definitions()[0].ensures()[0].proof(),
+        file.theorem_definitions()[0].ensures()[0].proof()
+    );
+}
+
+#[test]
 fn signed_int32_arithmetic_certificate_applies_and_rejects_tampering() {
     let source = r#"
         theorem signed_certificate_direct(x: int32) {
@@ -931,6 +961,41 @@ fn signed_int32_arithmetic_certificate_applies_and_rejects_tampering() {
         error.message().contains("signed_int32") || error.message().contains("certificate"),
         "{error:?}"
     );
+}
+
+#[test]
+fn signed_arithmetic_smart_planner_expands_to_structural_certificate() {
+    let source = r#"
+        theorem signed_smart_double(n: int32) {
+            requires 0 <= n;
+            requires n <= 100;
+            ensures n + n <= 200 by { arithmetic() using { 0 <= n; n <= 100; } }
+        }
+    "#;
+    let verified = verify_click_theorems(source).expect("smart signed arithmetic should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("smart arithmetic should expand");
+    assert!(
+        expanded.contains("arithmetic_certificate signed_int32"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("scale"),
+        "coefficient-2 expansion expected: {expanded}"
+    );
+    let rechecked = source.replace("by { arithmetic() using { 0 <= n; n <= 100; } }", &expanded);
+    verify_click_theorems(&rechecked).unwrap_or_else(|error| {
+        panic!(
+            "expanded structural certificate failed: {}",
+            error.message()
+        )
+    });
+    let tampered = expanded.replace("scale 1 by 2", "scale 1 by 3");
+    let tampered_source =
+        source.replace("by { arithmetic() using { 0 <= n; n <= 100; } }", &tampered);
+    verify_click_theorems(&tampered_source)
+        .expect_err("a tampered scale coefficient must be rejected");
 }
 
 #[test]

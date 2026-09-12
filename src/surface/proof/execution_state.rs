@@ -1254,7 +1254,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::Assumption => ("assumption", "simple"),
         PostExecutionTactic::Normalize => ("normalize", "simple"),
         PostExecutionTactic::NormalizeUsing(_) => ("normalize", "simple"),
-        PostExecutionTactic::ArithmeticUsing(_) => ("arithmetic", "simple"),
+        PostExecutionTactic::ArithmeticUsing(_) => ("arithmetic", "smart"),
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::If { .. } => ("if", "control"),
     }

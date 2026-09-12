@@ -1325,7 +1325,10 @@ fn charge_claim_work(claim: &SignedArithmeticClaim) -> bool {
     !crate::instrumentation::deadline_exceeded_with_work(units.max(1))
 }
 
-fn charge_claim_pair_work(left: &SignedArithmeticClaim, right: &SignedArithmeticClaim) -> bool {
+pub(crate) fn charge_claim_pair_work(
+    left: &SignedArithmeticClaim,
+    right: &SignedArithmeticClaim,
+) -> bool {
     let units = (left.constant.bits().saturating_add(right.constant.bits()) as usize)
         .saturating_add(2)
         .saturating_add(affine_map_work(&left.terms))
@@ -1457,7 +1460,7 @@ fn require_defined(
     }
 }
 
-fn scale_claim(
+pub(crate) fn scale_claim(
     source: &SignedArithmeticClaim,
     coefficient: &BigInt,
 ) -> Option<SignedArithmeticClaim> {

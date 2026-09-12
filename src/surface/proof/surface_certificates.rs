@@ -2533,10 +2533,38 @@ fn plan_explicit_signed_antisymmetry(
         &[forward.0.clone(), reverse.0.clone()],
     )
     .ok()?;
-    Some(vec![ProofTactic::ArithmeticUsing(vec![
-        forward.1.clone(),
-        reverse.1.clone(),
-    ])])
+    let (goal_left, goal_right) = match &forward.1 {
+        ClickProposition::Comparison { left, right, .. } => (left.clone(), right.clone()),
+        _ => return None,
+    };
+    Some(vec![ProofTactic::ArithmeticCertificate(
+        ArithmeticCertificate {
+            family: ArithmeticCertificateFamily::SignedInt32(SignedInt32Certificate {
+                nodes: vec![
+                    SignedArithmeticStep::Premise {
+                        index: 0,
+                        proposition: forward.1.clone(),
+                        result: forward.1.clone(),
+                    },
+                    SignedArithmeticStep::Premise {
+                        index: 1,
+                        proposition: reverse.1.clone(),
+                        result: reverse.1.clone(),
+                    },
+                    SignedArithmeticStep::EqualityFromBounds {
+                        lower: 0,
+                        upper: 1,
+                        result: ClickProposition::Comparison {
+                            left: goal_left,
+                            operator: ComparisonOperator::Equal,
+                            right: goal_right,
+                        },
+                    },
+                ],
+                conclusion: 2,
+            }),
+        },
+    )])
 }
 
 fn plan_explicit_le_and_neq_implies_lt(

@@ -728,23 +728,31 @@ fn write_signed_int32_certificate(
                 lower,
                 upper,
             } => format!(
-                "interval_from_affine {source} {} {lower} {upper};",
+                "interval_from_affine {source} ({}) ({lower}) ({upper});",
                 describe_contract_expression(term)
             ),
             SignedArithmeticStep::IntervalAtom { term, lower, upper } => format!(
-                "interval_atom {} {lower} {upper};",
+                "interval_atom ({}) ({lower}) ({upper});",
                 describe_contract_expression(term)
             ),
             SignedArithmeticStep::DefinedPremise { index, term } => {
-                format!("defined {index} {};", describe_contract_expression(term))
+                format!("defined {index} ({});", describe_contract_expression(term))
             }
+            SignedArithmeticStep::IntervalIntersect {
+                left,
+                right,
+                result,
+            } => format!(
+                "interval_intersect {left}, {right} ({}) ({});",
+                result.lower, result.upper
+            ),
             SignedArithmeticStep::IntervalAdd {
                 left,
                 right,
                 defined,
                 result,
             } => format!(
-                "interval_add {left}, {right} {defined} {} {};",
+                "interval_add {left}, {right} {defined} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalAddBounded {
@@ -752,7 +760,7 @@ fn write_signed_int32_certificate(
                 right,
                 result,
             } => format!(
-                "interval_add_bounded {left}, {right} {} {};",
+                "interval_add_bounded {left}, {right} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalSubtract {
@@ -761,7 +769,7 @@ fn write_signed_int32_certificate(
                 defined,
                 result,
             } => format!(
-                "interval_subtract {left}, {right} {defined} {} {};",
+                "interval_subtract {left}, {right} {defined} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalMultiply {
@@ -770,7 +778,7 @@ fn write_signed_int32_certificate(
                 defined,
                 result,
             } => format!(
-                "interval_multiply {left}, {right} {defined} {} {};",
+                "interval_multiply {left}, {right} {defined} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalRemainder {
@@ -779,7 +787,7 @@ fn write_signed_int32_certificate(
                 defined,
                 result,
             } => format!(
-                "interval_remainder {operand} {divisor} {defined} {} {};",
+                "interval_remainder {operand} {divisor} {defined} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalShiftLeft {
@@ -788,7 +796,7 @@ fn write_signed_int32_certificate(
                 defined,
                 result,
             } => format!(
-                "interval_shift_left {operand} {shift} {defined} {} {};",
+                "interval_shift_left {operand} {shift} {defined} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalArithmeticShiftRight {
@@ -796,7 +804,7 @@ fn write_signed_int32_certificate(
                 shift,
                 result,
             } => format!(
-                "interval_arithmetic_shift_right {operand} {shift} {} {};",
+                "interval_arithmetic_shift_right {operand} {shift} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalBitwiseAnd {
@@ -804,11 +812,11 @@ fn write_signed_int32_certificate(
                 mask,
                 result,
             } => format!(
-                "interval_bitwise_and {operand} {mask} {} {};",
+                "interval_bitwise_and {operand} {mask} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalSignBitFlip { operand, result } => format!(
-                "interval_sign_bit_flip {operand} {} {};",
+                "interval_sign_bit_flip {operand} ({}) ({});",
                 result.lower, result.upper
             ),
             SignedArithmeticStep::IntervalCompare {

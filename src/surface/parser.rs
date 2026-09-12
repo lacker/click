@@ -4823,6 +4823,19 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     SignedArithmeticStep::DefinedPremise { index, term }
                 }
+                "interval_intersect" => {
+                    let left = self.expect_index("left interval")?;
+                    self.expect(Token::Comma)?;
+                    let right = self.expect_index("right interval")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalIntersect {
+                        left,
+                        right,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
                 "interval_add" | "interval_add_bounded" => {
                     let left = self.expect_index("left interval")?;
                     self.expect(Token::Comma)?;
@@ -7398,6 +7411,12 @@ impl Parser {
     }
 
     fn expect_signed_i64(&mut self, expected: &str) -> Result<i64, ClickError> {
+        let parenthesized = if self.peek() == Some(&Token::LParen) {
+            self.position += 1;
+            true
+        } else {
+            false
+        };
         let negative = if self.peek() == Some(&Token::Minus) {
             self.position += 1;
             true
@@ -7428,13 +7447,17 @@ impl Parser {
                 );
             }
         };
-        if negative {
+        let value = if negative {
             value.checked_neg().ok_or_else(|| {
                 self.error_at(at.clone(), format!("expected {expected} to fit in int64"))
             })
         } else {
             Ok(value)
+        }?;
+        if parenthesized {
+            self.expect(Token::RParen)?;
         }
+        Ok(value)
     }
 
     fn expect_index(&mut self, expected: &str) -> Result<usize, ClickError> {
