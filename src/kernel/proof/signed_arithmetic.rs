@@ -573,6 +573,14 @@ pub(crate) enum SignedArithmeticNode {
         defined: usize,
         result: SignedArithmeticInterval,
     },
+    /// Add two intervals whose endpoint sum is already within int32.  The
+    /// child intervals therefore establish definedness without requiring a
+    /// separate source-level overflow proposition.
+    IntervalAddBounded {
+        left: usize,
+        right: usize,
+        result: SignedArithmeticInterval,
+    },
     IntervalSubtract {
         left: usize,
         right: usize,
@@ -881,7 +889,22 @@ impl SignedArithmeticCertificate {
                     let (right, right_term) = interval_at(&checked, *right)?;
                     let term = terms.binary(CheckedBinaryOperator::Add, left_term, right_term);
                     require_defined(&checked, &terms, *defined, term, node_index)?;
-                    let expected = interval_add(left, right, node_index)?;
+                    let expected = interval_add(left, right, node_index, true)?;
+                    check_interval_result(&expected, result, node_index)?;
+                    CheckedValue::Interval {
+                        value: expected,
+                        term,
+                    }
+                }
+                SignedArithmeticNode::IntervalAddBounded {
+                    left,
+                    right,
+                    result,
+                } => {
+                    let (left, left_term) = interval_at(&checked, *left)?;
+                    let (right, right_term) = interval_at(&checked, *right)?;
+                    let term = terms.binary(CheckedBinaryOperator::Add, left_term, right_term);
+                    let expected = interval_add(left, right, node_index, false)?;
                     check_interval_result(&expected, result, node_index)?;
                     CheckedValue::Interval {
                         value: expected,
@@ -1448,12 +1471,19 @@ fn interval_add(
     left: &SignedArithmeticInterval,
     right: &SignedArithmeticInterval,
     node: usize,
+    has_exact_definedness: bool,
 ) -> Result<SignedArithmeticInterval, SignedArithmeticCheckError> {
-    interval_checked(
-        i128::from(left.lower) + i128::from(right.lower),
-        i128::from(left.upper) + i128::from(right.upper),
-        node,
-    )
+    let lower = i128::from(left.lower) + i128::from(right.lower);
+    let upper = i128::from(left.upper) + i128::from(right.upper);
+    if has_exact_definedness {
+        interval_checked(
+            lower.max(i128::from(SIGNED_MIN)),
+            upper.min(i128::from(SIGNED_MAX)),
+            node,
+        )
+    } else {
+        interval_checked(lower, upper, node)
+    }
 }
 
 fn interval_subtract(

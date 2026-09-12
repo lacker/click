@@ -15,7 +15,7 @@ use crate::kernel::proof::signed_arithmetic::{
 use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition};
 use num_bigint::BigInt;
 use num_traits::{One, ToPrimitive, Zero};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 const MAX_SELECTED_PREMISES: usize = 64;
 const MAX_NODES: usize = 4096;
@@ -360,6 +360,7 @@ struct Planner<'a> {
     claims: &'a [(usize, SignedArithmeticClaim)],
     nodes: Vec<SignedArithmeticNode>,
     intervals: Vec<Option<SignedArithmeticInterval>>,
+    interval_cache: HashMap<SignedArithmeticAtom, usize>,
 }
 
 impl<'a> Planner<'a> {
@@ -369,6 +370,7 @@ impl<'a> Planner<'a> {
             claims,
             nodes: Vec::new(),
             intervals: Vec::new(),
+            interval_cache: HashMap::new(),
         }
     }
 
@@ -419,8 +421,12 @@ impl<'a> Planner<'a> {
     }
 
     fn interval_atom(&mut self, term: &Bitvector32Term) -> Option<usize> {
+        let cache_key = SignedArithmeticAtom::from_term(term)?;
+        if let Some(index) = self.interval_cache.get(&cache_key) {
+            return Some(*index);
+        }
         if let Some(value) = term.as_const().map(|value| i64::from(value as i32)) {
-            return self.push_interval(
+            let index = self.push_interval(
                 SignedArithmeticNode::IntervalAtom {
                     carrier: SignedArithmeticCarrier::SignedInt32,
                     term: term.clone(),
@@ -432,7 +438,9 @@ impl<'a> Planner<'a> {
                     lower: value,
                     upper: value,
                 },
-            );
+            )?;
+            self.interval_cache.insert(cache_key, index);
+            return Some(index);
         }
         if !Self::is_safe_interval_atom(term) {
             return None;
@@ -461,7 +469,7 @@ impl<'a> Planner<'a> {
             }
         }
         if lower.is_none() && upper.is_none() {
-            return self.push_interval(
+            let index = self.push_interval(
                 SignedArithmeticNode::IntervalAtom {
                     carrier: SignedArithmeticCarrier::SignedInt32,
                     term: term.clone(),
@@ -473,12 +481,14 @@ impl<'a> Planner<'a> {
                     lower: SIGNED_MIN,
                     upper: SIGNED_MAX,
                 },
-            );
+            )?;
+            self.interval_cache.insert(cache_key, index);
+            return Some(index);
         }
         let Some((lower_index, lower_claim, lower_bound)) = lower else {
             let (upper_index, upper_claim, upper_bound) = upper?;
             let upper_node = self.premise(upper_index, &upper_claim)?;
-            return self.push_interval(
+            let index = self.push_interval(
                 SignedArithmeticNode::IntervalFromAffine {
                     source: upper_node,
                     term: term.clone(),
@@ -490,7 +500,9 @@ impl<'a> Planner<'a> {
                     lower: SIGNED_MIN,
                     upper: upper_bound,
                 },
-            );
+            )?;
+            self.interval_cache.insert(cache_key, index);
+            return Some(index);
         };
         let lower_node = self.premise(lower_index, &lower_claim)?;
         let lower_node_index = self.push_interval(
@@ -526,7 +538,7 @@ impl<'a> Planner<'a> {
                 lower: lower_bound,
                 upper: upper_bound,
             };
-            return self.push_interval(
+            let index = self.push_interval(
                 SignedArithmeticNode::IntervalIntersect {
                     left: lower_node_index,
                     right: upper_interval,
@@ -537,8 +549,11 @@ impl<'a> Planner<'a> {
                     lower: lower_bound,
                     upper: upper_bound,
                 },
-            );
+            )?;
+            self.interval_cache.insert(cache_key, index);
+            return Some(index);
         }
+        self.interval_cache.insert(cache_key, lower_node_index);
         Some(lower_node_index)
     }
 
@@ -612,26 +627,37 @@ impl<'a> Planner<'a> {
             Bitvector32Term::Add(_, _) => {
                 let left = left?;
                 let right = right?;
-                let defined = self.defined(term)?;
                 let l = self.interval_at(left)?;
                 let r = self.interval_at(right)?;
                 let lower = l.lower.checked_add(r.lower)?;
                 let upper = l.upper.checked_add(r.upper)?;
-                (lower >= SIGNED_MIN && upper <= SIGNED_MAX).then_some(())?;
                 let interval = SignedArithmeticInterval {
                     carrier: SignedArithmeticCarrier::SignedInt32,
-                    lower,
-                    upper,
+                    lower: lower.max(SIGNED_MIN),
+                    upper: upper.min(SIGNED_MAX),
                 };
-                self.push_interval(
-                    SignedArithmeticNode::IntervalAdd {
-                        left,
-                        right,
-                        defined,
-                        result: interval.clone(),
-                    },
-                    interval,
-                )
+                if let Some(defined) = self.defined(term) {
+                    return self.push_interval(
+                        SignedArithmeticNode::IntervalAdd {
+                            left,
+                            right,
+                            defined,
+                            result: interval.clone(),
+                        },
+                        interval,
+                    );
+                }
+                if lower >= SIGNED_MIN && upper <= SIGNED_MAX {
+                    return self.push_interval(
+                        SignedArithmeticNode::IntervalAddBounded {
+                            left,
+                            right,
+                            result: interval.clone(),
+                        },
+                        interval,
+                    );
+                }
+                None
             }
             Bitvector32Term::Subtract(_, _) => {
                 let left = left?;
@@ -1020,6 +1046,90 @@ mod tests {
             plan.nodes
                 .iter()
                 .any(|node| matches!(node, SignedArithmeticNode::IntervalAdd { .. }))
+        );
+    }
+
+    #[test]
+    fn defined_addition_can_prove_a_lower_bound_without_upper_bounds() {
+        let a = var(11);
+        let b = var(12);
+        let lower_a = le(constant(0), a.clone());
+        let lower_b = le(constant(0), b.clone());
+        let defined = defined_add(a.clone(), b.clone());
+        let sum = Bitvector32Term::Add(Box::new(a), Box::new(b));
+        let goal = le(constant(0), sum);
+        let premises = vec![lower_a, lower_b, defined];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::DefinedPremise { index: 2, .. }))
+        );
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::IntervalAdd { .. }))
+        );
+        assert!(
+            plan.nodes
+                .iter()
+                .filter(|node| matches!(node, SignedArithmeticNode::Premise { .. }))
+                .count()
+                >= 2
+        );
+
+        let without_definedness = vec![premises[0].clone(), premises[1].clone()];
+        assert!(plan_signed_arithmetic_certificate(&goal, &without_definedness).is_none());
+    }
+
+    #[test]
+    fn bounded_doubling_reuses_bounds_without_definedness_or_duplicate_premises() {
+        let n = var(13);
+        let lower = le(constant(0), n.clone());
+        let upper = le(n.clone(), constant(100));
+        let doubled = Bitvector32Term::Add(Box::new(n.clone()), Box::new(n.clone()));
+        let goal = le(doubled, constant(200));
+        let plan = check_plan(&goal, &[lower, upper]);
+        assert!(plan.nodes.iter().any(|node| matches!(
+            node,
+            SignedArithmeticNode::IntervalAddBounded { left, right, .. } if left == right
+        )));
+        assert!(
+            !plan
+                .nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::DefinedPremise { .. }))
+        );
+        assert_eq!(
+            plan.nodes
+                .iter()
+                .filter(|node| matches!(node, SignedArithmeticNode::Premise { .. }))
+                .count(),
+            2
+        );
+
+        let wide_upper = le(n.clone(), constant(i32::MAX));
+        assert!(
+            plan_signed_arithmetic_certificate(&goal, &[le(constant(0), n.clone()), wide_upper])
+                .is_none()
+        );
+
+        let mut tampered = plan.clone();
+        let node = tampered
+            .nodes
+            .iter_mut()
+            .find(|node| matches!(node, SignedArithmeticNode::IntervalAddBounded { .. }))
+            .expect("bounded addition node");
+        if let SignedArithmeticNode::IntervalAddBounded { result, .. } = node {
+            result.upper += 1;
+        }
+        assert!(
+            tampered
+                .check(
+                    &goal,
+                    &[le(constant(0), var(13)), le(var(13), constant(100))]
+                )
+                .is_err()
         );
     }
 
