@@ -5178,3 +5178,153 @@ fn observed_wide_footprint_and_unknown_loop_barrier_are_invalidated() {
     );
     assert!(after.resources().contains_exact_representation(&support));
 }
+
+#[test]
+fn memory_invalidation_scales_with_affected_intervals_and_barrier_output() {
+    let mut samples = Vec::new();
+    for unrelated_count in [4_usize, 8, 16, 32] {
+        let target_support = CResourceFact::own_composite("curve_target".into(), Vec::new());
+        let target_view = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: "curve-block".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let memory = CMemory::new().with_block("curve-block", (8 * unrelated_count + 8) as u32);
+        let mut resources = ResourceContext::new().unchecked_with_fact(target_support.clone());
+        let target_occurrence = resources.owned_occurrences_for_fact(&target_support)[0];
+        resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+            target_occurrence,
+            &target_support,
+            [target_view.clone()],
+            &memory,
+        );
+        let mut unrelated_views = Vec::new();
+        for index in 0..unrelated_count {
+            let support =
+                CResourceFact::own_composite(format!("curve_unrelated_{index}"), Vec::new());
+            resources = resources.unchecked_with_fact(support.clone());
+            let occurrence = resources.owned_occurrences_for_fact(&support)[0];
+            let view = CResourceFact::view_memory(CMemoryRange::new(
+                Pointer {
+                    block: "curve-block".into(),
+                    offset: PointerOffsetTerm::Constant((8 + index * 8) as i64),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ));
+            resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+                occurrence,
+                &support,
+                [view.clone()],
+                &memory,
+            );
+            unrelated_views.push(view);
+        }
+        let state = CState::new()
+            .with_memory(memory.clone())
+            .with_resource_context(resources);
+        let before_allocations = crate::persistent::persistent_node_allocations();
+        let (after, store_work) = crate::instrumentation::measure_deterministic_work(|| {
+            state.clone().with_memory(memory.clone().store(
+                Pointer {
+                    block: "curve-block".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                int32(1),
+            ))
+        });
+        let store_allocations =
+            crate::persistent::persistent_node_allocations() - before_allocations;
+        assert!(
+            !after
+                .resources()
+                .contains_exact_representation(&target_view)
+        );
+        for view in &unrelated_views {
+            assert!(after.resources().contains_exact_representation(view));
+        }
+
+        let before_barrier_allocations = crate::persistent::persistent_node_allocations();
+        let (barrier_after, barrier_work) =
+            crate::instrumentation::measure_deterministic_work(|| {
+                state.with_memory(memory.clone().with_loop_memory_havoc(
+                    Variable(820),
+                    &BTreeSet::new(),
+                    None,
+                ))
+            });
+        let barrier_allocations =
+            crate::persistent::persistent_node_allocations() - before_barrier_allocations;
+        assert!(
+            !barrier_after
+                .resources()
+                .contains_exact_representation(&target_view)
+        );
+        for view in &unrelated_views {
+            assert!(
+                !barrier_after
+                    .resources()
+                    .contains_exact_representation(view)
+            );
+        }
+        samples.push((
+            unrelated_count,
+            store_work,
+            store_allocations,
+            barrier_work,
+            barrier_allocations,
+        ));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 + 4 && pair[1].2 <= pair[0].2 + 128,
+            "same-block disjoint intervals leaked unrelated work: {samples:?}"
+        );
+        assert!(
+            pair[1].3 >= pair[0].3,
+            "barrier work must account for its growing affected output: {samples:?}"
+        );
+    }
+}
+
+#[test]
+fn removing_symbolic_memory_observations_does_not_leave_alias_bucket_entries() {
+    let support = CResourceFact::own_composite("symbolic_alias_support".into(), Vec::new());
+    let memory = CMemory::new();
+    let mut resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let support_occurrence = resources.owned_occurrences_for_fact(&support)[0];
+    for iteration in 0..4 {
+        let view = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::Symbolic(Variable(900 + iteration)),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+            support_occurrence,
+            &support,
+            [view.clone()],
+            &memory,
+        );
+        let entry = *resources
+            .storage
+            .index
+            .exact
+            .get(&view)
+            .expect("symbolic observation entry")
+            .iter()
+            .next()
+            .expect("symbolic observation entry id");
+        let occurrence = resources.occurrence(entry);
+        resources = resources
+            .without_exact_representation_for_occurrence(occurrence)
+            .expect("symbolic observation should be removable");
+        assert!(resources.storage.symbolic_memory_support.is_empty());
+        assert!(resources.storage.support_metadata_by_projection.is_empty());
+    }
+}

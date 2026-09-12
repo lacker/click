@@ -992,12 +992,13 @@ and hashing include the observable footprint topology but never raw snapshot
 identity.
 
 The checkpoint adds direct observe/store, nested-support removal, divergent
-join, and wide-footprint/loop-barrier regressions, plus normalization,
+join, same-block interval invalidation curves, repeated symbolic-alias cleanup,
+and wide-footprint/loop-barrier regressions, plus normalization,
 support-occurrence, and interval-index coverage. Focused
-`cargo test --lib kernel::tests::resource_tests` passed 104/104;
+`cargo test --lib kernel::tests::resource_tests` passed 106/106;
 `cargo test --lib kernel::proof::execution::tests::` passed 35/35;
 `cargo clippy --all-targets -- -D warnings` passed; and unfiltered
-`scripts/check.sh` passed 2752/2752 tests and 14/14 fixture/example checks
+`scripts/check.sh` passed 2758/2758 tests and 14/14 fixture/example checks
 (the existing quarantined example remains skipped). This worktree is
 `codex/mvr-w5b` from `43f4a51`; the resulting commit is reported with the
 handoff. This is a partial B1 checkpoint, not a complete W5 claim: remaining

@@ -1281,9 +1281,10 @@ impl ResourceContext {
             || self.storage.symbolic_memory_support.clone(),
             |metadata| match &metadata.footprint {
                 ResourceMemoryFootprint::Exact(ranges)
-                    if ranges
-                        .iter()
-                        .any(|range| memory_interval_nodes(range).is_none()) =>
+                    if ranges.iter().any(|range| {
+                        memory_interval_nodes(range).is_none()
+                            || memory_block_may_alias(&range.base().block)
+                    }) =>
                 {
                     self.storage
                         .symbolic_memory_support
@@ -1663,6 +1664,7 @@ impl ResourceContext {
             // typed write set.  Only memory-qualified projections are stale;
             // the entry index bounds this conservative cleanup.
             for occurrence in self.storage.support_metadata_by_projection.keys() {
+                crate::instrumentation::record_deterministic_work(1);
                 if let Some(entry) = self.storage.entry_by_occurrence.get(occurrence) {
                     affected = affected.with_value(*entry);
                 }
@@ -1715,6 +1717,7 @@ impl ResourceContext {
         };
         if ambiguous_event {
             for occurrence in self.storage.support_metadata_by_projection.keys() {
+                crate::instrumentation::record_deterministic_work(1);
                 entries = entries.with_value(*occurrence);
             }
         }
@@ -1801,12 +1804,14 @@ impl ResourceContext {
                 // invalidates every memory-dependent projection, including
                 // exact ones, but leaves pure observations alone.
                 for occurrence in self.storage.support_metadata_by_projection.keys() {
+                    crate::instrumentation::record_deterministic_work(1);
                     entries = entries.with_value(*occurrence);
                 }
             }
             CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
                 if memory_block_may_alias(block) {
                     for occurrence in self.storage.support_metadata_by_projection.keys() {
+                        crate::instrumentation::record_deterministic_work(1);
                         entries = entries.with_value(*occurrence);
                     }
                 } else if let Some(bucket) = self.storage.projections_by_memory_block.get(block) {
