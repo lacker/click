@@ -177,6 +177,13 @@ enough to become the first regression of the package that fixes them.
     head-time binder arguments, and arm views at loop heads, but no
     positive descending, ascending, or rotate-then-ascend loop fixture.
     Every rbtree loop needs this. Package A9.
+14. **`click audit` fails on other examples.** Found by package T1: a
+    partial `click audit --keep-going examples` run failed at
+    `examples/arena/arena.click:59:9`, `110:13`, `127:13`, `133:13`,
+    `160:13` and `examples/bounded-pool/bounded_pool.click:214:5` with a
+    different mode from gap 11, for example `could not lower 'have'
+    proposition: the kernel lowering produced 0 paths`; confirmed
+    pre-existing on an unmodified base. Package T3.
 
 ## Design decisions
 
@@ -368,6 +375,12 @@ appears to need one reports the need instead of adding it.
 - 2026-09-12: A7 (`let r = step(...)` names a call's scalar result when the
   callee produces no instance, 9c7710ee) is on master; `tree_contains`
   verifies the unguarded membership postcondition. T2 dispatched.
+- 2026-09-12: A4 (`decreases <expression>` classified after resolution,
+  matched bodies as structural children, loop back-edge rule, head-time
+  binder arguments, arm views at loop heads, 2ab5dba3) is on master with a
+  confirming full gate; its positive loop fixtures wait on A9. T1 (audit on
+  an infeasible `branch` arm, fixed by expanding the dropped arm's tactic by
+  removal) is gating; T3 dispatched for gap 14.
 
 ## Work packages
 
@@ -493,6 +506,11 @@ Scope: replace the repeated Rust debug dump of the proposition and
 algebraic schemas in a failed pure `simp` with the bounded goal, premise,
 and search context the diagnostics policy allows. Regression: a fixture
 whose failure message is checked for the absence of the debug dump.
+
+**T3. Make `click audit` agree with `click verify` across `examples/`.**
+Scope: run the audit to completion, reduce each failure mode of gap 14,
+fix it in expansion, and add `verify -> expand -> reverify` regressions per
+mode. No proof or C changes to route around.
 
 **A9. Proof `match` on an instance model at any execution frontier.**
 Scope: let `match name.model { ... }` run at a loop-body frontier and after
