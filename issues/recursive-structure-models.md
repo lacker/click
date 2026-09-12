@@ -495,6 +495,20 @@ enough to become the first regression of the package that fixes them.
     the opaque application; `mdtests/rb_replace_node.md` still says a
     victim with children cannot be contracted, which
     `rb_replace_node_with_children.md` now contradicts.
+48. **An arm is not refuted from a predicate invariant.** A20: the
+    node-keyed ascent carries `invariant ctx_node_is(c.model, parent) ==
+    1` and reaches its exit, but refuting `Context::Top` at the guard needs
+    `ctx_node_is(c.model, parent) == 1` plus `parent != 0` to yield `c.model
+    != Context::Top`; arm refutation only matches a path fact against an
+    arm's own binding-free fact, `simp()` fails with "missing pure fact:
+    not (algebraic value equality)", and a `contradiction` arm in
+    `preserve` that first does the work is declined. Every node-keyed
+    ascent, including the rbtree fixup loops, needs this. Package A21.
+49. **Smaller A20 findings, not scheduled.** "fold requires the instance
+    body facts for the proposed fields" does not name the failing clause;
+    a cell reached neither by contract materialization nor by an unfold
+    still loses its load identity across a write whose separation is only
+    a resource fact.
 
 ## Design decisions
 
@@ -785,6 +799,11 @@ appears to need one reports the need instead of adding it.
   with both children verifies and audits on the node-keyed model with the
   frame at the root. Gap 46 found on integration; T7 dispatched. A20 in
   progress; C3 after A20 and T7.
+- 2026-09-12: A20 (ef856acd) is on master: memory-independent pure
+  functions anchor pointer arguments to one canonical snapshot, so
+  `rb_parent_is` is a body fact of `rb_at`; unfold-named cells substitute
+  the arm's constructor bindings, so `rb_replace_node` verifies in all
+  three frames. A21 dispatched; T7 in progress; C3 after both.
 
 ## Work packages
 
@@ -1060,6 +1079,16 @@ parent`) apply to the unfolded frame's owned cells and to guard reads, so
 Regressions: `rb_parent_is` as a body fact; `rb_replace_node` `Left` and
 `Right` frames; `rb_ascending_walk_to_root.md` ported to `rb_at(p)`/`ctx_at`.
 Depends on A18 (same fold check). C3 depends on it.
+
+**A21. Refute an arm from a predicate fact (gap 48).** Scope: when a pure
+`int32` predicate over the model is an available fact and the arm's
+constructor makes the predicate's definition reduce to a constant that the
+path contradicts, publish the arm as refuted (a bounded evaluation of the
+predicate at the constructor, no search); and let a `contradiction` arm in
+`preserve` establish its contradiction with a short explicit script before
+closing. Regressions: `mdtests/rb_ascending_walk_to_root.md` ported to
+`rb_at(p)`/`ctx_at(child, root)` with `decreases`; a negative where the
+predicate does not decide the arm. Depends on A20. C3 depends on it.
 
 **C2b. Port the pure red-black library to the re-keyed model.** Scope:
 `examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
