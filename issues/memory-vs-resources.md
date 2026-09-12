@@ -1010,8 +1010,9 @@ fallback. Focused `cargo test --lib kernel::tests::resource_tests` passed
 `cargo clippy --all-targets -- -D warnings` passed; and unfiltered
 `scripts/check.sh` passed 2759/2759 tests and 14/14 fixture/example checks
 (the existing quarantined example remains skipped). This worktree is
-`codex/mvr-w5b` from `43f4a51`; the checkpoint commits are `0a1bd260` and
-`4b726370`. This is a partial B1 checkpoint, not a complete W5 claim: remaining
+`codex/mvr-w5b` from `43f4a51`; the checkpoint commits are `0a1bd260`,
+`4b726370`, `cb6b2d5f`, and `4705b1f2` (latest before this prose update).
+This is a partial B1 checkpoint, not a complete W5 claim: remaining
 W5 C/D work includes the real three-call callback/table fixtures, scoped-open
 expiry coverage, and richer prerequisite-load footprints for composite
 observations. No C source, syntax, budgets, quarantine, or unrelated semantics
