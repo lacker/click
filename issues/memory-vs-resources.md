@@ -1027,12 +1027,15 @@ kernel's transactional open-scope test. They were already green, so no new
 representation defect was observed and no scope workaround was added.
 
 The C regressions retain that behavior at the surface boundary. Two
-back-to-back opens prove that close restores the folded representation once;
-an unrelated persistent token survives both closes; and a direct store after
-closing an owned wrapper is rejected, proving the opened body authority cannot
-escape. Existing `token_resource_consumed_by_call` continues to reject double
-consumption, while the kernel test checks rooted nested scopes, forged joins,
-transactional failure, and exactly one recorded `Open` certificate step.
+back-to-back opens execute a permitted body store in the first body and prove
+that close restores the owned marker exactly once; the helper then calls
+`preserve_spare`, whose checked contract consumes and produces the unrelated
+token after both closes. A second fixture executes one permitted store inside
+the open and rejects the comparable store after close, proving the opened body
+authority cannot escape. Existing `token_resource_consumed_by_call` continues
+to reject double consumption, while the kernel test checks rooted nested
+scopes, forged joins, transactional failure, and exactly one recorded `Open`
+certificate step.
 The added fixtures are `mdtests/resource_scope_preserves_unrelated.md` and
 `mdtests/resource_scope_does_not_escape_body.md`. This is a green partial C
 checkpoint, not a complete W5 claim; callback/table mutation and richer
