@@ -689,6 +689,48 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
     click_function_environment: &ClickFunctionEnvironment,
     initial_assumptions: &PureFactContext,
 ) -> Result<Vec<Proposition>, ClickError> {
+    Ok(requirement_propositions_with_sources_and_assumptions(
+        requires,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+        initial_assumptions,
+    )?
+    .into_iter()
+    .map(|fact| fact.proposition)
+    .collect())
+}
+
+/// One fact emitted while lowering the function's written requirement list.
+///
+/// This is construction-time provenance, before later entry-context passes
+/// add resource observations or definedness consequences.  Keeping the outer
+/// source ordinal here avoids trying to reconstruct it from the final fact
+/// vector, whose ordering deliberately differs from requirement order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) struct LoweredRequirementFact {
+    pub(in crate::surface) source_ordinal: usize,
+    pub(in crate::surface) role: LoweredRequirementFactRole,
+    pub(in crate::surface) proposition: Proposition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::surface) enum LoweredRequirementFactRole {
+    Principal,
+    Guard(usize),
+}
+
+pub(in crate::surface) fn requirement_propositions_with_sources_and_assumptions(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    initial_assumptions: &PureFactContext,
+) -> Result<Vec<LoweredRequirementFact>, ClickError> {
     // A proposition requirement may contain a memory read whose range is
     // justified by another requirement, such as `1 <= n` before
     // `a[0] == 7` under `views a[0..n]`. Lower requirements independently
@@ -784,12 +826,27 @@ pub(in crate::surface) fn requirement_propositions_with_assumptions(
 
     let mut facts = Vec::new();
     let mut guards = Vec::new();
-    for propositions in lowered.into_iter().flatten() {
+    for (source_ordinal, propositions) in lowered.into_iter().enumerate() {
+        let Some(propositions) = propositions else {
+            continue;
+        };
         let mut propositions = propositions.into_iter();
         if let Some(fact) = propositions.next() {
-            facts.push(fact);
+            facts.push(LoweredRequirementFact {
+                source_ordinal,
+                role: LoweredRequirementFactRole::Principal,
+                proposition: fact,
+            });
         }
-        guards.extend(propositions);
+        guards.extend(
+            propositions
+                .enumerate()
+                .map(|(guard_ordinal, proposition)| LoweredRequirementFact {
+                    source_ordinal,
+                    role: LoweredRequirementFactRole::Guard(guard_ordinal),
+                    proposition,
+                }),
+        );
     }
     facts.extend(guards);
     Ok(facts)

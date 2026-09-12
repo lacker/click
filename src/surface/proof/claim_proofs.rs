@@ -278,13 +278,22 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         ProofTacticSource::SourceSyntax => None,
         ProofTacticSource::GeneratedBy { source_index } => Some(source_index),
     };
-    let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
+    let caller_source_owner =
+        CallerSourceOwnerId::ordinary(source_path, function_block.signature().name());
+    let InitialClaimContext {
+        state,
+        arguments,
+        pure_facts,
+        entry_fact_origins,
+        surface_propositions,
+    } = initial_claim_context_with_caller_owner(
         function_block,
         parsed_function,
         resource_environment,
         predicate_environment,
         click_function_environment,
         claim_label,
+        Some(&caller_source_owner),
     )?;
     let function = annotated_function_with_assumptions(
         function_block,
@@ -319,6 +328,8 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
+        entry_fact_origins: Arc::new(entry_fact_origins),
+        caller_source_owner: Some(caller_source_owner),
         function_entry_state: Some(function_entry_state),
         function_source_registry,
         grouped_contract: false,
@@ -459,13 +470,22 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         ProofTacticSource::SourceSyntax => None,
         ProofTacticSource::GeneratedBy { source_index } => Some(source_index),
     };
-    let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
+    let caller_source_owner =
+        CallerSourceOwnerId::ordinary(source_path, function_block.signature().name());
+    let InitialClaimContext {
+        state,
+        arguments,
+        pure_facts,
+        entry_fact_origins,
+        surface_propositions,
+    } = initial_claim_context_with_caller_owner(
         function_block,
         parsed_function,
         resource_environment,
         predicate_environment,
         click_function_environment,
         &proof_label,
+        Some(&caller_source_owner),
     )?;
     let function = annotated_function_with_assumptions(
         function_block,
@@ -499,6 +519,8 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
+        entry_fact_origins: Arc::new(entry_fact_origins),
+        caller_source_owner: Some(caller_source_owner),
         function_entry_state: Some(function_entry_state),
         function_source_registry,
         grouped_contract: true,

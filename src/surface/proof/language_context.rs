@@ -97,6 +97,12 @@ pub(in crate::surface::proof) struct ExecutionProofConstants {
     pub(in crate::surface::proof) proof_site: Option<ProofSite>,
     pub(in crate::surface::proof) source_layout: SourceExecutionLayout,
     pub(in crate::surface::proof) execution_start_facts: Arc<Vec<Proposition>>,
+    /// Construction-time provenance aligned exactly with
+    /// `execution_start_facts`. It is presentation metadata only.
+    pub(in crate::surface::proof) entry_fact_origins: Arc<Vec<EntryFactOrigin>>,
+    /// Exact ordinary caller whose entry requirement identities populate the
+    /// proof-local index. Missing ownership makes source selection fail closed.
+    pub(in crate::surface::proof) caller_source_owner: Option<CallerSourceOwnerId>,
     pub(in crate::surface::proof) function_entry_state: Option<CState>,
     /// Immutable file-scoped lookup for exact ordinary callee source
     /// requirements. Descendant proof contexts share this Arc.
@@ -112,6 +118,8 @@ impl Default for ExecutionProofConstants {
             proof_site: None,
             source_layout: SourceExecutionLayout::default(),
             execution_start_facts: Arc::new(Vec::new()),
+            entry_fact_origins: Arc::new(Vec::new()),
+            caller_source_owner: None,
             function_entry_state: None,
             function_source_registry: Arc::new(FunctionSourceRegistry::default()),
             grouped_contract: false,

@@ -2096,6 +2096,14 @@ pub(super) fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionCla
         .collect()
 }
 
+pub(super) struct InitialClaimContext {
+    pub(super) state: CState,
+    pub(super) arguments: Vec<CExpression>,
+    pub(super) pure_facts: Vec<Proposition>,
+    pub(super) entry_fact_origins: Vec<EntryFactOrigin>,
+    pub(super) surface_propositions: SurfacePropositionMap,
+}
+
 pub(super) fn initial_claim_context(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2112,6 +2120,32 @@ pub(super) fn initial_claim_context(
     ),
     ClickError,
 > {
+    let context = initial_claim_context_with_caller_owner(
+        function_block,
+        parsed_function,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+        None,
+    )?;
+    Ok((
+        context.state,
+        context.arguments,
+        context.pure_facts,
+        context.surface_propositions,
+    ))
+}
+
+pub(super) fn initial_claim_context_with_caller_owner(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+    caller_owner: Option<&CallerSourceOwnerId>,
+) -> Result<InitialClaimContext, ClickError> {
     let (mut state, arguments) = if let Some(startup) = &parsed_function.program_entry_state {
         if !function_block.requires().is_empty() || !parsed_function.parameters().is_empty() {
             return Err(ClickError::new(
@@ -2245,17 +2279,56 @@ pub(super) fn initial_claim_context(
         projection_state = projected;
     }
     state = state.with_memory(projection_state.memory().clone());
-    let mut requirement_pure_facts = requirement_propositions(
-        function_block.requires(),
-        parsed_function.parameters(),
-        &arguments,
-        &state,
-        predicate_environment,
-        click_function_environment,
-    )?;
+    let lowered_requirement_facts =
+        crate::surface::lowering::requirement_propositions_with_sources_and_assumptions(
+            function_block.requires(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            predicate_environment,
+            click_function_environment,
+            &PureFactContext::new(),
+        )?;
+    let mut requirement_pure_facts = Vec::with_capacity(lowered_requirement_facts.len());
+    let mut entry_fact_origins = Vec::with_capacity(lowered_requirement_facts.len());
+    for lowered in lowered_requirement_facts {
+        requirement_pure_facts.push(lowered.proposition);
+        entry_fact_origins.push(match caller_owner {
+            Some(owner) => EntryFactOrigin::Requirement {
+                source_id: RequirementSourceId {
+                    owner: owner.clone(),
+                    outer_ordinal: lowered.source_ordinal,
+                },
+                role: match lowered.role {
+                    crate::surface::lowering::LoweredRequirementFactRole::Principal => {
+                        RequirementFactRole::Principal {
+                            unfolding_path: Vec::new(),
+                        }
+                    }
+                    crate::surface::lowering::LoweredRequirementFactRole::Guard(ordinal) => {
+                        RequirementFactRole::LoweringGuard { ordinal }
+                    }
+                },
+            },
+            None => EntryFactOrigin::Derived,
+        });
+    }
     requirement_pure_facts.extend(population_facts);
+    entry_fact_origins.resize(requirement_pure_facts.len(), EntryFactOrigin::Derived);
     // The lowerings of requirements that mention `defined(...)` at this
     // folded state; they are replaced at the definedness state below.
+    let defined_requirement_ordinals = function_block
+        .requires()
+        .iter()
+        .enumerate()
+        .filter_map(|(ordinal, requirement)| {
+            matches!(
+                requirement.inner(),
+                Requirement::Proposition(surface) if click_proposition_mentions_defined(surface)
+            )
+            .then_some(ordinal)
+        })
+        .collect::<BTreeSet<_>>();
     let folded_defined_facts = function_block
         .requires()
         .iter()
@@ -2316,6 +2389,10 @@ pub(super) fn initial_claim_context(
         &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
+    // Structural setup only appends checked unfoldings. They are useful entry
+    // facts, but Phase 1 keeps the written requirement's unique principal
+    // fact as the selection authority; an appended unfolding is derived.
+    entry_fact_origins.resize(requirement_pure_facts.len(), EntryFactOrigin::Derived);
     state = project_initial_composite_resource_cores(
         resource_environment,
         parsed_function.parameters(),
@@ -2337,6 +2414,7 @@ pub(super) fn initial_claim_context(
         click_function_environment,
         claim_label,
     )?;
+    entry_fact_origins.resize(requirement_pure_facts.len(), EntryFactOrigin::Derived);
     let definedness_state = project_initial_composite_resource_cores(
         resource_environment,
         parsed_function.parameters(),
@@ -2353,30 +2431,73 @@ pub(super) fn initial_claim_context(
     // entry state it reads no cell and collapses to `false`, which would make
     // the whole proof context vacuous. Re-lower those requirements at the
     // definedness state and replace their entry facts.
-    requirement_pure_facts.retain(|fact| !folded_defined_facts.contains(fact));
-    for requirement in function_block.requires() {
+    let retained = requirement_pure_facts
+        .into_iter()
+        .zip(entry_fact_origins)
+        .filter(|(fact, origin)| match origin {
+            EntryFactOrigin::Requirement { source_id, .. } => {
+                !defined_requirement_ordinals.contains(&source_id.outer_ordinal)
+            }
+            // Legacy setup callers have no source owner. Keep their previous
+            // value-based replacement behavior; production execution proofs
+            // always take the exact source-ID branch above.
+            EntryFactOrigin::Derived => {
+                caller_owner.is_some() || !folded_defined_facts.contains(fact)
+            }
+        })
+        .collect::<Vec<_>>();
+    (requirement_pure_facts, entry_fact_origins) = retained.into_iter().unzip();
+    for (source_ordinal, requirement) in function_block.requires().iter().enumerate() {
         let Requirement::Proposition(surface) = requirement.inner() else {
             continue;
         };
         if !click_proposition_mentions_defined(surface) {
             continue;
         }
-        let projected = requirement_propositions_with_assumptions(
-            std::slice::from_ref(requirement),
-            parsed_function.parameters(),
-            &arguments,
-            &definedness_state,
-            predicate_environment,
-            click_function_environment,
-            &assumptions_from_propositions(&requirement_pure_facts),
-        )?;
-        let [projected] = projected.as_slice() else {
+        let projected =
+            crate::surface::lowering::requirement_propositions_with_sources_and_assumptions(
+                std::slice::from_ref(requirement),
+                parsed_function.parameters(),
+                &arguments,
+                &definedness_state,
+                predicate_environment,
+                click_function_environment,
+                &assumptions_from_propositions(&requirement_pure_facts),
+            )?;
+        let Some(principal) = projected.iter().find(|fact| {
+            matches!(
+                fact.role,
+                crate::surface::lowering::LoweredRequirementFactRole::Principal
+            )
+        }) else {
             continue;
         };
-        if !requirement_pure_facts.contains(projected) {
-            requirement_pure_facts.push(projected.clone());
+        surface_propositions.record_lowering(surface, &principal.proposition)?;
+        for fact in projected {
+            let origin = match caller_owner {
+                Some(owner) => EntryFactOrigin::Requirement {
+                    source_id: RequirementSourceId {
+                        owner: owner.clone(),
+                        outer_ordinal: source_ordinal,
+                    },
+                    role: match fact.role {
+                        crate::surface::lowering::LoweredRequirementFactRole::Principal => {
+                            RequirementFactRole::Principal {
+                                unfolding_path: Vec::new(),
+                            }
+                        }
+                        crate::surface::lowering::LoweredRequirementFactRole::Guard(ordinal) => {
+                            RequirementFactRole::LoweringGuard { ordinal }
+                        }
+                    },
+                },
+                None => EntryFactOrigin::Derived,
+            };
+            if caller_owner.is_some() || !requirement_pure_facts.contains(&fact.proposition) {
+                requirement_pure_facts.push(fact.proposition);
+                entry_fact_origins.push(origin);
+            }
         }
-        surface_propositions.record_lowering(surface, projected)?;
     }
     let definedness = requirement_definedness_propositions(
         function_block.requires(),
@@ -2395,6 +2516,7 @@ pub(super) fn initial_claim_context(
     for (_, kernel) in definedness.into_iter().rev() {
         if !requirement_pure_facts.contains(&kernel) {
             requirement_pure_facts.insert(0, kernel);
+            entry_fact_origins.insert(0, EntryFactOrigin::Derived);
         }
     }
     // Resource projection can legitimately publish loadability observations
@@ -2475,14 +2597,17 @@ pub(super) fn initial_claim_context(
     ) {
         if !requirement_pure_facts.contains(&fact) {
             requirement_pure_facts.push(fact);
+            entry_fact_origins.push(EntryFactOrigin::Derived);
         }
     }
-    Ok((
+    debug_assert_eq!(requirement_pure_facts.len(), entry_fact_origins.len());
+    Ok(InitialClaimContext {
         state,
         arguments,
-        requirement_pure_facts,
+        pure_facts: requirement_pure_facts,
+        entry_fact_origins,
         surface_propositions,
-    ))
+    })
 }
 
 /// Removes loadability that projection derived as an entry-evaluator fact.

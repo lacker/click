@@ -1,5 +1,86 @@
 use super::*;
 
+/// Proof-local identity of the ordinary C function whose written entry
+/// requirements are being used.  `source_unit` is the canonical key from the
+/// verified-source map, not a display path recovered later.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::surface) struct CallerSourceOwnerId {
+    pub(in crate::surface) source_unit: String,
+    pub(in crate::surface) declaration_name: String,
+}
+
+impl CallerSourceOwnerId {
+    pub(in crate::surface) fn ordinary(
+        source_unit: impl Into<String>,
+        declaration_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            source_unit: source_unit.into(),
+            declaration_name: declaration_name.into(),
+        }
+    }
+}
+
+/// Stable identity of one outer requirement declaration in an ordinary
+/// caller.  This ordinal is never interchangeable with a lowered fact index.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::surface) struct RequirementSourceId {
+    pub(in crate::surface) owner: CallerSourceOwnerId,
+    pub(in crate::surface) outer_ordinal: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) enum RequirementFactRole {
+    Principal { unfolding_path: Vec<usize> },
+    LoweringGuard { ordinal: usize },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) enum EntryFactOrigin {
+    Requirement {
+        source_id: RequirementSourceId,
+        role: RequirementFactRole,
+    },
+    Derived,
+}
+
+/// Bounded source leaf retained after a checked `choose` projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) struct ProjectionSourceToken {
+    pub(in crate::surface) source_id: RequirementSourceId,
+    pub(in crate::surface) connective_path: Vec<usize>,
+}
+
+/// Shallow lookup key for a direct caller predicate argument.  Exact
+/// propositions and expressions remain validation payloads, never map keys.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::surface) struct CallerRequirementKey {
+    pub(in crate::surface) predicate_name: String,
+    pub(in crate::surface) predicate_argument_slot: usize,
+    pub(in crate::surface) caller_parameter_slot: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) struct CallerRequirementRecord {
+    pub(in crate::surface) source_id: RequirementSourceId,
+    pub(in crate::surface) source_proposition: ClickProposition,
+    pub(in crate::surface) key: CallerRequirementKey,
+    pub(in crate::surface) principal_fact_index: usize,
+    pub(in crate::surface) principal_fact: Proposition,
+    pub(in crate::surface) source_arguments: Vec<ContractExpression>,
+    pub(in crate::surface) entry_snapshot: crate::kernel::CMemorySnapshotIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface) struct CallerRequirementSelection {
+    pub(in crate::surface) source_id: RequirementSourceId,
+    pub(in crate::surface) principal_fact_index: usize,
+    pub(in crate::surface) principal_fact: Proposition,
+    pub(in crate::surface) source_proposition: ClickProposition,
+    pub(in crate::surface) source_arguments: Vec<ContractExpression>,
+    pub(in crate::surface) entry_snapshot: crate::kernel::CMemorySnapshotIdentity,
+}
+
 /// The source-side forms that can be re-lowered for an ordinary function
 /// requirement.  The source ordinal is kept separately so an outer label is
 /// preserved without copying label syntax into the retry carrier.

@@ -2694,6 +2694,69 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
 }
 
 #[test]
+fn initial_entry_provenance_keeps_nonzero_requirement_identity_after_derived_insertions() {
+    let click_file = crate::surface::parse(
+        r#"
+            predicate selected(x: int32) {
+                x == x
+            }
+
+            int32 source_identity(int32 x) {
+                requires x >= 0;
+                requires selected(x);
+                requires x + 1 > x;
+                ensures result == x by { assumption(); }
+            }
+        "#,
+    )
+    .expect("source-identity contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function = syntax::parse_function("int32 source_identity(int32 x) { return x; }")
+        .expect("test C function should parse");
+    let predicate_environment = PredicateEnvironment::new(click_file.predicate_definitions());
+    let click_function_environment =
+        ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let owner = CallerSourceOwnerId::ordinary("canonical/source.c", "source_identity");
+
+    let context = initial_claim_context_with_caller_owner(
+        function_block,
+        &parsed_function,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        "source identity",
+        Some(&owner),
+    )
+    .expect("entry context should retain exact requirement provenance");
+
+    assert_eq!(context.pure_facts.len(), context.entry_fact_origins.len());
+    let selected = context
+        .entry_fact_origins
+        .iter()
+        .enumerate()
+        .filter_map(|(fact_index, origin)| match origin {
+            EntryFactOrigin::Requirement {
+                source_id,
+                role: RequirementFactRole::Principal { .. },
+            } if source_id.outer_ordinal == 1 => Some((fact_index, source_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].1.owner, owner);
+    assert_ne!(
+        selected[0].0, 1,
+        "derived definedness facts should demonstrate that source ordinals are not fact indices"
+    );
+    assert!(
+        context.entry_fact_origins[..selected[0].0]
+            .iter()
+            .any(|origin| matches!(origin, EntryFactOrigin::Derived))
+    );
+}
+
+#[test]
 fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
