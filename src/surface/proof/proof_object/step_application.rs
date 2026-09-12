@@ -640,6 +640,29 @@ impl<'a> Proof<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         if let Some(goal) = self.goal()
             && let Some(plan) =
+                crate::surface::checking::plan_special_arithmetic_certificate(goal, &premises)
+            && let Some(surface_goal) = self.surface_goal()
+        {
+            let pairs = premises
+                .iter()
+                .cloned()
+                .zip(surface_premises.iter().cloned())
+                .collect::<Vec<_>>();
+            let certificate = crate::surface::checking::special_plan_to_surface_certificate(
+                &plan,
+                &pairs.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>(),
+                surface_goal,
+            );
+            let handle = self.apply_special_certificate(match &certificate.family {
+                ArithmeticCertificateFamily::Special(c) => c,
+                _ => unreachable!(),
+            });
+            if let Ok(handle) = handle {
+                return Ok((handle, Some(certificate)));
+            }
+        }
+        if let Some(goal) = self.goal()
+            && let Some(plan) =
                 crate::surface::checking::plan_signed_arithmetic_certificate(goal, &premises)
             && let Some(surface_goal) = self.surface_goal()
             && let Some(certificate) = self.signed_plan_to_surface_certificate(
@@ -707,7 +730,107 @@ impl<'a> Proof<'a> {
             ArithmeticCertificateFamily::SignedInt32(certificate) => {
                 self.apply_signed_int32_certificate(certificate)
             }
+            ArithmeticCertificateFamily::Special(certificate) => {
+                self.apply_special_certificate(certificate)
+            }
         }
+    }
+
+    fn apply_special_certificate(
+        &self,
+        certificate: &SpecialArithmeticCertificate,
+    ) -> Result<KernelProofHandle, ClickError> {
+        use crate::kernel::proof::arithmetic_special::{
+            SpecialArithmeticCertificate as KernelCertificate, SpecialArithmeticNode as KernelNode,
+        };
+        let mut premises = Vec::with_capacity(certificate.premises.len());
+        for premise in &certificate.premises {
+            premises.push(self.lower_surface_proposition_direct(
+                premise,
+                "special arithmetic certificate premise",
+            )?);
+        }
+        let lower_result = |result: &ClickProposition| {
+            self.lower_surface_proposition_direct(result, "special arithmetic certificate result")
+        };
+        let premise_ref = |index: usize| {
+            if index < premises.len() {
+                Ok(index)
+            } else {
+                Err(self.step_error(format!(
+                    "special arithmetic premise {index} is out of range"
+                )))
+            }
+        };
+        let mut nodes = Vec::with_capacity(certificate.nodes.len());
+        for node in &certificate.nodes {
+            let lowered = match node {
+                SpecialArithmeticNode::PointerTranslation {
+                    relation,
+                    bounds,
+                    result,
+                } => KernelNode::PointerTranslation {
+                    relation: premise_ref(*relation)?,
+                    bounds: bounds
+                        .iter()
+                        .map(|i| premise_ref(*i))
+                        .collect::<Result<_, _>>()?,
+                    result: lower_result(result)?,
+                },
+                SpecialArithmeticNode::PointerAlignment { premise, result } => {
+                    KernelNode::PointerAlignment {
+                        premise: premise.map(premise_ref).transpose()?,
+                        result: lower_result(result)?,
+                    }
+                }
+                SpecialArithmeticNode::PointerWordEquality {
+                    relation,
+                    alignments,
+                    result,
+                } => KernelNode::PointerWordEquality {
+                    relation: premise_ref(*relation)?,
+                    alignments: alignments
+                        .iter()
+                        .map(|i| premise_ref(*i))
+                        .collect::<Result<_, _>>()?,
+                    result: lower_result(result)?,
+                },
+                SpecialArithmeticNode::FloatReflexive { finite, result } => {
+                    KernelNode::FloatReflexive {
+                        finite: premise_ref(*finite)?,
+                        result: lower_result(result)?,
+                    }
+                }
+            };
+            nodes.push(lowered);
+        }
+        if certificate.conclusion >= nodes.len() {
+            return Err(self.step_error(format!(
+                "special arithmetic conclusion {} is out of range",
+                certificate.conclusion
+            )));
+        }
+        self.state
+            .apply_special_arithmetic(
+                &KernelCertificate {
+                    nodes,
+                    conclusion: certificate.conclusion,
+                },
+                &premises,
+            )
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("special arithmetic certificate requires a proposition goal")
+                }
+                PropositionCloseError::SpecialArithmeticPremiseUnavailable(index) => self
+                    .step_error(format!(
+                        "special arithmetic premise {index} is not exactly available"
+                    )),
+                PropositionCloseError::SpecialArithmetic(error) => self.step_error(format!(
+                    "special arithmetic certificate rejected: {error:?}"
+                )),
+                _ => self.step_error("special arithmetic certificate could not be applied"),
+            })
     }
 
     fn apply_signed_int32_certificate(

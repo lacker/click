@@ -215,6 +215,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "implies",
     "arithmetic_certificate",
     "signed_int32",
+    "special",
     "in",
     "induct",
     "initialize",
@@ -4001,6 +4002,7 @@ pub struct ArithmeticCertificate {
 pub enum ArithmeticCertificateFamily {
     Integer(IntegerCertificate),
     SignedInt32(SignedInt32Certificate),
+    Special(SpecialArithmeticCertificate),
 }
 
 /// The checked signed-int32 arithmetic rule family. Surface nodes retain
@@ -4144,6 +4146,45 @@ impl ArithmeticCertificate {
             family: ArithmeticCertificateFamily::Integer(certificate),
         }
     }
+
+    pub fn special(certificate: SpecialArithmeticCertificate) -> Self {
+        Self {
+            family: ArithmeticCertificateFamily::Special(certificate),
+        }
+    }
+}
+
+/// Checked pointer and finite-float arithmetic rules. The premise vector is
+/// the exact source premise slice consumed by the certificate; node indices
+/// refer only to that vector and the flat node list as documented by the
+/// parser/printer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpecialArithmeticCertificate {
+    pub premises: Vec<ClickProposition>,
+    pub nodes: Vec<SpecialArithmeticNode>,
+    pub conclusion: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SpecialArithmeticNode {
+    PointerTranslation {
+        relation: usize,
+        bounds: Vec<usize>,
+        result: ClickProposition,
+    },
+    PointerAlignment {
+        premise: Option<usize>,
+        result: ClickProposition,
+    },
+    PointerWordEquality {
+        relation: usize,
+        alignments: Vec<usize>,
+        result: ClickProposition,
+    },
+    FloatReflexive {
+        finite: usize,
+        result: ClickProposition,
+    },
 }
 
 /// The mathematical Integer rule family. Every node carries its source

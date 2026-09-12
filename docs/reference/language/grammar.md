@@ -57,8 +57,9 @@ documentation inventory keep the following accepted words synchronized.
 | `apply`, `have`, `if`, `cases`, `both`, `branch`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
-| `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; the checked signed-machine family is `arithmetic_certificate signed_int32 { ... }`. `integer_certificate { ... }` remains a parser-only legacy alias for the mathematical family. |
-| `signed_int32` | Selects the public checked signed-machine arithmetic-certificate family. |
+| `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; checked machine families are `arithmetic_certificate signed_int32 { ... }` and `arithmetic_certificate special { ... }`. `integer_certificate { ... }` remains a parser-only legacy alias for the mathematical family. |
+| `signed_int32`, `special` | Select the public checked signed-machine or pointer/finite-float arithmetic-certificate family. Special nodes are `pointer_translation`, `pointer_alignment`, `pointer_word_equality`, and `float_reflexive`; each consumes only the explicitly indexed premise slice. |
+| `special` | Selects the pointer, tagged-word, and finite-float arithmetic-certificate family. |
 | `premise` | Names an exact premise node in an arithmetic certificate. |
 | `scale` | Scales an earlier arithmetic certificate node by an exact decimal coefficient. |
 | `add` | Adds two earlier arithmetic certificate nodes. |

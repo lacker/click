@@ -1,8 +1,7 @@
-# Alignment closes by the simple `arithmetic using` step
+# Alignment closes by an explicit special arithmetic certificate
 
-The smart `simp` closure of an alignment goal expands to one explicit
-`arithmetic() using` step naming the base fact. Writing that step by hand
-checks the same rule directly, with no search.
+The explicit typed certificate names the base fact and checks the alignment
+directly, with no search.
 
 ```c filename=aligned_explicit_arithmetic.c
 int32 aligned_explicit_arithmetic(uint8* p) {
@@ -19,8 +18,10 @@ int32 aligned_explicit_arithmetic(uint8* p) {
 } by {
     execute();
     have aligned(p + 24, 8) by {
-        arithmetic() using {
-            aligned(p, 16);
+        arithmetic_certificate special {
+            premise 0: aligned(p, 16) => aligned(p, 16);
+            pointer_alignment premise 0 => aligned(p + 24, 8);
+            conclusion 0;
         }
     }
     simp();

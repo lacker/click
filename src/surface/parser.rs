@@ -4708,11 +4708,156 @@ impl Parser {
         let parsed = if self.peek_ident() == Some("signed_int32") {
             self.position += 1;
             self.parse_signed_int32_certificate_body()
+        } else if self.peek_ident() == Some("special") {
+            self.position += 1;
+            self.parse_special_arithmetic_certificate_body()
         } else {
             self.parse_arithmetic_certificate_body()
         };
         self.integer_literal_context = previous;
         parsed
+    }
+
+    fn parse_special_arithmetic_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {
+        self.expect(Token::LBrace)?;
+        let mut premises = Vec::<Option<ClickProposition>>::new();
+        let mut nodes = Vec::new();
+        let mut conclusion = None;
+        while self.peek() != Some(&Token::RBrace) {
+            let keyword = self.expect_ident("special arithmetic certificate node")?;
+            match keyword.as_str() {
+                "premise" => {
+                    let index = self.expect_index("special premise index")?;
+                    self.expect(Token::Colon)?;
+                    let proposition = self.parse_proposition()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    if proposition != result {
+                        return Err(self.error(format!(
+                            "special arithmetic premise {index} must repeat the same proposition on both sides"
+                        )));
+                    }
+                    if index > premises.len() {
+                        return Err(self.error(format!(
+                            "special arithmetic premise indices must be contiguous; expected {} but found {index}",
+                            premises.len()
+                        )));
+                    }
+                    if index == premises.len() {
+                        premises.push(None);
+                    }
+                    if premises[index].replace(proposition).is_some() {
+                        return Err(self.error(format!(
+                            "special arithmetic premise {index} is declared more than once"
+                        )));
+                    }
+                }
+                "pointer_translation" | "pointer_translate" => {
+                    self.expect_ident_spelling("relation")?;
+                    let relation = self.expect_index("pointer relation node")?;
+                    self.expect_ident_spelling("bounds")?;
+                    let bounds = self.parse_certificate_index_list("pointer bound node")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(SpecialArithmeticNode::PointerTranslation {
+                        relation,
+                        bounds,
+                        result,
+                    });
+                }
+                "pointer_alignment" | "pointer_align" => {
+                    self.expect_ident_spelling("premise")?;
+                    let premise = if self.peek_ident() == Some("intrinsic") {
+                        self.position += 1;
+                        None
+                    } else {
+                        Some(self.expect_index("pointer alignment premise")?)
+                    };
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(SpecialArithmeticNode::PointerAlignment { premise, result });
+                }
+                "pointer_word_equality" | "pointer_word" => {
+                    self.expect_ident_spelling("relation")?;
+                    let relation = self.expect_index("pointer word relation node")?;
+                    self.expect_ident_spelling("alignments")?;
+                    let alignments = self.parse_certificate_index_list("pointer alignment node")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(SpecialArithmeticNode::PointerWordEquality {
+                        relation,
+                        alignments,
+                        result,
+                    });
+                }
+                "float_reflexive" | "float_reflexivity" => {
+                    self.expect_ident_spelling("finite")?;
+                    let finite = self.expect_index("finite classification node")?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(SpecialArithmeticNode::FloatReflexive { finite, result });
+                }
+                "conclusion" => {
+                    if conclusion.is_some() {
+                        return Err(self.error(
+                            "special arithmetic certificate may contain only one `conclusion` line",
+                        ));
+                    }
+                    conclusion = Some(self.expect_index("conclusion node")?);
+                    self.expect(Token::Semicolon)?;
+                }
+                _ => {
+                    return Err(self.error(format!(
+                        "unknown special arithmetic certificate node `{keyword}`"
+                    )));
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+        let conclusion = conclusion.ok_or_else(|| {
+            self.error("special arithmetic certificate must end with `conclusion N;`")
+        })?;
+        if nodes.is_empty() {
+            return Err(self.error("special arithmetic certificate must contain a node"));
+        }
+        let premises = premises
+            .into_iter()
+            .enumerate()
+            .map(|(index, premise)| {
+                premise.ok_or_else(|| {
+                    self.error(format!(
+                        "special arithmetic premise indices must be contiguous; missing {index}"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ProofTactic::ArithmeticCertificate(
+            ArithmeticCertificate::special(SpecialArithmeticCertificate {
+                premises,
+                nodes,
+                conclusion,
+            }),
+        ))
+    }
+
+    fn parse_certificate_index_list(&mut self, expected: &str) -> Result<Vec<usize>, ClickError> {
+        self.expect(Token::LBracket)?;
+        let mut indices = Vec::new();
+        while self.peek() != Some(&Token::RBracket) {
+            indices.push(self.expect_index(expected)?);
+            if self.peek() == Some(&Token::Comma) {
+                self.position += 1;
+            } else {
+                break;
+            }
+        }
+        self.expect(Token::RBracket)?;
+        Ok(indices)
     }
 
     fn parse_signed_int32_certificate_body(&mut self) -> Result<ProofTactic, ClickError> {

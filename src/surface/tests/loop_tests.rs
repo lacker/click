@@ -468,7 +468,10 @@ fn pointer_loop_increment_emits_checked_equality_proof() {
     verify_c0_sources(&click, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
     let expanded = expand_c0_claim_source(&click, &sources, "last_element", CProofClaim::Grouped)
         .unwrap_or_else(|e| panic!("{}", e.message()));
-    assert!(expanded.contains("arithmetic() using"), "{expanded}");
+    assert!(
+        expanded.contains("arithmetic_certificate special"),
+        "{expanded}"
+    );
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|e| panic!("{}", e.message()));
 }
 
