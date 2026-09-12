@@ -1040,6 +1040,7 @@ impl<'a> Proof<'a> {
         }
         if let Some(surface_goal) = self.surface_goal()
             && let Some(goal) = self.goal()
+            && !anchored_pairs.is_empty()
             && let Some(plan) = plan_signed_arithmetic_certificate(
                 goal,
                 &anchored_pairs

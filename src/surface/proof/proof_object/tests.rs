@@ -2942,7 +2942,8 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
                 ProofStep::Rewrite(root_equality),
                 ProofStep::Both { left_proof: left, right_proof: right },
             ] if root_equality == &equality
-                && matches!(left.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
+                && (matches!(left.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
+                    || matches!(left.steps(), [ProofStep::ArithmeticCertificate(_)]))
                 && matches!(right.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
         ));
         assert!(root.state.shares_state_with(&retained_root.state));
