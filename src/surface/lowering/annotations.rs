@@ -1546,15 +1546,15 @@ pub(in crate::surface) fn click_parameter_pointer_element_widths_with_layouts(
         .iter()
         .filter_map(|parameter| {
             parameter
-                .click_type()
-                .c_type()
-                .and_then(click_array_element_type)
-                .map(|element| (parameter.name().to_string(), element.byte_width()))
+                .struct_name()
+                .and_then(|name| struct_layouts.get(name))
+                .map(|layout| (parameter.name().to_string(), layout.size_bytes()))
                 .or_else(|| {
                     parameter
-                        .struct_name()
-                        .and_then(|name| struct_layouts.get(name))
-                        .map(|layout| (parameter.name().to_string(), layout.size_bytes()))
+                        .click_type()
+                        .c_type()
+                        .and_then(click_array_element_type)
+                        .map(|element| (parameter.name().to_string(), element.byte_width()))
                 })
         })
         .collect()

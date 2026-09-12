@@ -45,6 +45,10 @@ pub(crate) struct ProofFacts {
     /// the goal and their buckets.
     bitvector_equalities_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
+    /// True finite-float classifications retain their shared fact identity so
+    /// a reflexive comparison does not publish the same premise twice.
+    finite_classifications_by_key:
+        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
     /// Exact algebraic equalities keyed by their root terms.  Goal-local
     /// constructor disequality rewrites need the variable-to-constructor
     /// premise without scanning unrelated proposition facts.
@@ -249,6 +253,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut by_integer_condition_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
+        let mut finite_classifications_by_key = PersistentMap::default();
         let mut algebraic_equalities_by_term = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
         let mut implications_by_consequent = PersistentMap::default();
@@ -279,6 +284,8 @@ impl ProofFacts {
                         index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                     bitvector_equalities_by_atom =
                         index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
+                    finite_classifications_by_key =
+                        index_finite_classification_fact(finite_classifications_by_key, &conjunct);
                     algebraic_equalities_by_term = index_algebraic_equality_fact(
                         algebraic_equalities_by_term,
                         conjunct.as_ref(),
@@ -292,6 +299,8 @@ impl ProofFacts {
                 index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
             bitvector_equalities_by_atom =
                 index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
+            finite_classifications_by_key =
+                index_finite_classification_fact(finite_classifications_by_key, &fact);
             algebraic_equalities_by_term =
                 index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
             exact = exact.with_value(fact.as_ref().clone());
@@ -309,6 +318,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
@@ -370,6 +380,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         let mut by_integer_condition_alpha = self.by_integer_condition_alpha.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
+        let mut finite_classifications_by_key = self.finite_classifications_by_key.clone();
         let mut algebraic_equalities_by_term = self.algebraic_equalities_by_term.clone();
         let by_quantified_equivalence =
             index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
@@ -386,6 +397,8 @@ impl ProofFacts {
                     index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                 bitvector_equalities_by_atom =
                     index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
+                finite_classifications_by_key =
+                    index_finite_classification_fact(finite_classifications_by_key, &conjunct);
                 algebraic_equalities_by_term =
                     index_algebraic_equality_fact(algebraic_equalities_by_term, conjunct.as_ref());
                 exact = exact.with_value(conjunct.as_ref().clone());
@@ -397,6 +410,8 @@ impl ProofFacts {
             index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
         bitvector_equalities_by_atom =
             index_bitvector_equality_fact(bitvector_equalities_by_atom, &fact);
+        finite_classifications_by_key =
+            index_finite_classification_fact(finite_classifications_by_key, &fact);
         algebraic_equalities_by_term =
             index_algebraic_equality_fact(algebraic_equalities_by_term, fact.as_ref());
         exact = exact.with_value(fact.as_ref().clone());
@@ -420,6 +435,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
@@ -951,10 +967,17 @@ impl ProofFacts {
                     ),
                     _ => continue,
                 };
-                if let Some(candidate) = self.matching_fact_across_effects(&classification, &[]) {
+                if let Some(candidate) = self
+                    .matching_indexed_finite_classification(&classification)
+                    .or_else(|| {
+                        self.matching_fact_across_effects(&classification, &[])
+                            .map(Arc::new)
+                    })
+                {
                     // Classification facts are not stored in the bitvector
-                    // relation index, so they cannot share its identity.
-                    candidates.push(Arc::new(candidate));
+                    // relation index; the dedicated index preserves their
+                    // identity across both operands.
+                    candidates.push(candidate);
                 }
             }
         }
@@ -1011,6 +1034,21 @@ impl ProofFacts {
             }
         }
         equalities
+    }
+
+    fn matching_indexed_finite_classification(
+        &self,
+        required: &Proposition,
+    ) -> Option<Arc<Proposition>> {
+        let key = snapshot_blind_proposition_key(required);
+        self.finite_classifications_by_key
+            .get(&key)
+            .and_then(|bucket| {
+                bucket
+                    .iter()
+                    .find(|candidate| self.exact.contains(candidate.as_ref()))
+                    .cloned()
+            })
     }
 
     /// The facts this context introduced after `ancestor`, oldest first.
@@ -1218,6 +1256,29 @@ fn index_bitvector_equality_fact(
             bucket.push(fact.clone());
             index = index.with_inserted(key, bucket);
         }
+    }
+    index
+}
+
+fn index_finite_classification_fact(
+    mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
+    fact: &Arc<Proposition>,
+) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>> {
+    if !matches!(
+        fact.as_ref(),
+        Proposition::ConditionIs(
+            ConditionTerm::Float32(CFloatCondition::Classification { .. })
+                | ConditionTerm::Float64(CFloatCondition::Classification { .. }),
+            true,
+        )
+    ) {
+        return index;
+    }
+    let key = snapshot_blind_proposition_key(fact.as_ref());
+    let mut bucket = index.get(&key).cloned().unwrap_or_default();
+    if !bucket.iter().any(|candidate| Arc::ptr_eq(candidate, fact)) {
+        bucket.push(fact.clone());
+        index = index.with_inserted(key, bucket);
     }
     index
 }
