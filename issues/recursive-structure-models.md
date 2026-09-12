@@ -316,6 +316,18 @@ enough to become the first regression of the package that fixes them.
     applied to refutation: when a path fact refutes an arm's own fact, the
     folded instance's model is not that constructor, published at contract
     lowering, loop heads, and loop back edges. Package A13.
+28. **Gap 23 was stale; `_Bool` and float loads are still unnamed.** T6
+    bisected the last audit disagreement to A10: naming wide integer loads
+    made the arm's assumed guard and the C guard the same term, so
+    `marked_linked_list.click:92:9` audits clean from b0cfc0e6 on; T6 adds
+    the missing regressions and tightens the stale-spelling case-fact
+    acceptance to constructor equations re-lowered at the recheck state.
+    The examples audit is 402 of 457: only the deferred witness refusal and
+    the quarantined multifile-registry remain. Left unscheduled: a `_Bool`
+    struct member breaks `unfold` of a recursive witness resource
+    ("resource rewrite changed more than a definitional representation")
+    because `Bool`, `Float32`, and `Float64` loads still read back as raw
+    `MemoryLoad` terms; the same adoption argument as A10.
 
 ## Design decisions
 
@@ -550,6 +562,8 @@ appears to need one reports the need instead of adding it.
   certificate assembly, so `click profile` could not point at this class
   of cost; and a generated 44-arm match declines to verify on a bound T4
   did not identify.
+- 2026-09-12: T6 (2ed15042) is on master; gap 23 closed as stale (gap 28).
+  All tooling packages T1 to T6 are landed. A13 in progress.
 
 ## Work packages
 
