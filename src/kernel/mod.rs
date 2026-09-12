@@ -12,6 +12,10 @@ mod functions;
 #[cfg(test)]
 pub(crate) use functions::rewrite_resource_instance;
 pub(crate) use functions::rewrite_resource_instance_selecting_children;
+// V0-V6 of the stable-view migration build the checked semantic spine before
+// V7 routes ordinary calls through it.
+#[allow(dead_code)]
+mod loans;
 mod loops;
 mod memory_provenance;
 mod nat_integer;
