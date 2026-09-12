@@ -80,110 +80,160 @@ impl SignedArithmeticAtom {
     pub(crate) fn from_term(term: &Bitvector32Term) -> Option<Self> {
         signed_arithmetic_atom_key(term)
     }
+
+    pub(crate) fn work(&self) -> usize {
+        signed_atom_work(self)
+    }
+
+    fn is_opaque_root(&self) -> bool {
+        matches!(
+            self.tokens.first(),
+            Some(SignedArithmeticAtomToken::Variable(_))
+                | Some(SignedArithmeticAtomToken::PureFunction { .. })
+        ) && self.tokens.iter().all(|token| {
+            matches!(
+                token,
+                SignedArithmeticAtomToken::Constant(_)
+                    | SignedArithmeticAtomToken::Variable(_)
+                    | SignedArithmeticAtomToken::PureFunction { .. }
+            )
+        })
+    }
 }
 
 fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmeticAtom> {
-    // Validate the whole supported fragment once.  In particular, do not
-    // re-walk every nested pure application while emitting its flat key.
-    if !is_signed_int32_expression(root) {
-        return None;
-    }
     let mut tokens = Vec::new();
     let mut pending = vec![root];
+    macro_rules! push_token {
+        ($token:expr) => {{
+            let growth = if tokens.len() == tokens.capacity() {
+                tokens.capacity().max(1)
+            } else {
+                1
+            };
+            if crate::instrumentation::deadline_exceeded_with_work(growth) {
+                return None;
+            }
+            tokens.push($token);
+        }};
+    }
     while let Some(term) = pending.pop() {
+        let units = match term {
+            Bitvector32Term::Constant(value) => (u32::BITS - value.leading_zeros()) as usize + 2,
+            Bitvector32Term::Variable(_) => 2,
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                name.len().saturating_add(arguments.len()).saturating_add(3)
+            }
+            Bitvector32Term::Add(_, _)
+            | Bitvector32Term::Subtract(_, _)
+            | Bitvector32Term::Multiply(_, _)
+            | Bitvector32Term::Divide(_, _)
+            | Bitvector32Term::Remainder(_, _)
+            | Bitvector32Term::ShiftLeft(_, _)
+            | Bitvector32Term::ArithmeticShiftRight(_, _)
+            | Bitvector32Term::LogicalShiftRight(_, _)
+            | Bitvector32Term::BitwiseAnd(_, _)
+            | Bitvector32Term::BitwiseOr(_, _)
+            | Bitvector32Term::BitwiseXor(_, _) => 3,
+            Bitvector32Term::BitwiseNot(_) => 2,
+            _ => 1,
+        };
+        if crate::instrumentation::deadline_exceeded_with_work(units) {
+            return None;
+        }
         match term {
             Bitvector32Term::Constant(value) => {
-                tokens.push(SignedArithmeticAtomToken::Constant(*value));
+                push_token!(SignedArithmeticAtomToken::Constant(*value));
             }
             Bitvector32Term::Variable(variable) => {
-                tokens.push(SignedArithmeticAtomToken::Variable(*variable));
+                push_token!(SignedArithmeticAtomToken::Variable(*variable));
             }
             Bitvector32Term::PureFunctionApplication { name, arguments } => {
-                tokens.push(SignedArithmeticAtomToken::PureFunction {
+                push_token!(SignedArithmeticAtomToken::PureFunction {
                     name: name.clone(),
                     arity: arguments.len(),
                 });
                 pending.extend(arguments.iter().rev());
             }
             Bitvector32Term::Add(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::Add,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::Subtract(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::Subtract,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::Multiply(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::Multiply,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::Divide(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::Divide,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::Remainder(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::Remainder,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::ShiftLeft(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::ShiftLeft,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::ArithmeticShiftRight(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::ArithmeticShiftRight,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::LogicalShiftRight(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::LogicalShiftRight,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::BitwiseAnd(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::BitwiseAnd,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::BitwiseOr(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::BitwiseOr,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::BitwiseXor(left, right) => {
-                tokens.push(SignedArithmeticAtomToken::Binary(
+                push_token!(SignedArithmeticAtomToken::Binary(
                     SignedArithmeticBinaryOperator::BitwiseXor,
                 ));
                 pending.push(right);
                 pending.push(left);
             }
             Bitvector32Term::BitwiseNot(operand) => {
-                tokens.push(SignedArithmeticAtomToken::UnaryNot);
+                push_token!(SignedArithmeticAtomToken::UnaryNot);
                 pending.push(operand);
             }
             _ => return None,
@@ -287,10 +337,14 @@ fn pair_is_equivalent(cache: &HashMap<(usize, usize), bool>, left: usize, right:
 
 impl TermArena {
     fn atom(&mut self, term: Bitvector32Term) -> Option<usize> {
-        let term = signed_arithmetic_atom_key(&term)?;
+        let term = SignedArithmeticAtom::from_term(&term)?;
+        Some(self.atom_key(term))
+    }
+
+    fn atom_key(&mut self, term: SignedArithmeticAtom) -> usize {
         let reference = self.terms.len();
         self.terms.push(CheckedTerm::Atom(term));
-        Some(reference)
+        reference
     }
 
     fn binary(&mut self, operator: CheckedBinaryOperator, left: usize, right: usize) -> usize {
@@ -333,6 +387,9 @@ impl TermArena {
                 }
                 match (&self.terms[left], &self.terms[right]) {
                     (CheckedTerm::Atom(left_term), CheckedTerm::Atom(right_term)) => {
+                        if !charge_atom_pair_work(left_term, right_term) {
+                            return false;
+                        }
                         let equivalent = left_term == right_term;
                         self.equivalence_cache.insert((left, right), equivalent);
                         self.equivalence_cache.insert((right, left), equivalent);
@@ -421,12 +478,15 @@ impl TermArena {
     fn equivalent_explicit(&self, reference: usize, explicit: &Bitvector32Term) -> bool {
         let mut pending = vec![(reference, explicit)];
         while let Some((reference, explicit)) = pending.pop() {
+            if crate::instrumentation::deadline_exceeded_with_work(1) {
+                return false;
+            }
             match (&self.terms[reference], explicit) {
                 (CheckedTerm::Atom(expected), actual) => {
-                    let Some(actual) = signed_arithmetic_atom_key(actual) else {
+                    let Some(actual) = SignedArithmeticAtom::from_term(actual) else {
                         return false;
                     };
-                    if expected != &actual {
+                    if !charge_atom_pair_work(expected, &actual) || expected != &actual {
                         return false;
                     }
                 }
@@ -573,6 +633,14 @@ pub(crate) enum SignedArithmeticNode {
         defined: usize,
         result: SignedArithmeticInterval,
     },
+    /// Add two intervals whose endpoint sum is already within int32.  The
+    /// child intervals therefore establish definedness without requiring a
+    /// separate source-level overflow proposition.
+    IntervalAddBounded {
+        left: usize,
+        right: usize,
+        result: SignedArithmeticInterval,
+    },
     IntervalSubtract {
         left: usize,
         right: usize,
@@ -618,6 +686,15 @@ pub(crate) enum SignedArithmeticNode {
         left: usize,
         right: usize,
         comparison: SignedArithmeticComparison,
+        result: Proposition,
+    },
+    /// Re-express an interval-justified affine machine term as a checked
+    /// proposition.  The source affine node supplies the algebraic fact;
+    /// the interval node proves that every decomposed machine operation is
+    /// defined (or has bounded endpoints).
+    AffineConclusion {
+        source: usize,
+        evidence: usize,
         result: Proposition,
     },
 }
@@ -714,7 +791,10 @@ impl SignedArithmeticCertificate {
                     if left.relation == SignedArithmeticRelation::Disequal {
                         return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
                     }
-                    if !charge_claim_work(left) || !charge_claim_work(right) {
+                    if !charge_claim_work(left)
+                        || !charge_claim_work(right)
+                        || !charge_claim_pair_work(left, right)
+                    {
                         return Err(SignedArithmeticCheckError::Overflow(node_index));
                     }
                     let expected = add_claim(left, right)
@@ -732,6 +812,9 @@ impl SignedArithmeticCertificate {
                     let source = affine_at(&checked, *source)?;
                     if source.relation != SignedArithmeticRelation::Equal {
                         return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
+                    }
+                    if !charge_claim_work(source) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
                     }
                     let expected = if *reverse {
                         negate_claim(source, SignedArithmeticRelation::LessEqual)
@@ -758,6 +841,9 @@ impl SignedArithmeticCertificate {
                     {
                         return Err(SignedArithmeticCheckError::InvalidRelation(node_index));
                     }
+                    if !charge_claim_pair_work(lower, upper) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
+                    }
                     let expected = equality_from_bounds(lower, upper)
                         .ok_or(SignedArithmeticCheckError::InvalidRelation(node_index))?;
                     if !same_int32_claim(&expected, result) {
@@ -779,17 +865,17 @@ impl SignedArithmeticCertificate {
                     upper,
                 } => {
                     let source = affine_at(&checked, *source)?;
-                    if !is_intrinsically_safe_interval_atom(term) {
+                    let atom = SignedArithmeticAtom::from_term(term)
+                        .ok_or(SignedArithmeticCheckError::InvalidOperator(node_index))?;
+                    if !atom.is_opaque_root() {
                         return Err(SignedArithmeticCheckError::InvalidOperator(node_index));
                     }
-                    let (expected_lower, expected_upper) = affine_term_bounds(source, term)
+                    let (expected_lower, expected_upper) = affine_term_bounds(source, &atom)
                         .ok_or(SignedArithmeticCheckError::InvalidEndpoint(node_index))?;
                     if (*lower, *upper) != (expected_lower, expected_upper) {
                         return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
                     }
-                    let term_reference = terms
-                        .atom(term.clone())
-                        .ok_or(SignedArithmeticCheckError::InvalidOperator(node_index))?;
+                    let term_reference = terms.atom_key(atom);
                     CheckedValue::Interval {
                         value: SignedArithmeticInterval {
                             carrier: SignedArithmeticCarrier::SignedInt32,
@@ -809,8 +895,10 @@ impl SignedArithmeticCertificate {
                     if *lower > *upper || *lower < SIGNED_MIN || *upper > SIGNED_MAX {
                         return Err(SignedArithmeticCheckError::InvalidEndpoint(node_index));
                     }
+                    let atom = SignedArithmeticAtom::from_term(term)
+                        .ok_or(SignedArithmeticCheckError::InvalidOperator(node_index))?;
                     let valid_atom =
-                        is_opaque_atom(term) && (*lower, *upper) == (SIGNED_MIN, SIGNED_MAX);
+                        atom.is_opaque_root() && (*lower, *upper) == (SIGNED_MIN, SIGNED_MAX);
                     let valid_constant = term
                         .as_const()
                         .map(|value| i64::from(value as i32))
@@ -818,9 +906,7 @@ impl SignedArithmeticCertificate {
                     if !valid_atom && !valid_constant {
                         return Err(SignedArithmeticCheckError::InvalidOperator(node_index));
                     }
-                    let term_reference = terms
-                        .atom(term.clone())
-                        .ok_or(SignedArithmeticCheckError::InvalidOperator(node_index))?;
+                    let term_reference = terms.atom_key(atom);
                     CheckedValue::Interval {
                         value: SignedArithmeticInterval {
                             carrier: *carrier,
@@ -881,7 +967,22 @@ impl SignedArithmeticCertificate {
                     let (right, right_term) = interval_at(&checked, *right)?;
                     let term = terms.binary(CheckedBinaryOperator::Add, left_term, right_term);
                     require_defined(&checked, &terms, *defined, term, node_index)?;
-                    let expected = interval_add(left, right, node_index)?;
+                    let expected = interval_add(left, right, node_index, true)?;
+                    check_interval_result(&expected, result, node_index)?;
+                    CheckedValue::Interval {
+                        value: expected,
+                        term,
+                    }
+                }
+                SignedArithmeticNode::IntervalAddBounded {
+                    left,
+                    right,
+                    result,
+                } => {
+                    let (left, left_term) = interval_at(&checked, *left)?;
+                    let (right, right_term) = interval_at(&checked, *right)?;
+                    let term = terms.binary(CheckedBinaryOperator::Add, left_term, right_term);
+                    let expected = interval_add(left, right, node_index, false)?;
                     check_interval_result(&expected, result, node_index)?;
                     CheckedValue::Interval {
                         value: expected,
@@ -1072,6 +1173,29 @@ impl SignedArithmeticCertificate {
                     }
                     CheckedValue::Proposition(result.clone())
                 }
+                SignedArithmeticNode::AffineConclusion {
+                    source,
+                    evidence,
+                    result,
+                } => {
+                    let source = affine_at(&checked, *source)?;
+                    let _ = interval_at(&checked, *evidence)?;
+                    let expected = affine_claim_from_interval_evidence(
+                        &self.nodes,
+                        &checked,
+                        &mut terms,
+                        *evidence,
+                        result,
+                    )
+                    .ok_or(SignedArithmeticCheckError::NodeResultMismatch(node_index))?;
+                    if !charge_claim_work(&expected) {
+                        return Err(SignedArithmeticCheckError::Overflow(node_index));
+                    }
+                    if !same_int32_claim(&expected, source) {
+                        return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    CheckedValue::Proposition(result.clone())
+                }
             };
             if let CheckedValue::Affine(claim) = &value
                 && !charge_claim_work(claim)
@@ -1101,21 +1225,128 @@ fn require_int32(carrier: SignedArithmeticCarrier) -> Result<(), SignedArithmeti
 }
 
 fn same_int32_claim(expected: &SignedArithmeticClaim, actual: &SignedArithmeticClaim) -> bool {
-    expected == actual && expected.carrier == SignedArithmeticCarrier::SignedInt32
+    charge_claim_pair_work(expected, actual)
+        && expected == actual
+        && expected.carrier == SignedArithmeticCarrier::SignedInt32
+}
+
+fn btree_log_work(entries: usize) -> usize {
+    (usize::BITS - entries.saturating_add(1).leading_zeros()) as usize
+}
+
+fn affine_map_work(map: &BTreeMap<SignedArithmeticAtom, BigInt>) -> usize {
+    let logarithmic = btree_log_work(map.len()).max(1);
+    map.iter().fold(1usize, |units, (atom, coefficient)| {
+        units.saturating_add(
+            signed_atom_work(atom)
+                .saturating_add(coefficient.bits() as usize + 1)
+                .saturating_mul(logarithmic),
+        )
+    })
+}
+
+fn charge_affine_map_work(map: &BTreeMap<SignedArithmeticAtom, BigInt>) -> bool {
+    !crate::instrumentation::deadline_exceeded_with_work(affine_map_work(map))
+}
+
+fn charge_affine_map_update_work(
+    map: &BTreeMap<SignedArithmeticAtom, BigInt>,
+    atom: &SignedArithmeticAtom,
+    coefficient: &BigInt,
+) -> bool {
+    let units = signed_atom_work(atom)
+        .saturating_add(coefficient.bits() as usize + 1)
+        .saturating_mul(btree_log_work(map.len()).max(1))
+        .saturating_mul(3);
+    !crate::instrumentation::deadline_exceeded_with_work(units)
+}
+
+fn charge_atom_pair_work(left: &SignedArithmeticAtom, right: &SignedArithmeticAtom) -> bool {
+    let units = left.work().saturating_add(right.work()).saturating_add(1);
+    !crate::instrumentation::deadline_exceeded_with_work(units)
+}
+
+fn charge_bigint_binary_work(left: &BigInt, right: &BigInt) -> bool {
+    let units = (left.bits() as usize + 1).saturating_mul(right.bits() as usize + 1);
+    !crate::instrumentation::deadline_exceeded_with_work(units.max(1))
+}
+
+fn charge_term_work(root: &Bitvector32Term) -> bool {
+    let mut pending = vec![root];
+    while let Some(term) = pending.pop() {
+        let units = match term {
+            Bitvector32Term::Constant(value) => (u32::BITS - value.leading_zeros()) as usize + 2,
+            Bitvector32Term::Variable(_) => 2,
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                name.len().saturating_add(arguments.len()).saturating_add(2)
+            }
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::LogicalShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                pending.push(left);
+                pending.push(right);
+                3
+            }
+            Bitvector32Term::BitwiseNot(operand) => {
+                pending.push(operand);
+                2
+            }
+            _ => 1,
+        };
+        if crate::instrumentation::deadline_exceeded_with_work(units) {
+            return false;
+        }
+    }
+    true
+}
+
+fn canonical_term_budgeted(term: &Bitvector32Term) -> Option<Bitvector32Term> {
+    if !charge_term_work(term) {
+        return None;
+    }
+    let canonical = crate::kernel::eval::canonical_term(term);
+    if !charge_term_work(&canonical) {
+        return None;
+    }
+    Some(canonical)
 }
 
 fn charge_claim_work(claim: &SignedArithmeticClaim) -> bool {
-    let mut units = claim.constant.bits() as usize + 1;
-    for (term, coefficient) in &claim.terms {
-        units = units.saturating_add(signed_atom_work(term));
-        units = units.saturating_add(coefficient.bits() as usize + 1);
-    }
+    let units = (claim.constant.bits().saturating_add(1) as usize)
+        .saturating_add(affine_map_work(&claim.terms));
+    !crate::instrumentation::deadline_exceeded_with_work(units.max(1))
+}
+
+fn charge_claim_pair_work(left: &SignedArithmeticClaim, right: &SignedArithmeticClaim) -> bool {
+    let units = (left.constant.bits().saturating_add(right.constant.bits()) as usize)
+        .saturating_add(2)
+        .saturating_add(affine_map_work(&left.terms))
+        .saturating_add(affine_map_work(&right.terms));
     !crate::instrumentation::deadline_exceeded_with_work(units.max(1))
 }
 
 fn charge_scale_work(claim: &SignedArithmeticClaim, coefficient: &BigInt) -> bool {
-    for value in claim.terms.values().chain(std::iter::once(&claim.constant)) {
-        let units = (value.bits() as usize + 1).saturating_mul(coefficient.bits() as usize + 1);
+    if !charge_affine_map_work(&claim.terms) {
+        return false;
+    }
+    for (term, value) in claim
+        .terms
+        .iter()
+        .map(|(term, value)| (Some(term), value))
+        .chain(std::iter::once((None, &claim.constant)))
+    {
+        let atom_units = term.map_or(0, signed_atom_work);
+        let units = atom_units.saturating_add(
+            (value.bits() as usize + 1).saturating_mul(coefficient.bits() as usize + 1),
+        );
         if crate::instrumentation::deadline_exceeded_with_work(units) {
             return false;
         }
@@ -1230,11 +1461,24 @@ fn scale_claim(
     source: &SignedArithmeticClaim,
     coefficient: &BigInt,
 ) -> Option<SignedArithmeticClaim> {
+    if !charge_affine_map_work(&source.terms) {
+        return None;
+    }
     let terms = source
         .terms
         .iter()
-        .map(|(term, value)| Some((term.clone(), value * coefficient)))
+        .map(|(term, value)| {
+            if !charge_affine_map_update_work(&source.terms, term, value)
+                || !charge_bigint_binary_work(value, coefficient)
+            {
+                return None;
+            }
+            Some((term.clone(), value * coefficient))
+        })
         .collect::<Option<BTreeMap<_, _>>>()?;
+    if !charge_bigint_binary_work(&source.constant, coefficient) {
+        return None;
+    }
     Some(SignedArithmeticClaim {
         carrier: source.carrier,
         relation: source.relation,
@@ -1250,9 +1494,22 @@ fn add_claim(
     if left.carrier != right.carrier {
         return None;
     }
+    if !charge_affine_map_work(&left.terms) || !charge_affine_map_work(&right.terms) {
+        return None;
+    }
+    if !charge_bigint_binary_work(&left.constant, &right.constant) {
+        return None;
+    }
     let mut terms = left.terms.clone();
     for (term, coefficient) in &right.terms {
-        let value = terms.entry(term.clone()).or_default().clone() + coefficient;
+        if !charge_affine_map_update_work(&terms, term, coefficient) {
+            return None;
+        }
+        let previous = terms.get(term).cloned().unwrap_or_default();
+        if !charge_bigint_binary_work(&previous, coefficient) {
+            return None;
+        }
+        let value = previous + coefficient;
         if value.is_zero() {
             terms.remove(term);
         } else {
@@ -1290,12 +1547,21 @@ fn equality_from_bounds(
     if lower.carrier != upper.carrier {
         return None;
     }
+    if !charge_affine_map_work(&lower.terms) || !charge_affine_map_work(&upper.terms) {
+        return None;
+    }
+    if !charge_bigint_binary_work(&upper.constant, &BigInt::one())
+        || !charge_bigint_binary_work(&lower.constant, &upper.constant)
+    {
+        return None;
+    }
     let opposite = upper
         .terms
         .iter()
         .map(|(term, coefficient)| (term.clone(), -coefficient))
         .collect::<BTreeMap<_, _>>();
-    if lower.terms != opposite || lower.constant != -&upper.constant {
+    let opposite_constant = -&upper.constant;
+    if lower.terms != opposite || lower.constant != opposite_constant {
         return None;
     }
     Some(SignedArithmeticClaim {
@@ -1315,13 +1581,15 @@ fn is_trivial(claim: &SignedArithmeticClaim) -> bool {
         }
 }
 
-fn affine_term_bounds(claim: &SignedArithmeticClaim, term: &Bitvector32Term) -> Option<(i64, i64)> {
+fn affine_term_bounds(
+    claim: &SignedArithmeticClaim,
+    atom: &SignedArithmeticAtom,
+) -> Option<(i64, i64)> {
     if claim.terms.len() != 1 || claim.relation != SignedArithmeticRelation::LessEqual {
         return None;
     }
-    let atom = signed_arithmetic_atom_key(term)?;
     let (claim_atom, coefficient) = claim.terms.iter().next()?;
-    if claim_atom != &atom {
+    if !charge_atom_pair_work(claim_atom, atom) || claim_atom != atom {
         return None;
     }
     let minimum = BigInt::from(SIGNED_MIN);
@@ -1345,76 +1613,287 @@ fn affine_term_bounds(claim: &SignedArithmeticClaim, term: &Bitvector32Term) -> 
     }
 }
 
-fn is_opaque_atom(term: &Bitvector32Term) -> bool {
-    match term {
-        Bitvector32Term::Variable(_) => true,
-        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().all(is_safe_opaque_payload)
+fn affine_claim_from_interval_evidence(
+    nodes: &[SignedArithmeticNode],
+    checked: &[CheckedValue],
+    terms: &mut TermArena,
+    evidence: usize,
+    proposition: &Proposition,
+) -> Option<SignedArithmeticClaim> {
+    let (evidence_term, evidence_affine) = interval_affine_evidence(nodes, checked, evidence)?;
+    let (condition, value) = match proposition {
+        Proposition::ConditionIs(condition, value) => (condition, *value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => (condition, !value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (relation, left, right, strict) = match (condition, value) {
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, left, right, true)
         }
-        _ => false,
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, left, right, false)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, right, left, true)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), true) => {
+            (SignedArithmeticRelation::LessEqual, right, left, false)
+        }
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, right, left, false)
+        }
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, right, left, true)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, left, right, false)
+        }
+        (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => {
+            (SignedArithmeticRelation::LessEqual, left, right, true)
+        }
+        (ConditionTerm::Bitvector32Equal(left, right), true) => {
+            let (terms, constant) = affine_difference_from_evidence(
+                left,
+                right,
+                terms,
+                &evidence_term,
+                &evidence_affine,
+            )?;
+            return Some(SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::Equal,
+                terms,
+                constant,
+            });
+        }
+        (ConditionTerm::Bitvector32Equal(left, right), false) => {
+            let (terms, constant) = affine_difference_from_evidence(
+                left,
+                right,
+                terms,
+                &evidence_term,
+                &evidence_affine,
+            )?;
+            return Some(SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::Disequal,
+                terms,
+                constant,
+            });
+        }
+        _ => return None,
+    };
+    let (terms, mut constant) =
+        affine_difference_from_evidence(left, right, terms, &evidence_term, &evidence_affine)?;
+    if strict {
+        if !charge_bigint_binary_work(&constant, &BigInt::one()) {
+            return None;
+        }
+        constant += 1;
     }
+    Some(SignedArithmeticClaim {
+        carrier: SignedArithmeticCarrier::SignedInt32,
+        relation,
+        terms,
+        constant,
+    })
 }
 
-fn is_safe_opaque_payload(root: &Bitvector32Term) -> bool {
-    let mut pending = vec![root];
-    while let Some(term) = pending.pop() {
-        match term {
-            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
-            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-                pending.extend(arguments.iter());
+fn affine_difference_from_evidence(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    terms: &mut TermArena,
+    evidence_term: &usize,
+    evidence_affine: &(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt),
+) -> Option<(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt)> {
+    let difference = |term: &Bitvector32Term, coefficient: i8| {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return None;
+        }
+        if terms.equivalent_explicit(*evidence_term, term) {
+            let multiplier = BigInt::from(coefficient);
+            let mut result = BTreeMap::new();
+            for (atom, value) in &evidence_affine.0 {
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    signed_atom_work(atom)
+                        .saturating_add(value.bits() as usize + 1)
+                        .saturating_add(multiplier.bits() as usize + 1),
+                ) {
+                    return None;
+                }
+                if !charge_affine_map_update_work(&result, atom, value) {
+                    return None;
+                }
+                if !charge_bigint_binary_work(value, &multiplier) {
+                    return None;
+                }
+                result.insert(atom.clone(), value * &multiplier);
             }
-            _ => return false,
+            if !charge_bigint_binary_work(&evidence_affine.1, &multiplier) {
+                return None;
+            }
+            return Some((result, evidence_affine.1.clone() * multiplier));
+        }
+        if contains_affine_machine_operation(term) {
+            return None;
+        }
+        affine_leaf(term).map(|(mut result, constant)| {
+            if coefficient == -1 {
+                for value in result.values_mut() {
+                    *value = -value.clone();
+                }
+                (result, -constant)
+            } else {
+                (result, constant)
+            }
+        })
+    };
+    let (left_terms, left_constant) = difference(left, 1)?;
+    let (right_terms, right_constant) = difference(right, -1)?;
+    let mut result = left_terms;
+    for (atom, coefficient) in right_terms {
+        if !charge_affine_map_update_work(&result, &atom, &coefficient) {
+            return None;
+        }
+        let previous = result.get(&atom).cloned().unwrap_or_default();
+        if !charge_bigint_binary_work(&previous, &coefficient) {
+            return None;
+        }
+        let updated = previous + coefficient;
+        if updated.is_zero() {
+            result.remove(&atom);
+        } else {
+            result.insert(atom, updated);
         }
     }
-    true
+    if !charge_bigint_binary_work(&left_constant, &right_constant) {
+        return None;
+    }
+    Some((result, left_constant + right_constant))
 }
 
-/// An affine-to-interval node may only re-use evidence for a term whose value
-/// was already produced without a machine operation that can be undefined.
-/// Compound arithmetic therefore has to arrive through an interval operation
-/// node, where its exact definedness proposition is checked locally. Constants
-/// and the bounded pure-application atom form are safe identities at this
-/// boundary. Memory loads, Click applications, algebraic matches, and
-/// pointer-derived payloads remain unsupported until they have an equivalent
-/// structural walker.
-fn is_intrinsically_safe_interval_atom(term: &Bitvector32Term) -> bool {
-    matches!(term, Bitvector32Term::Constant(_)) || is_opaque_atom(term)
-}
-
-/// Check that a compound term can be treated as one signed-int32 atom by an
-/// affine premise.  Compound machine operations are deliberately opaque here:
-/// interval nodes, which carry explicit definedness references, are the only
-/// route that may decompose them.  The iterative walk also rejects LP64
-/// pointer addresses and all other carriers hidden below an int32 operator.
-fn is_signed_int32_expression(root: &Bitvector32Term) -> bool {
-    let mut pending = vec![root];
-    while let Some(term) = pending.pop() {
-        match term {
-            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
-            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-                if !arguments.iter().all(is_safe_opaque_payload) {
-                    return false;
+fn interval_affine_evidence(
+    nodes: &[SignedArithmeticNode],
+    checked: &[CheckedValue],
+    _evidence: usize,
+) -> Option<(usize, (BTreeMap<SignedArithmeticAtom, BigInt>, BigInt))> {
+    enum Task {
+        Visit(usize),
+        Add,
+        Subtract,
+    }
+    let mut tasks = vec![Task::Visit(_evidence)];
+    let mut results = Vec::new();
+    while let Some(task) = tasks.pop() {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return None;
+        }
+        match task {
+            Task::Visit(index) => {
+                let node = nodes.get(index)?;
+                match node {
+                    SignedArithmeticNode::IntervalAtom { term, .. }
+                    | SignedArithmeticNode::IntervalFromAffine { term, .. } => {
+                        let (affine_terms, constant) = affine_leaf(term)?;
+                        let term_reference = match checked.get(index)? {
+                            CheckedValue::Interval { term, .. } => *term,
+                            _ => return None,
+                        };
+                        results.push((term_reference, (affine_terms, constant)));
+                    }
+                    SignedArithmeticNode::IntervalIntersect { left, .. } => {
+                        tasks.push(Task::Visit(*left));
+                    }
+                    SignedArithmeticNode::IntervalAdd { left, right, .. }
+                    | SignedArithmeticNode::IntervalAddBounded { left, right, .. } => {
+                        tasks.push(Task::Add);
+                        tasks.push(Task::Visit(*right));
+                        tasks.push(Task::Visit(*left));
+                    }
+                    SignedArithmeticNode::IntervalSubtract { left, right, .. } => {
+                        tasks.push(Task::Subtract);
+                        tasks.push(Task::Visit(*right));
+                        tasks.push(Task::Visit(*left));
+                    }
+                    _ => return None,
                 }
             }
-            Bitvector32Term::Add(left, right)
-            | Bitvector32Term::Subtract(left, right)
-            | Bitvector32Term::Multiply(left, right)
-            | Bitvector32Term::Divide(left, right)
-            | Bitvector32Term::Remainder(left, right)
-            | Bitvector32Term::ShiftLeft(left, right)
-            | Bitvector32Term::ArithmeticShiftRight(left, right)
-            | Bitvector32Term::LogicalShiftRight(left, right)
-            | Bitvector32Term::BitwiseAnd(left, right)
-            | Bitvector32Term::BitwiseOr(left, right)
-            | Bitvector32Term::BitwiseXor(left, right) => {
-                pending.push(left);
-                pending.push(right);
+            Task::Add | Task::Subtract => {
+                let right = results.pop()?;
+                let left = results.pop()?;
+                let mut affine_terms: BTreeMap<SignedArithmeticAtom, BigInt> = left.1.0;
+                let add = matches!(task, Task::Add);
+                for (atom, coefficient) in right.1.0 {
+                    if crate::instrumentation::deadline_exceeded_with_work(1) {
+                        return None;
+                    }
+                    let contribution = if add { coefficient } else { -coefficient };
+                    if crate::instrumentation::deadline_exceeded_with_work(
+                        signed_atom_work(&atom).saturating_add(contribution.bits() as usize + 1),
+                    ) {
+                        return None;
+                    }
+                    if !charge_affine_map_update_work(&affine_terms, &atom, &contribution) {
+                        return None;
+                    }
+                    let previous = affine_terms.get(&atom).cloned().unwrap_or_default();
+                    if !charge_bigint_binary_work(&previous, &contribution) {
+                        return None;
+                    }
+                    let updated: BigInt = previous + contribution;
+                    if updated.is_zero() {
+                        affine_terms.remove(&atom);
+                    } else {
+                        affine_terms.insert(atom, updated);
+                    }
+                }
+                if !charge_bigint_binary_work(&left.1.1, &right.1.1) {
+                    return None;
+                }
+                let constant = if add {
+                    left.1.1 + right.1.1
+                } else {
+                    left.1.1 - right.1.1
+                };
+                let term_reference = match checked.get(_evidence) {
+                    Some(CheckedValue::Interval { term, .. }) => *term,
+                    _ => 0,
+                };
+                results.push((term_reference, (affine_terms, constant)));
             }
-            Bitvector32Term::BitwiseNot(operand) => pending.push(operand),
-            _ => return false,
         }
     }
-    true
+    let (term_reference, affine) = results.pop()?;
+    if !results.is_empty() {
+        return None;
+    }
+    Some((term_reference, affine))
+}
+
+fn affine_leaf(term: &Bitvector32Term) -> Option<(BTreeMap<SignedArithmeticAtom, BigInt>, BigInt)> {
+    if let Some(value) = term.as_const().map(|value| i64::from(value as i32)) {
+        return Some((BTreeMap::new(), BigInt::from(value)));
+    }
+    let canonical = canonical_term_budgeted(term)?;
+    let atom = SignedArithmeticAtom::from_term(&canonical)?;
+    if crate::instrumentation::deadline_exceeded_with_work(atom.work()) {
+        return None;
+    }
+    Some((BTreeMap::from([(atom, BigInt::one())]), BigInt::zero()))
+}
+
+fn contains_affine_machine_operation(root: &Bitvector32Term) -> bool {
+    matches!(
+        root,
+        Bitvector32Term::Add(_, _) | Bitvector32Term::Subtract(_, _)
+    )
+}
+
+fn is_opaque_atom(term: &Bitvector32Term) -> bool {
+    SignedArithmeticAtom::from_term(term).is_some_and(|atom| atom.is_opaque_root())
 }
 
 fn interval_checked(
@@ -1448,12 +1927,19 @@ fn interval_add(
     left: &SignedArithmeticInterval,
     right: &SignedArithmeticInterval,
     node: usize,
+    has_exact_definedness: bool,
 ) -> Result<SignedArithmeticInterval, SignedArithmeticCheckError> {
-    interval_checked(
-        i128::from(left.lower) + i128::from(right.lower),
-        i128::from(left.upper) + i128::from(right.upper),
-        node,
-    )
+    let lower = i128::from(left.lower) + i128::from(right.lower);
+    let upper = i128::from(left.upper) + i128::from(right.upper);
+    if has_exact_definedness {
+        interval_checked(
+            lower.max(i128::from(SIGNED_MIN)),
+            upper.min(i128::from(SIGNED_MAX)),
+            node,
+        )
+    } else {
+        interval_checked(lower, upper, node)
+    }
 }
 
 fn interval_subtract(
@@ -1536,10 +2022,10 @@ fn is_exact_definedness(proposition: &Proposition, term: &Bitvector32Term) -> bo
 
 fn signed_arithmetic_terms_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
     match (
-        signed_arithmetic_atom_key(left),
-        signed_arithmetic_atom_key(right),
+        SignedArithmeticAtom::from_term(left),
+        SignedArithmeticAtom::from_term(right),
     ) {
-        (Some(left), Some(right)) => left == right,
+        (Some(left), Some(right)) => charge_atom_pair_work(&left, &right) && left == right,
         _ => false,
     }
 }
@@ -1661,6 +2147,9 @@ fn affine_claim(proposition: &Proposition) -> Option<SignedArithmeticClaim> {
     };
     let (terms, mut constant) = affine_difference(left, right)?;
     if strict {
+        if !charge_bigint_binary_work(&constant, &BigInt::one()) {
+            return None;
+        }
         constant += 1;
     }
     Some(SignedArithmeticClaim {
@@ -1681,24 +2170,38 @@ fn affine_difference(
     while let Some((term, coefficient)) = pending.pop() {
         match term {
             Bitvector32Term::Constant(value) => {
-                constant += coefficient * BigInt::from(*value as i32);
+                let value = BigInt::from(*value as i32);
+                if !charge_bigint_binary_work(&coefficient, &value) {
+                    return None;
+                }
+                let product = coefficient * &value;
+                if !charge_bigint_binary_work(&constant, &product) {
+                    return None;
+                }
+                constant += product;
             }
-            term if is_opaque_atom(term) || is_signed_int32_expression(term) => {
-                let atom = crate::kernel::eval::canonical_term(term);
+            term => {
+                let atom = canonical_term_budgeted(term)?;
                 if crate::instrumentation::deadline_exceeded_with_work(
-                    signed_term_work(&atom).saturating_add(coefficient.bits() as usize + 1),
+                    coefficient.bits() as usize + 1,
                 ) {
                     return None;
                 }
-                let key = signed_arithmetic_atom_key(&atom)?;
-                let updated = terms.entry(key.clone()).or_default().clone() + coefficient;
+                let key = SignedArithmeticAtom::from_term(&atom)?;
+                if !charge_affine_map_update_work(&terms, &key, &coefficient) {
+                    return None;
+                }
+                let previous = terms.get(&key).cloned().unwrap_or_default();
+                if !charge_bigint_binary_work(&previous, &coefficient) {
+                    return None;
+                }
+                let updated = previous + coefficient;
                 if updated.is_zero() {
                     terms.remove(&key);
                 } else {
                     terms.insert(key, updated);
                 }
             }
-            _ => return None,
         }
     }
     Some((terms, constant))
@@ -1706,12 +2209,21 @@ fn affine_difference(
 
 fn conclusion_matches(value: &CheckedValue, goal: &Proposition) -> bool {
     match value {
-        CheckedValue::Affine(claim) => {
-            affine_claim(goal).is_some_and(|expected| expected == *claim)
-        }
-        CheckedValue::Proposition(proposition) => proposition == goal,
+        CheckedValue::Affine(claim) => affine_claim(goal)
+            .is_some_and(|expected| charge_claim_pair_work(&expected, claim) && expected == *claim),
+        CheckedValue::Proposition(proposition) => propositions_match(proposition, goal),
         CheckedValue::Interval { .. } | CheckedValue::Defined { .. } => false,
     }
+}
+
+fn propositions_match(left: &Proposition, right: &Proposition) -> bool {
+    let Some(left_claim) = affine_claim(left) else {
+        return false;
+    };
+    let Some(right_claim) = affine_claim(right) else {
+        return false;
+    };
+    charge_claim_pair_work(&left_claim, &right_claim) && left_claim == right_claim
 }
 
 #[cfg(test)]
@@ -2103,7 +2615,7 @@ mod tests {
                 },
                 SignedArithmeticNode::IntervalFromAffine {
                     source: 0,
-                    term: compound,
+                    term: compound.clone(),
                     lower: SIGNED_MIN,
                     upper: 200,
                 },
@@ -2117,6 +2629,35 @@ mod tests {
         assert_eq!(
             unsafe_reuse.check(&premise, std::slice::from_ref(&premise)),
             Err(SignedArithmeticCheckError::InvalidOperator(1))
+        );
+
+        let masked_compound = Bitvector32Term::BitwiseAnd(
+            Box::new(compound.clone()),
+            Box::new(Bitvector32Term::Constant(255)),
+        );
+        let unsafe_operand = SignedArithmeticCertificate {
+            nodes: vec![
+                SignedArithmeticNode::IntervalAtom {
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    term: compound,
+                    lower: SIGNED_MIN,
+                    upper: SIGNED_MAX,
+                },
+                SignedArithmeticNode::IntervalBitwiseAnd {
+                    operand: 0,
+                    mask: 255,
+                    result: SignedArithmeticInterval {
+                        carrier: SignedArithmeticCarrier::SignedInt32,
+                        lower: 0,
+                        upper: 255,
+                    },
+                },
+            ],
+            conclusion: 1,
+        };
+        assert_eq!(
+            unsafe_operand.check(&le(masked_compound, Bitvector32Term::Constant(255)), &[]),
+            Err(SignedArithmeticCheckError::InvalidOperator(0))
         );
     }
 
@@ -2264,6 +2805,51 @@ mod tests {
     }
 
     #[test]
+    fn deep_interval_proposition_conclusion_uses_bounded_identity() {
+        let mut term = x();
+        for _ in 0..1024 {
+            term = Bitvector32Term::PureFunctionApplication {
+                name: "f".to_string(),
+                arguments: vec![term],
+            };
+        }
+        let goal = le(term.clone(), Bitvector32Term::Constant(0));
+        let premise_claim = claim(&goal);
+        let certificate = SignedArithmeticCertificate {
+            nodes: vec![
+                SignedArithmeticNode::Premise {
+                    index: 0,
+                    result: premise_claim,
+                },
+                SignedArithmeticNode::IntervalFromAffine {
+                    source: 0,
+                    term: term.clone(),
+                    lower: SIGNED_MIN,
+                    upper: 0,
+                },
+                SignedArithmeticNode::IntervalAtom {
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    term: Bitvector32Term::Constant(0),
+                    lower: 0,
+                    upper: 0,
+                },
+                SignedArithmeticNode::IntervalCompare {
+                    left: 1,
+                    right: 2,
+                    comparison: SignedArithmeticComparison::LessEqual,
+                    result: goal.clone(),
+                },
+            ],
+            conclusion: 3,
+        };
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            certificate.check(&goal, std::slice::from_ref(&goal))
+        });
+        assert_eq!(result, Ok(()));
+        assert!(work > 1024);
+    }
+
+    #[test]
     fn rejects_forward_and_out_of_range_references() {
         let goal = le(x(), Bitvector32Term::Constant(1));
         let certificate = SignedArithmeticCertificate {
@@ -2366,6 +2952,69 @@ mod tests {
             bad_coefficient.check(&goal, std::slice::from_ref(&premise)),
             Err(SignedArithmeticCheckError::NodeResultMismatch(1))
         ));
+    }
+
+    #[test]
+    fn scale_work_grows_with_coefficient_magnitude() {
+        let premise = le(Bitvector32Term::Constant(0), Bitvector32Term::Constant(0));
+        let mut measurements = Vec::new();
+        for bits in [8usize, 16, 32, 64] {
+            let coefficient = BigInt::one() << bits;
+            let result = claim(&premise);
+            let certificate = SignedArithmeticCertificate {
+                nodes: vec![
+                    SignedArithmeticNode::Premise {
+                        index: 0,
+                        result: claim(&premise),
+                    },
+                    SignedArithmeticNode::Scale {
+                        source: 0,
+                        coefficient,
+                        result,
+                    },
+                ],
+                conclusion: 1,
+            };
+            let (checked, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate.check(&premise, std::slice::from_ref(&premise))
+            });
+            assert_eq!(checked, Ok(()));
+            measurements.push(work);
+        }
+        assert!(measurements.windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    #[test]
+    fn affine_multi_key_and_deep_atom_work_scales() {
+        let mut measurements = Vec::new();
+        for size in [4usize, 8, 16, 32] {
+            let mut terms = BTreeMap::new();
+            for index in 0..size {
+                let mut atom = Bitvector32Term::Variable(Variable(index as u64));
+                for depth in 0..size {
+                    atom = Bitvector32Term::PureFunctionApplication {
+                        name: format!("f{depth}"),
+                        arguments: vec![atom],
+                    };
+                }
+                let key = SignedArithmeticAtom::from_term(&atom).unwrap();
+                terms.insert(key, BigInt::one());
+            }
+            let claim = SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::LessEqual,
+                terms,
+                constant: BigInt::zero(),
+            };
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(same_int32_claim(&claim, &claim));
+            });
+            measurements.push(work);
+        }
+        assert!(
+            measurements.windows(2).all(|pair| pair[1] > pair[0]),
+            "multi-key deep atom work must scale: {measurements:?}"
+        );
     }
 
     #[test]
