@@ -986,6 +986,10 @@ paths now replace memory through one invalidating state hook. Overlapping or
 unknown effects remove only affected projections (with cascading support
 cleanup); disjoint effects preserve framed observations, and an unknown loop
 effect invalidates all memory-dependent projections but not pure resources.
+Each checked transition walks only its adjacent memory-derivation edges and
+queries the affected interval candidates, giving O(edges + log U + k) work for
+U indexed ranges and k affected projections; an opaque barrier is explicitly
+output-sized over the memory-dependent projections it invalidates.
 Normalization and exact joins preserve occurrence and footprint metadata only
 when the authority and dependency topology agree. Resource-context equality
 and hashing include the observable footprint topology but never raw snapshot
@@ -1000,8 +1004,8 @@ support-occurrence, and interval-index coverage. Focused
 `cargo clippy --all-targets -- -D warnings` passed; and unfiltered
 `scripts/check.sh` passed 2758/2758 tests and 14/14 fixture/example checks
 (the existing quarantined example remains skipped). This worktree is
-`codex/mvr-w5b` from `43f4a51`; the resulting commit is reported with the
-handoff. This is a partial B1 checkpoint, not a complete W5 claim: remaining
+`codex/mvr-w5b` from `43f4a51`; the checkpoint commits are `0a1bd260` and
+`4b726370`. This is a partial B1 checkpoint, not a complete W5 claim: remaining
 W5 C/D work includes the real three-call callback/table fixtures, scoped-open
 expiry coverage, and richer prerequisite-load footprints for composite
 observations. No C source, syntax, budgets, quarantine, or unrelated semantics
