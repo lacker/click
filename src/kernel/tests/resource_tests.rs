@@ -4537,9 +4537,11 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
             });
             let state = CState::new().with_memory(memory);
             // Clause 0 is the only initially readable provider.  Put it last
-            // so every other clause first records a missing edge; an event
-            // queue must then retry exactly the newly unblocked successor.
+            // and reverse the dependents so a fixed-point implementation must
+            // rescan the whole pending suffix once per dependency depth.  An
+            // event queue instead retries only the newly unblocked successor.
             let clauses = (1..size)
+                .rev()
                 .chain(std::iter::once(0))
                 .map(|index| {
                     let base = if index == 0 {

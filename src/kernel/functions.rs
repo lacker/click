@@ -12230,6 +12230,7 @@ fn evaluate_resource_clauses_against_whole_section(
                     resource_clause_enqueue_waiters(
                         &fact,
                         assumptions,
+                        &section_supply,
                         &evaluated,
                         &mut queued,
                         &mut pending,
@@ -12358,6 +12359,7 @@ fn resource_clause_unregister_waiters(
 fn resource_clause_enqueue_waiters(
     supplied: &CResourceFact,
     assumptions: &PureFactContext,
+    section_supply: &ResourceContext,
     evaluated: &[Option<CResourceFact>],
     queued: &mut [bool],
     pending: &mut VecDeque<usize>,
@@ -12370,17 +12372,79 @@ fn resource_clause_enqueue_waiters(
             candidates.extend(indices.iter().copied());
         }
     }
-    let available = ResourceContext::new().unchecked_with_fact(supplied.clone());
     for index in candidates {
         if evaluated[index].is_none()
             && !queued[index]
             && dependencies[index]
                 .iter()
-                .any(|dependency| available.satisfies_fact(dependency, assumptions))
+                .any(|dependency| section_supply.satisfies_fact(dependency, assumptions))
         {
             queued[index] = true;
             pending.push_back(index);
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_clause_worklist_tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_supply_wakes_wide_memory_waiter() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("resource-clause-adjacent".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let wide = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ));
+        let left = CResourceFact::view_memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ));
+        let right = CResourceFact::view_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(1),
+            Bitvector32Term::Constant(2),
+        ));
+        let assumptions = PureFactContext::new();
+        let mut dependencies = vec![Vec::new()];
+        let mut waiters = BTreeMap::new();
+        resource_clause_register_waiters(0, vec![wide.clone()], &mut dependencies, &mut waiters);
+        let evaluated = vec![None];
+        let mut queued = vec![false];
+        let mut pending = VecDeque::new();
+        let section_supply = ResourceContext::new().unchecked_with_fact(left.clone());
+
+        assert!(!section_supply.satisfies_fact(&wide, &assumptions));
+        resource_clause_enqueue_waiters(
+            &left,
+            &assumptions,
+            &section_supply,
+            &evaluated,
+            &mut queued,
+            &mut pending,
+            &dependencies,
+            &waiters,
+        );
+        assert!(pending.is_empty());
+
+        let section_supply = section_supply.unchecked_with_fact(right.clone());
+        assert!(section_supply.satisfies_fact(&wide, &assumptions));
+        resource_clause_enqueue_waiters(
+            &right,
+            &assumptions,
+            &section_supply,
+            &evaluated,
+            &mut queued,
+            &mut pending,
+            &dependencies,
+            &waiters,
+        );
+        assert_eq!(pending, VecDeque::from([0]));
     }
 }
 

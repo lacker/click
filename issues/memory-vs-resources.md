@@ -455,6 +455,53 @@ was introduced. W3 did not merge or push; the manager should cherry-pick
 `09267e5a` and then `8b260cc9` (or the coherent range) after checking the
 primary branch base.
 
+## W3 follow-up: accumulated supply and nested loadability (2026-09-11)
+
+This review follow-up started from `2538cdbf` (the preceding W3 entry
+evaluation documentation checkpoint) and is committed as `58c3fa21`, still
+unmerged and unpushed. The event-driven clause queue now tests a
+newly supplied fact against the accumulated indexed section supply. A wide
+pending memory dependency can therefore wake after adjacent `[0..1]` and
+`[1..2]` supplies have been combined; candidate selection still uses the
+fact/base/block waiter index and does not rescan the section.
+
+Nested pure requirements now separate unconditional loadability atoms from
+their surrounding logic. Positive `loadable` atoms are extracted only under
+source conjunctions and lowered as checked standalone read authority. The
+entry evaluator strips only direct conjunctive `CMemoryLoadable` atoms from
+projection-derived facts, preserving unrelated conjuncts. `or`, implication,
+negation, quantifier, snapshot, range, and predicate bodies remain whole
+logical facts and cannot grant unconditional read authority. Composite bodies
+and projection observations still cannot bootstrap entry loads.
+
+The permanent regressions are
+`mdtests/contract_nested_dynamic_loadable_composite_argument.md` and
+`mdtests/contract_nested_loadable_branch_rejects_bootstrap.md`, plus the
+kernel `adjacent_supply_wakes_wide_memory_waiter` test. The dependency scaling
+fixture now reverses the dependent clause order to force one fixed-point round
+per dependency depth; sizes remain `4, 8, 16, 32`, with deterministic work
+`70, 168, 412, 1092` and attempts `7, 15, 31, 63` (`2*n-1`).
+
+Files changed in this follow-up are `src/surface/proof.rs`,
+`src/kernel/functions.rs`, `src/kernel/tests/resource_tests.rs`, the two
+new `mdtests/` files above, and this issue document. The replaced paths are
+the one-fact event wake check and the whole-proposition loadability filter;
+the old source-order dependency curve was replaced by adversarial reverse
+ordering. No new evaluator or surface authority path was added.
+
+Checks passed: `cargo check --all-targets`; `cargo fmt --all -- --check`;
+`cargo clippy --all-targets -- -D warnings`; `git diff --check`; focused
+`cargo nextest run --lib resource_tests contract_execution_tests callback_contract_tests --no-capture`
+(`172/172`); `MDTEST_FILTER=nested_ cargo nextest run --test mdtests --no-capture`;
+and `cargo nextest run --test examples example_projects --no-capture`.
+The unfiltered `scripts/check.sh` exited `0`: `2585/2585` tests and all
+`14/14` fixture/example checks passed (one existing quarantined example is
+skipped by the examples test). No tooling-stop condition or stale verifier
+process was observed. No C source, Click syntax, budget, quarantine, or
+excluded semantics changed; no free unfolding or forward-language change was
+introduced. W3 did not merge or push; the manager should cherry-pick this
+follow-up after checking the primary branch base.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

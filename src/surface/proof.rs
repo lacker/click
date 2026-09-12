@@ -2399,8 +2399,12 @@ pub(super) fn initial_claim_context(
     // the explicit loadability requirements captured before projection.
     let mut entry_pure_facts = requirement_pure_facts
         .iter()
-        .filter(|fact| !proposition_contains_memory_loadable(fact))
-        .cloned()
+        // Projection may expose a loadability atom alongside ordinary logical
+        // content.  Remove only an unconditional conjunctive loadability atom;
+        // retain the rest of the proposition so the entry evaluator sees the
+        // same checked logical requirements without treating a branch,
+        // negation, or quantifier as an unconditional read capability.
+        .filter_map(entry_pure_fact_without_unconditional_loadability)
         .collect::<Vec<_>>();
     for fact in entry_loadability_facts {
         if !entry_pure_facts.contains(&fact) {
@@ -2457,23 +2461,71 @@ pub(super) fn initial_claim_context(
     ))
 }
 
-fn proposition_contains_memory_loadable(proposition: &Proposition) -> bool {
+/// Removes loadability that projection derived as an entry-evaluator fact.
+///
+/// Only `And` is structurally safe to split: an atom in an `Or`, implication,
+/// negation, or quantifier is conditional and cannot become unconditional read
+/// authority.  Those propositions are retained as whole logical facts, while
+/// [`precondition_read_facts`] below recognizes only a standalone
+/// `CMemoryLoadable` proposition as a checked read view.  This keeps unrelated
+/// conjuncts from disappearing merely because one projected atom was removed.
+fn entry_pure_fact_without_unconditional_loadability(
+    proposition: &Proposition,
+) -> Option<Proposition> {
     match proposition {
-        Proposition::CMemoryLoadable { .. } => true,
-        Proposition::And(left, right)
-        | Proposition::Or(left, right)
-        | Proposition::Implies(left, right) => {
-            proposition_contains_memory_loadable(left)
-                || proposition_contains_memory_loadable(right)
+        Proposition::CMemoryLoadable { .. } => None,
+        Proposition::And(left, right) => {
+            let left = entry_pure_fact_without_unconditional_loadability(left);
+            let right = entry_pure_fact_without_unconditional_loadability(right);
+            match (left, right) {
+                (Some(left), Some(right)) => {
+                    Some(Proposition::And(Box::new(left), Box::new(right)))
+                }
+                (Some(proposition), None) | (None, Some(proposition)) => Some(proposition),
+                (None, None) => None,
+            }
         }
-        Proposition::Not(proposition)
-        | Proposition::ForAll {
-            body: proposition, ..
+        // Do not inspect a conditional or bound body: retaining it preserves
+        // its logic but never promotes a nested loadability atom to authority.
+        Proposition::Or(..)
+        | Proposition::Implies(..)
+        | Proposition::Not(..)
+        | Proposition::ForAll { .. }
+        | Proposition::Exists { .. } => Some(proposition.clone()),
+        _ => Some(proposition.clone()),
+    }
+}
+
+/// Collects only loadability segments that are unconditional conjuncts of a
+/// source requirement.  A separate lowered atom is used for each segment so
+/// its checked read view can be supplied to the kernel entry evaluator without
+/// lowering or authorizing the surrounding logical proposition.
+fn collect_conjunctive_loadability_segments(
+    proposition: &ClickProposition,
+    segments: &mut Vec<ContractSegment>,
+) {
+    match proposition {
+        ClickProposition::Loadable { segment } => segments.push(segment.clone()),
+        ClickProposition::And(left, right) => {
+            collect_conjunctive_loadability_segments(left, segments);
+            collect_conjunctive_loadability_segments(right, segments);
         }
-        | Proposition::Exists {
-            body: proposition, ..
-        } => proposition_contains_memory_loadable(proposition),
-        _ => false,
+        // A loadability atom under a branch, negation, quantifier, snapshot,
+        // or range binder is not unconditional entry authority.
+        ClickProposition::Comparison { .. }
+        | ClickProposition::FloatClassification { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Defined { .. }
+        | ClickProposition::At { .. }
+        | ClickProposition::Or(..)
+        | ClickProposition::Not(..)
+        | ClickProposition::Implies(..)
+        | ClickProposition::ForAll { .. }
+        | ClickProposition::Exists { .. }
+        | ClickProposition::RangeAll { .. }
+        | ClickProposition::RangeAny { .. }
+        | ClickProposition::PredicateCall { .. } => {}
     }
 }
 
@@ -2487,27 +2539,49 @@ fn explicit_entry_loadability_facts(
 ) -> Result<Vec<Proposition>, ClickError> {
     let mut facts = Vec::new();
     for requirement in function_block.requires() {
-        let explicit = matches!(
-            requirement.inner(),
-            Requirement::LoadableSegment { .. }
-                | Requirement::Proposition(ClickProposition::Loadable { .. })
-        );
-        if !explicit {
-            continue;
-        }
-        let lowered = crate::surface::lowering::requirement_propositions_with_assumptions(
-            std::slice::from_ref(requirement),
-            parsed_function.parameters(),
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-            &PureFactContext::new(),
-        )?;
-        for fact in lowered {
-            if matches!(fact, Proposition::CMemoryLoadable { .. }) && !facts.contains(&fact) {
-                facts.push(fact);
+        match requirement.inner() {
+            Requirement::LoadableSegment { .. } => {
+                let lowered = crate::surface::lowering::requirement_propositions_with_assumptions(
+                    std::slice::from_ref(requirement),
+                    parsed_function.parameters(),
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                    &PureFactContext::new(),
+                )?;
+                for fact in lowered {
+                    if matches!(fact, Proposition::CMemoryLoadable { .. }) && !facts.contains(&fact)
+                    {
+                        facts.push(fact);
+                    }
+                }
             }
+            Requirement::Proposition(proposition) => {
+                let mut segments = Vec::new();
+                collect_conjunctive_loadability_segments(proposition, &mut segments);
+                for segment in segments {
+                    let loadable = Requirement::Proposition(ClickProposition::Loadable { segment });
+                    let lowered =
+                        crate::surface::lowering::requirement_propositions_with_assumptions(
+                            std::slice::from_ref(&loadable),
+                            parsed_function.parameters(),
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                            &PureFactContext::new(),
+                        )?;
+                    for fact in lowered {
+                        if matches!(fact, Proposition::CMemoryLoadable { .. })
+                            && !facts.contains(&fact)
+                        {
+                            facts.push(fact);
+                        }
+                    }
+                }
+            }
+            Requirement::Resource(_) | Requirement::Labeled { .. } => {}
         }
     }
     Ok(facts)
