@@ -219,6 +219,12 @@ enough to become the first regression of the package that fixes them.
     generated `have c.model == old(c.model)` inside a match arm omits the
     entry-anchored rewrite because the certificate was searched against a
     goal with the entry model already substituted. Package T5.
+18. **A pointer disequality is not decided from null-ness or separation.**
+    Found by package A10 on the `Right` frame of `__rb_change_child`: the
+    inner test `parent->rb_left == old` must be false, but from
+    `parent->rb_left == 0` and `old != 0`, or from the sibling being a
+    separately owned node, the exact condition check does not derive
+    `parent->rb_left != old`. Package A11.
 
 ## Design decisions
 
@@ -424,6 +430,11 @@ appears to need one reports the need instead of adding it.
 - 2026-09-12: T3 (three audit modes fixed: post-exit `have` in an open
   scope, scope `have` expansion recording, `assumption` closing a produced
   resource claim; bb009743) is on master. T5 dispatched for the residue.
+- 2026-09-12: A10 (wide integer loads named by their load variable, so a
+  frame's unwritten facts survive a sibling write; one contract over the
+  `Top` and `Left` frames of `__rb_change_child`; b0cfc0e6) is on master
+  with a confirming full gate. A11 dispatched for gap 18. A9 and T5 are in
+  progress.
 
 ## Work packages
 
@@ -580,6 +591,14 @@ path premises versus contract assumptions). Regressions: the reduction as a
 positive; the same with the fact genuinely invalidated by the write as a
 negative. Depends on A8; C3 and C5 depend on it.
 
+**A11. Decide `p != q` from `p == 0` and `q != 0`, and from separation.**
+Scope: a bounded derived pointer fact in the exact condition check and in
+`simp`/`normalize`, keyed by the pointers involved. Regressions: the two
+null-ness reductions, a negative with neither pointer known non-null, the
+separation case, and the `Right` arm added to
+`mdtests/rb_ctx_change_child_one_contract.md` so one contract covers all
+three frames. Depends on A10; C3 and C5 depend on it.
+
 **T4. Make wide execution joins linear.**
 Scope: profile the frontier split and join path on the N-arm match and
 nested `branch` fixtures from gap 15, remove the deep clones or make them
@@ -647,7 +666,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, A8, A9, A10, B1, C1, C2.
+on A4, A8, A9, A10, A11, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with
