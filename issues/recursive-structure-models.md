@@ -108,6 +108,23 @@ enough to become the first regression of the package that fixes them.
    tree_at(root)` is refused ("has fields; bind it with `owns name: ...`")
    and no spelling names a fielded child. Package A4 must accept a matched
    body's named arm children, for functions and loops alike.
+8. **A pure function cannot return a bare pointer type.** Found by package
+   A6: `evaluate_spec_pure_function_application_paths` builds results with
+   `c_value_from_bitvector_term`, which has no opaque pointer term, so an
+   accessor `heap_node(t) -> struct tree_node*` cannot be lowered. Adding one
+   means a new pointer-block variant with congruence, substitution,
+   canonicalization, and block-distinctness rules, which is a
+   soundness-sensitive kernel package. Not scheduled: state traversal results
+   through `inorder` and list constructors instead (`exists (rest) {
+   rb_inorder(m) == List::Cons(result, rest) }`), and revisit only if a
+   required contract cannot be spelled that way.
+9. **A C call result used directly in a condition has no surface name.**
+   Found by package A6 on the scaffold's `tree_contains`: `if
+   (tree_contains(root->left, target)) return 1;` leaves the branch fact
+   `v1000001 != 0` and the contract fact `v1000001 == heap_member(...)` with
+   no way to state the equation between them, so the unguarded `ensures
+   result == heap_member(old(t.model), target)` does not verify; the guarded
+   `root == target implies ...` form does. Package A7.
 
 ## Design decisions
 
@@ -372,6 +389,16 @@ bindings in scope inside nested `branch` and proof `if` arms and inside a
 negative where the pointers are provably different. No new syntax: this is
 lowering and kernel scope. Depends on nothing; C4 and the B2 membership
 result depend on it.
+
+**A7. Name a call result used directly in a condition.**
+Scope: let a proof refer to the scalar result of a C call that appears only
+inside a condition or return expression (gap 9), for example through the
+existing `let r = step(call, {...})` binder form applied at that frontier,
+or through the postcondition being available on the branch fact by the
+call's result identity. Regression: the scaffold's `tree_contains` with the
+unguarded `ensures result == heap_member(old(t.model), target)`, and a
+small fixture with `if (f(x)) return 1;`. No new syntax if the `let ... =
+step(...)` form suffices. Depends on A6.
 
 ### Phase B: models on the fixed scaffold
 
