@@ -1305,6 +1305,18 @@ binds it to the recorded origin of the word the `where` fact relates it to, so
 after `node->word = (unsigned long)tail;` the witness is `tail`. A word with no
 recorded origin cannot fold, and the diagnostic names the missing body fact.
 
+A resource parameter serves the same purpose when the packed pointer is already
+named by the caller. `rb_at(p, parent)` in `mdtests/rb_at_link_helpers.md` takes
+the parent as its second parameter and states
+`fact p->__rb_parent_color == address(parent) + (p->__rb_parent_color & 1);`,
+so `rb_parent`'s `(struct rb_node *)(r->__rb_parent_color & ~3)` recovers that
+parameter with its provenance. Keep the tag in the stated form
+`(p->__rb_parent_color & 1)` rather than an opaque pure-function application:
+clearing tag bits needs the tag proven below 4, and a function such as
+`color_bit(color)` is opaque until it is unfolded at a concrete constructor. A
+second fact `(p->__rb_parent_color & 1) == color_bit(color)` then ties the bit
+to the model.
+
 There is no `else`: when the guard is false, the body is empty. The guard must
 be load-free, because it decides which memory resource facts exist and therefore
 cannot depend on reading that same memory. A guarded body may directly contain
