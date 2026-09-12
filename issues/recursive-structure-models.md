@@ -632,6 +632,14 @@ appears to need one reports the need instead of adding it.
   induction-hypothesis limit (gap 32), and the inline-helper termination
   gap (gap 33); S1, A15, A16 dispatched, C4 in progress. C3 waits on A15
   and A16.
+- 2026-09-12: A15 (819cb5b1) is on master: inlined helpers are call-graph
+  nodes for termination, and a sidecar-contracted inline helper with its
+  own ranked loop is keyed by its executing name. Two notes, not
+  scheduled: a contract-less inline helper that contains a loop cannot be
+  proven at all today (the caller's `execute()` has no loop region for it,
+  so a symbolic argument unrolls until the budget is exhausted), and the
+  termination SCC step runs a reachability query per ordered function pair,
+  quadratic in function count, which a kernel-scale import would hit.
 
 ## Work packages
 
