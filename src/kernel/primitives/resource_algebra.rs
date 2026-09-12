@@ -481,7 +481,17 @@ pub(crate) fn concrete_memory_range_bounds(range: &CMemoryRange) -> Option<(i64,
 
 fn memory_footprint_for_fact(fact: &CResourceFact) -> ResourceMemoryFootprint {
     if let Some(range) = fact.memory_range() {
-        return ResourceMemoryFootprint::Exact(std::sync::Arc::from(vec![range.clone()]));
+        let mut ranges = vec![range.clone()];
+        let mut uncertain = false;
+        collect_memory_load_ranges(&range.base().offset, &mut ranges, &mut uncertain);
+        collect_memory_load_ranges_from_term(range.start(), &mut ranges, &mut uncertain);
+        collect_memory_load_ranges_from_term(range.end(), &mut ranges, &mut uncertain);
+        if uncertain {
+            return ResourceMemoryFootprint::Unknown;
+        }
+        ranges.sort();
+        ranges.dedup();
+        return ResourceMemoryFootprint::Exact(std::sync::Arc::from(ranges));
     }
     // A composite core is the result of one or more body loads.  Until the
     // lowering supplies those prerequisite ranges explicitly, treating it as
@@ -491,6 +501,114 @@ fn memory_footprint_for_fact(fact: &CResourceFact) -> ResourceMemoryFootprint {
         ResourceMemoryFootprint::Unknown
     } else {
         ResourceMemoryFootprint::None
+    }
+}
+
+/// Add the checked scalar cells that were read to form a projected address.
+/// A memory resource's final range is not sufficient when its base or bounds
+/// contain a load (for example, `owner->items[owner->length]`).  The compact
+/// term walk is deliberately conservative for expression forms whose load
+/// children are not exposed by this routine: those projections become an
+/// unknown footprint instead of escaping invalidation.
+fn collect_memory_load_ranges(
+    offset: &PointerOffsetTerm,
+    ranges: &mut Vec<CMemoryRange>,
+    uncertain: &mut bool,
+) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_memory_load_ranges(left, ranges, uncertain);
+            collect_memory_load_ranges(right, ranges, uncertain);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. }
+        | PointerOffsetTerm::Int64Scaled { value, .. } => {
+            collect_memory_load_ranges_from_term(value, ranges, uncertain);
+        }
+    }
+}
+
+fn collect_memory_load_ranges_from_term(
+    term: &Bitvector32Term,
+    ranges: &mut Vec<CMemoryRange>,
+    uncertain: &mut bool,
+) {
+    match term {
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            ranges.push(CMemoryRange::new(
+                pointer.as_ref().clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ));
+            collect_memory_load_ranges(&pointer.offset, ranges, uncertain);
+        }
+        Bitvector32Term::PointerAddress(pointer) => {
+            collect_memory_load_ranges(&pointer.offset, ranges, uncertain);
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::UnsignedDivide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::UnsignedRemainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::LogicalShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right)
+        | Bitvector32Term::Int64Add(left, right)
+        | Bitvector32Term::Int64Subtract(left, right)
+        | Bitvector32Term::Int64Multiply(left, right)
+        | Bitvector32Term::Int64Divide(left, right)
+        | Bitvector32Term::Int64Remainder(left, right)
+        | Bitvector32Term::Int64ShiftLeft(left, right)
+        | Bitvector32Term::Int64ArithmeticShiftRight(left, right)
+        | Bitvector32Term::Int64BitwiseAnd(left, right)
+        | Bitvector32Term::Int64BitwiseOr(left, right)
+        | Bitvector32Term::Int64BitwiseXor(left, right)
+        | Bitvector32Term::UInt64Add(left, right)
+        | Bitvector32Term::UInt64Subtract(left, right)
+        | Bitvector32Term::UInt64Multiply(left, right)
+        | Bitvector32Term::UInt64Divide(left, right)
+        | Bitvector32Term::UInt64Remainder(left, right)
+        | Bitvector32Term::UInt64ShiftLeft(left, right)
+        | Bitvector32Term::UInt64LogicalShiftRight(left, right)
+        | Bitvector32Term::UInt64BitwiseAnd(left, right)
+        | Bitvector32Term::UInt64BitwiseOr(left, right)
+        | Bitvector32Term::UInt64BitwiseXor(left, right)
+        | Bitvector32Term::Float32Binary { left, right, .. }
+        | Bitvector32Term::Float64Binary { left, right, .. } => {
+            collect_memory_load_ranges_from_term(left, ranges, uncertain);
+            collect_memory_load_ranges_from_term(right, ranges, uncertain);
+        }
+        Bitvector32Term::BitwiseNot(value)
+        | Bitvector32Term::Float32Negate(value)
+        | Bitvector32Term::Float64Negate(value)
+        | Bitvector32Term::Int64From32(value)
+        | Bitvector32Term::Int64FromUInt32(value)
+        | Bitvector32Term::UInt64From32(value)
+        | Bitvector32Term::UInt32From64(value)
+        | Bitvector32Term::UInt64FromInt32(value)
+        | Bitvector32Term::UInt64FromInt64(value)
+        | Bitvector32Term::Int64BitwiseNot(value)
+        | Bitvector32Term::UInt64BitwiseNot(value) => {
+            collect_memory_load_ranges_from_term(value, ranges, uncertain);
+        }
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::Variable(_) => {}
+        // These forms can hide load-bearing children behind a separate
+        // semantic object. Until that object exposes its checked reads,
+        // conservatively invalidate the whole projection on memory writes.
+        Bitvector32Term::If { .. }
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::PureFunctionApplication { .. }
+        | Bitvector32Term::ClickFunctionApplication { .. }
+        | Bitvector32Term::AlgebraicMatch { .. }
+        | Bitvector32Term::IntegerToMachine { .. } => *uncertain = true,
     }
 }
 
