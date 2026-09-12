@@ -380,8 +380,26 @@ pub(super) fn describe_pure_fact(
                 _ => format!("malformed named contract fact `{contract}`"),
             }
         }
-        _ => bounded_debug(fact),
+        _ => describe_unclassified_pure_fact(fact),
     }
+}
+
+/// Renders a fact whose shape has no sentence above through the bounded
+/// proposition printer.
+///
+/// `Debug` is not an option here. A kernel proposition carries shared
+/// structure a developer dump repeats per occurrence — an algebraic term
+/// holds its whole instantiated `AlgebraicSchemas`, and a state-indexed term
+/// holds memory snapshots — so the fallback grows with the datatype
+/// declarations rather than with the claim. The printer in
+/// `proof_diagnostics::render` spells the same proposition in its source
+/// vocabulary under node, depth, and byte bounds; `CLICK_FULL_DIAGNOSTICS`
+/// still yields the developer dump.
+fn describe_unclassified_pure_fact(fact: &Proposition) -> String {
+    if std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some() {
+        return format!("{fact:?}");
+    }
+    crate::surface::proof_diagnostics::render::render_proposition(fact)
 }
 
 pub(super) fn describe_execution_pure_facts(facts: &[ExecutionPureFact]) -> String {
@@ -784,7 +802,7 @@ pub(super) fn format_declared_resource(
             .iter()
             .map(|argument| match argument {
                 AlgebraicValue::C(value) => describe_c_value(value, parameters, arguments),
-                AlgebraicValue::Integer(value) => format!("{value:?}"),
+                AlgebraicValue::Integer(value) => describe_integer_term(value),
                 AlgebraicValue::Algebraic(value) =>
                     format!("<{} model>", value.algebraic_type.name),
             })
@@ -1794,7 +1812,25 @@ pub(super) fn describe_bitvector_with_context(
             describe_bitvector_with_context(then_term, parameters, arguments),
             describe_bitvector_with_context(else_term, parameters, arguments)
         ),
-        Bitvector32Term::RangeFold { .. } => bounded_debug(term),
+        // A fold body is an arbitrary term over its own binders, so it has no
+        // shorter source spelling; render it through the bounded proposition
+        // printer rather than dumping the developer structure.
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => format!(
+            "fold({}..{}, init={}, acc=v{}, item=v{}, body={})",
+            describe_bitvector_with_context(start, parameters, arguments),
+            describe_bitvector_with_context(end, parameters, arguments),
+            describe_bitvector_with_context(initial, parameters, arguments),
+            accumulator.0,
+            item.0,
+            describe_bitvector_with_context(body, parameters, arguments)
+        ),
         Bitvector32Term::PureFunctionApplication {
             name,
             arguments: values,
@@ -1911,26 +1947,45 @@ pub(super) fn describe_pointer_offset(offset: &PointerOffsetTerm) -> String {
     }
 }
 
+/// Renders an exact-arithmetic comparison through the bounded term printer.
+///
+/// An `IntegerTerm` can carry a pure-function application or an algebraic
+/// elimination, so its `Debug` reaches the whole instantiated datatype schema
+/// graph the way a proposition's does.
+fn describe_integer_comparison(
+    left: &crate::kernel::SharedIntegerTerm,
+    operator: &str,
+    right: &crate::kernel::SharedIntegerTerm,
+) -> String {
+    format!(
+        "{} {operator} {}",
+        describe_integer_term(left),
+        describe_integer_term(right)
+    )
+}
+
+fn describe_integer_term(term: &crate::kernel::IntegerTerm) -> String {
+    crate::surface::proof_diagnostics::render::render_integer_term(term)
+}
+
 pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
     match condition {
         ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality".to_string(),
         ConditionTerm::IntegerLessThan(left, right) => {
-            format!("{left:?} < {right:?}")
+            describe_integer_comparison(left, "<", right)
         }
         ConditionTerm::IntegerLessEqual(left, right) => {
-            format!("{left:?} <= {right:?}")
+            describe_integer_comparison(left, "<=", right)
         }
         ConditionTerm::IntegerGreaterThan(left, right) => {
-            format!("{left:?} > {right:?}")
+            describe_integer_comparison(left, ">", right)
         }
         ConditionTerm::IntegerGreaterEqual(left, right) => {
-            format!("{left:?} >= {right:?}")
+            describe_integer_comparison(left, ">=", right)
         }
-        ConditionTerm::IntegerEqual(left, right) => {
-            format!("{left:?} == {right:?}")
-        }
+        ConditionTerm::IntegerEqual(left, right) => describe_integer_comparison(left, "==", right),
         ConditionTerm::IntegerNotEqual(left, right) => {
-            format!("{left:?} != {right:?}")
+            describe_integer_comparison(left, "!=", right)
         }
         ConditionTerm::Constant(value) => value.to_string(),
         ConditionTerm::Variable(variable) => format!("cond{}", variable.0),

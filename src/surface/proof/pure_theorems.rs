@@ -4054,7 +4054,8 @@ fn apply_pure_induction_hypothesis(
         for premise in premises {
             if !exact_fact_is_available(premise, available) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `apply using` requires an unavailable exact premise: {premise:?}"
+                    "`{claim_label}` tactic {tactic_index}: `apply using` requires an unavailable exact premise: {}",
+                    describe_pure_fact(premise, &[], &[])
                 )));
             }
         }
@@ -4156,7 +4157,9 @@ fn apply_pure_induction_hypothesis(
     }
     if !proves(&nonnegative) && !positive_subtraction {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: induction hypothesis argument is not proved nonnegative: {nonnegative:?}\n  available: {available:#?}"
+            "`{claim_label}` tactic {tactic_index}: induction hypothesis argument is not proved nonnegative: {}\n  {}",
+            describe_pure_fact(&nonnegative, &[], &[]),
+            describe_available_facts(available, &[], &[], &[], &[])
         )));
     }
     if !available.contains(&nonnegative) {
@@ -4196,7 +4199,8 @@ fn apply_pure_induction_hypothesis(
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
         if requirement != nonnegative && !proves(&requirement) {
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: induction hypothesis requirement is unavailable: {requirement:?}"
+                "`{claim_label}` tactic {tactic_index}: induction hypothesis requirement is unavailable: {}",
+                describe_pure_fact(&requirement, &[], &[])
             )));
         }
         application_premises.push(requirement);
@@ -4326,7 +4330,7 @@ fn prove_pure_theorem_goal(
                 return Err(ClickError::new(format!(
                     "`{proof_name}` failed for `{claim_label}`: simplified proposition was not true: {}\n  {}",
                     describe_pure_fact(&goal, &[], &[]),
-                    describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
+                    describe_available_facts(&available, &[], &[], &[], &[])
                 )));
             }
         }
@@ -4771,7 +4775,8 @@ fn prove_pure_theorem_tactics(
                 for premise in &explicit_premises {
                     if !exact_fact_is_available(premise, &available) {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `apply using` requires an unavailable exact premise: {premise:?}"
+                            "`{claim_label}` tactic {tactic_index}: `apply using` requires an unavailable exact premise: {}",
+                            describe_pure_fact(premise, &[], &[])
                         )));
                     }
                 }
@@ -5129,7 +5134,7 @@ fn prove_pure_theorem_tactics(
                         return Err(ClickError::new(format!(
                             "`simp` failed for `{claim_label}`: simplified proposition was not true: {}\n  {}",
                             describe_pure_fact(&goal, &[], &[]),
-                            describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
+                            describe_available_facts(&available, &[], &[], &[], &[])
                         )));
                     }
                 }

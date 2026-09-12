@@ -514,6 +514,63 @@ fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
     assert!(message.len() < 1000, "{message}");
 }
 
+/// A goal whose shape has no prepared sentence used to fall through to the
+/// kernel proposition's `Debug`, which carries every variant of every
+/// reachable datatype family for each occurrence of a value, and the `simp`
+/// report printed the goal twice.  The bounded printer renders the same claim
+/// in its source vocabulary, once.
+#[test]
+fn failed_compound_algebraic_simp_renders_the_goal_once_without_a_debug_dump() {
+    let source = r#"
+        spec enum Color { Red, Black }
+        spec enum RbTree { Empty, Node(int32, Color, RbTree, RbTree) }
+
+        function color_bit(color: Color) -> int32 {
+            match color {
+                Color::Red => 0,
+                Color::Black => 1,
+            }
+        }
+
+        function root_color(tree: RbTree) -> Color {
+            match tree {
+                RbTree::Empty => Color::Black,
+                RbTree::Node(value, color, left, right) => color,
+            }
+        }
+
+        theorem color_bit_is_two(t: RbTree) {
+            ensures color_bit(root_color(t)) == 2 and root_color(t) == Color::Red by {
+                simp();
+            }
+        }
+    "#;
+    let error = verify_c0_sources(source, &[]).unwrap_err();
+    let message = error.message();
+    assert!(message.contains("color_bit_is_two.ensures_0"), "{message}");
+    assert!(message.contains("root_color("), "{message}");
+    assert!(message.contains("Color::Red"), "{message}");
+    assert!(message.contains("available pure facts: []"), "{message}");
+    for marker in [
+        "AlgebraicSchemas",
+        "AlgebraicTerm",
+        "AlgebraicType",
+        "AlgebraicVariantType",
+        "ClickFunctionApplication",
+        "algebraic_type:",
+        "variants:",
+        "grounded:",
+        "rigid:",
+    ] {
+        assert!(!message.contains(marker), "{marker}: {message}");
+    }
+    // The goal is reported once, not once as the simplified proposition and
+    // again as the missing fact.
+    assert_eq!(message.matches("Color::Red").count(), 1, "{message}");
+    assert!(!message.contains("missing pure fact"), "{message}");
+    assert!(message.len() < 600, "{message}");
+}
+
 #[test]
 fn negative_mdtest_failures_include_structured_kernel_context() {
     for name in [

@@ -6,8 +6,9 @@
 //! the useful part of a diagnostic.
 
 use crate::kernel::{
-    Bitvector32Term, CExpressionOutcome, CMemory, CResource, CState, ConditionTerm,
-    IntegerRangeFoldIndex, IntegerTerm, Pointer, PointerOffsetTerm, Proposition, Term,
+    AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, Bitvector32Term, CExpressionOutcome, CMemory,
+    CResource, CState, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm, Pointer,
+    PointerOffsetTerm, Proposition, PureFunctionArgument, Term,
 };
 use std::fmt::Write;
 
@@ -34,6 +35,25 @@ pub(crate) fn render_proposition(proposition: &Proposition) -> String {
         }
         renderer.output.truncate(end);
         renderer.output.push_str(SUFFIX);
+    }
+    renderer.output
+}
+
+/// Render one exact-arithmetic term under the same bounds.
+///
+/// An `IntegerTerm` can hold a pure-function application or an algebraic
+/// elimination, so its `Debug` reaches the same datatype schemas a
+/// proposition's does.
+pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
+    let mut renderer = Renderer {
+        output: String::with_capacity(128),
+        nodes: 0,
+        depth: 0,
+        truncated: false,
+    };
+    renderer.integer(term);
+    if renderer.truncated {
+        renderer.output.push('…');
     }
     renderer.output
 }
@@ -357,8 +377,111 @@ impl Renderer {
             Term::CMemory(m) => self.memory(m),
             Term::CState(s) => self.state(s),
             Term::Sequence(_) => self.push("sequence(<bounded opaque value>)"),
-            Term::Algebraic(_) => self.push("algebraic(<bounded opaque value>)"),
+            Term::Algebraic(value) => self.algebraic(value),
         }
+    }
+
+    /// Renders an algebraic term in its source spelling: a constructor, a pure
+    /// function application, an elimination, or a binder.
+    ///
+    /// The datatype's declaration graph is deliberately not rendered. An
+    /// `AlgebraicTerm` carries the whole instantiated `AlgebraicSchemas` so the
+    /// kernel can check formation without trusting surface names, and printing
+    /// that structure repeats every variant of every reachable family for each
+    /// occurrence of a value. The type's own name is what a reader needs.
+    fn algebraic(&mut self, term: &AlgebraicTerm) {
+        if !self.visit() {
+            return;
+        }
+        self.depth += 1;
+        match &term.node {
+            AlgebraicTermNode::Variable(variable) => {
+                self.fmt(format_args!("v{}:{}", variable.0, term.algebraic_type.name))
+            }
+            AlgebraicTermNode::Constructor { variant, fields } => {
+                self.fmt(format_args!("{}::{variant}", term.algebraic_type.name));
+                if !fields.is_empty() {
+                    self.push("(");
+                    for (index, field) in fields.iter().enumerate() {
+                        if self.truncated {
+                            break;
+                        }
+                        if index > 0 {
+                            self.push(", ");
+                        }
+                        self.algebraic_value(field);
+                    }
+                    self.push(")");
+                }
+            }
+            AlgebraicTermNode::Match { scrutinee, arms } => {
+                self.push("match ");
+                self.algebraic(scrutinee);
+                self.push(" { ");
+                for (index, arm) in arms.iter().enumerate() {
+                    if self.truncated {
+                        break;
+                    }
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.push(&arm.variant);
+                    self.push(" => ");
+                    self.algebraic(&arm.body);
+                }
+                self.push(" }");
+            }
+            AlgebraicTermNode::PureFunctionApplication { name, arguments } => {
+                self.push(name);
+                self.push("(");
+                self.pure_arguments(arguments);
+                self.push(")");
+            }
+        }
+        self.depth -= 1;
+    }
+
+    fn algebraic_value(&mut self, value: &AlgebraicValue) {
+        if !self.visit() {
+            return;
+        }
+        self.depth += 1;
+        match value {
+            AlgebraicValue::C(value) => self.cvalue(value),
+            AlgebraicValue::Integer(value) => self.integer(value),
+            AlgebraicValue::Algebraic(value) => self.algebraic(value),
+        }
+        self.depth -= 1;
+    }
+
+    fn pure_arguments(&mut self, arguments: &[PureFunctionArgument]) {
+        for (index, argument) in arguments.iter().enumerate() {
+            if self.truncated {
+                break;
+            }
+            if index > 0 {
+                self.push(", ");
+            }
+            self.pure_argument(argument);
+        }
+    }
+
+    fn pure_argument(&mut self, argument: &PureFunctionArgument) {
+        if !self.visit() {
+            return;
+        }
+        self.depth += 1;
+        match argument {
+            PureFunctionArgument::Value(value) => self.cvalue(value),
+            PureFunctionArgument::Integer(value) => self.integer_shared(value),
+            PureFunctionArgument::Algebraic(value) => self.algebraic(value),
+            PureFunctionArgument::ArrayRef { pointer, .. } => {
+                self.push("array-ref(<memory snapshot>, ");
+                self.cvalue(pointer);
+                self.push(")");
+            }
+        }
+        self.depth -= 1;
     }
     fn condition(&mut self, c: &ConditionTerm) {
         match c {
@@ -396,6 +519,11 @@ impl Renderer {
                 self.binary_condition_bv(a, b, "int32 >=")
             }
             ConditionTerm::Bitvector32Equal(a, b) => self.binary_condition_bv(a, b, "int32 ="),
+            ConditionTerm::AlgebraicEqual(a, b) => {
+                self.algebraic(a);
+                self.push(" = ");
+                self.algebraic(b);
+            }
             ConditionTerm::PointerOffsetEqual(a, b) => {
                 self.offset(a, 0);
                 self.push(" = ");
@@ -441,10 +569,27 @@ impl Renderer {
             IntegerTerm::Subtract(left, right) => self.integer_binary(left, "-", right),
             IntegerTerm::Multiply(left, right) => self.integer_binary(left, "*", right),
             IntegerTerm::PureFunctionApplication(application) => {
-                self.fmt(format_args!("pure-function#{}", application.id()))
+                self.push(application.name());
+                self.push("(");
+                self.pure_arguments(application.arguments());
+                self.push(")");
             }
-            IntegerTerm::AlgebraicMatch { arms, .. } => {
-                self.fmt(format_args!("integer-match({} arms)", arms.len()))
+            IntegerTerm::AlgebraicMatch { scrutinee, arms } => {
+                self.push("match ");
+                self.algebraic(scrutinee);
+                self.push(" { ");
+                for (index, arm) in arms.iter().enumerate() {
+                    if self.truncated {
+                        break;
+                    }
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.push(&arm.variant);
+                    self.push(" => ");
+                    self.integer_shared(&arm.body);
+                }
+                self.push(" }");
             }
             IntegerTerm::RangeFold {
                 index,
@@ -539,6 +684,48 @@ impl Renderer {
                     accumulator.0, item.0
                 ));
                 self.bitvector(body);
+                self.push(")");
+            }
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                self.push(name);
+                self.push("(");
+                for (index, argument) in arguments.iter().enumerate() {
+                    if self.truncated {
+                        break;
+                    }
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.bitvector(argument);
+                }
+                self.push(")");
+            }
+            Bitvector32Term::ClickFunctionApplication { name, arguments } => {
+                self.push(name);
+                self.push("(");
+                self.pure_arguments(arguments);
+                self.push(")");
+            }
+            Bitvector32Term::AlgebraicMatch { scrutinee, arms } => {
+                self.push("match ");
+                self.algebraic(scrutinee);
+                self.push(" { ");
+                for (index, arm) in arms.iter().enumerate() {
+                    if self.truncated {
+                        break;
+                    }
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.push(&arm.variant);
+                    self.push(" => ");
+                    self.bitvector(&arm.body);
+                }
+                self.push(" }");
+            }
+            Bitvector32Term::PointerAddress(pointer) => {
+                self.push("address(");
+                self.pointer(pointer);
                 self.push(")");
             }
             _ => self.push("bitvector(<bounded opaque operation>)"),
