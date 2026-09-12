@@ -232,7 +232,7 @@ fn signed_surface_terms_equal(
     true
 }
 
-fn integer_plan_to_surface_certificate(
+pub(super) fn integer_plan_to_surface_certificate(
     plan: &IntegerArithmeticCertificate,
     premise_pairs: &[(Proposition, ClickProposition)],
     surface_goal: &ClickProposition,

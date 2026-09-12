@@ -796,6 +796,13 @@ impl<'a> Proof<'a> {
                 self.lower_cited_surface_proposition(premise, "`arithmetic using` premise")
             })
             .collect::<Result<Vec<_>, _>>()?;
+        for (index, premise) in premises.iter().enumerate() {
+            if !self.facts().exact_available_across_effects(premise, &[]) {
+                return Err(self.step_error(format!(
+                    "`arithmetic using` premise {index} is not exactly available"
+                )));
+            }
+        }
         if let Some(goal) = self.goal()
             && let Some(plan) =
                 crate::surface::checking::plan_special_arithmetic_certificate(goal, &premises)
@@ -817,6 +824,27 @@ impl<'a> Proof<'a> {
             });
             if let Ok(handle) = handle {
                 return Ok((handle, Some(certificate)));
+            }
+        }
+        if let Some(goal) = self.goal()
+            && let Some(surface_goal) = self.surface_goal()
+            && let Some(plan) =
+                crate::surface::checking::plan_integer_affine_certificate(goal, &premises)
+        {
+            let pairs = premises
+                .iter()
+                .cloned()
+                .zip(anchored_surface_premises.iter().cloned())
+                .collect::<Vec<_>>();
+            if let Some(certificate) =
+                crate::surface::proof::smart_closures::integer_plan_to_surface_certificate(
+                    &plan,
+                    &pairs,
+                    surface_goal,
+                )
+            {
+                let handle = self.apply_integer_certificate(&certificate)?;
+                return Ok((handle, Some(ArithmeticCertificate::integer(certificate))));
             }
         }
         if let Some(goal) = self.goal()

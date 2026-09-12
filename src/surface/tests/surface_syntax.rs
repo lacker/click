@@ -1366,6 +1366,46 @@ fn signed_arithmetic_using_requires_every_needed_exact_premise() {
 }
 
 #[test]
+fn integer_arithmetic_uses_checked_unified_certificate_without_replanning() {
+    let source = r#"
+        theorem integer_smart_bound(x: Integer) {
+            requires x == 1;
+            ensures x <= 2 by { arithmetic() using { x == 1; } }
+        }
+    "#;
+    let verified = verify_click_theorems(source).expect("Integer arithmetic should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("Integer arithmetic should expand");
+    assert!(expanded.contains("arithmetic_certificate {"), "{expanded}");
+    assert!(!expanded.contains("arithmetic()"), "{expanded}");
+    let rechecked = source.replace("by { arithmetic() using { x == 1; } }", &expanded);
+    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
+        verify_click_theorems(&rechecked)
+    });
+    result.expect("expanded Integer certificate should recheck");
+    assert_eq!(planning, 0, "explicit Integer certificate must not replan");
+}
+
+#[test]
+fn integer_arithmetic_using_rejects_an_unavailable_irrelevant_extra() {
+    let source = r#"
+        theorem integer_missing_extra(x: Integer) {
+            requires x == 1;
+            ensures x <= 2 by { arithmetic() using { x == 1; x == 9; } }
+        }
+    "#;
+    let error = verify_click_theorems(source)
+        .expect_err("every listed Integer premise must be exactly available");
+    assert!(
+        error
+            .message()
+            .contains("arithmetic using` premise 1 is not exactly available"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn signed_arithmetic_smart_planner_preserves_explicit_definedness() {
     let source = r#"
         theorem defined_addition(a: int32, b: int32) {
