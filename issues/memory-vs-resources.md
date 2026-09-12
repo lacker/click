@@ -1280,3 +1280,253 @@ incomplete anchor selection. The clean rollback checkpoint preserves the
 earlier docs-only state and does not integrate those implementations. No C
 source, language semantics, budgets, quarantine, or unrelated files were
 changed to obtain this investigation result.
+
+## Consolidated status and resume handoff (2026-09-12)
+
+This section is the current handoff summary. Earlier W0-W5 entries remain as
+the detailed historical record; where an earlier entry says that a worker
+branch was unmerged, this section distinguishes the subsequently verified
+upstream integration from the temporary worktree commit.
+
+### Current phase status
+
+| Phase | Status at current upstream | Summary |
+| --- | --- | --- |
+| W0 | Complete | Baseline, G1-G3 investigation, ownership map, and internal-boundary plan recorded. G1 was fixed upstream; G2/G3 were later addressed by the integrated W3 path. |
+| W1 | Complete | Normalized resource specifications and family-specific validation are integrated. |
+| W2 | Complete | Body-independent contract interface and shared direct/callback preparation are integrated, with evidence kinds kept distinct. |
+| W3 | Complete | Whole-clause dependent entry evaluation, checked access obligations, event-driven waiter worklist, and interval/symbolic waiter handling are integrated. |
+| W4 | Complete | Checked resource transitions and the authoritative memory-effect projection are integrated across calls, havoc, refinement, loops, and certification. |
+| W5 | Partial / blocked | A, B1, C, D, and E1 provenance work is integrated, but E2 has not produced a sound complete callback-invalidation design. The remaining W5 claim is blocked on snapshot-qualified expanded composite footprints and end-to-end callback evidence. |
+| W6 | Not started | Binder transport and snapshot substitution remain planned work after W5. |
+| W7 | Not started | Final R1-R6 qualification, cleanup, documentation, and issue reconciliation are not complete. |
+
+### Verified integration and temporary-branch commit map
+
+The following was checked after fetching `origin/master` at
+`266d0d449ae5ed41b5583884b2a40a12c0ee4122` (`266d0d44`): a hash is called
+integrated/pushed below only when it is an ancestor of that remote ref.
+Temporary worktree hashes are listed separately and must not be inferred to be
+on master merely because they are described in an earlier handoff.
+
+| Phase | Integrated/pushed commits verified in `origin/master` | Temporary worktree commits or equivalent integrations |
+| --- | --- | --- |
+| W0 | `188a594b`, `16338efe`, `345eb056` | `49fda560` and `65b5a343` were planning/baseline worktree variants; the integrated plan/baseline is the pair above. |
+| W1 | `ef44ad20`, `d8d1db47`, `1add3707` | `69fdd385`, `aa691e0f`, `b8953041`, and `aed3a1dc` are temporary branch variants; their reviewed result is represented by the integrated pair `ef44ad20`/`d8d1db47` and reconciliation `1add3707`. |
+| W2 | `1e867e25`, `856221a1`, `2b7e9e32` | `70785c23` and `42ec4c46` are temporary branch hashes; the integrated contract-interface result is the three hashes at left. |
+| W3 | `2faebefc`, `b4661346`, `6193066c`, `dab51408`, `648654c0`, plus documentation commits `217c17cc`, `53ba9913`, `b621c561`, `9f6b83ca`, and `2f5e4f4d` | `09267e5a`, `8b260cc9`, `25711aa6`, `ec820946`, and `56958fa6` are temporary worker hashes. Their corresponding integrated implementations are the hashes at left, verified by subject and ancestry. |
+| W4 | `28aae600`, `9fd0fc56`, `a3112b70`, and integration merge `93f80505` | `e82f2946`, `27f8cca8`, `b7a764da`, and `05da2753` are temporary W4 variants; they are not remote ancestors. |
+| W5-A | `839aae90`, `4b2fed41`, `d3b7405e`, `9e66590b`, `c7e21ab1`, `2e5cbb8a` | These checkpoint-A hashes are integrated, but A is only partial W5 and not a completion claim. |
+| W5-B1 | `d3ec5b26`, `0a1bd260`, `4b726370`, `cb6b2d5f`, `4705b1f2` | These B1 hashes are integrated; the documented opaque/barrier fallback and its O(U) limitation remain relevant. |
+| W5-C/D | `bc5ba4a5`, `a526c820`, `8460125c`, `a005ac28` | These C/D hashes are integrated regression checkpoints, not proof that all W5 behavior is complete. |
+| W5-E1 | `a5ec4580`, `7dc0d6ba`, `49ed348b`, `b6fdd9ef`, and integration merge `29d7071e` | The E1 worktree hashes are integrated. E2 remains an investigation, not a landed implementation. |
+| W5-E2/docs | `f4ae6dd4`, `0b1953e4` | `f7d61b76` is a temporary docs-only hash; its net blocker text is represented by integrated `0b1953e4`. The rollback branch also contains local-only `4e6ca3bb`, `f270b748`, and `809812fd`; none is integrated. |
+
+The local documentation handoff being prepared from this summary is not a
+claim that an experimental source implementation landed. The only intended
+change in that handoff is this existing issue document.
+
+### E2 semantic findings and evidence boundary
+
+The central distinction is between a pure exact-pointer theorem and a
+resource-supported predicate. An ordinary no-memory `Predicate` fact such as
+`Copy(augment->copy)` is a pure theorem about that exact pointer value. A
+resource occurrence changing does not by itself retire that theorem; a bad
+pointer still fails, while the same independently established pointer remains
+eligible. A predicate declared inside a composite resource is different: its
+authority is supported by the composite body and must follow that resource's
+occurrence, snapshot, and scope.
+
+The investigation reproduced memory-projection staleness through loaded
+address bases/bounds, and the E1 implementation now carries recursively
+discovered scalar load prerequisites conservatively. It also reproduced the
+permitted callback-body mutation, changed callback-table-cell rejection,
+consumed-suite rejection, scoped-open restoration, and disjoint framed-support
+preservation cases recorded in the preceding checkpoints. It did not reproduce
+retirement of an independently established pure exact-pointer theorem. At
+the surface boundary, `fact Copy(augment->copy)` needs owned coverage and a
+function-pointer resource parameter cannot act as an independently retained
+cell view; therefore the earlier generic missing-view failure is not evidence
+of stale pure-theorem authorization.
+
+No unconditional callback-fact retention list or `FactProvenance` sidecar was
+added. Existing support-indexed projections remain the authority. A supported
+observation must retain its exact support occurrence, relevant memory snapshot
+and version, footprint, and lexical scope. Equal persistent resource values
+may be aliases of the same authority or separate occurrences in different
+branches; value equality alone must not remove or preserve the wrong
+observation. Joins, normalization, cache rekeying, and close must preserve
+metadata only when the occurrence/topology and snapshot rules say that the
+support survived.
+
+### Experimental chronology and rejected designs
+
+The temporary source sequence was:
+
+1. `9ac45778` (`Fix callback resource invalidation and frame scaling`) carried
+   the callback invalidation repair and regression work. Review found that
+   post-state stale projections could be resurrected unless old overlapping
+   support was invalidated exactly once before return evaluation. Fresh
+   ensured projections must then be inserted after that invalidation and must
+   not be invalidated a second time. The `requires`-empty fast path also
+   dropped `ensures`-only or constructor-only contract information; it must be
+   guarded by all three lists being empty.
+2. `9904b5cb` (`Bound frame resource invalidation candidates`) attempted a
+   persistent composition/block/offset index and added curves. Review found
+   hidden cold scans, pointer-path scans, alias-bucket gaps, deep
+   `ResourceContext`/`Arc` identity concerns, and incomplete anchor semantics.
+3. `d9ef0f4e` (`Bound frame provenance queries by indexed anchors`) removed
+   more visible scans and passed its focused tests and full gate, but it still
+   selected declared anchors rather than derived expanded leaves. Its
+   min(left,right) bucket selection could omit the true composition when an
+   unrelated decoy occupied the queried anchor. Its candidate counter also
+   did not charge bucket iteration, BTree-set construction, fallback unions,
+   or all pointer-path work, so apparently flat post-materialization visits
+   were misleading.
+
+Those commits were preserved for audit but not integrated. They were reverted
+on the temporary branch by `4e6ca3bb`, `f270b748`, and `809812fd`, returning
+to the earlier green docs-only source state. The temporary docs commit
+`f7d61b76` likewise was not integrated as a hash; its blocker content was
+replayed into the integrated docs commit `0b1953e4` and is consolidated here.
+
+The concrete performance failure was an `owned-vector` verification path
+exhausting the deterministic simple budget at `500001` units (the limit was
+`500000`), after unrelated compositions entered a wildcard path. A later
+targeted run passed after the experimental exclusion, but that did not prove
+semantic completeness. The interrupted diagnostic/timing worker was checked
+and exited; no stale `cargo`, `nextest`, `click-verify`, or gate worker was
+left running. The correct response was to preserve the green checkpoint and
+document the unresolved representation boundary, not raise a budget or add a
+quarantine.
+
+### Why the tempting indexes are insufficient
+
+An index by the composite's declared pointer, even when it indexes every
+argument and unions both query anchors, is not complete: recursive expansion
+can derive child bases at offsets unrelated to every declared argument. A
+composition rooted at offset 0 can own leaves at offsets 4 and 6, while a
+decoy rooted at offset 4 occupies the only selected bucket. Choosing the
+smaller left/right bucket is conservative for soundness only in the sense that
+it may refuse a proof; it is not complete for finding a separating witness.
+Restoring a whole-block fallback repairs completeness only by reintroducing
+O(U) scans and the owned-vector budget failure.
+
+An index by one supporting resource fact or one `support_occurrence_by_projection`
+entry is also insufficient for generic frame disjointness. The separating
+witness may be a different composition whose expanded leaf is disjoint from
+the queried write. Support-occurrence indexes are still necessary for exact
+invalidation of a known projection, but they cannot replace the generic frame
+witness index.
+
+### Required sound representation and lifecycle
+
+The next implementation should introduce a checked per-composition
+`FrameFootprint` (the concrete Rust name is not prescribed) containing:
+
+- a stable map-local composition/occurrence identity, never a deep
+  `ResourceContext` key and never an unqualified `Arc` address;
+- the composite-definition epoch and the source memory snapshot identity,
+  including widths used to interpret loaded offsets and bounds;
+- every recursively expanded owned leaf `CMemoryRange`, normalized to the
+  existing fixed-depth physical-byte interval/containment geometry; and
+- an explicit `Unknown`/alias-wide marker whenever expansion is unavailable,
+  symbolic, mixed-snapshot, opaque, or otherwise not checked.
+
+For each checked footprint, post leaf ranges into a persistent same-block
+interval/containment index. Keep alias-wide/opaque buckets for
+`ExternalArgument`, symbolic/function-symbolic blocks, and failed expansion.
+Generic frame range queries should retrieve overlapping postings and exact-check
+the selected footprint witnesses; pointer queries use a unit range. A support
+occurrence reverse index remains separate and drives exact removal of the
+projections it supports. No footprint from a different definition epoch or
+memory snapshot may be reused.
+
+Expansion must be iterative with a checked depth/work bound. A failed or
+partially expanded composition is `Unknown`, never a partially trusted
+footprint. Persistent updates on insert/remove, fork, join, normalization,
+scope close, snapshot replacement, and cache eviction must be symmetric. Equal
+persistent aliases must preserve the same occurrence only when the join proves
+that occurrence and its dependency topology are shared; otherwise retain
+distinct identities. Resetting a context must clear all postings and reverse
+indexes together. Expansion caches must be keyed by occurrence/composition,
+definition epoch, memory snapshot, and relevant assumptions, and must never
+turn a failed obligation into authority.
+
+### Staged next implementation and acceptance matrix
+
+Implement the next chunk in this order:
+
+1. Add a checked footprint carrier and stable map-local identity, with unit
+   tests for duplicate values, fork/join, normalization, replacement, reset,
+   and cache rekeying. Keep occurrence support metadata separate from value
+   equality and from the generic footprint index.
+2. Build the insertion/removal interval postings from all recursively
+   expanded leaves. Add the alias-wide and `ExternalArgument` fallback paths;
+   do not use an ambient composition scan or a whole-block fallback for a
+   concrete query.
+3. Route frame range and pointer queries through interval overlap plus exact
+   witness checking. Make unavailable or mismatched snapshots fail closed.
+   Preserve the existing conservative symbolic/barrier behavior.
+4. Restore the call/return invalidation ordering: one pre-return invalidation
+   of old overlapping support, followed by checked return/ensure insertion;
+   prove that fresh overlapping ensures survive and disjoint observations do
+   survive.
+5. Add non-vacuous derived-offset, nested composite, opaque, alias-wide, and
+   callback-table mutation fixtures before claiming W5 completion.
+
+Every performance-sensitive query must run a deterministic two-axis matrix
+with unrelated supported-fact sizes `U = 4, 16, 64, 256, 1024` and call or
+composition counts such as `C = 1, 2, 4, 8, 16`. Measure cold and warm
+queries separately. Counters must include interval-node/bucket visits,
+fallback and alias-bucket visits, candidate-ID unions and set construction,
+composition lookup/materialization, recursive expansion work, and affected
+output count. Cover different-block, same-block interval, derived-offset,
+pointer-unit, `ExternalArgument`, symbolic/opaque fallback, insert, remove,
+join, and barrier cases. A warm flat curve is insufficient if a cold query
+still scans all unrelated compositions; bounds must be output-sensitive in
+the selected leaves/edges and logarithmic in indexed universe where promised.
+
+### Remaining W5, then W6/W7
+
+After the tooling boundary is repaired, W5 still needs the real three-call
+callback-table/resource-context matrix, scoped-open expiry under actual
+permitted mutation, fresh ensures after overlapping invalidation, nested and
+opaque composite prerequisite footprints, and exact support-preservation and
+rejection cases. Pure exact-pointer theorem behavior must remain separate from
+composite-supported predicate invalidation. W5 is complete only when those
+semantic regressions and the cold/warm matrix pass on one integrated green
+commit.
+
+W6 then unifies existing binder transport and snapshot substitution without
+changing instance identity, fresh post fields, or return snapshots. W7 runs
+the full R1-R6 direct/callback/theorem/refinement/certification matrix,
+removes obsolete adapters, updates the related concept/internals docs, and
+deletes/reconciles this issue only after every acceptance criterion is true.
+
+### Fresh-agent resume point and gates
+
+Start from the then-current fetched `origin/master`, not from any temporary
+W5 branch. Read this entire issue and `AGENTS.md`, create a dedicated
+`codex/` worktree, and first run the current positive and negative callback,
+resource, execution, and scoped-open witnesses before editing. Keep source
+changes separate from documentation and do not modify C, budgets, quarantine,
+or unrelated issue files.
+
+The minimum gate sequence for an implementation checkpoint is:
+
+```text
+cargo fmt --all -- --check
+cargo test --lib kernel::functions::callback_contract_tests -- --nocapture
+cargo test --lib kernel::tests::resource_tests -- --nocapture
+cargo test --lib kernel::tests::contract_execution_tests -- --nocapture
+cargo clippy --all-targets -- -D warnings
+./scripts/check.sh
+```
+
+The final verdict is the unpiped exit status of `./scripts/check.sh`. After
+any timeout or interruption, confirm that the verifier process tree has
+exited before trusting a timing result. Before integration, verify the primary
+checkout is clean and its base is an ancestor of the tested branch; update and
+rerun affected gates if upstream moved. Do not claim experimental source code
+landed unless its exact hash is an ancestor of the current remote master.
