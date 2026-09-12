@@ -144,6 +144,12 @@ pub(super) struct ProofNode {
     /// recorded attribution; it never infers ownership from final states.
     pub(super) focused_branch: BranchId,
     pub(super) depth: usize,
+    /// For a split marker, the goals the split opened. Sibling arms of one
+    /// split share this chain, so a marker is on a walking lineage only when
+    /// it opened the goal that lineage is currently following. An empty list
+    /// is a marker that opened no goal of its own; the walk then treats it as
+    /// the enclosing structural marker it is.
+    pub(super) split_branches: Vec<BranchId>,
 }
 
 impl<'a> Proof<'a> {
@@ -152,7 +158,11 @@ impl<'a> Proof<'a> {
     /// case-split arm, sibling arms' steps interleave in the same chain and
     /// belong to other lineages. A step-less marker node records the goal
     /// that was live before it (the split's parent), so walking back
-    /// through markers follows the lineage to the root.
+    /// through markers follows the lineage to the root. A split marker also
+    /// records the goals it opened, and is followed only when it opened the
+    /// goal being walked: a split nested inside a sibling arm leaves a marker
+    /// naming that sibling, and following it would adopt the sibling arm's
+    /// steps as this path's own.
     pub(in crate::surface::proof) fn path_certificate(
         &self,
     ) -> Result<ProofCertificate, ClickError> {
@@ -163,7 +173,11 @@ impl<'a> Proof<'a> {
             match &current.step {
                 Some(step) if current.focused_branch == goal => steps.push(step.as_ref().clone()),
                 Some(_) => {}
-                None => goal = current.focused_branch,
+                None => {
+                    if current.split_branches.is_empty() || current.split_branches.contains(&goal) {
+                        goal = current.focused_branch;
+                    }
+                }
             }
             node = current.parent.clone();
         }

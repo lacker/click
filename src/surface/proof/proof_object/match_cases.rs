@@ -112,6 +112,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: Vec::new(),
             }),
         }
     }
@@ -493,6 +494,7 @@ impl<'a> Proof<'a> {
                 parent: Some(marker.node.clone()),
                 focused_branch: self.focused_branch_id(),
                 depth: marker.node.depth + 1,
+                split_branches: Vec::new(),
                 step: Some(Arc::new(ProofStep::Match {
                     scrutinee: source.scrutinee.clone(),
                     arms,
@@ -527,6 +529,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: ids.to_vec(),
             }),
         };
         let record = ExecutionProofCaseSplit {

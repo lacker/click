@@ -68,10 +68,35 @@ int32 break_once_automatically(int32 n) {
 }
 ```
 
+`stop_at_automatically` is `stop_at` with both phases omitted, so the
+automation walks two `break` paths through nested C `if`s. Each path is one
+proof case, and the merged certificate has to place each case where its own
+path took it. The expansion `click audit` checks is that certificate printed,
+so a case placed after a sibling arm's steps verifies here and fails to
+reverify there.
+
+```c filename=stop_at_automatically.c
+int32 stop_at_automatically(int32 n) {
+    int32 i = n;
+
+    while (true) {
+        if (i == 3) {
+            break;
+        }
+        if (i == 0) {
+            break;
+        }
+        i = 0;
+    }
+    return i;
+}
+```
+
 ```click
 verifying "break_once.c";
 verifying "stop_at.c";
 verifying "break_once_automatically.c";
+verifying "stop_at_automatically.c";
 
 int32 break_once(int32 n) {
     requires n >= 0;
@@ -127,6 +152,19 @@ int32 stop_at(int32 n) {
 int32 break_once_automatically(int32 n) {
     requires n >= 0;
     ensures result >= 0;
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 0;
+    }
+    step();
+    simp();
+}
+
+int32 stop_at_automatically(int32 n) {
+    requires n >= 0;
+    ensures result == 3 or result == 0;
 } by {
     step();
     step();

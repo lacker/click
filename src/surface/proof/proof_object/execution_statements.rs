@@ -556,6 +556,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(step)),
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth + 1,
+                split_branches: Vec::new(),
             }),
         })
     }
@@ -686,6 +687,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
+                split_branches: Vec::new(),
             }),
         };
         let mut search = attempt::search_scope("close invariants body");
@@ -744,6 +746,7 @@ impl<'a> Proof<'a> {
                 )))),
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth + 1,
+                split_branches: Vec::new(),
             }),
         })
     }
@@ -1038,10 +1041,14 @@ impl<'a> Proof<'a> {
             // Record where this proof-level case split sits in the path's
             // surface record, exactly as the checked form recorded it.
             if arm_execution.presentation.surface_record.blocker.is_none() {
-                // The split sits after the Proof's own top-level steps: surface
-                // synthesis splits sibling paths at this offset, so it is
-                // measured on the checked derivation, not a mirrored record.
-                let tactic_offset = self.certificate().steps().len();
+                // The split sits after this path's own steps. The offset is
+                // read back against the arm's `path_certificate()`, which
+                // carries only the focused goal's lineage, so it is measured
+                // the same way: a sibling arm stepped earlier in the same
+                // derivation contributes steps to `certificate()` that this
+                // path never took, and counting those puts the case past the
+                // end of its own tactics.
+                let tactic_offset = self.path_certificate()?.steps().len();
                 arm_execution
                     .presentation
                     .surface_record
@@ -1083,6 +1090,7 @@ impl<'a> Proof<'a> {
                         step: None,
                         focused_branch: self.focused_branch_id(),
                         depth: self.node.depth,
+                        split_branches: ids.to_vec(),
                     }),
                 };
                 Ok((successor, [Some(ids[0]), Some(ids[1])]))
@@ -1604,6 +1612,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(have_step)),
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: Vec::new(),
             }),
         })
     }
@@ -1747,6 +1756,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(loop_step)),
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: Vec::new(),
             }),
         })
     }

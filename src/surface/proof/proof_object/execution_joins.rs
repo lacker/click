@@ -2033,6 +2033,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(parts.step)),
                 focused_branch: parent_goal,
                 depth: parent_node.depth + 1,
+                split_branches: Vec::new(),
             }),
         })
     }
@@ -2733,6 +2734,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: arm_ids.iter().flatten().copied().collect(),
             }),
         };
         let record = ExecutionSplit {

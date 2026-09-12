@@ -713,6 +713,7 @@ impl<'a> ProofScope<'a> {
                         })),
                         focused_branch: self.root.focused_branch_id(),
                         depth: self.root.node.depth + 1,
+                        split_branches: Vec::new(),
                     }),
                 })
             }
@@ -822,6 +823,7 @@ impl<'a> ProofScope<'a> {
                         })),
                         focused_branch,
                         depth: self.root.node.depth + 1,
+                        split_branches: Vec::new(),
                     }),
                 })
             }

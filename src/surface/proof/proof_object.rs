@@ -1521,6 +1521,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
+                split_branches: Vec::new(),
             }),
         })
     }

@@ -895,3 +895,88 @@ uint32 count_live(struct cell* node) {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn audits_an_omitted_preservation_with_two_body_breaks() {
+    // `stop_at` from `mdtests/loop_body_break_exit.md` with both phases
+    // omitted: a `while (true)` whose only ways out are two `break`s in
+    // nested C `if`s. `click verify` passed while the expansion the audit
+    // checks did not: the preservation driver runs sibling arms on one
+    // interleaved provenance chain, and a leaf's lineage walk followed the
+    // sibling arm's nested split marker and adopted that arm's steps, so the
+    // emitted script reached the second `if` at the wrong frontier and `step`
+    // reported "2 feasible condition paths".
+    let directory =
+        std::env::temp_dir().join(format!("click-audit-break-exit-{}", std::process::id()));
+    if directory.exists() {
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    let c_source = r#"int32 stop_at(int32 n) {
+    int32 i = n;
+
+    while (true) {
+        if (i == 3) {
+            break;
+        }
+        if (i == 0) {
+            break;
+        }
+        i = 0;
+    }
+    return i;
+}"#;
+    let click_source = r#"verifying "stop_at.c";
+
+int32 stop_at(int32 n) {
+    requires n >= 0;
+    ensures result == 3 or result == 0;
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 0;
+    }
+    step();
+    simp();
+}
+"#;
+    let click_path = directory.join("stop_at.click");
+    fs::write(directory.join("stop_at.c"), c_source).unwrap();
+    fs::write(&click_path, click_source).unwrap();
+    verify_c0_sources(click_source, &[("stop_at.c", c_source)])
+        .expect("the omitted-phase break-exit loop should verify");
+
+    let loop_offset = click_source
+        .find("loop {")
+        .expect("the proof should contain the loop tactic");
+    let line = click_source[..loop_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+    let site = sites
+        .iter()
+        .find(|site| site.position.line == line)
+        .expect("the omitted-phase loop should be an auditable site");
+    let expanded = expand_location(&format_location(&site_location(site)))
+        .expect("the omitted-phase loop should expand");
+    assert!(
+        expanded.contains("if i == 3") && expanded.contains("if i == 0"),
+        "each breaking C `if` should expand to a proof case: {expanded}"
+    );
+    let source = load_audit_source_from_text(&click_path, expanded.clone()).unwrap();
+    let refs = source_refs(&source.c_sources);
+    verify_c0_sources(&source.click_source, &refs).unwrap_or_else(|error| {
+        panic!(
+            "the rewritten preservation should reverify: {}",
+            error.message()
+        )
+    });
+    assert_eq!(
+        reexpand_source(&click_path, &site.claim, &expanded).unwrap(),
+        expanded
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

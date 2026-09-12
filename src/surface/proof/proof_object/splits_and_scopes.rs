@@ -404,6 +404,7 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused_branch: self.focused_branch_id(),
                     depth: self.node.depth,
+                    split_branches: ids.to_vec(),
                 }),
             },
             split,
@@ -470,6 +471,7 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused_branch: self.focused_branch_id(),
                     depth: self.node.depth,
+                    split_branches: ids.to_vec(),
                 }),
             },
             split,
@@ -517,6 +519,7 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused_branch: self.focused_branch_id(),
                     depth: self.node.depth,
+                    split_branches: ids.to_vec(),
                 }),
             },
             split,
@@ -672,6 +675,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: ids.to_vec(),
             }),
         };
         let record = ExecutionProofCaseSplit {
@@ -737,6 +741,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: ids.to_vec(),
             }),
         };
         let record = ExecutionLogicalCasesSplit {
@@ -902,6 +907,7 @@ impl<'a> Proof<'a> {
                 ))),
                 focused_branch: marker.node.focused_branch,
                 depth: parent.depth + 1,
+                split_branches: Vec::new(),
             }),
         })
     }
@@ -1125,6 +1131,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
+                split_branches: Vec::new(),
             }),
         };
         let scope = ProofScope {
@@ -1215,6 +1222,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: 0,
+                split_branches: Vec::new(),
             }),
         };
         Ok(ProofScope {

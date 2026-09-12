@@ -579,6 +579,7 @@ impl<'a> Proof<'a> {
                     step: Some(Arc::new(provenance_step)),
                     focused_branch: self.focused_branch_id(),
                     depth: self.node.depth + 1,
+                    split_branches: Vec::new(),
                 }),
             });
         }
@@ -656,6 +657,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(step)),
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth + 1,
+                split_branches: Vec::new(),
             }),
         })
     }

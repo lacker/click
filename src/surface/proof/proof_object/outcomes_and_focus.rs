@@ -320,6 +320,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
+                split_branches: Vec::new(),
             }),
         };
         Ok((successor, outcome_ids))

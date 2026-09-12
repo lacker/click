@@ -14228,3 +14228,134 @@ fn undecided_wide_guard_after_a_recursive_call_expands_and_reverifies() {
     verify_c0_sources(&expanded, &sources)
         .expect("the expanded undecided-guard arm should independently reverify");
 }
+
+#[test]
+fn omitted_preservation_over_two_sibling_c_ifs_expands_and_reverifies() {
+    // The automatic preservation the `loop` keyword owns walks four body
+    // paths here: two sibling C `if`s, each split into its own proof case.
+    // Merging aligns each case at the certificate offset its split recorded,
+    // and that offset is read back against the leaf's own `path_certificate`.
+    // The preservation driver runs sibling arms on one interleaved chain, so
+    // walking a leaf's lineage passes through the *other* arm's nested split
+    // marker; following that marker adopted the sibling arm's steps, and the
+    // recorded offset then pointed past the end of this path's own tactics
+    // ("case offset exceeds its tactics"). A split marker now records the
+    // goals it opened and is followed only when it opened the goal being
+    // walked.
+    let c_source = r#"
+        int32 two_ifs(int32 n) {
+            int32 i = 0;
+            int32 x = 0;
+            int32 y = 0;
+
+            while (i < n) {
+                if (x == 0) {
+                    x = 1;
+                }
+                if (y == 0) {
+                    y = 1;
+                }
+                i = i + 1;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "two_ifs.c";
+
+        int32 two_ifs(int32 n) {
+            requires n >= 0;
+            ensures result >= 0;
+        } by {
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
+            loop {
+                invariant i >= 0;
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("two_ifs.c", c_source)];
+    verify_c0_sources(click_source, &sources)
+        .expect("an omitted-phase preservation over two sibling `if`s should verify");
+
+    let loop_offset = click_source
+        .find("loop {")
+        .expect("the proof should contain the loop tactic");
+    let position = expansion::position_at_offset(click_source, loop_offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the automatic preservation should expand");
+    assert!(
+        expanded.contains("if x == 0") && expanded.contains("if y == 0"),
+        "both sibling C `if`s should expand to proof cases: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("the expanded preservation should independently reverify: {error:?}\n{expanded}")
+    });
+}
+
+#[test]
+fn omitted_preservation_over_two_body_breaks_expands_and_reverifies() {
+    // `stop_at` from `mdtests/loop_body_break_exit.md` with both phases
+    // omitted: a `while (true)` whose only ways out are two `break`s in
+    // nested C `if`s. The proof verified, but the emitted expansion carried
+    // the sibling arm's `step()`s into this path, so the recheck reached the
+    // second `if` at the wrong frontier and `step` reported "2 feasible
+    // condition paths" — `click audit` disagreeing with `click verify`.
+    let c_source = r#"
+        int32 stop_at(int32 n) {
+            int32 i = n;
+
+            while (true) {
+                if (i == 3) {
+                    break;
+                }
+                if (i == 0) {
+                    break;
+                }
+                i = 0;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "stop_at.c";
+
+        int32 stop_at(int32 n) {
+            requires n >= 0;
+            ensures result == 3 or result == 0;
+        } by {
+            step();
+            step();
+            loop {
+                invariant i >= 0;
+            }
+            step();
+            simp();
+        }
+    "#;
+    let sources = [("stop_at.c", c_source)];
+    verify_c0_sources(click_source, &sources)
+        .expect("an omitted-phase loop with two body breaks should verify");
+
+    let loop_offset = click_source
+        .find("loop {")
+        .expect("the proof should contain the loop tactic");
+    let position = expansion::position_at_offset(click_source, loop_offset);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the automatic preservation should expand");
+    assert!(
+        expanded.contains("if i == 3") && expanded.contains("if i == 0"),
+        "each breaking C `if` should expand to a proof case: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        panic!("the expanded break-exit preservation should reverify: {error:?}\n{expanded}")
+    });
+}
