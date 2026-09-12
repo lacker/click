@@ -2546,11 +2546,11 @@ pub enum ProofTactic {
     },
     ApplyInduction {
         hypothesis: String,
-        argument: ContractExpression,
+        arguments: Vec<ContractExpression>,
     },
     ApplyInductionUsing {
         hypothesis: String,
-        argument: ContractExpression,
+        arguments: Vec<ContractExpression>,
         premises: Vec<ClickProposition>,
     },
     ApplyTheorem(TheoremApplication),
@@ -2994,7 +2994,7 @@ pub enum ProofStep {
     },
     ApplyInduction {
         hypothesis: String,
-        argument: ContractExpression,
+        arguments: Vec<ContractExpression>,
         premises: Vec<ClickProposition>,
     },
     ApplyTheoremUsing {
@@ -3270,11 +3270,11 @@ impl ProofStep {
             }
             ProofTactic::ApplyInductionUsing {
                 hypothesis,
-                argument,
+                arguments,
                 premises,
             } => Self::ApplyInduction {
                 hypothesis: hypothesis.clone(),
-                argument: argument.clone(),
+                arguments: arguments.clone(),
                 premises: premises.clone(),
             },
             ProofTactic::ApplyTheoremUsing {
@@ -3472,11 +3472,11 @@ impl ProofStep {
             },
             Self::ApplyInduction {
                 hypothesis,
-                argument,
+                arguments,
                 premises,
             } => ProofTactic::ApplyInductionUsing {
                 hypothesis: hypothesis.clone(),
-                argument: argument.clone(),
+                arguments: arguments.clone(),
                 premises: premises.clone(),
             },
             Self::ApplyTheoremUsing {

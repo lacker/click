@@ -390,6 +390,47 @@ theorem heap_rotate_right_preserves_inorder(tree: HeapTree) {
     }
 }
 
+theorem plug_inorder_transport(ctx: Context, a: HeapTree, b: HeapTree) {
+    requires heap_inorder(a) == heap_inorder(b);
+    ensures heap_inorder(plug(ctx, a)) == heap_inorder(plug(ctx, b)) by {
+        induct(ctx) as ih {
+            Context::Top => {
+                unfold(plug(Context::Top, a));
+                unfold(plug(Context::Top, b));
+                assumption();
+            }
+            Context::Left(parent, value, sibling, up) => {
+                have heap_inorder(HeapTree::Node(parent, value, a, sibling))
+                    == heap_inorder(HeapTree::Node(parent, value, b, sibling)) by {
+                    unfold(heap_inorder(HeapTree::Node(parent, value, a, sibling)));
+                    unfold(heap_inorder(HeapTree::Node(parent, value, b, sibling)));
+                    rewrite(heap_inorder(a) == heap_inorder(b));
+                    normalize();
+                }
+                apply(ih(up, HeapTree::Node(parent, value, a, sibling),
+                         HeapTree::Node(parent, value, b, sibling)));
+                unfold(plug(Context::Left(parent, value, sibling, up), a));
+                unfold(plug(Context::Left(parent, value, sibling, up), b));
+                assumption();
+            }
+            Context::Right(parent, value, sibling, up) => {
+                have heap_inorder(HeapTree::Node(parent, value, sibling, a))
+                    == heap_inorder(HeapTree::Node(parent, value, sibling, b)) by {
+                    unfold(heap_inorder(HeapTree::Node(parent, value, sibling, a)));
+                    unfold(heap_inorder(HeapTree::Node(parent, value, sibling, b)));
+                    rewrite(heap_inorder(a) == heap_inorder(b));
+                    normalize();
+                }
+                apply(ih(up, HeapTree::Node(parent, value, sibling, a),
+                         HeapTree::Node(parent, value, sibling, b)));
+                unfold(plug(Context::Right(parent, value, sibling, up), a));
+                unfold(plug(Context::Right(parent, value, sibling, up), b));
+                assumption();
+            }
+        }
+    }
+}
+
 struct tree_node* tree_rotate_left(struct tree_node* root) {
     consumes t: tree_at(root);
     requires t.model != HeapTree::Empty;

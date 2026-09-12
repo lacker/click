@@ -658,8 +658,8 @@ fn parses_and_prints_pure_induction_tactics() {
         tactics[0].clone(),
         ProofTactic::ApplyInductionUsing {
             hypothesis: "ih".to_string(),
-            argument: match &tactics[1] {
-                ProofTactic::ApplyTheorem(application) => application.arguments[0].clone(),
+            arguments: match &tactics[1] {
+                ProofTactic::ApplyTheorem(application) => application.arguments.clone(),
                 _ => unreachable!(),
             },
             premises: Vec::new(),
