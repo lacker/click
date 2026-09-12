@@ -164,6 +164,19 @@ enough to become the first regression of the package that fixes them.
     failed pure `simp` printed a full Rust debug dump of the proposition and
     schemas twice, which is the raw-state-dump class of diagnostic defect;
     package T2.
+13. **A loop body cannot unfold its binder.** Found by package A4: at an
+    arbitrary loop head the binder's model is a fresh symbolic value, arm
+    selection from the invariants yields only the variant, and `unfold`
+    requires constructor evidence ("resource match requires constructor
+    evidence for the instance field"). The two ways to get a constructor
+    are closed: proof `match` on a model is refused at a loop-body frontier
+    ("proof `match` currently requires unchanged function entry"), and a
+    pure `int32 -> enum` function cannot be written because an `if` body
+    cannot produce an algebraic value (gap 10). So A4 landed the parser,
+    the matched-body structural children, the loop back-edge rule, the
+    head-time binder arguments, and arm views at loop heads, but no
+    positive descending, ascending, or rotate-then-ascend loop fixture.
+    Every rbtree loop needs this. Package A9.
 
 ## Design decisions
 
@@ -352,6 +365,9 @@ appears to need one reports the need instead of adding it.
 - 2026-09-12: C1 (`rb_at`, `ctx_at`, `plug`, the seven link helpers and
   `__rb_change_child` on verbatim Linux bodies, 05257e8e) is on master. A7
   is gating; T1 (audit defect) and A8 are dispatched; A4 is in progress.
+- 2026-09-12: A7 (`let r = step(...)` names a call's scalar result when the
+  callee produces no instance, 9c7710ee) is on master; `tree_contains`
+  verifies the unguarded membership postcondition. T2 dispatched.
 
 ## Work packages
 
@@ -478,6 +494,22 @@ algebraic schemas in a failed pure `simp` with the bounded goal, premise,
 and search context the diagnostics policy allows. Regression: a fixture
 whose failure message is checked for the absence of the debug dump.
 
+**A9. Proof `match` on an instance model at any execution frontier.**
+Scope: let `match name.model { ... }` run at a loop-body frontier and after
+C steps, not only at unchanged function entry, introducing each arm's
+constructor equation and bindings on that arm's path with the same range
+split the entry form uses (coordinate with A8's arity change in
+`match_cases.rs`; land after it). With that, `unfold(sub) as { ... }`
+inside `preserve` has its constructor. Regressions: A4's missing loop
+shapes on the scaffold and small fixtures: a descending loop to the
+leftmost node with `decreases sub;`, an ascending loop through
+`ctx_at(child, parent, root)` frames with `decreases ctx;`, a
+rotate-then-ascend loop, and the negatives for an unrelated node and a
+refolded consumed frame. Also flip or bypass `is_recursive` for matched
+recursive definitions consistently (A4 bypassed it in
+`structural_resource_children` only). No new syntax. Depends on A4 and
+A8; B1 and C3 depend on it.
+
 ### Phase B: models on the fixed scaffold
 
 **B1. Context resource, `plug`, and the iterative walks (D3).**
@@ -486,7 +518,7 @@ Scope: `examples/modeled-binary-tree` sidecar. Add `Context`, `ctx_at`,
 `produces ctx: ctx_at(result); produces sub: tree_at(result); ensures
 plug(ctx.model, sub.model) == old(t.model);` and the leftmost or rightmost
 position stated on the model. Regressions: the example itself plus a focused
-mdtest with a negative that drops a frame. Depends on A1, A2, A3, A4.
+mdtest with a negative that drops a frame. Depends on A1, A2, A3, A4, A5, A9.
 
 **B2. Right rotation, membership, and rotation theorems.**
 Scope: `heap_rotate_right` with its in-order preservation theorem, the
@@ -530,7 +562,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, B1, C1, C2.
+on A4, A8, A9, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with
