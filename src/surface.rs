@@ -424,11 +424,46 @@ pub struct AlgebraicVariantDefinition {
 pub enum AlgebraicFieldType {
     Parameter(String),
     Integer,
-    C(C0Type),
+    /// A C value type. `struct_name` is the pointee's struct tag when the
+    /// field is declared `struct tag*`; every C pointer shares one kernel
+    /// type, so the tag is the only record of which layout a matched
+    /// constructor binding of this field denotes.
+    C {
+        c_type: C0Type,
+        struct_name: Option<String>,
+    },
     Algebraic {
         name: String,
         arguments: Vec<AlgebraicFieldType>,
     },
+}
+
+impl AlgebraicFieldType {
+    /// The struct tag a matched-arm binding of this field is a base for, or
+    /// `None` when the field is not a C struct pointer.
+    pub fn struct_pointer_name(&self) -> Option<&str> {
+        match self {
+            Self::C {
+                c_type,
+                struct_name,
+            } if c_type.is_pointer() => struct_name.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// How this field's type reads in a diagnostic about a match-arm binding.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Parameter(name) => name.clone(),
+            Self::Integer => "Integer".to_string(),
+            Self::C {
+                struct_name: Some(name),
+                ..
+            } => format!("struct {name}*"),
+            Self::C { c_type, .. } => describe_c0_type(*c_type),
+            Self::Algebraic { name, .. } => name.clone(),
+        }
+    }
 }
 
 /// A value type in the Click specification language. C types are one family

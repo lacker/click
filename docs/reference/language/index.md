@@ -1089,7 +1089,13 @@ resource cell(p: int32*) {
 
 Here `Maybe<T>` is declared in the linked fixture. Arms must cover every
 constructor exactly once. Bindings are scoped to their arm and have the
-constructor's instantiated types, including pointers and nested ADTs. They
+constructor's instantiated types, including pointers and nested ADTs. A
+binding whose constructor field is declared `struct tag*` is a struct base for
+the whole arm: `parent->left` names that field's cell at its declared offset
+and width in `owns`, in `fact`, and in a child instance's arguments. The
+datatype may be declared above or below the resource, because declaration
+order does not create scope. A binding of any other type is not a base, and
+using one as one is refused with the type the constructor declares. They
 cannot shadow resource parameters or fields. Fold/unfold requires constructor
 evidence for the actual instance field (for example,
 `c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
@@ -1206,6 +1212,37 @@ definitions that own each other are still rejected as a composite resource
 cycle. `Context::Top => {}` shows that an arm may own nothing at all, and
 `fold(ctx_at(node), { model: Context::Top }, {})` constructs it.
 
+An arm need not own only cells of the resource's own parameters. The frame
+below is keyed by the focused child and owns the cells of the `parent` the
+constructor carries, including the sibling subtree reached through it:
+
+<!-- verified-example: mdtests/resource_arm_binding_struct_base.md -->
+```click
+resource ctx_at(child: struct tree_node*) {
+    field model: Context;
+    match model {
+        Context::Top => {},
+        Context::Left(parent, value, sibling_model, up_model) => {
+            owns parent->value;
+            owns parent->left;
+            owns parent->right;
+            owns sibling: tree_at(parent->right);
+            owns up: ctx_at(parent);
+            fact parent != 0;
+            fact parent->left == child;
+            fact parent->value == value;
+            fact sibling.model == sibling_model;
+            fact up.model == up_model;
+        },
+    }
+}
+```
+
+`Context::Left`'s first field is declared `struct tree_node*`, so `parent`
+carries that layout for the arm. After `unfold(ctx) as { sibling: s, up: u }`
+the arm's facts hold of the exposed cells, so `fact parent->left == child`
+is what lets a proof read the focused node back out of the frame.
+
 Equations for all child fields must bind them to immediate constructor fields
 of the matching types. In particular, a child of the parent's own family
 strictly descends to a proper submodel.
@@ -1216,8 +1253,7 @@ Fold checks this memory before interpreting the child arguments. Expression
 safety and path premises must be proved; argument evaluation does not split
 the proof into cases. See `mdtests/resource_tree_node_init.md`.
 Memory and token families in a child slot, witnesses, nested resource
-matches/guards, arbitrary match scrutinees, a struct field reached through a
-constructor binding such as `up_node->value`, and passing child paths as
+matches/guards, arbitrary match scrutinees, and passing child paths as
 contract arguments remain unsupported. No operation automatically unfolds an entire recursive structure.
 
 A declaration alone grants no ownership, and binding an instance does not
