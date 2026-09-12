@@ -953,10 +953,6 @@ fn cancel_common_offset_addends(
 /// The largest alignment a fact may state; probes above it are pointless.
 const MAX_PROBED_ALIGNMENT: u64 = 4096;
 
-/// The alignment every successful heap allocation has under the LP64
-/// profile (`max_align_t` for the C library allocator).
-const HEAP_ALLOCATION_ALIGNMENT: u64 = 16;
-
 impl PureFactContext {
     /// Decides `aligned(pointer, alignment)` from the pointer's formation: a
     /// heap block base is allocator-aligned, and any other base needs a
@@ -989,7 +985,7 @@ impl PureFactContext {
         }
         let (base, displacement) = split_constant_displacement(&pointer.offset);
         let intrinsic_block_alignment = match &pointer.block {
-            PointerBlock::Heap(_) => Some(HEAP_ALLOCATION_ALIGNMENT),
+            PointerBlock::Heap(_) => Some(crate::kernel::primitives::HEAP_ALLOCATION_ALIGNMENT),
             // A file-scope or static object's block is placed by the
             // compiler at its type's alignment, recorded when the block was
             // created.

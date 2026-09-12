@@ -17,6 +17,105 @@ use std::collections::BTreeMap;
 
 const SIGNED_MIN: i64 = i32::MIN as i64;
 const SIGNED_MAX: i64 = i32::MAX as i64;
+const MAX_TERM_PAYLOAD: usize = 256;
+
+fn charge_payload(payload: usize) -> bool {
+    payload <= MAX_TERM_PAYLOAD
+        && !crate::instrumentation::deadline_exceeded_with_work(payload.max(1))
+}
+
+fn pointer_offset_payload(root: &PointerOffsetTerm) -> Option<usize> {
+    let mut pending = vec![root];
+    let mut payload = 0usize;
+    while let Some(offset) = pending.pop() {
+        payload = payload.checked_add(1)?;
+        if payload > MAX_TERM_PAYLOAD {
+            return None;
+        }
+        match offset {
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+            PointerOffsetTerm::Add(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            PointerOffsetTerm::Int32Scaled { value, .. } => {
+                payload = payload.checked_add(bitvector_payload(value)?)?;
+            }
+            PointerOffsetTerm::Int64Scaled { .. } => return None,
+        }
+        if payload > MAX_TERM_PAYLOAD {
+            return None;
+        }
+    }
+    Some(payload)
+}
+
+fn bitvector_payload(root: &Bitvector32Term) -> Option<usize> {
+    let mut pending = vec![root];
+    let mut payload = 0usize;
+    while let Some(term) = pending.pop() {
+        payload = payload.checked_add(1)?;
+        if payload > MAX_TERM_PAYLOAD {
+            return None;
+        }
+        match term {
+            Bitvector32Term::Constant(_)
+            | Bitvector32Term::Int64Constant(_)
+            | Bitvector32Term::UInt64Constant(_)
+            | Bitvector32Term::Variable(_) => {}
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::UInt64Add(left, right)
+            | Bitvector32Term::UInt64Subtract(left, right)
+            | Bitvector32Term::UInt64BitwiseAnd(left, right)
+            | Bitvector32Term::UInt64BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            Bitvector32Term::PointerAddress(pointer) => {
+                payload = payload.checked_add(pointer_offset_payload(&pointer.offset)?)?;
+            }
+            _ => return None,
+        }
+        if payload > MAX_TERM_PAYLOAD {
+            return None;
+        }
+    }
+    Some(payload)
+}
+
+fn charge_pointer_offset(offset: &PointerOffsetTerm) -> bool {
+    pointer_offset_payload(offset).is_some_and(charge_payload)
+}
+
+fn charge_bitvector(term: &Bitvector32Term) -> bool {
+    bitvector_payload(term).is_some_and(charge_payload)
+}
+
+fn charge_map_insert(offset: &PointerOffsetTerm, map_len: usize) -> bool {
+    let comparisons = (usize::BITS - map_len.max(1).leading_zeros()) as usize;
+    pointer_offset_payload(offset).is_some_and(|payload| {
+        !crate::instrumentation::deadline_exceeded_with_work(
+            payload.saturating_mul(comparisons).max(1),
+        )
+    })
+}
+
+fn charge_signed_bound(proposition: &Proposition) -> bool {
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+        true,
+    ) = proposition
+    else {
+        return false;
+    };
+    charge_bitvector(left) && charge_bitvector(right)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SpecialArithmeticNode {
@@ -62,6 +161,7 @@ pub(crate) enum SpecialArithmeticCheckError {
     InvalidDefinedness(usize),
     InvalidOperator(usize),
     NodeResultMismatch(usize),
+    WorkLimitExceeded,
     DoesNotFollow,
 }
 
@@ -78,12 +178,20 @@ impl SpecialArithmeticCertificate {
         }
         let mut checked = Vec::with_capacity(self.nodes.len());
         for (index, node) in self.nodes.iter().enumerate() {
+            if crate::instrumentation::deadline_exceeded_with_work(1) {
+                return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+            }
             let result = match node {
                 SpecialArithmeticNode::PointerTranslation {
                     relation,
                     bounds,
                     result,
                 } => {
+                    if crate::instrumentation::deadline_exceeded_with_work(
+                        bounds.len().saturating_add(1),
+                    ) {
+                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                    }
                     let relation_proposition = premises
                         .get(*relation)
                         .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
@@ -101,6 +209,9 @@ impl SpecialArithmeticCertificate {
                     result.clone()
                 }
                 SpecialArithmeticNode::PointerAlignment { premise, result } => {
+                    if crate::instrumentation::deadline_exceeded_with_work(1) {
+                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                    }
                     let premise = premise
                         .map(|index| {
                             premises
@@ -118,6 +229,11 @@ impl SpecialArithmeticCertificate {
                     alignments,
                     result,
                 } => {
+                    if crate::instrumentation::deadline_exceeded_with_work(
+                        alignments.len().saturating_add(1),
+                    ) {
+                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                    }
                     let relation = premises
                         .get(*relation)
                         .ok_or(SpecialArithmeticCheckError::InvalidPremise(*relation))?;
@@ -135,6 +251,9 @@ impl SpecialArithmeticCertificate {
                     result.clone()
                 }
                 SpecialArithmeticNode::FloatReflexive { finite, result } => {
+                    if crate::instrumentation::deadline_exceeded_with_work(1) {
+                        return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                    }
                     let finite = premises
                         .get(*finite)
                         .ok_or(SpecialArithmeticCheckError::InvalidPremise(*finite))?;
@@ -181,6 +300,9 @@ fn scalar(value: &Bitvector32Term) -> Option<i64> {
 fn scalar_bounds(premises: &[&Proposition]) -> Option<BTreeMap<Bitvector32Term, (i64, i64)>> {
     let mut bounds = BTreeMap::new();
     for premise in premises {
+        if !charge_signed_bound(premise) {
+            return None;
+        }
         let Proposition::ConditionIs(condition, true) = premise else {
             return None;
         };
@@ -210,6 +332,13 @@ fn scalar_bounds(premises: &[&Proposition]) -> Option<BTreeMap<Bitvector32Term, 
         }
         let left_constant = scalar(left);
         let right_constant = scalar(right);
+        let key_payload = bitvector_payload(left)?.max(bitvector_payload(right)?);
+        let comparisons = (usize::BITS - bounds.len().max(1).leading_zeros()) as usize;
+        if crate::instrumentation::deadline_exceeded_with_work(
+            key_payload.saturating_mul(comparisons).max(1),
+        ) {
+            return None;
+        }
         match (left_constant, right_constant) {
             (None, Some(right)) => {
                 let entry = bounds
@@ -251,6 +380,13 @@ fn pointer_translation(
     let Some((premise_left, premise_right, premise_blocks)) = pointer_sides(relation) else {
         return false;
     };
+    if !charge_pointer_offset(goal_left)
+        || !charge_pointer_offset(goal_right)
+        || !charge_pointer_offset(premise_left)
+        || !charge_pointer_offset(premise_right)
+    {
+        return false;
+    }
     let (left, right) = match (goal_blocks, premise_blocks) {
         (None, None) => (goal_left, goal_right),
         (Some((goal_l, goal_r)), Some((premise_l, premise_r)))
@@ -335,6 +471,9 @@ fn pointer_translation(
                 },
                 OffsetPart::Offset(value) => value.clone(),
             };
+            if !charge_map_insert(&atom, terms.len()) {
+                return false;
+            }
             let entry = terms.entry(atom).or_default();
             let Some(next) = entry.checked_add(sign) else {
                 return false;
@@ -346,6 +485,9 @@ fn pointer_translation(
 }
 
 fn offset_difference(goal: &PointerOffsetTerm, premise: &PointerOffsetTerm) -> Option<i128> {
+    if !charge_pointer_offset(goal) || !charge_pointer_offset(premise) {
+        return None;
+    }
     let mut terms = BTreeMap::<PointerOffsetTerm, i128>::new();
     let mut constant = 0i128;
     for (offset, sign) in [(goal, 1i128), (premise, -1)] {
@@ -358,6 +500,9 @@ fn offset_difference(goal: &PointerOffsetTerm, premise: &PointerOffsetTerm) -> O
                     pending.push(right);
                 }
                 other => {
+                    if !charge_map_insert(other, terms.len()) {
+                        return None;
+                    }
                     *terms.entry(other.clone()).or_default() += sign;
                 }
             }
@@ -368,12 +513,15 @@ fn offset_difference(goal: &PointerOffsetTerm, premise: &PointerOffsetTerm) -> O
 }
 
 fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> bool {
-    let Proposition::ConditionIs(condition, true) = result else {
+    let Proposition::ConditionIs(condition, expected) = result else {
         return false;
     };
     let Some((goal_pointer, goal_alignment)) = condition.as_pointer_alignment() else {
         return false;
     };
+    if !charge_pointer_offset(&goal_pointer.offset) {
+        return false;
+    }
     let premise_alignment = premise.and_then(|proposition| {
         let Proposition::ConditionIs(condition, true) = proposition else {
             return None;
@@ -386,7 +534,10 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
     if !goal_alignment.is_power_of_two() {
         return false;
     }
-    if let Some((base, alignment)) = premise_alignment {
+    let aligned = if let Some((base, alignment)) = premise_alignment {
+        if !charge_pointer_offset(&base.offset) {
+            return false;
+        }
         if base.block != goal_pointer.block
             || alignment % goal_alignment != 0
             || offset_difference(&goal_pointer.offset, &base.offset)
@@ -394,11 +545,17 @@ fn pointer_alignment(premise: Option<&Proposition>, result: &Proposition) -> boo
         {
             return false;
         }
-        return true;
-    }
-    matches!(goal_pointer.block, PointerBlock::Heap(_))
-        && offset_difference(&goal_pointer.offset, &PointerOffsetTerm::Constant(0))
-            .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+        true
+    } else {
+        let intrinsic_alignment = match &goal_pointer.block {
+            PointerBlock::Heap(_) => Some(crate::kernel::primitives::HEAP_ALLOCATION_ALIGNMENT),
+            block => crate::kernel::primitives::registered_block_alignment(block),
+        };
+        intrinsic_alignment.is_some_and(|intrinsic| goal_alignment <= intrinsic)
+            && offset_difference(&goal_pointer.offset, &PointerOffsetTerm::Constant(0))
+                .is_some_and(|delta| delta.rem_euclid(goal_alignment as i128) == 0)
+    };
+    *expected == aligned
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -514,11 +671,18 @@ fn pointer_word_equality(
     else {
         return false;
     };
-    let Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(goal_left, goal_right), true) =
+    let Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(goal_left, goal_right), expected) =
         result
     else {
         return false;
     };
+    if !charge_bitvector(left)
+        || !charge_bitvector(right)
+        || !charge_bitvector(goal_left)
+        || !charge_bitvector(goal_right)
+    {
+        return false;
+    }
     let mut alignments = Vec::new();
     for premise in alignment_premises {
         let Proposition::ConditionIs(condition, true) = premise else {
@@ -527,6 +691,9 @@ fn pointer_word_equality(
         let Some((pointer, alignment)) = condition.as_pointer_alignment() else {
             return false;
         };
+        if !charge_pointer_offset(&pointer.offset) {
+            return false;
+        }
         alignments.push((pointer, alignment));
     }
     if tagged_form(left, (left, right), &alignments).is_none()
@@ -536,11 +703,27 @@ fn pointer_word_equality(
     }
     let goal_left_form = tagged_form(goal_left, (left, right), &alignments);
     let goal_right_form = tagged_form(goal_right, (left, right), &alignments);
-    match (goal_left_form, goal_right_form) {
+    let equal = match (goal_left_form, goal_right_form) {
         (Some(goal_left), Some(goal_right)) => {
             goal_left.pointer == goal_right.pointer && goal_left.tag == goal_right.tag
         }
         _ => false,
+    };
+    if *expected {
+        equal
+    } else {
+        match (
+            tagged_form(goal_left, (left, right), &alignments),
+            tagged_form(goal_right, (left, right), &alignments),
+        ) {
+            (Some(goal_left), Some(goal_right)) if goal_left.pointer == goal_right.pointer => {
+                matches!(
+                    (goal_left.tag.uint64_as_const(), goal_right.tag.uint64_as_const()),
+                    (Some(left), Some(right)) if left != right
+                )
+            }
+            _ => false,
+        }
     }
 }
 
@@ -559,6 +742,9 @@ fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
         }) => (expression.as_ref(), 64),
         _ => return false,
     };
+    if !charge_bitvector(finite_expression) {
+        return false;
+    }
     let Proposition::ConditionIs(condition, expected) = result else {
         return false;
     };
@@ -578,6 +764,9 @@ fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
     if width != finite_width || left != right || left != finite_expression {
         return false;
     }
+    if !charge_bitvector(left) || !charge_bitvector(right) {
+        return false;
+    }
     let reflexive = matches!(
         operator,
         CComparisonOperator::Equal
@@ -594,6 +783,13 @@ mod tests {
     fn pointer(offset: PointerOffsetTerm) -> Pointer {
         Pointer {
             block: PointerBlock::ExternalArgument,
+            offset,
+        }
+    }
+
+    fn heap_pointer(offset: PointerOffsetTerm) -> Pointer {
+        Pointer {
+            block: PointerBlock::Heap(7),
             offset,
         }
     }
@@ -710,6 +906,45 @@ mod tests {
             .check(&goal, &[aligned_base]),
             Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
         ));
+
+        for alignment in [2, 4, 8, 16] {
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::pointer_aligned(
+                    heap_pointer(PointerOffsetTerm::Constant(0)),
+                    alignment,
+                ),
+                true,
+            );
+            SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                    premise: None,
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            }
+            .check(&goal, &[])
+            .unwrap();
+        }
+        for alignment in [32, 4096] {
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::pointer_aligned(
+                    heap_pointer(PointerOffsetTerm::Constant(0)),
+                    alignment,
+                ),
+                true,
+            );
+            assert!(matches!(
+                SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::PointerAlignment {
+                        premise: None,
+                        result: goal.clone(),
+                    }],
+                    conclusion: 0,
+                }
+                .check(&goal, &[]),
+                Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+            ));
+        }
     }
 
     #[test]
@@ -784,5 +1019,108 @@ mod tests {
             .check(&good, &[finite]),
             Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
         ));
+    }
+
+    #[test]
+    fn deep_pointer_terms_are_rejected_before_recursive_key_comparison() {
+        let mut offset = PointerOffsetTerm::Constant(0);
+        for _ in 0..=MAX_TERM_PAYLOAD {
+            offset = add(offset, PointerOffsetTerm::Constant(0));
+        }
+        let relation = pointer_eq(offset.clone(), PointerOffsetTerm::Constant(0));
+        let goal = pointer_eq(offset, PointerOffsetTerm::Constant(0));
+        let certificate = SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerTranslation {
+                relation: 0,
+                bounds: vec![],
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        };
+        assert!(matches!(
+            certificate.check(&goal, &[relation]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        ));
+    }
+
+    #[test]
+    fn translation_work_scales_with_explicit_payload() {
+        let mut previous = None;
+        for size in [4, 8, 16, 32, 64] {
+            let p = PointerOffsetTerm::Variable(crate::kernel::Variable(100));
+            let arr = PointerOffsetTerm::Variable(crate::kernel::Variable(101));
+            let i = Bitvector32Term::Variable(crate::kernel::Variable(1));
+            let n = Bitvector32Term::Variable(crate::kernel::Variable(2));
+            let mut left = p.clone();
+            let mut right = add(arr.clone(), scaled(i.clone()));
+            let mut premises = vec![Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(i.clone()), Box::new(n.clone())),
+                true,
+            )];
+            for index in 0..size {
+                let delta = PointerOffsetTerm::Variable(crate::kernel::Variable(1000 + index));
+                left = add(left, delta.clone());
+                right = add(right, delta);
+                premises.push(Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(
+                        Box::new(Bitvector32Term::Variable(crate::kernel::Variable(
+                            2000 + index,
+                        ))),
+                        Box::new(Bitvector32Term::Constant(100)),
+                    ),
+                    true,
+                ));
+            }
+            let relation = pointer_eq(p, add(arr, scaled(i)));
+            let goal = pointer_eq(left, right);
+            premises.insert(0, relation);
+            let certificate = SpecialArithmeticCertificate {
+                nodes: vec![SpecialArithmeticNode::PointerTranslation {
+                    relation: 0,
+                    bounds: (1..premises.len()).collect(),
+                    result: goal.clone(),
+                }],
+                conclusion: 0,
+            };
+            let (valid, work) = crate::instrumentation::measure_deterministic_work(|| {
+                certificate.check(&goal, &premises).is_ok()
+            });
+            assert!(valid);
+            if let Some(previous) = previous {
+                assert!(work <= previous * 4);
+            }
+            previous = Some(work);
+        }
+    }
+
+    #[test]
+    fn tagged_word_negative_result_needs_distinct_constant_tags() {
+        let pointer = pointer(PointerOffsetTerm::Constant(0));
+        let address = Bitvector32Term::PointerAddress(Box::new(pointer));
+        let word = Bitvector32Term::Variable(crate::kernel::Variable(30));
+        let relation = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                word,
+                Bitvector32Term::uint64_add(address.clone(), Bitvector32Term::UInt64Constant(1)),
+            ),
+            true,
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::uint64_equal(
+                Bitvector32Term::uint64_add(address.clone(), Bitvector32Term::UInt64Constant(1)),
+                Bitvector32Term::uint64_add(address, Bitvector32Term::UInt64Constant(2)),
+            ),
+            false,
+        );
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::PointerWordEquality {
+                relation: 0,
+                alignments: vec![],
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(&goal, &[relation])
+        .unwrap();
     }
 }

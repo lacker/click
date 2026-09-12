@@ -34,6 +34,11 @@ pub(super) use resource_algebra::*;
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
 
+/// The allocator alignment guaranteed by the LP64 heap model.  Keep this
+/// beside the pointer primitives so all proof routes use the same profile
+/// contract rather than copying a second limit into a checker.
+pub(crate) const HEAP_ALLOCATION_ALIGNMENT: u64 = 16;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Variable(pub u64);
 
