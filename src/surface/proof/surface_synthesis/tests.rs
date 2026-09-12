@@ -519,6 +519,127 @@ fn external_symbolic_element_requirement_term(
     }
 }
 
+fn full_external_cstr_surface() -> ClickProposition {
+    let length = ContractExpression::CFragment(CExpression::Variable("__click_q0".into()));
+    let index = ContractExpression::CFragment(CExpression::Variable("__click_q1".into()));
+    let range_end = ContractExpression::Add(
+        Box::new(length.clone()),
+        Box::new(ContractExpression::CFragment(CExpression::Value(int32(1)))),
+    );
+    let range = ClickProposition::Loadable {
+        segment: ContractSegment {
+            state: ContractSegmentState::Current,
+            base: CExpression::Variable("bytes".into()),
+            start: CExpression::Variable("__click_q0".into()),
+            end: CExpression::Add(
+                Box::new(CExpression::Variable("__click_q0".into())),
+                Box::new(CExpression::Value(int32(1))),
+            ),
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(CExpression::Variable("bytes".into())),
+                start: length.clone(),
+                end: range_end,
+            },
+        },
+    };
+    let nonzero = ClickProposition::Comparison {
+        left: ContractExpression::Index(
+            Box::new(ContractExpression::CFragment(CExpression::Variable(
+                "bytes".into(),
+            ))),
+            Box::new(index.clone()),
+        ),
+        operator: ComparisonOperator::NotEqual,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let all_before_terminator = ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "__click_q1".into(),
+        body: Box::new(ClickProposition::Implies(
+            Box::new(ClickProposition::And(
+                Box::new(ClickProposition::Comparison {
+                    left: index.clone(),
+                    operator: ComparisonOperator::GreaterEqual,
+                    right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                }),
+                Box::new(ClickProposition::Comparison {
+                    left: index.clone(),
+                    operator: ComparisonOperator::LessThan,
+                    right: length.clone(),
+                }),
+            )),
+            Box::new(nonzero),
+        )),
+    };
+    let terminator = ClickProposition::Comparison {
+        left: ContractExpression::Index(
+            Box::new(ContractExpression::CFragment(CExpression::Variable(
+                "bytes".into(),
+            ))),
+            Box::new(length.clone()),
+        ),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    ClickProposition::Exists {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "__click_q0".into(),
+        body: Box::new(ClickProposition::And(
+            Box::new(ClickProposition::Comparison {
+                left: length.clone(),
+                operator: ComparisonOperator::GreaterEqual,
+                right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            }),
+            Box::new(ClickProposition::And(
+                Box::new(range),
+                Box::new(ClickProposition::And(
+                    Box::new(all_before_terminator),
+                    Box::new(terminator),
+                )),
+            )),
+        )),
+    }
+}
+
+#[test]
+fn strlen_full_guarded_requirement_with_variable_argument_round_trips() {
+    let memory = CMemory::new().with_block("strlen:production-bytes", 16);
+    let (parameters, concrete_arguments, state) = external_symbolic_element_context(memory.clone());
+    let pointer = match &concrete_arguments[0] {
+        CExpression::Value(CValue::Pointer(pointer)) => pointer.clone(),
+        _ => panic!("the production-shaped argument must be a pointer"),
+    };
+    let arguments = vec![
+        CExpression::Variable("bytes".to_string()),
+        concrete_arguments[1].clone(),
+    ];
+    let requirement_surface = full_external_cstr_surface();
+    let requirement = relower_written_proposition(&requirement_surface, &state)
+        .expect("the production-shaped strlen requirement must lower");
+    let synthesized = {
+        let _budget = SurfaceSynthesisScope::enter();
+        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
+            .expect("the guarded strlen requirement must be spellable")
+    };
+    assert!(matches!(synthesized, ClickProposition::Exists { .. }));
+    let lowered = relower_written_proposition(&synthesized, &state)
+        .expect("the synthesized existential must lower through the have path");
+    let resolve = crate::kernel::resolve_load_variables_from_registry;
+    assert!(
+        crate::kernel::proof::propositions_are_alpha_equal(
+            &resolve(&lowered),
+            &resolve(&requirement)
+        ),
+        "lowered: {lowered:?}\nrequirement: {requirement:?}"
+    );
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&resolve(&lowered)),
+        crate::kernel::proof::proposition_identity_key(&resolve(&requirement)),
+        "the variable argument must preserve canonical load identity"
+    );
+    assert_eq!(state.locals().get("bytes"), Some(&CValue::Pointer(pointer)));
+}
+
 #[test]
 fn strlen_symbolic_element_range_round_trips_exactly() {
     let memory = CMemory::new().with_block("strlen:bytes", 16);

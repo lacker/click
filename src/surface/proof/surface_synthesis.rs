@@ -580,7 +580,24 @@ fn synthesized_surface_matches_proposition(
     arguments: &[CExpression],
     state: &CState,
 ) -> bool {
-    let Ok(parameter_values) = parameter_values(parameters, arguments) else {
+    // A retained call requirement may carry a caller variable as the
+    // selected pointer argument. The normal contract environment builder
+    // expects already-evaluated call values, so resolve only this exact
+    // pointer variable through the current state's indexed local binding for
+    // the round-trip check. Other expressions remain rejected.
+    let resolved_arguments = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Variable(name) => match state.locals().get(name) {
+                Some(CValue::Pointer(pointer)) => {
+                    CExpression::Value(CValue::Pointer(pointer.clone()))
+                }
+                _ => argument.clone(),
+            },
+            _ => argument.clone(),
+        })
+        .collect::<Vec<_>>();
+    let Ok(parameter_values) = parameter_values(parameters, &resolved_arguments) else {
         return false;
     };
     let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
@@ -901,8 +918,18 @@ fn synthesize_external_symbolic_element_range(
         .iter()
         .zip(arguments)
         .find_map(|(parameter, argument)| {
-            let CExpression::Value(CValue::Pointer(named_base)) = argument else {
-                return None;
+            let named_base = match argument {
+                CExpression::Value(CValue::Pointer(pointer)) => pointer,
+                // Call-site arguments normally have already been evaluated
+                // to values, but a retained call requirement can carry the
+                // caller's exact variable expression instead. Resolve only
+                // that selected name through the current state's indexed
+                // local binding; do not infer a pointer from ambient facts.
+                CExpression::Variable(name) => match state.locals().get(name) {
+                    Some(CValue::Pointer(pointer)) => pointer,
+                    _ => return None,
+                },
+                _ => return None,
             };
             if parameter
                 .c_type()
