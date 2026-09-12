@@ -833,6 +833,12 @@ appears to need one reports the need instead of adding it.
   predicate fact by exact evaluation at each constructor, and expansion
   descends into `both` and `close_invariants` bodies. The node-keyed ascent
   stops on gap 51; A22 dispatched; C3 after it.
+- 2026-09-12: A22 (a6323676) is on master: a matched arm's cells are
+  owned at the spelling the C reads when an exact pointer equality
+  identifies the binding with an older pointer (fact-level alias index,
+  one hop, downward only). **The node-keyed ascent verifies and audits**,
+  and the examples audit is 500 of 555 with only the two known failures.
+  Phase A is complete for the insert fixup; C3 dispatched.
 
 ## Work packages
 
