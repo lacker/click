@@ -14,7 +14,7 @@
 use super::super::{Bitvector32Term, ConditionTerm, Proposition};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 const SIGNED_MIN: i64 = i32::MIN as i64;
 const SIGNED_MAX: i64 = i32::MAX as i64;
@@ -129,6 +129,10 @@ struct TermArena {
     equivalence_cache: HashMap<(usize, usize), bool>,
 }
 
+fn pair_is_equivalent(cache: &HashMap<(usize, usize), bool>, left: usize, right: usize) -> bool {
+    left == right || cache.get(&(left, right)).is_some_and(|result| *result)
+}
+
 impl TermArena {
     fn atom(&mut self, term: Bitvector32Term) -> usize {
         let reference = self.terms.len();
@@ -159,70 +163,106 @@ impl TermArena {
         if let Some(result) = self.equivalence_cache.get(&(left, right)) {
             return *result;
         }
-        let mut pending = vec![(left, right)];
-        let mut visited = HashSet::new();
-        let mut equivalent = true;
-        while let Some((left, right)) = pending.pop() {
-            if !visited.insert((left, right)) {
+        // The third tuple element is a postorder marker. Every completed pair,
+        // including shared subgraphs beneath distinct wrapper roots, is
+        // memoized before its parent is discharged.
+        let mut pending = vec![(left, right, false)];
+        while let Some((left, right, expanded)) = pending.pop() {
+            if left == right {
                 continue;
             }
-            if let Some(result) = self.equivalence_cache.get(&(left, right)) {
-                if !result {
-                    equivalent = false;
-                    break;
+            if self.equivalence_cache.contains_key(&(left, right)) {
+                continue;
+            }
+            if !expanded {
+                if crate::instrumentation::deadline_exceeded_with_work(1) {
+                    return false;
                 }
-                continue;
-            }
-            if crate::instrumentation::deadline_exceeded_with_work(1) {
-                equivalent = false;
-                break;
-            }
-            match (&self.terms[left], &self.terms[right]) {
-                (CheckedTerm::Atom(left), CheckedTerm::Atom(right)) => {
-                    if left != right {
-                        equivalent = false;
-                        break;
+                match (&self.terms[left], &self.terms[right]) {
+                    (CheckedTerm::Atom(left_term), CheckedTerm::Atom(right_term)) => {
+                        let equivalent = left_term == right_term;
+                        self.equivalence_cache.insert((left, right), equivalent);
+                        self.equivalence_cache.insert((right, left), equivalent);
+                        if !equivalent {
+                            return false;
+                        }
+                    }
+                    (
+                        CheckedTerm::Binary {
+                            operator: left_operator,
+                            left: left_left,
+                            right: left_right,
+                        },
+                        CheckedTerm::Binary {
+                            operator: right_operator,
+                            left: right_left,
+                            right: right_right,
+                        },
+                    ) if left_operator == right_operator => {
+                        pending.push((left, right, true));
+                        pending.push((*left_right, *right_right, false));
+                        pending.push((*left_left, *right_left, false));
+                    }
+                    (
+                        CheckedTerm::Unary {
+                            operator: left_operator,
+                            operand: left_operand,
+                        },
+                        CheckedTerm::Unary {
+                            operator: right_operator,
+                            operand: right_operand,
+                        },
+                    ) if left_operator == right_operator => {
+                        pending.push((left, right, true));
+                        pending.push((*left_operand, *right_operand, false));
+                    }
+                    _ => {
+                        self.equivalence_cache.insert((left, right), false);
+                        self.equivalence_cache.insert((right, left), false);
+                        return false;
                     }
                 }
-                (
-                    CheckedTerm::Binary {
-                        operator: left_operator,
-                        left: left_left,
-                        right: left_right,
-                    },
-                    CheckedTerm::Binary {
-                        operator: right_operator,
-                        left: right_left,
-                        right: right_right,
-                    },
-                ) if left_operator == right_operator => {
-                    pending.push((*left_left, *right_left));
-                    pending.push((*left_right, *right_right));
-                }
-                (
-                    CheckedTerm::Unary {
-                        operator: left_operator,
-                        operand: left_operand,
-                    },
-                    CheckedTerm::Unary {
-                        operator: right_operator,
-                        operand: right_operand,
-                    },
-                ) if left_operator == right_operator => {
-                    pending.push((*left_operand, *right_operand));
-                }
-                _ => {
-                    equivalent = false;
-                    break;
+            } else {
+                let equivalent = match (&self.terms[left], &self.terms[right]) {
+                    (
+                        CheckedTerm::Binary {
+                            left: left_left,
+                            right: left_right,
+                            ..
+                        },
+                        CheckedTerm::Binary {
+                            left: right_left,
+                            right: right_right,
+                            ..
+                        },
+                    ) => {
+                        pair_is_equivalent(&self.equivalence_cache, *left_left, *right_left)
+                            && pair_is_equivalent(
+                                &self.equivalence_cache,
+                                *left_right,
+                                *right_right,
+                            )
+                    }
+                    (
+                        CheckedTerm::Unary {
+                            operand: left_operand,
+                            ..
+                        },
+                        CheckedTerm::Unary {
+                            operand: right_operand,
+                            ..
+                        },
+                    ) => pair_is_equivalent(&self.equivalence_cache, *left_operand, *right_operand),
+                    _ => false,
+                };
+                self.equivalence_cache.insert((left, right), equivalent);
+                self.equivalence_cache.insert((right, left), equivalent);
+                if !equivalent {
+                    return false;
                 }
             }
         }
-        // The arena is append-only, so this result remains valid for all later
-        // checks. Caching both orientations makes repeated intersections of
-        // the same deep expression output-sensitive rather than quadratic.
-        self.equivalence_cache.insert((left, right), equivalent);
-        self.equivalence_cache.insert((right, left), equivalent);
-        equivalent
+        true
     }
 
     fn equivalent_explicit(&self, reference: usize, explicit: &Bitvector32Term) -> bool {
@@ -938,32 +978,23 @@ fn signed_term_work(root: &Bitvector32Term) -> usize {
                 pending.push(right);
             }
             Bitvector32Term::BitwiseNot(operand) => pending.push(operand),
-            // These nodes are accepted as opaque atoms. Their identity is
-            // nevertheless deep: names, arguments, algebraic arms, pointer
-            // offsets, and memory snapshots all participate in equality and
-            // ordering. Charge their complete canonical debug payload rather
-            // than treating the enum discriminant as the whole term size.
-            Bitvector32Term::PureFunctionApplication { .. }
-            | Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. }
-            | Bitvector32Term::MemoryLoad(_, _)
-            | Bitvector32Term::PointerAddress(_) => {
-                units = units.saturating_add(canonical_payload_work(term));
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                // Function application identity compares the name and every
+                // argument. Arguments are restricted to this same safe
+                // machine-term fragment, so an iterative walk charges the
+                // complete payload without formatting or allocating it.
+                units = units.saturating_add(name.len());
+                units = units.saturating_add(arguments.len());
+                pending.extend(arguments.iter());
             }
             _ => {
-                units = units.saturating_add(canonical_payload_work(term));
+                // Unsupported opaque payloads are rejected before they can
+                // enter a checked affine claim; keep this branch bounded for
+                // defensive direct callers.
             }
         }
     }
     units
-}
-
-/// A term's derived identity includes all of the payload rendered here. This
-/// is intentionally output-sensitive for opaque applications, algebraic
-/// matches, pointers, and memory snapshots, whose shallow enum size otherwise
-/// hides the work performed by `Eq`/`Ord` and BTreeMap insertion.
-fn canonical_payload_work<T: std::fmt::Debug>(payload: &T) -> usize {
-    format!("{payload:?}").len().saturating_add(1)
 }
 
 fn affine_at(
@@ -1128,21 +1159,37 @@ fn affine_term_bounds(claim: &SignedArithmeticClaim, term: &Bitvector32Term) -> 
 }
 
 fn is_opaque_atom(term: &Bitvector32Term) -> bool {
-    matches!(
-        term,
-        Bitvector32Term::Variable(_)
-            | Bitvector32Term::MemoryLoad(_, _)
-            | Bitvector32Term::PureFunctionApplication { .. }
-            | Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. }
-    )
+    match term {
+        Bitvector32Term::Variable(_) => true,
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(is_safe_opaque_payload)
+        }
+        _ => false,
+    }
+}
+
+fn is_safe_opaque_payload(root: &Bitvector32Term) -> bool {
+    let mut pending = vec![root];
+    while let Some(term) = pending.pop() {
+        match term {
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                pending.extend(arguments.iter());
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// An affine-to-interval node may only re-use evidence for a term whose value
 /// was already produced without a machine operation that can be undefined.
 /// Compound arithmetic therefore has to arrive through an interval operation
 /// node, where its exact definedness proposition is checked locally. Constants
-/// and opaque observations are safe identity atoms at this boundary.
+/// and the bounded pure-application atom form are safe identities at this
+/// boundary. Memory loads, Click applications, algebraic matches, and
+/// pointer-derived payloads remain unsupported until they have an equivalent
+/// structural walker.
 fn is_intrinsically_safe_interval_atom(term: &Bitvector32Term) -> bool {
     matches!(term, Bitvector32Term::Constant(_)) || is_opaque_atom(term)
 }
@@ -1156,12 +1203,12 @@ fn is_signed_int32_expression(root: &Bitvector32Term) -> bool {
     let mut pending = vec![root];
     while let Some(term) = pending.pop() {
         match term {
-            Bitvector32Term::Constant(_)
-            | Bitvector32Term::Variable(_)
-            | Bitvector32Term::MemoryLoad(_, _)
-            | Bitvector32Term::PureFunctionApplication { .. }
-            | Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. } => {}
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                if !arguments.iter().all(is_safe_opaque_payload) {
+                    return false;
+                }
+            }
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
@@ -1908,6 +1955,45 @@ mod tests {
     }
 
     #[test]
+    fn shared_subgraph_equivalence_is_cached_across_distinct_roots() {
+        let mut measurements = Vec::new();
+        for size in [8usize, 16, 32, 64] {
+            let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut arena = TermArena::default();
+                let mut left_shared = arena.atom(x());
+                let mut right_shared = arena.atom(x());
+                for index in 0..size {
+                    let left_atom =
+                        arena.atom(Bitvector32Term::Variable(Variable(2000 + index as u64)));
+                    let right_atom =
+                        arena.atom(Bitvector32Term::Variable(Variable(2000 + index as u64)));
+                    left_shared = arena.binary(CheckedBinaryOperator::Add, left_shared, left_atom);
+                    right_shared =
+                        arena.binary(CheckedBinaryOperator::Add, right_shared, right_atom);
+                }
+                for index in 0..size {
+                    let left_atom =
+                        arena.atom(Bitvector32Term::Variable(Variable(3000 + index as u64)));
+                    let right_atom =
+                        arena.atom(Bitvector32Term::Variable(Variable(3000 + index as u64)));
+                    let left_root =
+                        arena.binary(CheckedBinaryOperator::Add, left_shared, left_atom);
+                    let right_root =
+                        arena.binary(CheckedBinaryOperator::Add, right_shared, right_atom);
+                    assert!(arena.equivalent(left_root, right_root));
+                }
+            });
+            measurements.push(work);
+        }
+        for pair in measurements.windows(2) {
+            assert!(
+                pair[1] <= 4 * pair[0] + 16,
+                "shared subgraph comparison should not retraverse roots: {measurements:?}"
+            );
+        }
+    }
+
+    #[test]
     fn opaque_payload_work_scales_with_application_identity() {
         let mut measurements = Vec::new();
         for payload_size in [8usize, 16, 32, 64] {
@@ -1931,6 +2017,24 @@ mod tests {
             );
             assert!(pair[1] <= 5 * pair[0], "{measurements:?}");
         }
+    }
+
+    #[test]
+    fn deep_opaque_payload_work_is_iterative_and_budgeted() {
+        let mut term = x();
+        for _ in 0..4096 {
+            term = Bitvector32Term::PureFunctionApplication {
+                name: "f".to_string(),
+                arguments: vec![term],
+            };
+        }
+        assert!(is_opaque_atom(&term));
+        let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert!(!crate::instrumentation::deadline_exceeded_with_work(
+                signed_term_work(&term)
+            ));
+        });
+        assert!(work > 4096);
     }
 
     #[test]
