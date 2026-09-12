@@ -969,6 +969,20 @@ appears to need one reports the need instead of adding it.
   item did not reproduce. Every verifier gap on the insert path is closed;
   C3 resumes with the insert fixture stopping at its own `initialize`
   (the frame-to-`parent` lemma before the loop).
+- 2026-09-12: uniform scoping. The insert work showed proof locals (a proof
+  `match` arm's bindings, `unfold ... as` names, call-result binders)
+  resolving differently by tactic position. Two slices landed directly:
+  bb142e1c resolves them in theorem arguments and `using` premises,
+  `instantiate`, and `extract` exactly as in a `have` goal, and accepts the
+  null constant at a pointer-typed theorem parameter
+  (`theorem_argument_arm_binding*.md`, `theorem_argument_null_constant.md`);
+  ad5c2307 lets a `loop` written inside an arm name the arm's bindings in
+  its invariants, resource arguments, and `decreases` measure. The bound
+  clause carries its proof scope and every lowering (re-annotation,
+  finishing, both planners) resolves through it while the written spelling
+  is what certificates record and expansion prints
+  (`loop_clause_reads_arm_bindings.md`). A28 (one arm-publication point per
+  frontier in the kernel) in progress; C3 resumes on the insert fixture.
 
 ## Work packages
 
