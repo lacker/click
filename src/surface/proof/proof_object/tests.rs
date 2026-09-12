@@ -11327,6 +11327,233 @@ fn cursor_execution_load_binding_work_is_deterministic_and_output_sized() {
     }
 }
 
+fn generated_load_source_event_fixture(
+    variable: u32,
+    occurrence: u32,
+    pointer_offset: u32,
+) -> crate::kernel::GeneratedLoadSourceEvent {
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(pointer_offset.into()),
+    };
+    crate::kernel::GeneratedLoadSourceEvent::new(
+        crate::kernel::LoadSourceId {
+            owner: crate::kernel::LoadSourceOwnerId {
+                source_unit: std::sync::Arc::from("source.c"),
+                function: std::sync::Arc::from("load"),
+            },
+            occurrence,
+        },
+        crate::kernel::GeneratedLoadBinding::Exact {
+            variable: Variable(variable.into()),
+            snapshot: crate::kernel::CMemorySnapshotIdentity::of(&CMemory::new()),
+            pointer: pointer.clone(),
+            load: Bitvector32Term::MemoryLoad(CMemory::new().into(), Box::new(pointer)),
+        },
+    )
+    .expect("the fixture carries an exact generated-load binding")
+}
+
+fn generated_load_source_execution() -> ExecutionProofState {
+    ExecutionProofState::at_entry(
+        CState::new(),
+        ExecutionFrontier::default(),
+        RecordedSnapshots::default(),
+        SurfacePropositionMap::default(),
+        PersistentSequence::default(),
+    )
+}
+
+#[test]
+fn generated_load_source_events_are_idempotent_and_tombstone_conflicts() {
+    let mut execution = generated_load_source_execution();
+    let first = generated_load_source_event_fixture(70_001, 1, 0);
+    let same = first.clone();
+    let different_source = generated_load_source_event_fixture(70_001, 2, 0);
+    let different_binding = generated_load_source_event_fixture(70_001, 1, 1);
+
+    execution
+        .presentation
+        .record_generated_load_source_events(&[first.clone(), same]);
+    assert_eq!(
+        execution
+            .presentation
+            .generated_load_source_resolutions
+            .len(),
+        1
+    );
+    assert_eq!(execution.presentation.generated_load_source_events.len(), 1);
+    assert!(matches!(
+        execution
+            .presentation
+            .generated_load_source_resolutions
+            .get(&Variable(70_001)),
+        Some(crate::kernel::GeneratedLoadSourceResolution::Unique(event)) if event == &first
+    ));
+
+    // Either a different source occurrence or a different exact producer
+    // binding poisons the variable permanently.
+    execution
+        .presentation
+        .record_generated_load_source_events(&[different_source]);
+    assert!(matches!(
+        execution
+            .presentation
+            .generated_load_source_resolutions
+            .get(&Variable(70_001)),
+        Some(crate::kernel::GeneratedLoadSourceResolution::Ambiguous {
+            variable: Variable(70_001)
+        })
+    ));
+    assert_eq!(execution.presentation.generated_load_source_events.len(), 2);
+    execution
+        .presentation
+        .record_generated_load_source_events(&[different_binding, first]);
+    assert_eq!(
+        execution.presentation.generated_load_source_events.len(),
+        2,
+        "a tombstone must not be reopened or grow with ignored observations"
+    );
+}
+
+#[test]
+fn generated_load_source_event_rejects_ambiguous_binding_input() {
+    let source = crate::kernel::LoadSourceId {
+        owner: crate::kernel::LoadSourceOwnerId {
+            source_unit: std::sync::Arc::from("source.c"),
+            function: std::sync::Arc::from("load"),
+        },
+        occurrence: 1,
+    };
+    assert!(
+        crate::kernel::GeneratedLoadSourceEvent::new(
+            source,
+            crate::kernel::GeneratedLoadBinding::Ambiguous {
+                variable: Variable(70_004),
+            },
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn generated_load_source_event_forks_merge_by_suffix_without_cross_path_leaks() {
+    let base = generated_load_source_execution();
+    let first = generated_load_source_event_fixture(70_002, 1, 0);
+    let second = generated_load_source_event_fixture(70_002, 2, 0);
+    let other_variable = generated_load_source_event_fixture(70_003, 1, 0);
+
+    let mut then_arm = base.clone();
+    then_arm
+        .presentation
+        .record_generated_load_source_events(std::slice::from_ref(&first));
+    let mut else_arm = base.clone();
+    else_arm
+        .presentation
+        .record_generated_load_source_events(std::slice::from_ref(&first));
+
+    let mut same_join = base.clone();
+    let then_suffix = then_arm
+        .presentation
+        .generated_load_source_events
+        .suffix_since(&base.presentation.generated_load_source_events)
+        .expect("then arm must descend from the split root");
+    same_join
+        .presentation
+        .record_generated_load_source_events(&then_suffix);
+    let else_suffix = else_arm
+        .presentation
+        .generated_load_source_events
+        .suffix_since(&base.presentation.generated_load_source_events)
+        .expect("else arm must descend from the split root");
+    same_join
+        .presentation
+        .record_generated_load_source_events(&else_suffix);
+    assert_eq!(
+        same_join.presentation.generated_load_source_events.len(),
+        1,
+        "the same event from both arms is one idempotent observation"
+    );
+    assert!(matches!(
+        same_join
+            .presentation
+            .generated_load_source_resolutions
+            .get(&Variable(70_002)),
+        Some(crate::kernel::GeneratedLoadSourceResolution::Unique(event)) if event == &first
+    ));
+
+    let mut conflicting_arm = base.clone();
+    conflicting_arm
+        .presentation
+        .record_generated_load_source_events(std::slice::from_ref(&second));
+    let mut conflict_join = base.clone();
+    conflict_join
+        .presentation
+        .record_generated_load_source_events(&then_suffix);
+    let conflicting_suffix = conflicting_arm
+        .presentation
+        .generated_load_source_events
+        .suffix_since(&base.presentation.generated_load_source_events)
+        .expect("conflicting arm must descend from the split root");
+    conflict_join
+        .presentation
+        .record_generated_load_source_events(&conflicting_suffix);
+    assert!(matches!(
+        conflict_join
+            .presentation
+            .generated_load_source_resolutions
+            .get(&Variable(70_002)),
+        Some(crate::kernel::GeneratedLoadSourceResolution::Ambiguous {
+            variable: Variable(70_002)
+        })
+    ));
+
+    // A sibling's event is not visible from the root or an unrelated key.
+    let mut unrelated_arm = base.clone();
+    unrelated_arm
+        .presentation
+        .record_generated_load_source_events(std::slice::from_ref(&other_variable));
+    assert!(base.presentation.generated_load_source_events.is_empty());
+    assert!(
+        then_arm
+            .presentation
+            .generated_load_source_resolutions
+            .get(&Variable(70_003))
+            .is_none()
+    );
+    assert!(matches!(
+        unrelated_arm
+            .presentation
+            .generated_load_source_resolutions
+            .get(&Variable(70_003)),
+        Some(crate::kernel::GeneratedLoadSourceResolution::Unique(event)) if event == &other_variable
+    ));
+}
+
+#[test]
+fn duplicate_terminal_outcomes_merge_source_ambiguity_per_outcome() {
+    let parent_events = PersistentSequence::default();
+    let first = generated_load_source_event_fixture(70_005, 1, 0);
+    let second = generated_load_source_event_fixture(70_005, 2, 0);
+    let mut retained = generated_load_source_execution().provenance_for_outcome(0);
+    retained.record_generated_load_source_events(std::slice::from_ref(&first));
+    let mut duplicate_arm = generated_load_source_execution().provenance_for_outcome(0);
+    duplicate_arm.record_generated_load_source_events(std::slice::from_ref(&second));
+
+    // The terminal join's semantic path key intentionally ignores source
+    // presentation. When two arms collapse to one outcome, their source
+    // observations must still merge into that retained outcome's map.
+    assert!(retained.merge_generated_load_source_events_since(&duplicate_arm, &parent_events,));
+    assert!(matches!(
+        retained
+            .generated_load_source_resolutions
+            .get(&Variable(70_005)),
+        Some(crate::kernel::GeneratedLoadSourceResolution::Ambiguous {
+            variable: Variable(70_005)
+        })
+    ));
+}
+
 #[test]
 fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
     let click_file = crate::surface::parse(

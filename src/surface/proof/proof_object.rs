@@ -633,6 +633,15 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// suffix since the split root, keeping merge work output-sized.
     pub(in crate::surface::proof) generated_load_binding_events:
         PersistentSequence<crate::kernel::GeneratedLoadBinding>,
+    /// Exact source occurrences observed for generated load variables.  This
+    /// is separate from the source-neutral binding map so a future source
+    /// consumer can require both identities without changing kernel facts.
+    pub(in crate::surface::proof) generated_load_source_resolutions:
+        PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadSourceResolution>,
+    /// Append-only source observations. Joins consume only each arm's suffix
+    /// since the split root, just like generated-load binding observations.
+    pub(in crate::surface::proof) generated_load_source_events:
+        PersistentSequence<crate::kernel::GeneratedLoadSourceEvent>,
     /// The one selected existential whose body leaves may still be cited by
     /// an enclosing `extract`.  A later `choose` replaces this active record;
     /// nested `have`/scope boundaries start without one. This is
@@ -684,6 +693,14 @@ impl ExecutionProofState {
                 surface_propositions: self.presentation.surface_propositions.clone(),
                 recorded_snapshots: self.presentation.recorded_snapshots.clone(),
                 generated_load_bindings: self.presentation.generated_load_bindings.clone(),
+                generated_load_source_resolutions: self
+                    .presentation
+                    .generated_load_source_resolutions
+                    .clone(),
+                generated_load_source_events: self
+                    .presentation
+                    .generated_load_source_events
+                    .clone(),
             })
     }
 
@@ -730,6 +747,8 @@ impl ExecutionProofState {
                 outcome_provenance: Arc::new(Vec::new()),
                 generated_load_bindings: PersistentMap::default(),
                 generated_load_binding_events: PersistentSequence::default(),
+                generated_load_source_resolutions: PersistentMap::default(),
+                generated_load_source_events: PersistentSequence::default(),
                 chosen_projection: None,
             },
         )
@@ -771,6 +790,25 @@ impl ProofExecutionView<'_> {
             .get(path_index)
             .map(|provenance| &provenance.generated_load_bindings)
             .unwrap_or(&self.execution.presentation.generated_load_bindings)
+    }
+
+    /// Exact source identity for one terminal outcome.  A variable is absent
+    /// when no source event was observed and ambiguous when sibling paths or
+    /// repeated producer observations disagree.
+    #[allow(dead_code)]
+    pub(super) fn generated_load_source_resolutions(
+        &self,
+        path_index: usize,
+    ) -> &PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadSourceResolution> {
+        self.outcome_provenance
+            .get(path_index)
+            .map(|provenance| &provenance.generated_load_source_resolutions)
+            .unwrap_or(
+                &self
+                    .execution
+                    .presentation
+                    .generated_load_source_resolutions,
+            )
     }
 
     /// The proof-level case decisions recorded on one outcome path, in
@@ -824,6 +862,9 @@ struct OutcomeProvenance {
     #[allow(dead_code)]
     generated_load_bindings:
         PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadBinding>,
+    generated_load_source_resolutions:
+        PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadSourceResolution>,
+    generated_load_source_events: PersistentSequence<crate::kernel::GeneratedLoadSourceEvent>,
 }
 
 type Obligation = KernelBranchObligation<PropositionPresentation, Arc<OutcomeProofData>>;
@@ -1893,6 +1934,21 @@ impl ExecutionProofPresentation {
         self.generated_load_bindings = by_variable;
     }
 
+    /// Record exact source observations without consulting facts or a source
+    /// registry.  Repeating the complete event is idempotent; changing either
+    /// its source identity or exact producer binding permanently tombstones
+    /// the variable as ambiguous.
+    pub(in crate::surface::proof) fn record_generated_load_source_events(
+        &mut self,
+        incoming: &[crate::kernel::GeneratedLoadSourceEvent],
+    ) {
+        record_generated_load_source_events(
+            &mut self.generated_load_source_resolutions,
+            &mut self.generated_load_source_events,
+            incoming,
+        );
+    }
+
     pub(in crate::surface::proof) fn defer_post_execution(
         &mut self,
         tactic_index: usize,
@@ -1907,5 +1963,83 @@ impl ExecutionProofPresentation {
                 tactic,
                 surface_recorded: false,
             });
+    }
+}
+
+fn record_generated_load_source_events(
+    resolutions: &mut PersistentMap<
+        crate::kernel::Variable,
+        crate::kernel::GeneratedLoadSourceResolution,
+    >,
+    events: &mut PersistentSequence<crate::kernel::GeneratedLoadSourceEvent>,
+    incoming: &[crate::kernel::GeneratedLoadSourceEvent],
+) {
+    if incoming.is_empty() {
+        return;
+    }
+    let mut by_variable = resolutions.clone();
+    for event in incoming {
+        let variable = event.variable();
+        let merged = match by_variable.get(&variable) {
+            Some(crate::kernel::GeneratedLoadSourceResolution::Ambiguous { .. }) => continue,
+            Some(crate::kernel::GeneratedLoadSourceResolution::Unique(_))
+                if matches!(
+                    event.binding(),
+                    crate::kernel::GeneratedLoadBinding::Ambiguous { .. }
+                ) =>
+            {
+                crate::kernel::GeneratedLoadSourceResolution::Ambiguous { variable }
+            }
+            Some(crate::kernel::GeneratedLoadSourceResolution::Unique(existing))
+                if existing == event =>
+            {
+                continue;
+            }
+            Some(crate::kernel::GeneratedLoadSourceResolution::Unique(_)) | None => {
+                if by_variable.get(&variable).is_some() {
+                    crate::kernel::GeneratedLoadSourceResolution::Ambiguous { variable }
+                } else {
+                    match event.binding() {
+                        crate::kernel::GeneratedLoadBinding::Exact { .. } => {
+                            crate::kernel::GeneratedLoadSourceResolution::Unique(event.clone())
+                        }
+                        crate::kernel::GeneratedLoadBinding::Ambiguous { .. } => {
+                            crate::kernel::GeneratedLoadSourceResolution::Ambiguous { variable }
+                        }
+                    }
+                }
+            }
+        };
+        by_variable = by_variable.with_inserted(variable, merged);
+        events.push(event.clone());
+    }
+    *resolutions = by_variable;
+}
+
+impl OutcomeProvenance {
+    fn record_generated_load_source_events(
+        &mut self,
+        incoming: &[crate::kernel::GeneratedLoadSourceEvent],
+    ) {
+        record_generated_load_source_events(
+            &mut self.generated_load_source_resolutions,
+            &mut self.generated_load_source_events,
+            incoming,
+        );
+    }
+
+    fn merge_generated_load_source_events_since(
+        &mut self,
+        incoming: &Self,
+        parent_events: &PersistentSequence<crate::kernel::GeneratedLoadSourceEvent>,
+    ) -> bool {
+        let Some(introduced) = incoming
+            .generated_load_source_events
+            .suffix_since(parent_events)
+        else {
+            return false;
+        };
+        self.record_generated_load_source_events(&introduced);
+        true
     }
 }

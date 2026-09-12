@@ -5448,6 +5448,70 @@ pub(crate) enum GeneratedLoadBinding {
     },
 }
 
+/// The source-side identity of one generated load occurrence.  This is kept
+/// kernel-private and deliberately carries no parser or surface types: the C
+/// lowering may assign an owner and an occurrence number, while proof
+/// presentation only compares the opaque identity it receives.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct LoadSourceId {
+    pub(crate) owner: LoadSourceOwnerId,
+    pub(crate) occurrence: u32,
+}
+
+/// Stable owner identity for source load occurrences.  The source unit and
+/// function names are diagnostic/source-plan data, not part of any kernel
+/// proposition or semantic expression identity.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct LoadSourceOwnerId {
+    pub(crate) source_unit: Arc<str>,
+    pub(crate) function: Arc<str>,
+}
+
+/// One producer observation pairing a source occurrence with the exact
+/// source-neutral binding minted by the kernel.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct GeneratedLoadSourceEvent {
+    source: LoadSourceId,
+    binding: GeneratedLoadBinding,
+}
+
+impl GeneratedLoadSourceEvent {
+    /// Construct an event from one exact producer observation. Ambiguity is a
+    /// property of the persistent resolution store, never an operation that
+    /// execution can claim to have observed at one source occurrence.
+    #[allow(dead_code)]
+    pub(crate) fn new(source: LoadSourceId, binding: GeneratedLoadBinding) -> Option<Self> {
+        matches!(binding, GeneratedLoadBinding::Exact { .. }).then_some(Self { source, binding })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn source(&self) -> &LoadSourceId {
+        &self.source
+    }
+
+    pub(crate) fn binding(&self) -> &GeneratedLoadBinding {
+        &self.binding
+    }
+
+    pub(crate) fn variable(&self) -> Variable {
+        match &self.binding {
+            GeneratedLoadBinding::Exact { variable, .. } => *variable,
+            GeneratedLoadBinding::Ambiguous { .. } => {
+                unreachable!("generated-load source events are constructed only for exact mints")
+            }
+        }
+    }
+}
+
+/// Persistent proof-presentation resolution for one generated load variable.
+/// A conflicting observation is a permanent tombstone: later consumers must
+/// not guess which source occurrence was intended.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum GeneratedLoadSourceResolution {
+    Unique(GeneratedLoadSourceEvent),
+    Ambiguous { variable: Variable },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CertifiedExecutionFactTransport {
     pub(super) source: Proposition,

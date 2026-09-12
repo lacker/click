@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::kernel::proof::PropositionIdentityKey;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl<'a> Proof<'a> {
     /// Opens the C `if` at an execution frontier into its kernel-feasible
@@ -1023,6 +1023,7 @@ impl<'a> Proof<'a> {
         arms: [&ExecutionProofState; 2],
     ) -> Result<(), ClickError> {
         self.merge_branch_generated_load_bindings(execution, parent, arms)?;
+        self.merge_branch_generated_load_source_events(execution, parent, arms)?;
         // A chosen existential projection is usable only when both sibling
         // paths retained the same checked source record.  Otherwise it is
         // branch-local presentation and must not leak through the join.
@@ -1076,6 +1077,32 @@ impl<'a> Proof<'a> {
             execution
                 .presentation
                 .record_generated_load_bindings(&introduced);
+        }
+        Ok(())
+    }
+
+    /// Propagates source identities appended by each arm after the split
+    /// root. The persistent event sequence keeps this merge output-sized and
+    /// rejects a non-descending arm rather than scanning ambient facts.
+    fn merge_branch_generated_load_source_events(
+        &self,
+        execution: &mut ExecutionProofState,
+        parent: &ExecutionProofState,
+        arms: [&ExecutionProofState; 2],
+    ) -> Result<(), ClickError> {
+        for (name, arm) in [("then", arms[0]), ("else", arms[1])] {
+            let introduced = arm
+                .presentation
+                .generated_load_source_events
+                .suffix_since(&parent.presentation.generated_load_source_events)
+                .ok_or_else(|| {
+                    self.step_error(format!(
+                        "{name} execution load source events do not descend from the split root"
+                    ))
+                })?;
+            execution
+                .presentation
+                .record_generated_load_source_events(&introduced);
         }
         Ok(())
     }
@@ -1194,9 +1221,9 @@ impl<'a> Proof<'a> {
         // doing so avoids duplicating the complete ambient proof context per
         // outcome.
         let mut paths = Vec::new();
-        let mut retained_path_keys = BTreeSet::new();
+        let mut retained_path_keys: BTreeMap<_, usize> = BTreeMap::new();
         let mut execution_evidence = Vec::new();
-        let mut outcome_provenance = Vec::new();
+        let mut outcome_provenance: Vec<OutcomeProvenance> = Vec::new();
         for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
                 .execution
@@ -1219,11 +1246,23 @@ impl<'a> Proof<'a> {
                     }
                 }
                 let obligations = path.obligations().to_vec();
-                if retained_path_keys.insert((
+                let path_key = (
                     path.outcome().clone(),
                     path_facts.clone(),
                     obligations.clone(),
-                )) {
+                );
+                if let Some(retained_index) = retained_path_keys.get(&path_key).copied() {
+                    let incoming = arm.execution.provenance_for_outcome(arm_path_index);
+                    if !outcome_provenance[retained_index].merge_generated_load_source_events_since(
+                        &incoming,
+                        &parent_execution.presentation.generated_load_source_events,
+                    ) {
+                        return Err(self.step_error(
+                            "terminal outcome load source events do not descend from the branch root",
+                        ));
+                    }
+                } else {
+                    retained_path_keys.insert(path_key, paths.len());
                     paths.push((path.outcome().clone(), path_facts, obligations));
                     execution_evidence
                         .push(arm.execution.core.execution_evidence[arm_path_index].clone());

@@ -2166,6 +2166,8 @@ mod outcome_case_tests {
                     surface_propositions: SurfacePropositionMap::default(),
                     recorded_snapshots: RecordedSnapshots::default(),
                     generated_load_bindings: PersistentMap::default(),
+                    generated_load_source_resolutions: PersistentMap::default(),
+                    generated_load_source_events: PersistentSequence::default(),
                 },
                 &|condition, _| {
                     visits.set(visits.get() + 1);
