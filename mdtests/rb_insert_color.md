@@ -357,13 +357,21 @@ function rb_parent_is(tree: RbTree, p: struct rb_node*) -> int32 {
     }
 }
 
+function rb_has_parent(tree: RbTree, p: struct rb_node*) -> int32 {
+    match tree {
+        RbTree::Empty => 0,
+        RbTree::Node(identity, parent, color, left, right) =>
+            if parent == p { 1 } else { 0 },
+    }
+}
+
 function ctx_node_is(ctx: Context, p: struct rb_node*) -> int32 {
     match ctx {
         Context::Top => if p == 0 { 1 } else { 0 },
         Context::Left(identity, grandparent, color, sibling_model, up_model) =>
-            if identity == p { 1 } else { 0 },
+            if p == identity { 1 } else { 0 },
         Context::Right(identity, grandparent, color, sibling_model, up_model) =>
-            if identity == p { 1 } else { 0 },
+            if p == identity { 1 } else { 0 },
     }
 }
 
@@ -508,11 +516,11 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
 
 function ctx_holds(ctx: Context, sub: RbTree) -> int32 {
     match ctx {
-        Context::Top => rb_parent_is(sub, 0),
+        Context::Top => rb_has_parent(sub, 0),
         Context::Left(identity, grandparent, color, sibling_model, up_model) =>
-            rb_parent_is(sub, identity),
+            rb_has_parent(sub, identity),
         Context::Right(identity, grandparent, color, sibling_model, up_model) =>
-            rb_parent_is(sub, identity),
+            rb_has_parent(sub, identity),
     }
 }
 
@@ -541,6 +549,226 @@ function ctx_root_black(ctx: Context) -> int32
             } else {
                 0
             },
+    }
+}
+
+
+
+theorem rb_ptr_transitive(a: struct rb_node*, b: struct rb_node*, c: struct rb_node*) {
+    requires a == b;
+    requires a == c;
+
+    ensures c == b by { simp(); }
+}
+
+theorem rb_has_parent_node(identity: struct rb_node*, parent: struct rb_node*, color: Color,
+                           left: RbTree, right: RbTree, q: struct rb_node*) {
+    requires rb_has_parent(RbTree::Node(identity, parent, color, left, right), q) == 1;
+
+    ensures parent == q by {
+        if parent == q {
+            assumption();
+        } else {
+            have rb_has_parent(RbTree::Node(identity, parent, color, left, right), q) != 1 by {
+                unfold(rb_has_parent(
+                    RbTree::Node(identity, parent, color, left, right), q));
+                normalize() using { not(parent == q); }
+            }
+            contradiction(rb_has_parent(
+                RbTree::Node(identity, parent, color, left, right), q) == 1);
+        }
+    }
+}
+
+theorem rb_has_parent_same(sub: RbTree, q: struct rb_node*, p: struct rb_node*) {
+    requires rb_has_parent(sub, q) == 1;
+    requires rb_has_parent(sub, p) == 1;
+
+    ensures p == q by {
+        induct(sub) as ih {
+            RbTree::Empty => {
+                have rb_has_parent(RbTree::Empty, q) != 1 by {
+                    unfold(rb_has_parent(RbTree::Empty, q));
+                    normalize();
+                }
+                contradiction(rb_has_parent(RbTree::Empty, q) == 1);
+            }
+            RbTree::Node(identity, parent, color, left, right) => {
+                apply(rb_has_parent_node(identity, parent, color, left, right, q));
+                apply(rb_has_parent_node(identity, parent, color, left, right, p));
+                apply(rb_ptr_transitive(parent, q, p));
+                assumption();
+            }
+        }
+    }
+}
+
+theorem ctx_holds_top_parent(sub: RbTree) {
+    requires ctx_holds(Context::Top, sub) == 1;
+
+    ensures rb_has_parent(sub, 0) == 1 by {
+        unfold(ctx_holds(Context::Top, sub));
+        rewrite(rb_has_parent(sub, 0) == ctx_holds(Context::Top, sub));
+        assumption();
+    }
+}
+
+theorem ctx_holds_left_parent(cid: struct rb_node*, grandparent: struct rb_node*,
+                              ccolor: Color, sibling_model: RbTree, up_model: Context,
+                              sub: RbTree) {
+    requires ctx_holds(Context::Left(cid, grandparent, ccolor, sibling_model, up_model),
+        sub) == 1;
+
+    ensures rb_has_parent(sub, cid) == 1 by {
+        unfold(ctx_holds(
+            Context::Left(cid, grandparent, ccolor, sibling_model, up_model), sub));
+        rewrite(rb_has_parent(sub, cid)
+            == ctx_holds(Context::Left(cid, grandparent, ccolor, sibling_model, up_model),
+                sub));
+        assumption();
+    }
+}
+
+theorem ctx_holds_right_parent(cid: struct rb_node*, grandparent: struct rb_node*,
+                               ccolor: Color, sibling_model: RbTree, up_model: Context,
+                               sub: RbTree) {
+    requires ctx_holds(Context::Right(cid, grandparent, ccolor, sibling_model, up_model),
+        sub) == 1;
+
+    ensures rb_has_parent(sub, cid) == 1 by {
+        unfold(ctx_holds(
+            Context::Right(cid, grandparent, ccolor, sibling_model, up_model), sub));
+        rewrite(rb_has_parent(sub, cid)
+            == ctx_holds(Context::Right(cid, grandparent, ccolor, sibling_model, up_model),
+                sub));
+        assumption();
+    }
+}
+
+theorem ctx_node_is_from_parent(ctx: Context, sub: RbTree, p: struct rb_node*) {
+    requires ctx_holds(ctx, sub) == 1;
+    requires rb_has_parent(sub, p) == 1;
+
+    ensures ctx_node_is(ctx, p) == 1 by {
+        induct(ctx) as ih {
+            Context::Top => {
+                apply(ctx_holds_top_parent(sub));
+                apply(rb_has_parent_same(sub, 0, p));
+                have ctx_node_is(Context::Top, p) == 1 by {
+                    unfold(ctx_node_is(Context::Top, p));
+                    normalize() using { p == 0; }
+                }
+                assumption();
+            }
+            Context::Left(cid, grandparent, ccolor, sibling_model, up_model) => {
+                apply(ctx_holds_left_parent(cid, grandparent, ccolor, sibling_model,
+                    up_model, sub));
+                apply(rb_has_parent_same(sub, cid, p));
+                have ctx_node_is(
+                    Context::Left(cid, grandparent, ccolor, sibling_model, up_model),
+                    p) == 1 by {
+                    unfold(ctx_node_is(
+                        Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p));
+                    normalize() using { p == cid; }
+                }
+                assumption();
+            }
+            Context::Right(cid, grandparent, ccolor, sibling_model, up_model) => {
+                apply(ctx_holds_right_parent(cid, grandparent, ccolor, sibling_model,
+                    up_model, sub));
+                apply(rb_has_parent_same(sub, cid, p));
+                have ctx_node_is(
+                    Context::Right(cid, grandparent, ccolor, sibling_model, up_model),
+                    p) == 1 by {
+                    unfold(ctx_node_is(
+                        Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p));
+                    normalize() using { p == cid; }
+                }
+                assumption();
+            }
+        }
+    }
+}
+
+theorem ctx_reroot_top_fixed(p: struct rb_node*) {
+    ensures Context::Top == ctx_reroot(Context::Top, p) by {
+        unfold(ctx_reroot(Context::Top, p));
+        normalize();
+    }
+}
+
+theorem ctx_reroot_left_fixed(cid: struct rb_node*, grandparent: struct rb_node*,
+                              ccolor: Color, sibling_model: RbTree, up_model: Context,
+                              p: struct rb_node*) {
+    requires ctx_node_is(Context::Left(cid, grandparent, ccolor, sibling_model, up_model),
+        p) == 1;
+
+    ensures Context::Left(cid, grandparent, ccolor, sibling_model, up_model)
+        == ctx_reroot(Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p) by {
+        if p == cid {
+            unfold(ctx_reroot(
+                Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p));
+            rewrite(p == cid);
+            normalize();
+        } else {
+            have ctx_node_is(
+                Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p) != 1 by {
+                unfold(ctx_node_is(
+                    Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p));
+                normalize() using { not(p == cid); }
+            }
+            contradiction(ctx_node_is(
+                Context::Left(cid, grandparent, ccolor, sibling_model, up_model), p) == 1);
+        }
+    }
+}
+
+theorem ctx_reroot_right_fixed(cid: struct rb_node*, grandparent: struct rb_node*,
+                               ccolor: Color, sibling_model: RbTree, up_model: Context,
+                               p: struct rb_node*) {
+    requires ctx_node_is(Context::Right(cid, grandparent, ccolor, sibling_model, up_model),
+        p) == 1;
+
+    ensures Context::Right(cid, grandparent, ccolor, sibling_model, up_model)
+        == ctx_reroot(Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p) by {
+        if p == cid {
+            unfold(ctx_reroot(
+                Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p));
+            rewrite(p == cid);
+            normalize();
+        } else {
+            have ctx_node_is(
+                Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p) != 1 by {
+                unfold(ctx_node_is(
+                    Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p));
+                normalize() using { not(p == cid); }
+            }
+            contradiction(ctx_node_is(
+                Context::Right(cid, grandparent, ccolor, sibling_model, up_model), p) == 1);
+        }
+    }
+}
+
+theorem ctx_reroot_fixed(ctx: Context, p: struct rb_node*) {
+    requires ctx_node_is(ctx, p) == 1;
+
+    ensures ctx == ctx_reroot(ctx, p) by {
+        induct(ctx) as ih {
+            Context::Top => {
+                apply(ctx_reroot_top_fixed(p));
+                assumption();
+            }
+            Context::Left(cid, grandparent, ccolor, sibling_model, up_model) => {
+                apply(ctx_reroot_left_fixed(cid, grandparent, ccolor, sibling_model,
+                    up_model, p));
+                assumption();
+            }
+            Context::Right(cid, grandparent, ccolor, sibling_model, up_model) => {
+                apply(ctx_reroot_right_fixed(cid, grandparent, ccolor, sibling_model,
+                    up_model, p));
+                assumption();
+            }
+        }
     }
 }
 
@@ -674,6 +902,44 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
             step();
             step();
             let t = fold(rb_at(node), { model: old(t.model) }, { left: l, right: r });
+            have rb_has_parent(t.model, node_parent) == 1 by {
+                rewrite(t.model
+                    == RbTree::Node(identity, node_parent, color, left_model, right_model));
+                unfold(rb_has_parent(
+                    RbTree::Node(identity, node_parent, color, left_model, right_model),
+                    node_parent));
+                normalize();
+            }
+            have ctx_node_is(c.model, node_parent) == 1 by {
+                apply(ctx_node_is_from_parent(c.model, t.model, node_parent)) using {
+                    ctx_holds(c.model, t.model) == 1;
+                    rb_has_parent(t.model, node_parent) == 1;
+                }
+                assumption();
+            }
+            have c.model == ctx_reroot(c.model, node_parent) by {
+                apply(ctx_reroot_fixed(c.model, node_parent)) using {
+                    ctx_node_is(c.model, node_parent) == 1;
+                }
+                assumption();
+            }
+            have parent == node_parent by { simp(); }
+            have rb_has_parent(t.model, parent) == 1 by { simp(); }
+            have ctx_node_is(c.model, parent) == 1 by { simp(); }
+            have c.model == ctx_reroot(c.model, parent) by { simp(); }
+            have rb_parent_is(t.model, parent) == 1 by { simp(); }
+            have t.model
+                == RbTree::Node(identity, node_parent, color, left_model, right_model) by {
+                simp();
+            }
+            have rb_inorder(plug(c.model, t.model))
+                == rb_inorder(plug(old(c.model),
+                    RbTree::Node(identity, node_parent, color,
+                        left_model, right_model))) by {
+                rewrite(t.model
+                    == RbTree::Node(identity, node_parent, color, left_model, right_model));
+                simp();
+            }
             loop {
                 owns c: ctx_at(node, root);
                 owns t: rb_at(node);
@@ -686,8 +952,11 @@ void __rb_insert(struct rb_node* node, struct rb_root* root,
                 invariant ctx_root_black(c.model) == 1;
                 invariant almost_rb_insert(plug(c.model, t.model)) == 1;
                 invariant rb_inorder(plug(c.model, t.model))
-                    == rb_inorder(plug(old(c.model), old(t.model)));
+                    == rb_inorder(plug(old(c.model),
+                        RbTree::Node(identity, node_parent, color,
+                            left_model, right_model)));
                 invariant rb_tree_parent_consistent(plug(c.model, t.model)) == 1;
+
             }
             simp();
         },
@@ -716,5 +985,5 @@ void rb_insert_color(struct rb_node* node, struct rb_root* root) {
 ```
 
 ```expect
-fail: `__rb_insert.contract (loop 0 invariant 4 entry)`
+fail: `__rb_insert.contract`
 ```
