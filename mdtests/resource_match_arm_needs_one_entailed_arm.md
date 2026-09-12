@@ -7,8 +7,13 @@ it was before any arm could be selected at all.
 
 There is no implicit proof by cases: the two surviving arms do not own the
 same cells, and Click does not split the contract to find out which one the
-caller meant. The diagnostic names the instance that stayed folded and the
-field whose arm no requirement decides.
+caller meant. `node->value` is owned by `Slot::Filled` alone, and a cell one
+possible arm does not own is never published, so the refusal stands. The
+diagnostic names the instance that stayed folded and the arms the requirements
+left possible, which is where the reader has to look.
+
+What the possible arms do agree on is readable; that is
+[`resource_match_common_arm_cells.md`](resource_match_common_arm_cells.md).
 
 ```c filename=threelower.c
 struct cell { int32 value; };
@@ -49,5 +54,5 @@ int32 read_cell(struct cell* node) {
 ```
 
 ```expect
-fail: `cell(node)` stays folded: no requirement of this contract selects one arm of its `model` field
+fail: `cell(node)` stays folded: the requirements leave the arms `Slot::Filled` and `Slot::Reserved` possible, and this cell is not owned by every one of them
 ```

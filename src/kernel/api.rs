@@ -338,6 +338,7 @@ fn c_loop_preservation_contexts_with_mode(
             assume_condition_truthiness(
                 &top_state,
                 condition,
+                definitions,
                 assumptions,
                 &invariant_facts,
                 &invariant_obligations,

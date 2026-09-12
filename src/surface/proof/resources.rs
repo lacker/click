@@ -324,9 +324,10 @@ fn materialize_folded_composite_resource_memory(
 /// This is the contract-lowering and loop-head half of decision D7. The
 /// decision itself is the kernel's [`crate::kernel::select_resource_model_arm`]:
 /// a constructor premise, an existential witness, or disequalities that leave
-/// one variant. When nothing selects an arm the instance stays folded, exactly
-/// as it does today, and a read through it fails with the note
-/// `folded_matched_instance_note` adds.
+/// one variant. When the premises leave several arms possible, what every one
+/// of them owns is projected instead; see [`common_possible_instance_arm`].
+/// When they leave the model open the instance stays folded, and a read through
+/// it fails with the note `folded_matched_instance_note` adds.
 ///
 /// The returned definition is the arm scope `resource_match_arm_scopes` builds:
 /// its `contains` holds only the arm's own memory clauses, so projecting it
@@ -349,7 +350,6 @@ pub(in crate::surface) fn selected_resource_instance_arm(
     let AlgebraicValue::Algebraic(model) = instance.fields().get(field_index)? else {
         return None;
     };
-    let selection = crate::kernel::select_resource_model_arm(model, assumptions)?;
     let scopes = crate::surface::validation::resource_match_arm_scopes(
         definition,
         |name| {
@@ -360,10 +360,85 @@ pub(in crate::surface) fn selected_resource_instance_arm(
         |name| resource_environment.get(name),
     )
     .ok()?;
-    scopes
+    match crate::kernel::select_resource_model_arm(model, assumptions) {
+        Some(selection) => scopes
+            .into_iter()
+            .find(|(variant, _, _)| variant == selection.variant())
+            .map(|(_, _, arm)| arm),
+        // No single arm: what every arm the premises leave possible owns is
+        // still readable, and that is what this projects.
+        None => common_possible_instance_arm(
+            scopes,
+            &crate::kernel::possible_resource_model_arm_variants(model, assumptions),
+        ),
+    }
+}
+
+/// The arm scope holding exactly the memory clauses every possible arm owns.
+///
+/// This is decision D7 extended from the arm a section's premises select to the
+/// arms they leave possible (gap 39). `requires c.model != Context::Top` on a
+/// three-constructor frame decides nothing, but the `Left` and `Right` arms it
+/// leaves both own `parent->rb_right`, so that cell is readable however the
+/// model turns out.
+///
+/// Two clauses agree when they are the same clause: the arms of one instance
+/// share the resource's own parameters, so a segment written over them denotes
+/// the same cells in each arm. A segment naming a constructor binding is never
+/// published, because each arm's binding is its own unknown and two arms that
+/// happen to spell one the same way are not talking about the same cell.
+///
+/// The result carries no facts and no children: an arm nothing selected states
+/// nothing, and only an explicit `unfold` produces a contained instance. Cost
+/// is the clauses of this one instance's arms.
+fn common_possible_instance_arm(
+    scopes: Vec<(String, Vec<(String, ClickType)>, ResourceDefinition)>,
+    possible: &[String],
+) -> Option<ResourceDefinition> {
+    if possible.len() < 2 {
+        return None;
+    }
+    let mut arms = possible
+        .iter()
+        .map(|variant| {
+            let (_, bindings, arm) = scopes
+                .iter()
+                .find(|(candidate, _, _)| candidate == variant)?;
+            let bound = bindings
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<BTreeSet<_>>();
+            let clauses = arm
+                .composite_body()?
+                .contains()
+                .iter()
+                .filter(|clause| match clause {
+                    ResourceClause::OwnMemory(segment) => {
+                        contract_segment_referenced_names(segment)
+                            .iter()
+                            .all(|name| !bound.contains(name.as_str()))
+                    }
+                    _ => false,
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            Some((arm.clone(), clauses))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let (mut common, first) = arms.remove(0);
+    let clauses = first
         .into_iter()
-        .find(|(variant, _, _)| variant == selection.variant())
-        .map(|(_, _, arm)| arm)
+        .filter(|clause| arms.iter().all(|(_, other)| other.contains(clause)))
+        .collect::<Vec<_>>();
+    if clauses.is_empty() {
+        return None;
+    }
+    let body = common.composite_body.as_mut()?;
+    body.contains = clauses;
+    body.facts = Vec::new();
+    body.children = Vec::new();
+    body.witnesses = Vec::new();
+    Some(common)
 }
 
 pub(super) fn project_initial_composite_resource_cores(

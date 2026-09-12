@@ -1,13 +1,23 @@
-# an rbtree ascent whose guard is a conjunction
+# an rbtree ascent whose guard reads the parent's link through the frame
 
-This is the ascent of [`rb_ascending_walk_to_root.md`](rb_ascending_walk_to_root.md)
-with the short-circuit guard `rb_next` climbs with. Every iteration consumes
-one frame — unfold the frame, take the C step that moves the cursor up, fold
-the node the frame owned into a larger subtree — and the measure is the
-context, `decreases c;`. What is new is the guard: it leaves the loop by two
-paths, `parent == 0` and `parent != 0` with the second conjunct false, and the
-loop rule certifies both and exports their join. Before that the `loop` tactic
-refused the whole loop with "requires exactly one statement successor, got 2".
+This is the ascent of
+[`rb_ascent_conjunctive_guard.md`](rb_ascent_conjunctive_guard.md) with the
+second conjunct `rb_next` actually writes: `node == parent->rb_right`. Every
+iteration consumes one frame — unfold the frame, take the C step that moves the
+cursor up, fold the node the frame owned into a larger subtree — and the measure
+is the context, `decreases c;`.
+
+What is new is where the guard reads. `parent->rb_right` is not the focused
+node's own cell; it belongs to the folded frame `c`, and at a loop head no arm
+of the three-constructor `Context` is selected, so the whole guard used to be
+refused as undecided: "the loop condition could not be evaluated on this path".
+The guard decides itself. A short-circuit conjunct is read under the truth of
+the conjuncts before it, `parent != 0` contradicts the `Top` arm's own
+`fact parent == 0`, and the two arms that remain both own `parent->rb_right`.
+So the cell is readable whichever way the model turns out, and the loop head
+publishes it as a view — read authority only, with the frame still folded and
+still owned exactly where it was. A cell only one of the possible arms owned
+would not be published, and the guard would still be refused.
 
 The C is a minimal translation of the Linux guard. `rb_next` writes
 `while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`,
@@ -15,23 +25,14 @@ and an assignment is not an expression in the supported C0 subset, so the
 assignment moves into the body exactly as `rb_ascending_walk_to_root.md`
 already writes it. That is the whole translation.
 
-The second conjunct is the focused node's own link rather than
-`node == parent->rb_right`. It reads memory either way, which is the point
-here: what this fixture isolates is certifying two exits, not where the second
-conjunct reads. Reading the parent's link through the folded frame is the
-separate question of publishing what the arms a guard prefix leaves possible
-agree on, and
-[`rb_ascent_parent_link_guard.md`](rb_ascent_parent_link_guard.md) is the same
-ascent with that conjunct.
-
 The contract consumes the walk's instances and produces none. The ascent stops
-either at the root or at the first node with a right child, and no contract can
-name the second position: `ctx_at(child, parent, root)` and `rb_at(p, parent)`
-take the focused node's parent, and a produced instance's arguments are the
-entry-time ones. That is gap 35, which package C1b re-keys the model to fix.
-What this fixture states at the exit is what the loop proved on the way:
-`plug(c.model, t.model)` is unchanged from the entry model at every iteration,
-and the focused node is not null.
+either at the root or at the first node that is not its parent's right child,
+and no contract can name the second position: `ctx_at(child, parent, root)` and
+`rb_at(p, parent)` take the focused node's parent, and a produced instance's
+arguments are the entry-time ones. That is gap 35, which package C1b re-keys the
+model to fix. What this fixture states at the exit is what the loop proved on
+the way: `plug(c.model, t.model)` is unchanged from the entry model at every
+iteration, and the focused node is not null.
 
 ```c filename=rbtree.h
 #ifndef RBTREE_H
@@ -56,13 +57,13 @@ static inline struct rb_node *rb_parent(struct rb_node *r) {
 #endif
 ```
 
-```c filename=rb_ascent_conjunctive_guard.c
+```c filename=rb_ascent_parent_link_guard.c
 #include "rbtree.h"
 
-struct rb_node *rb_up_while_no_right_child(struct rb_node *node,
-                                           struct rb_node *parent,
-                                           struct rb_root *root) {
-    while (parent != 0 && node->rb_right == 0) {
+struct rb_node *rb_up_while_right_child(struct rb_node *node,
+                                        struct rb_node *parent,
+                                        struct rb_root *root) {
+    while (parent != 0 && node == parent->rb_right) {
         node = parent;
         parent = rb_parent(node);
     }
@@ -72,7 +73,7 @@ struct rb_node *rb_up_while_no_right_child(struct rb_node *node,
 ```
 
 ```click
-verifying "rb_ascent_conjunctive_guard.c";
+verifying "rb_ascent_parent_link_guard.c";
 
 spec enum Color { Red, Black }
 
@@ -175,8 +176,8 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
     }
 }
 
-struct rb_node* rb_up_while_no_right_child(struct rb_node* node, struct rb_node* parent,
-                           struct rb_root* root) {
+struct rb_node* rb_up_while_right_child(struct rb_node* node, struct rb_node* parent,
+                                        struct rb_root* root) {
     consumes c: ctx_at(node, parent, root);
     consumes t: rb_at(node, parent);
     requires t.model != RbTree::Empty;

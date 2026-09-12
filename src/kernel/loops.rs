@@ -1661,6 +1661,7 @@ fn execute_c_while_exit_paths(
             for assumption in assume_condition_truthiness(
                 candidate.state(),
                 condition,
+                &composite_resource_definitions,
                 &candidate_assumptions,
                 &[],
                 &[],
@@ -1719,6 +1720,7 @@ fn execute_c_while_exit_paths(
             || !assume_condition_truthiness(
                 &guard_state,
                 condition,
+                &composite_resource_definitions,
                 assumptions,
                 invariant_facts,
                 invariant_obligations,
@@ -1736,6 +1738,7 @@ fn execute_c_while_exit_paths(
             let condition_contexts = assume_condition_truthiness(
                 &guard_state,
                 condition,
+                &composite_resource_definitions,
                 assumptions,
                 &invariant_facts,
                 &invariant_obligations,
@@ -2120,6 +2123,7 @@ pub(super) fn collect_loop_preservation_summary(
             assume_condition_truthiness(
                 top_state,
                 condition,
+                composite_resource_definitions,
                 assumptions,
                 &invariant_facts,
                 &invariant_obligations,
@@ -2183,6 +2187,7 @@ pub(super) fn collect_loop_preservation_summary(
                         let condition_contexts = assume_condition_branches(
                             &next_state,
                             condition,
+                            composite_resource_definitions,
                             assumptions,
                             &body_path.facts,
                             &body_path.obligations,
@@ -3812,7 +3817,165 @@ impl CConditionAssumption {
 
 /// Every way this guard can leave `state`: one entry per feasible value path,
 /// plus one entry for each path on which the guard could not be evaluated.
+///
+/// A guard that could not be evaluated is evaluated once more conjunct by
+/// conjunct, because a short-circuit guard's later conjunct is read under the
+/// truth of its earlier ones and that prefix may publish read authority (D7,
+/// extended to the arms a prefix leaves possible). `parent != 0 &&
+/// node == parent->rb_right` is the shape: the first conjunct refutes the
+/// folded frame's `Top` arm, the `Left` and `Right` arms both own
+/// `parent->rb_right`, and the second conjunct reads it. The second pass costs
+/// one more evaluation of a guard that already failed, and it changes nothing
+/// for a guard the ordinary evaluation decided.
 pub(super) fn assume_condition_branches(
+    state: &CState,
+    condition: &CExpression,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    prefix_facts: &[ExecutionPureFact],
+    prefix_obligations: &[ProofObligation],
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CConditionAssumption>> {
+    let branches = assume_condition_branches_at_state(
+        state,
+        condition,
+        assumptions,
+        prefix_facts,
+        prefix_obligations,
+        budget,
+    )?;
+    if definitions.is_empty()
+        || branches
+            .iter()
+            .all(|branch| branch.undecided_outcome().is_none())
+    {
+        return Ok(branches);
+    }
+    let mut conjuncts = Vec::new();
+    guard_conjuncts(condition, &mut conjuncts);
+    if conjuncts.len() < 2 {
+        return Ok(branches);
+    }
+    assume_guard_conjunct_branches(
+        state,
+        &conjuncts,
+        definitions,
+        assumptions,
+        prefix_facts,
+        prefix_obligations,
+        budget,
+    )
+}
+
+/// The top-level conjuncts of a short-circuit guard, left to right.
+///
+/// `a && b && c` is one guard with three exit paths and three reading
+/// positions; anything else is one conjunct, evaluated exactly as it is.
+fn guard_conjuncts<'a>(condition: &'a CExpression, conjuncts: &mut Vec<&'a CExpression>) {
+    match condition {
+        CExpression::And(left, right) => {
+            guard_conjuncts(left, conjuncts);
+            guard_conjuncts(right, conjuncts);
+        }
+        _ => conjuncts.push(condition),
+    }
+}
+
+/// Every way a short-circuit guard can leave `state`, evaluating conjunct `k`
+/// under the truth of conjuncts `1..k-1` and under the read authority those
+/// truths publish.
+///
+/// The C is unchanged: the guard is false as soon as one conjunct is false,
+/// true when the last one is, and undecided wherever a conjunct produced no
+/// value — which is the refusal S1 installed, kept here. What the second pass
+/// adds is where each conjunct is read: a folded matched instance publishes the
+/// cells every arm the prefix leaves possible owns, so a conjunct may read what
+/// an earlier conjunct unlocked and nothing more.
+///
+/// Cost is one evaluation of each conjunct per live prefix, plus one arm-view
+/// publication per conjunct: the arms of the instances held, evaluated once
+/// each. No conjunct is revisited and no prefix is searched over.
+fn assume_guard_conjunct_branches(
+    state: &CState,
+    conjuncts: &[&CExpression],
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    prefix_facts: &[ExecutionPureFact],
+    prefix_obligations: &[ProofObligation],
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CConditionAssumption>> {
+    let mut branches = Vec::new();
+    let mut live = vec![(prefix_facts.to_vec(), prefix_obligations.to_vec())];
+    for (index, conjunct) in conjuncts.iter().enumerate() {
+        let is_last = index + 1 == conjuncts.len();
+        let mut next = Vec::new();
+        for (facts, obligations) in live {
+            let conjunct_state =
+                with_guard_prefix_arm_views(state, definitions, assumptions, &facts, &obligations);
+            for assumption in assume_condition_branches_at_state(
+                &conjunct_state,
+                conjunct,
+                assumptions,
+                &facts,
+                &obligations,
+                budget,
+            )? {
+                match assumption.branch {
+                    // A true conjunct that is not the last decides nothing on
+                    // its own; it is the premise the next one is read under.
+                    CConditionBranch::Decided(true) if !is_last => {
+                        next.push((assumption.facts, assumption.obligations));
+                    }
+                    _ => branches.push(assumption),
+                }
+            }
+        }
+        live = next;
+    }
+    budget.check_path_width(branches.len())?;
+    Ok(branches)
+}
+
+/// `state` with the cells published that every arm the guard prefix in `facts`
+/// leaves possible owns (D7).
+///
+/// The prefix's own conclusion comes first: a conjunct that contradicts an
+/// arm's binding-free fact refutes that arm, which is the same refutation rule
+/// the loop head, the back edge, and the exit already apply, and it is what
+/// leaves a set of possible arms rather than a decided one. Ownership is
+/// untouched; only read authority is published, and only for a cell every
+/// possible arm owns.
+fn with_guard_prefix_arm_views(
+    state: &CState,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    facts: &[ExecutionPureFact],
+    obligations: &[ProofObligation],
+) -> CState {
+    let prefix_assumptions = assumptions_with_path_context(assumptions, facts, obligations);
+    let refuted = crate::kernel::refuted_instance_arm_model_facts(
+        state.resources(),
+        definitions,
+        state,
+        &prefix_assumptions,
+    );
+    let view_assumptions = assumptions_with_propositions(&prefix_assumptions, &refuted);
+    let views = crate::kernel::functions::selected_instance_arm_views(
+        state.resources(),
+        definitions,
+        state,
+        &view_assumptions,
+    );
+    if views.is_empty() {
+        return state.clone();
+    }
+    state
+        .clone()
+        .with_resource_context(state.resources().clone().unchecked_with_facts(views))
+}
+
+/// One evaluation of a whole guard at one state.
+fn assume_condition_branches_at_state(
     state: &CState,
     condition: &CExpression,
     assumptions: &PureFactContext,
@@ -3881,6 +4044,7 @@ pub(super) fn assume_condition_branches(
 pub(super) fn assume_condition_truthiness(
     state: &CState,
     condition: &CExpression,
+    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
@@ -3890,6 +4054,7 @@ pub(super) fn assume_condition_truthiness(
     Ok(assume_condition_branches(
         state,
         condition,
+        definitions,
         assumptions,
         prefix_facts,
         prefix_obligations,
