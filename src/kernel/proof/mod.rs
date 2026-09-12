@@ -5,6 +5,7 @@
 //! branch topology; the remaining checked representation moves here in
 //! independently green slices.
 
+pub(crate) mod arithmetic_special;
 mod branches;
 mod execution;
 mod fact_keys;
