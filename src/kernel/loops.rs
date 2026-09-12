@@ -1365,6 +1365,9 @@ fn c_loop_state_components_match_at_back_edge_inner(
     ) {
         changed.push("counted resource populations");
     }
+    if top_state.loan_ledger != next_state.loan_ledger {
+        changed.push("stable-view loan authority");
+    }
     if changed.is_empty() {
         Ok(())
     } else {
@@ -2242,6 +2245,9 @@ fn loop_exit_state_difference(left: &CState, right: &CState) -> Option<String> {
     }
     if left.resources() != right.resources() {
         differences.push("resource ownership".to_string());
+    }
+    if left.loan_ledger != right.loan_ledger {
+        differences.push("stable-view loan authority".to_string());
     }
     if differences.is_empty() {
         differences.push("the symbolic state".to_string());

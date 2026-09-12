@@ -2583,6 +2583,11 @@ impl CState {
             && std::sync::Arc::ptr_eq(&self.memory.union_cells, &other.memory.union_cells)
             && std::sync::Arc::ptr_eq(&self.memory.heap, &other.memory.heap)
             && self.resources.shares_storage_with(&other.resources)
+            && match (&self.loan_ledger, &other.loan_ledger) {
+                (None, None) => true,
+                (Some(left), Some(right)) => left.shares_storage_with(right),
+                _ => false,
+            }
             && std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
     }
 
@@ -2617,10 +2622,12 @@ impl CState {
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn loan_ledger(&self) -> Option<&crate::kernel::loans::LoanLedger> {
         self.loan_ledger.as_ref()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn with_loan_ledger(
         mut self,
         ledger: Option<crate::kernel::loans::LoanLedger>,

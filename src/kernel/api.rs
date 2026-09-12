@@ -646,6 +646,16 @@ fn abstract_c_state_for_join_across_with_policy(
     stable_entry_locals: &BTreeMap<String, CValue>,
     preserve_exact_common_memory: bool,
 ) -> Result<CState, String> {
+    // A join may retain one exact persistent ledger root, but it cannot pick
+    // one arm's loan history when siblings have advanced independently. The
+    // ledger equality is an opaque state-identity comparison; no loan map or
+    // history is traversed here.
+    if sibling_states
+        .iter()
+        .any(|sibling| sibling.loan_ledger != state.loan_ledger)
+    {
+        return Err("stable-view loan state differs across branch join".to_string());
+    }
     let mut existing_variables = BTreeSet::new();
     for sibling in sibling_states {
         crate::instrumentation::record_deterministic_work(

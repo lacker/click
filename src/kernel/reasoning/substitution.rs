@@ -39,6 +39,40 @@ pub(crate) fn resolve_minted_load_pointer(
 mod resource_frame_substitution_tests {
     use super::*;
 
+    #[test]
+    fn state_substitutions_preserve_the_exact_loan_ledger_root() {
+        let ledger = crate::kernel::loans::LoanLedger::new();
+        let state = CState::new()
+            .with_local("x", int32(Bitvector32Term::Variable(Variable(71_100))))
+            .with_loan_ledger(Some(ledger));
+        let bitvector_substituted = substitute_bitvector_variable_in_c_state(
+            &state,
+            Variable(71_100),
+            &Bitvector32Term::Constant(4),
+        );
+        let pointer_substituted = substitute_pointer_variable_in_c_state(
+            &state,
+            Variable(71_100),
+            &Pointer::symbolic(Variable(71_101)),
+        );
+
+        let original = state.loan_ledger().expect("state has ledger");
+        assert!(
+            original.shares_storage_with(
+                bitvector_substituted
+                    .loan_ledger()
+                    .expect("bitvector substitution has ledger")
+            )
+        );
+        assert!(
+            original.shares_storage_with(
+                pointer_substituted
+                    .loan_ledger()
+                    .expect("pointer substitution has ledger")
+            )
+        );
+    }
+
     fn inherited_check(range: CMemoryRange) -> CLoopEffectCheck {
         CLoopEffectCheck {
             effect: CLoopEffect::Mutable(Vec::new()),
