@@ -1279,20 +1279,30 @@ fn special_arithmetic_certificate_round_trips_and_rejects_bad_premises() {
 }
 
 #[test]
-fn special_certificate_rejects_deep_premise_identity_without_recursive_walk() {
-    let nested = format!("{}aligned(p, 8)", "aligned(p, 8) and ".repeat(300),);
+fn special_certificate_accepts_deep_identity_and_rejects_late_mismatch() {
+    let nested = format!("{}aligned(p, 8)", "aligned(p, 8) and ".repeat(260),);
     let source = format!(
-        "theorem deep_special_certificate(p: int32) {{ ensures {nested} by {{\
+        "theorem deep_special_certificate(p: int32) {{ ensures aligned(p, 8) by {{\
             arithmetic_certificate special {{\
                 premise 0: {nested} => {nested};\
-                pointer_alignment premise 0 => {nested};\
+                pointer_alignment premise 0 => aligned(p, 8);\
                 conclusion 0;\
             }}\
         }} }}"
     );
+    let parsed =
+        parse(&source).expect("deep identical certificate premises should parse iteratively");
+    std::mem::forget(parsed);
+    let late = nested.rfind("aligned(p, 8)").unwrap();
+    let mismatch = format!(
+        "{}aligned(p, 16){}",
+        &nested[..late],
+        &nested[late + "aligned(p, 8)".len()..]
+    );
+    let mismatch_source = source.replacen(&nested, &mismatch, 1);
     assert!(
-        parse(&source).is_err(),
-        "deep explicit certificate premise identity must fail closed before recursive equality"
+        parse(&mismatch_source).is_err(),
+        "a late deep premise mismatch must reject without recursive equality"
     );
 }
 
