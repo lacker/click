@@ -2785,6 +2785,53 @@ fn resource_join_preserves_only_common_projection_support() {
 }
 
 #[test]
+fn resource_join_drops_projection_when_memory_footprints_diverge() {
+    let support = CResourceFact::own_composite("join_memory_support".into(), Vec::new());
+    let view = |block: &str| {
+        CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        ))
+    };
+    let root = ResourceContext::new().unchecked_with_fact(support.clone());
+    let support_occurrence = root.owned_occurrences_for_fact(&support)[0];
+    let left_memory = CMemory::new().with_block("left-join", 8);
+    let right_memory = CMemory::new().with_block("right-join", 8);
+    let left = root
+        .clone()
+        .unchecked_with_supported_facts_from_occurrence_with_memory(
+            support_occurrence,
+            &support,
+            [view("left-join")],
+            &left_memory,
+        );
+    let right = root
+        .clone()
+        .unchecked_with_supported_facts_from_occurrence_with_memory(
+            support_occurrence,
+            &support,
+            [view("right-join")],
+            &right_memory,
+        );
+    let common = ResourceContext::common_exact_descendant(&left, &right, &root)
+        .expect("branches share the root resource authority");
+    assert!(common.contains_exact_representation(&support));
+    assert_eq!(
+        common
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_view() && fact.memory_range().is_some())
+            .count(),
+        0,
+        "a projection with divergent memory dependency metadata must not be reintroduced unindexed"
+    );
+}
+
+#[test]
 fn resource_common_descendant_visits_only_branch_local_changes() {
     let left_path = CResourceFact::own_token("left_path".to_string(), Vec::new());
     let right_path = CResourceFact::own_token("right_path".to_string(), Vec::new());

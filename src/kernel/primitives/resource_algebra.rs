@@ -151,6 +151,15 @@ fn memory_interval_nodes(range: &CMemoryRange) -> Option<Vec<ResourceMemoryInter
     Some(nodes)
 }
 
+fn memory_block_may_alias(block: &PointerBlock) -> bool {
+    matches!(
+        block,
+        PointerBlock::ExternalArgument
+            | PointerBlock::Symbolic(_)
+            | PointerBlock::FunctionSymbolic(_)
+    )
+}
+
 fn memory_interval_ancestors(node: &ResourceMemoryIntervalNode) -> Vec<ResourceMemoryIntervalNode> {
     (node.level..=32)
         .map(|level| ResourceMemoryIntervalNode {
@@ -347,9 +356,12 @@ fn memory_derivation_affects_footprint(
                 bytes.as_const().unwrap_or(u32::MAX),
             )
         }),
-        CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
-            ranges.iter().any(|range| range.base().block == *block)
-        }
+        CMemoryDerivation::LocalLifetimeEnded { block, .. } => ranges.iter().any(|range| {
+            !range.base().blocks_proven_distinct(&Pointer {
+                block: block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            })
+        }),
         CMemoryDerivation::LoopHavoc {
             mutable_ranges: None,
             ..
@@ -420,15 +432,29 @@ fn memory_ranges_overlap(left: &CMemoryRange, right: &CMemoryRange) -> bool {
     left_start < right_end && right_start < left_end
 }
 
-fn concrete_memory_range_bounds(range: &CMemoryRange) -> Option<(i64, i64)> {
+pub(crate) fn concrete_memory_range_bounds(range: &CMemoryRange) -> Option<(i64, i64)> {
     let base = range.base().offset.as_const()?;
-    let start = signed_bitvector_constant(range.start())?;
-    let end = signed_bitvector_constant(range.end())?;
+    let start_elements = signed_bitvector_constant(range.start())?;
+    let end_elements = signed_bitvector_constant(range.end())?;
+    if start_elements >= end_elements {
+        return None;
+    }
     let width = i64::from(range.element_width());
-    Some((
-        base.checked_add(start.checked_mul(width)?)?,
-        base.checked_add(end.checked_mul(width)?)?,
-    ))
+    let start = base.checked_add(start_elements.checked_mul(width)?)?;
+    let byte_count = end_elements
+        .checked_sub(start_elements)?
+        .checked_mul(width)?;
+    let end = start.checked_add(byte_count)?;
+    // The interval index and the resource-clause waiter index share this
+    // fixed signed 32-bit physical coordinate space. In particular, the
+    // exclusive end is not allowed to be i32::MAX + 1.
+    (i64::from(i32::MIN)..=i64::from(i32::MAX))
+        .contains(&start)
+        .then_some(())?;
+    (i64::from(i32::MIN)..=i64::from(i32::MAX))
+        .contains(&end)
+        .then_some(())?;
+    Some((start, end))
 }
 
 fn memory_footprint_for_fact(fact: &CResourceFact) -> ResourceMemoryFootprint {
@@ -658,7 +684,7 @@ impl ResourceContext {
             let mut explicit = 0usize;
             let mut supported = BTreeMap::<
                 (CResourceFact, ResourceOccurrenceId),
-                (usize, Option<ResourceSupportMetadata>),
+                (usize, Option<ResourceSupportMetadata>, bool),
             >::new();
             for entry in context
                 .storage
@@ -684,11 +710,16 @@ impl ResourceContext {
                         .cloned();
                     let slot = supported
                         .entry((support.clone(), support_entry))
-                        .or_insert((0, metadata.clone()));
+                        .or_insert((0, metadata.clone(), true));
                     if slot.1 != metadata {
                         // Equal projections with different dependency
                         // topology cannot be safely joined under one record.
+                        // The explicit consistency bit distinguishes this
+                        // from a legacy projection that has no metadata at
+                        // all; the former is dropped, the latter remains
+                        // valid support-only evidence.
                         slot.1 = None;
+                        slot.2 = false;
                     }
                     slot.0 += 1;
                 } else {
@@ -703,12 +734,14 @@ impl ResourceContext {
             let (right_explicit, right_supported) = representations(right, fact);
             let supported = left_supported
                 .into_iter()
-                .filter_map(|(support, (left_count, left_metadata))| {
+                .filter_map(|(support, (left_count, left_metadata, left_consistent))| {
                     right_supported
                         .get(&support)
-                        .filter(|(_, right_metadata)| {
-                            left_metadata.as_ref().map(|metadata| &metadata.footprint)
-                                == right_metadata.as_ref().map(|metadata| &metadata.footprint)
+                        .filter(|(_, right_metadata, right_consistent)| {
+                            left_consistent
+                                && *right_consistent
+                                && left_metadata.as_ref().map(|metadata| &metadata.footprint)
+                                    == right_metadata.as_ref().map(|metadata| &metadata.footprint)
                         })
                         .map(|_| {
                             let right_count = right_supported[&support].0;
@@ -1076,7 +1109,8 @@ impl ResourceContext {
             |metadata| match &metadata.footprint {
                 ResourceMemoryFootprint::Exact(ranges)
                     if ranges.iter().any(|range| {
-                        memory_interval_nodes(range).is_none() || range.base().has_symbolic_block()
+                        memory_interval_nodes(range).is_none()
+                            || memory_block_may_alias(&range.base().block)
                     }) =>
                 {
                     self.storage.symbolic_memory_support.with_value(occurrence)
@@ -1118,17 +1152,39 @@ impl ResourceContext {
     }
 
     fn remove_entry(&mut self, entry: ResourceEntryId) -> CResourceFact {
-        let projections = self
-            .storage
-            .projections_by_support_occurrence
-            .get(&self.occurrence(entry))
-            .cloned()
-            .unwrap_or_default();
-        for projection in projections.iter().copied() {
-            crate::instrumentation::record_deterministic_work(1);
-            self.remove_entry_only(projection);
+        // Remove the complete support-descendant closure. An explicit stack
+        // keeps work proportional to affected output, and the visited set
+        // makes malformed cyclic evidence harmless.
+        let fact = self.fact(entry).clone();
+        let mut pending = vec![(entry, false)];
+        let mut scheduled = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        scheduled.insert(entry);
+        while let Some((current, leaving)) = pending.pop() {
+            if leaving {
+                if self.storage.facts.contains_key(&current) {
+                    self.remove_entry_only(current);
+                }
+                continue;
+            }
+            if !visited.insert(current) || !self.storage.facts.contains_key(&current) {
+                continue;
+            }
+            pending.push((current, true));
+            let projections = self
+                .storage
+                .projections_by_support_occurrence
+                .get(&self.occurrence(current))
+                .cloned()
+                .unwrap_or_default();
+            for projection in projections.iter().copied().rev() {
+                if scheduled.insert(projection) {
+                    crate::instrumentation::record_deterministic_work(1);
+                    pending.push((projection, false));
+                }
+            }
         }
-        self.remove_entry_only(entry)
+        fact
     }
 
     fn remove_entry_only(&mut self, entry: ResourceEntryId) -> CResourceFact {
@@ -1633,22 +1689,22 @@ impl ResourceContext {
                 entries.with_value(*occurrence)
             });
         let ambiguous_event = match derivation {
-            CMemoryDerivation::Store { pointer, .. } => pointer.has_symbolic_block(),
+            CMemoryDerivation::Store { pointer, .. } => memory_block_may_alias(&pointer.block),
             CMemoryDerivation::CallHavoc { mutable_ranges, .. }
             | CMemoryDerivation::LoopHavoc {
                 mutable_ranges: Some(mutable_ranges),
                 ..
             } => mutable_ranges
                 .iter()
-                .any(|range| range.base().has_symbolic_block()),
+                .any(|range| memory_block_may_alias(&range.base().block)),
             CMemoryDerivation::HeapFreed {
                 allocation_base, ..
             }
             | CMemoryDerivation::HeapAllocationPending {
                 allocation_base, ..
-            } => allocation_base.has_symbolic_block(),
-            CMemoryDerivation::LocalLifetimeEnded { .. }
-            | CMemoryDerivation::LoopHavoc {
+            } => memory_block_may_alias(&allocation_base.block),
+            CMemoryDerivation::LocalLifetimeEnded { block, .. } => memory_block_may_alias(block),
+            CMemoryDerivation::LoopHavoc {
                 mutable_ranges: None,
                 ..
             }
@@ -1749,7 +1805,11 @@ impl ResourceContext {
                 }
             }
             CMemoryDerivation::LocalLifetimeEnded { block, .. } => {
-                if let Some(bucket) = self.storage.projections_by_memory_block.get(block) {
+                if memory_block_may_alias(block) {
+                    for occurrence in self.storage.support_metadata_by_projection.keys() {
+                        entries = entries.with_value(*occurrence);
+                    }
+                } else if let Some(bucket) = self.storage.projections_by_memory_block.get(block) {
                     for occurrence in bucket.iter() {
                         entries = entries.with_value(*occurrence);
                     }
@@ -4899,4 +4959,110 @@ fn bitvector_terms_proven_equal(
     left == right
         || assumptions.decide(&ConditionTerm::equal(left.clone(), right.clone())) == Some(true)
         || assumptions.bitvector_terms_equal_from_facts(left, right)
+}
+
+#[cfg(test)]
+mod support_removal_tests {
+    use super::*;
+
+    #[test]
+    fn concrete_interval_rejects_exclusive_end_outside_shared_coordinate_space() {
+        let range = CMemoryRange::new(
+            Pointer {
+                block: "boundary".into(),
+                offset: PointerOffsetTerm::Constant(1),
+            },
+            Bitvector32Term::Constant((i32::MAX - 1) as u32),
+            Bitvector32Term::Constant(i32::MAX as u32),
+        );
+        assert_eq!(concrete_memory_range_bounds(&range), None);
+    }
+
+    #[test]
+    fn removing_support_cascades_through_nested_projection_chain() {
+        let parent = CResourceFact::own_composite("parent".into(), Vec::new());
+        let child = CResourceFact::view_token("child".into(), Vec::new());
+        let grandchild = CResourceFact::view_token("grandchild".into(), Vec::new());
+        let mut context = ResourceContext::new().unchecked_with_fact(parent.clone());
+        let parent_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&parent)
+            .expect("parent entry")
+            .iter()
+            .next()
+            .expect("parent entry id");
+        let parent_occurrence = context.occurrence(parent_entry);
+        // These direct calls intentionally exercise the internal support graph
+        // beyond the public owned-authority constructor: normalization and
+        // future observation composition must not leave nested descendants
+        // behind when an ancestor is invalidated.
+        context.insert_fact_with_support_occurrence(
+            child.clone(),
+            Some(parent.clone()),
+            Some(parent_occurrence),
+        );
+        let child_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&child)
+            .expect("child entry")
+            .iter()
+            .next()
+            .expect("child entry id");
+        context.insert_fact_with_support_occurrence(
+            grandchild.clone(),
+            Some(child.clone()),
+            Some(context.occurrence(child_entry)),
+        );
+
+        context.remove_entry(parent_entry);
+
+        assert!(context.storage.facts.is_empty());
+        assert!(context.storage.projections_by_support_occurrence.is_empty());
+    }
+
+    #[test]
+    fn removing_cyclic_support_graph_terminates_and_cleans_all_nodes() {
+        let left = CResourceFact::view_token("left".into(), Vec::new());
+        let right = CResourceFact::view_token("right".into(), Vec::new());
+        let mut context = ResourceContext::new().unchecked_with_fact(left.clone());
+        let left_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&left)
+            .expect("left entry")
+            .iter()
+            .next()
+            .expect("left entry id");
+        let left_occurrence = context.occurrence(left_entry);
+        context.insert_fact_with_support_occurrence(
+            right.clone(),
+            Some(left.clone()),
+            Some(left_occurrence),
+        );
+        let right_entry = *context
+            .storage
+            .index
+            .exact
+            .get(&right)
+            .expect("right entry")
+            .iter()
+            .next()
+            .expect("right entry id");
+        // Build malformed cyclic evidence only to verify the removal guard;
+        // production constructors never create this edge.
+        context.insert_fact_with_support_occurrence(
+            left.clone(),
+            Some(right.clone()),
+            Some(context.occurrence(right_entry)),
+        );
+
+        context.remove_entry(left_entry);
+
+        assert!(context.storage.facts.is_empty());
+    }
 }

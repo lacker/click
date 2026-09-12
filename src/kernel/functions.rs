@@ -9696,7 +9696,12 @@ fn evaluate_contract_return_resources(
             ))));
         };
         return_resources = return_resources
-            .unchecked_with_supported_facts_from_occurrence(support_occurrence, &support, projected)
+            .unchecked_with_supported_facts_from_occurrence_with_memory(
+                support_occurrence,
+                &support,
+                projected,
+                post_state.memory(),
+            )
             .with_cached_supported_expansion_for_occurrence(
                 support_occurrence,
                 &support,
@@ -13086,21 +13091,8 @@ struct ResourceClauseWaiterIndex {
 fn resource_clause_concrete_memory_interval(
     range: &CMemoryRange,
 ) -> Option<(ResourceClauseIntervalSpace, i64, i64)> {
-    let base_offset = range.base().offset.as_const()?;
-    let start_elements = signed_bitvector_constant(range.start())?;
-    let end_elements = signed_bitvector_constant(range.end())?;
-    if start_elements >= end_elements {
-        return None;
-    }
-    let element_width = i64::from(range.element_width());
-    let start = base_offset.checked_add(start_elements.checked_mul(element_width)?)?;
-    let byte_count = end_elements
-        .checked_sub(start_elements)?
-        .checked_mul(element_width)?;
-    let end = start.checked_add(byte_count)?;
-    if !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&start)
-        || !(i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(&end)
-    {
+    let (start, end) = crate::kernel::primitives::concrete_memory_range_bounds(range)?;
+    if start >= end {
         return None;
     }
     Some((

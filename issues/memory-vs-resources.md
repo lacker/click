@@ -974,9 +974,9 @@ unrelated-fact scaling regressions. It is a green partial W5 checkpoint; the
 observe-then-consume/replace C fixture and the remaining R3/R6 mutation and
 callback-cell regressions are outstanding for later W5 checkpoints.
 
-#### W5 checkpoint B handoff (2026-09-12)
+#### W5 checkpoint B1 handoff (2026-09-12)
 
-Checkpoint B carries memory-dependent observation provenance through checked
+Checkpoint B1 carries memory-dependent observation provenance through checked
 state transitions. Each supported projection retains its supporting opaque
 resource occurrence, source memory identity, and per-projection footprint;
 concrete footprints use a fixed-depth dyadic interval index, while symbolic or
@@ -991,18 +991,20 @@ when the authority and dependency topology agree. Resource-context equality
 and hashing include the observable footprint topology but never raw snapshot
 identity.
 
-The checkpoint adds direct observe/store and wide-footprint/loop-barrier
-regressions, plus normalization, support-occurrence, and interval-index
-coverage. Focused `cargo test --lib kernel::tests::resource_tests` passed
-103/103; `cargo test --lib kernel::proof::execution::tests::` passed 35/35;
+The checkpoint adds direct observe/store, nested-support removal, divergent
+join, and wide-footprint/loop-barrier regressions, plus normalization,
+support-occurrence, and interval-index coverage. Focused
+`cargo test --lib kernel::tests::resource_tests` passed 104/104;
+`cargo test --lib kernel::proof::execution::tests::` passed 35/35;
 `cargo clippy --all-targets -- -D warnings` passed; and unfiltered
 `scripts/check.sh` passed 2752/2752 tests and 14/14 fixture/example checks
 (the existing quarantined example remains skipped). This worktree is
 `codex/mvr-w5b` from `43f4a51`; the resulting commit is reported with the
-handoff. Remaining W5 C/D work includes the real three-call callback/table
-fixtures, scoped-open expiry coverage, and richer prerequisite-load
-footprints for composite observations. No C source, syntax, budgets,
-quarantine, or unrelated semantics changed.
+handoff. This is a partial B1 checkpoint, not a complete W5 claim: remaining
+W5 C/D work includes the real three-call callback/table fixtures, scoped-open
+expiry coverage, and richer prerequisite-load footprints for composite
+observations. No C source, syntax, budgets, quarantine, or unrelated semantics
+changed.
 
 ### W6 — Unify existing binder transport and snapshot substitution
 

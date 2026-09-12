@@ -3038,10 +3038,11 @@ fn fold_composite_resources_on_outcome_with_facts(
                 let resources = post_state
                     .resources()
                     .clone()
-                    .unchecked_with_supported_facts_from_occurrence(
+                    .unchecked_with_supported_facts_from_occurrence_with_memory(
                         authority_occurrence,
                         authority,
                         projections,
+                        post_state.memory(),
                     );
                 post_state = post_state.with_resource_context(resources);
             }
