@@ -839,6 +839,10 @@ appears to need one reports the need instead of adding it.
   one hop, downward only). **The node-keyed ascent verifies and audits**,
   and the examples audit is 500 of 555 with only the two known failures.
   Phase A is complete for the insert fixup; C3 dispatched.
+- 2026-09-12: B1 is complete (docs 0b6016aa): every function in
+  `examples/modeled-binary-tree` is verified and audited (37 of 37 sites),
+  and the docs walk `tree_leftmost` as the canonical modeled-loop proof.
+  C3 in progress.
 
 ## Work packages
 
