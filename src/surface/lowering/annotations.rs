@@ -258,6 +258,7 @@ type FunctionContractSummary = (
     Vec<Option<usize>>,
     Vec<SpecProposition>,
     Vec<CMemorySegment>,
+    Vec<CMemorySegment>,
     Vec<CFunctionContractClaim>,
     bool,
     Vec<CPredicateUnfolding>,
@@ -450,6 +451,7 @@ pub(in crate::surface) fn annotated_function(
         contract_requirement_sources,
         contract_ensures,
         contract_mutable,
+        resource_derived_mutable,
         contract_claims,
         opaque_contract_supported,
         predicate_unfoldings,
@@ -460,14 +462,19 @@ pub(in crate::surface) fn annotated_function(
         click_function_environment,
         resource_environment,
     )?;
-    // `consumes` grants the callee a write-capable owned range. Carry that
-    // frame into loop summaries so checked proof artifacts retain the same
-    // memory-footprint evidence as independent contract certification.
-    let implicit_contract_mutable_segments = contract_mutable.as_slice();
     let resource_derived_mutable_frame = function_block
         .requires()
         .iter()
         .any(|requirement| matches!(requirement.inner(), Requirement::Resource(_)));
+    // `consumes` grants the callee a write-capable owned range. Carry that
+    // frame into loop summaries so checked proof artifacts retain the same
+    // memory-footprint evidence as independent contract certification. A
+    // derived function inherits only its separately tracked resource frame.
+    let implicit_contract_mutable_segments = if resource_derived_mutable_frame {
+        resource_derived_mutable.as_slice()
+    } else {
+        contract_mutable.as_slice()
+    };
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
         implicit_contract_mutable_segments,
@@ -582,6 +589,7 @@ pub(in crate::surface) fn annotated_function(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
+    let function = function.with_resource_derived_mutable_segments(resource_derived_mutable);
     if let Some(parameter) =
         crate::kernel::modified_by_value_aggregate_parameter_with_current_ensure_in_source(
             &function,
@@ -1128,6 +1136,7 @@ pub(in crate::surface) fn function_contract_summary(
     }
 
     let mut mutable = Vec::new();
+    let mut resource_derived_mutable = Vec::new();
     {
         if let Some(startup) = &parsed_function.program_entry_state {
             mutable.extend(startup.resources().facts().iter().filter_map(|fact| {
@@ -1142,11 +1151,10 @@ pub(in crate::surface) fn function_contract_summary(
                 )
             }));
         }
-        // Keep the lowered owned segments as proof/diagnostic metadata.  The
-        // kernel's modular-call projection deliberately ignores this derived
-        // list when a resource transition is present; it is retained here so
-        // body effect checking and loop summaries can remain source-oriented
-        // read-only consumers during the migration.
+        // Keep the lowered owned segments separate from startup/explicit
+        // metadata. The kernel's modular-call projection derives authority
+        // from checked resource facts; these segments are only for body and
+        // loop proof framing after their equivalence is checked.
         for requirement in function_block.requires() {
             if let Requirement::Resource(resource) = requirement.inner() {
                 collect_owned_resource_memory_segments(
@@ -1154,10 +1162,11 @@ pub(in crate::surface) fn function_contract_summary(
                     _resource_environment,
                     parsed_function.parameters(),
                     &mut lowerer,
-                    &mut mutable,
+                    &mut resource_derived_mutable,
                 )?;
             }
         }
+        mutable.extend(resource_derived_mutable.iter().cloned());
     }
     let claims = if function_block.ensures().is_empty() {
         vec![CFunctionContractClaim::body_safety()]
@@ -1188,6 +1197,7 @@ pub(in crate::surface) fn function_contract_summary(
         contract_requirement_sources,
         ensures,
         mutable,
+        resource_derived_mutable,
         claims,
         opaque_contract_supported,
         predicate_unfoldings,

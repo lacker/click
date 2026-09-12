@@ -2149,8 +2149,13 @@ pub struct CFunctionContractInterface {
     /// from the checked transition; this vector remains available to body and
     /// diagnostic consumers without becoming a modular-call input.
     pub(crate) contract_mutable: Vec<CMemorySegment>,
+    /// The exact surface-derived resource frame retained for loop metadata.
+    /// Keeping it separate lets the derived-frame marker reject accidental
+    /// mixtures with startup or explicit effect segments.
+    pub(crate) resource_derived_mutable_segments: Vec<CMemorySegment>,
     pub(crate) contract_effect_claim_required: bool,
     pub(crate) resource_derived_mutable_frame: bool,
+    pub(crate) resource_derived_frame_mixed: bool,
     pub(crate) contract_claims: Vec<CFunctionContractClaim>,
     pub(crate) opaque_contract_supported: bool,
     pub(crate) composite_resource_definitions: Vec<CCompositeResourceDefinition>,

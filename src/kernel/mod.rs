@@ -61,8 +61,9 @@ pub(crate) use functions::storage_writes_outside_owned_footprint;
 pub(crate) use functions::symbolic_call_result;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use functions::{
-    evaluate_function_resource_context, quantified_resource_requirement_assumptions,
-    resource_clause_position_note, resource_clause_stall_note,
+    evaluate_function_resource_context, evaluate_function_resource_context_with_metadata,
+    quantified_resource_requirement_assumptions, resource_clause_position_note,
+    resource_clause_stall_note, validate_resource_derived_loop_frames,
 };
 pub use loops::CLoopBinder;
 pub(crate) use loops::{

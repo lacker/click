@@ -37,6 +37,9 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
     for segment in &mut interface.contract_mutable {
         names.segment(segment);
     }
+    for segment in &mut interface.resource_derived_mutable_segments {
+        names.segment(segment);
+    }
     interface
 }
 

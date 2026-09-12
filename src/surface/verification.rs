@@ -1561,6 +1561,40 @@ fn verify_c0_sources_with_context(
             &click_function_environment,
             &resource_environment,
         )?;
+        if contract_function.resource_derived_mutable_frame() {
+            let loop_assumptions = assumptions_from_propositions(&certification_facts);
+            let mut loop_budget = crate::kernel::ExecutionBudget::default();
+            let Some(loop_entry_state) = crate::kernel::c_function_entry_state(
+                &certification_state,
+                &contract_function,
+                &certification_arguments,
+            ) else {
+                return Err(ClickError::new(format!(
+                    "could not construct the resource-derived loop entry for `{}`",
+                    function_block.signature.name()
+                )));
+            };
+            match crate::kernel::validate_resource_derived_loop_frames(
+                &contract_function,
+                &loop_entry_state,
+                &loop_assumptions,
+                &mut loop_budget,
+            ) {
+                Ok(Ok(())) => {}
+                Ok(Err(message)) => {
+                    return Err(ClickError::new(format!(
+                        "could not validate resource-derived loop frames for `{}`: {message}",
+                        function_block.signature.name()
+                    )));
+                }
+                Err(limit) => {
+                    return Err(ClickError::new(format!(
+                        "resource-derived loop-frame validation for `{}` exceeded its execution budget: {limit:?}",
+                        function_block.signature.name()
+                    )));
+                }
+            }
+        }
         // A resource-bearing contract without an effect clause frames caller
         // memory through the resource transition at each store, but file-scope
         // and static storage is not external memory: its writes must lie inside
@@ -1568,8 +1602,19 @@ fn verify_c0_sources_with_context(
         // bodies). Otherwise a view, or ownership of a neighboring cell, would
         // authorize a store into storage the contract does not own.
         if !contract_function.contract_mutable().is_empty()
+            || !contract_function.resource_requires().is_empty()
             || contract_function.resource_derived_mutable_frame()
         {
+            let Some(storage_entry_state) = crate::kernel::c_function_entry_state(
+                &certification_state,
+                &contract_function,
+                &certification_arguments,
+            ) else {
+                return Err(ClickError::new(format!(
+                    "could not construct the storage-check entry for `{}`",
+                    function_block.signature.name()
+                )));
+            };
             for verified in &function_verified {
                 for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
                     let Proposition::CFunctionVerifies { outcome, .. } =
@@ -1587,11 +1632,55 @@ fn verify_c0_sources_with_context(
                     available_pure_facts
                         .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
                     let assumptions = assumptions_from_propositions(&available_pure_facts);
+                    let storage_pointer = |pointer: &crate::kernel::Pointer| {
+                        pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
+                    };
+                    let has_storage_effect = crate::kernel::memory_effect_write_pointers(
+                        path.effect_facts(),
+                    )
+                    .iter()
+                    .any(storage_pointer)
+                        || path.effect_facts().iter().any(|fact| {
+                            matches!(
+                                fact.proposition(),
+                                Proposition::CMemoryEffectSummary { mutable_ranges, .. }
+                                    if mutable_ranges.iter().any(|range| storage_pointer(range.base()))
+                            )
+                        });
+                    let checked_transition = if has_storage_effect
+                        && contract_function.resource_derived_mutable_frame()
+                    {
+                        let mut transition_budget = crate::kernel::ExecutionBudget::default();
+                        match crate::kernel::evaluate_function_resource_context_with_metadata(
+                            &storage_entry_state,
+                            contract_function.resource_requires(),
+                            contract_function.composite_resource_definitions(),
+                            &assumptions,
+                            &mut transition_budget,
+                        ) {
+                            Ok(Ok((_, checked))) => Some(checked),
+                            Ok(Err(error)) => {
+                                return Err(ClickError::new(format!(
+                                    "`{}` path {path_index}: could not evaluate the checked resource transition: {error:?}",
+                                    function_block.signature.name()
+                                )));
+                            }
+                            Err(limit) => {
+                                return Err(ClickError::new(format!(
+                                    "`{}` path {path_index}: checked resource transition exceeded its execution budget: {limit:?}",
+                                    function_block.signature.name()
+                                )));
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     match crate::kernel::storage_writes_outside_owned_footprint(
                         &contract_function,
-                        &certification_state,
+                        &storage_entry_state,
                         path.effect_facts(),
                         &assumptions,
+                        checked_transition.as_deref(),
                     ) {
                         Ok(Some(outside)) if outside.is_empty() => {}
                         Ok(Some(outside)) => {
@@ -3984,6 +4073,7 @@ pub(in crate::surface) fn build_function_environment(
                     contract_requirement_sources,
                     contract_ensures,
                     contract_mutable,
+                    resource_derived_mutable,
                     contract_claims,
                     opaque_supported,
                     predicate_unfoldings,
@@ -4016,6 +4106,8 @@ pub(in crate::surface) fn build_function_environment(
                         opaque_supported,
                     )
                     .with_contract_requirement_sources(contract_requirement_sources);
+                let function =
+                    function.with_resource_derived_mutable_segments(resource_derived_mutable);
                 if resource_derived_mutable_frame {
                     function.with_resource_derived_mutable_frame()
                 } else {

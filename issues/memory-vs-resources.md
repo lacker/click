@@ -616,6 +616,15 @@ resource-derived-frame marker permits its owned memory to enter the
 projection. Direct body execution still checks stores against the transferred
 resource context rather than applying abstract call havoc.
 
+Refinement compares target and implementation projections, including
+resource-derived ranges even when their retained surface metadata is empty;
+guarded explicit effects retain exact-route refusal. Resource-derived frame
+metadata is stored separately from startup/explicit segments, and marking a
+mixed interface is rejected. Before certification, inherited loop-frame
+metadata is checked against the same entry projection; storage checks receive
+the checked resource facts used to construct their projection rather than
+reevaluating an ambient surface frame.
+
 The surface `collect_owned_resource_memory_segments` traversal remains as
 checked, source-oriented metadata for body/loop proof framing and the
 certification storage diagnostic. It is not used as the modular call effect

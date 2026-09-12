@@ -3148,7 +3148,8 @@ fn function_refines_named_contract_in_case(
     let supported_stateful_memory = !state_independent
         && !contract_interface.resource_requires().is_empty()
         && !contract_interface.resource_ensures().is_empty()
-        && !contract_interface.contract_mutable().is_empty()
+        && (!contract_interface.contract_mutable().is_empty()
+            || contract_interface.resource_derived_mutable_frame())
         && supported_syntax;
     if !state_independent && !supported_stateful_memory {
         return Ok(false);
@@ -3332,9 +3333,11 @@ fn predicate_interfaces_are_explicitly_compatible(
 }
 
 /// Writes to file-scope or static storage that a checked path performs outside
-/// the contract's owned footprint, described for diagnostics. `None` when an
-/// owned segment could not be evaluated at entry. Caller memory reached through
-/// a pointer is checked by the resource transition at each store; storage is
+/// the contract's owned footprint, described for diagnostics. The caller may
+/// pass the checked resource facts from certification; this keeps the storage
+/// decision on the same transition artifact as modular effects. `None` is
+/// retained for explicit-effect callers. Caller memory reached through a
+/// pointer is checked by the resource transition at each store; storage is
 /// not external memory, so a contract that declares resources but no effect
 /// clause is framed here instead: its storage writes must lie inside the owned
 /// ranges (startup resources, owned raw ranges, and composite bodies).
@@ -3343,6 +3346,7 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     entry: &CState,
     facts: &[ExecutionPureFact],
     assumptions: &PureFactContext,
+    transition_resources: Option<&[CCheckedResourceFact]>,
 ) -> ExecutionResult<Option<Vec<String>>> {
     let is_storage = |pointer: &Pointer| {
         pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
@@ -3367,10 +3371,15 @@ pub(crate) fn storage_writes_outside_owned_footprint(
         return Ok(Some(Vec::new()));
     }
     let mut budget = ExecutionBudget::default();
-    let Some(owned) =
-        evaluate_contract_mutable_ranges(contract, entry, assumptions, &mut budget, false)?
-    else {
-        return Ok(None);
+    let owned = match project_contract_memory_effects(
+        entry,
+        contract.contract_interface(),
+        transition_resources,
+        assumptions,
+        &mut budget,
+    )? {
+        Ok(projection) => projection.ranges().to_vec(),
+        Err(_) => return Ok(None),
     };
     let mut outside = Vec::new();
     for pointer in &storage_writes {
@@ -3397,22 +3406,6 @@ pub(crate) fn storage_writes_outside_owned_footprint(
         }
     }
     Ok(Some(outside))
-}
-
-fn evaluate_contract_mutable_ranges(
-    contract: &CFunction,
-    entry: &CState,
-    assumptions: &PureFactContext,
-    budget: &mut ExecutionBudget,
-    require_unguarded: bool,
-) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
-    evaluate_contract_mutable_ranges_for_interface(
-        contract.contract_interface(),
-        entry,
-        assumptions,
-        budget,
-        require_unguarded,
-    )
 }
 
 /// Project the checked resource transition's memory effects.  This is the
@@ -3495,6 +3488,11 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
     budget: &mut ExecutionBudget,
     require_decided_guards: bool,
 ) -> ExecutionResult<Result<CFunctionMemoryEffectProjection, String>> {
+    if interface.resource_derived_mutable_frame() && interface.resource_derived_frame_mixed() {
+        return Ok(Err(
+            "resource-derived mutable frame mixes explicit effect segments".to_string(),
+        ));
+    }
     let evaluated_transition;
     let transition_resources = if interface.resource_derived_mutable_frame() {
         match transition_resources {
@@ -3593,6 +3591,182 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
         ranges,
         evidence_facts,
     }))
+}
+
+/// Check that retained inherited loop-frame metadata is exactly the checked
+/// resource-derived effect. The loop lowering keeps source expressions because
+/// it must re-evaluate dependent addresses at each back edge; this gate makes
+/// that metadata a checked view of the same entry transition rather than an
+/// independent source of memory authority.
+pub(crate) fn validate_resource_derived_loop_frames(
+    function: &CFunction,
+    entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<(), String>> {
+    fn has_inherited_loop_frame(statement: &CStatement) -> bool {
+        match statement {
+            CStatement::Seq(first, second) => {
+                has_inherited_loop_frame(first) || has_inherited_loop_frame(second)
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => has_inherited_loop_frame(then_branch) || has_inherited_loop_frame(else_branch),
+            CStatement::While {
+                effect_checks,
+                body,
+                ..
+            } => {
+                effect_checks.iter().any(|check| {
+                    check
+                        .context()
+                        .is_some_and(|context| context.contains("inherited owned resource frame"))
+                }) || has_inherited_loop_frame(body)
+            }
+            CStatement::Switch { cases, .. } => cases
+                .iter()
+                .any(|case| has_inherited_loop_frame(&case.body)),
+            CStatement::ContinueWithStep { step } => has_inherited_loop_frame(step),
+            _ => false,
+        }
+    }
+    if !function.resource_derived_mutable_frame() || !has_inherited_loop_frame(function.body()) {
+        return Ok(Ok(()));
+    }
+    let projection = match project_contract_memory_effects(
+        entry,
+        function.contract_interface(),
+        None,
+        assumptions,
+        budget,
+    )? {
+        Ok(projection) => projection,
+        Err(message) => return Ok(Err(message)),
+    };
+    fn check_statement(
+        statement: &CStatement,
+        entry: &CState,
+        assumptions: &PureFactContext,
+        budget: &mut ExecutionBudget,
+        expected: &[CMemoryRange],
+    ) -> ExecutionResult<Result<(), String>> {
+        let mut check = |checks: &[CLoopEffectCheck]| -> ExecutionResult<Result<(), String>> {
+            for effect_check in checks {
+                if !effect_check
+                    .context()
+                    .is_some_and(|context| context.contains("inherited owned resource frame"))
+                {
+                    continue;
+                }
+                let CLoopEffect::Mutable(segments) = effect_check.effect() else {
+                    return Ok(Err(
+                        "resource-derived loop frame lost its mutable metadata".to_string()
+                    ));
+                };
+                let Ok((actual, _)) =
+                    project_explicit_memory_segments(entry, segments, assumptions, budget, false)?
+                else {
+                    return Ok(Err(
+                        "could not evaluate inherited resource-derived loop frame".to_string(),
+                    ));
+                };
+                // Resource definitions may split one logical range across
+                // adjacent members while the source-oriented collector keeps
+                // those members separate. Coalesce only adjacent ranges with
+                // the same base and element width before checking equality;
+                // this is a derived normalization, not another authority.
+                let coalesce = |mut ranges: Vec<CMemoryRange>| {
+                    ranges.sort_by(|left, right| {
+                        left.base
+                            .cmp(&right.base)
+                            .then_with(|| left.start.cmp(&right.start))
+                            .then_with(|| left.end.cmp(&right.end))
+                    });
+                    let mut merged: Vec<CMemoryRange> = Vec::with_capacity(ranges.len());
+                    for range in ranges {
+                        if let Some(previous) = merged.last_mut()
+                            && previous.base == range.base
+                            && previous.element_width == range.element_width
+                            && previous.end == range.start
+                        {
+                            previous.end = range.end;
+                        } else {
+                            merged.push(range);
+                        }
+                    }
+                    merged
+                };
+                let actual = coalesce(actual);
+                let expected = coalesce(expected.to_vec());
+                let equivalent = |left: &[CMemoryRange], right: &[CMemoryRange]| {
+                    left.iter().all(|range| {
+                        right
+                            .iter()
+                            .any(|candidate| memory_range_covers(candidate, range, assumptions))
+                    })
+                };
+                if !equivalent(&actual, &expected) || !equivalent(&expected, &actual) {
+                    return Ok(Err(
+                        "inherited loop frame disagrees with checked resource effect".to_string(),
+                    ));
+                }
+            }
+            Ok(Ok(()))
+        };
+        match statement {
+            CStatement::Seq(first, second) => {
+                if let Err(error) = check_statement(first, entry, assumptions, budget, expected)? {
+                    return Ok(Err(error));
+                }
+                check_statement(second, entry, assumptions, budget, expected)
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if let Err(error) =
+                    check_statement(then_branch, entry, assumptions, budget, expected)?
+                {
+                    return Ok(Err(error));
+                }
+                check_statement(else_branch, entry, assumptions, budget, expected)
+            }
+            CStatement::While {
+                effect_checks,
+                body,
+                ..
+            } => {
+                if let Err(error) = check(effect_checks)? {
+                    return Ok(Err(error));
+                }
+                check_statement(body, entry, assumptions, budget, expected)
+            }
+            CStatement::Switch { cases, .. } => {
+                for case in cases {
+                    if let Err(error) =
+                        check_statement(&case.body, entry, assumptions, budget, expected)?
+                    {
+                        return Ok(Err(error));
+                    }
+                }
+                Ok(Ok(()))
+            }
+            CStatement::ContinueWithStep { step } => {
+                check_statement(step, entry, assumptions, budget, expected)
+            }
+            _ => Ok(Ok(())),
+        }
+    }
+    check_statement(
+        function.body(),
+        entry,
+        assumptions,
+        budget,
+        projection.ranges(),
+    )
 }
 
 fn evaluate_contract_mutable_ranges_for_interface(
@@ -3970,8 +4144,12 @@ fn framed_resource_transition_refines(
     ))
 }
 
-/// Checks that every segment the callback may write lies inside one segment
-/// the named contract declares mutable.
+/// Checks that every range the implementation may write lies inside the
+/// target's checked effect projection. Both projections are built from the
+/// same transition/effect evaluator: resource-derived interfaces evaluate
+/// their entry resource clauses into role-bearing facts, while explicit
+/// interfaces evaluate their guarded segments. Surface `contract_mutable`
+/// metadata is never walked as the semantic comparison itself.
 ///
 /// Both guard questions are decided by [`refinement_route_proves`]: exact
 /// membership in the refinement assumptions, or the frozen condition checker
@@ -3996,9 +4174,54 @@ fn mutable_footprint_is_compatible_for_interfaces(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
-    if function.contract_mutable().is_empty() {
-        return Ok(true);
+    if !contract.resource_derived_mutable_frame()
+        && !function.resource_derived_mutable_frame()
+        && (contract
+            .contract_mutable()
+            .iter()
+            .any(|segment| segment.guard().is_some())
+            || function
+                .contract_mutable()
+                .iter()
+                .any(|segment| segment.guard().is_some()))
+    {
+        return explicit_refinement_effects_are_compatible(
+            contract,
+            function,
+            contract_entry,
+            function_entry,
+            assumptions,
+            budget,
+        );
     }
+    let contract_projection =
+        project_refinement_effects(contract, contract_entry, assumptions, budget)?;
+    let function_projection =
+        project_refinement_effects(function, function_entry, assumptions, budget)?;
+    let (Ok(contract_projection), Ok(function_projection)) =
+        (contract_projection, function_projection)
+    else {
+        return Ok(false);
+    };
+    Ok(function_projection.ranges().iter().all(|required_range| {
+        contract_projection.ranges().iter().any(|available_range| {
+            memory_range_covers(available_range, required_range, assumptions)
+        })
+    }))
+}
+
+/// Guarded explicit effects need one projection per implementation guard: the
+/// implementation's guard is the active path assumption, while a target guard
+/// must already be established on that path. Range lowering itself still goes
+/// through the shared projection evaluator.
+fn explicit_refinement_effects_are_compatible(
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
+    contract_entry: &CState,
+    function_entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<bool> {
     let mut guard_assumptions = assumptions.clone();
     let Some(contract_guards) = lower_refinement_mutable_guards_for_interface(
         contract,
@@ -4018,9 +4241,8 @@ fn mutable_footprint_is_compatible_for_interfaces(
     else {
         return Ok(false);
     };
-
     for (required_segment, required_guard) in
-        function.contract_mutable().iter().zip(&function_guards)
+        function.contract_mutable().iter().zip(function_guards)
     {
         if required_guard.as_ref().is_some_and(|guard| {
             refinement_route_proves(
@@ -4032,7 +4254,7 @@ fn mutable_footprint_is_compatible_for_interfaces(
         }
         let mut active_assumptions = guard_assumptions.clone();
         if let Some(guard) = required_guard {
-            active_assumptions = active_assumptions.assume_proposition(guard.clone());
+            active_assumptions = active_assumptions.assume_proposition(guard);
         }
         let Ok((required_ranges, _)) = project_explicit_memory_segments(
             function_entry,
@@ -4047,7 +4269,6 @@ fn mutable_footprint_is_compatible_for_interfaces(
         let Some(required_range) = required_ranges.first() else {
             return Ok(false);
         };
-
         let mut covered = false;
         for (available_segment, available_guard) in
             contract.contract_mutable().iter().zip(&contract_guards)
@@ -4057,9 +4278,11 @@ fn mutable_footprint_is_compatible_for_interfaces(
             {
                 continue;
             }
+            let mut available_segment = available_segment.clone();
+            available_segment.guard = None;
             let Ok((available_ranges, _)) = project_explicit_memory_segments(
                 contract_entry,
-                std::slice::from_ref(available_segment),
+                std::slice::from_ref(&available_segment),
                 &active_assumptions,
                 budget,
                 true,
@@ -4067,10 +4290,9 @@ fn mutable_footprint_is_compatible_for_interfaces(
             else {
                 continue;
             };
-            let Some(available_range) = available_ranges.first() else {
-                continue;
-            };
-            if memory_range_covers(available_range, required_range, &active_assumptions) {
+            if available_ranges.iter().any(|available_range| {
+                memory_range_covers(available_range, required_range, &active_assumptions)
+            }) {
                 covered = true;
                 break;
             }
@@ -4079,8 +4301,76 @@ fn mutable_footprint_is_compatible_for_interfaces(
             return Ok(false);
         }
     }
-
     Ok(true)
+}
+
+fn project_refinement_effects(
+    interface: &CFunctionContractInterface,
+    entry: &CState,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CFunctionMemoryEffectProjection, String>> {
+    let mut projection_assumptions = assumptions.clone();
+    // Explicit guards retain refinement's exact-route refusal semantics. The
+    // resource-derived projection has no independent surface guard list and
+    // therefore goes directly through the checked transition evaluator.
+    if !interface.resource_derived_mutable_frame() {
+        let Some(guards) = lower_refinement_mutable_guards_for_interface(
+            interface,
+            entry,
+            &mut projection_assumptions,
+            budget,
+        )?
+        else {
+            return Ok(Err("mutable footprint guard is undecided".to_string()));
+        };
+        let mut ranges = Vec::new();
+        let mut evidence_facts = Vec::new();
+        for (segment, guard) in interface.contract_mutable().iter().zip(guards) {
+            let mut active_assumptions = projection_assumptions.clone();
+            if let Some(guard) = guard {
+                if refinement_route_proves(
+                    &active_assumptions,
+                    &Proposition::Not(Box::new(guard.clone())),
+                ) {
+                    continue;
+                }
+                active_assumptions = active_assumptions.assume_proposition(guard.clone());
+                if !refinement_route_proves(&active_assumptions, &guard) {
+                    return Ok(Err("mutable footprint guard is undecided".to_string()));
+                }
+            }
+            // Guard resolution above is the refinement-specific route. Feed
+            // the now unconditional segment to the shared evaluator so range
+            // lowering itself remains identical to call/certification paths.
+            let mut segment = segment.clone();
+            segment.guard = None;
+            let Ok((segment_ranges, segment_evidence)) = project_explicit_memory_segments(
+                entry,
+                std::slice::from_ref(&segment),
+                &active_assumptions,
+                budget,
+                true,
+            )?
+            else {
+                return Ok(Err("could not evaluate mutable footprint".to_string()));
+            };
+            ranges.extend(segment_ranges);
+            evidence_facts.extend(segment_evidence);
+        }
+        return Ok(Ok(CFunctionMemoryEffectProjection {
+            ranges,
+            evidence_facts,
+        }));
+    }
+    project_contract_memory_effects_with_guard_policy(
+        entry,
+        interface,
+        None,
+        &projection_assumptions,
+        budget,
+        true,
+    )
 }
 
 #[cfg(test)]

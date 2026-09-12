@@ -852,6 +852,167 @@ fn checked_wrapper_projection_scales_with_used_members() {
 }
 
 #[test]
+fn resource_derived_refinement_compares_checked_ranges() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:resource-refinement:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 8));
+    let resource = |start| {
+        CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(start)),
+            CExpression::Value(int32(start + 1)),
+        ))
+    };
+    let target = c_function(CType::Void, "resource_target", vec![], CStatement::Skip)
+        .with_contract(vec![], vec![], vec![], vec![], true)
+        .with_resource_summary(vec![resource(0)], vec![])
+        .with_resource_derived_mutable_frame();
+    let implementation = c_function(
+        CType::Void,
+        "resource_implementation",
+        vec![],
+        CStatement::Skip,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![resource(1)], vec![])
+    .with_resource_derived_mutable_frame();
+    assert!(
+        !mutable_footprint_is_compatible(
+            &target,
+            &implementation,
+            &state,
+            &state,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn resource_derived_frame_rejects_mixed_explicit_effect_metadata() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:mixed-resource-frame:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 4));
+    let function = c_function(
+        CType::Void,
+        "mixed_resource_frame",
+        vec![],
+        CStatement::Skip,
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![
+            CMemorySegment::new(
+                CExpression::Variable("p".into()),
+                CExpression::Value(int32(0)),
+                CExpression::Value(int32(1)),
+            ),
+            CMemorySegment::new(
+                CExpression::Variable("p".into()),
+                CExpression::Value(int32(2)),
+                CExpression::Value(int32(3)),
+            ),
+        ],
+        vec![],
+        true,
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ))],
+        vec![],
+    )
+    .with_resource_derived_mutable_frame();
+    let projection = project_contract_memory_effects(
+        &state,
+        function.contract_interface(),
+        None,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(projection.is_err());
+}
+
+#[test]
+fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:loop-wrapper:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let definition = CCompositeResourceDefinition::new(
+        "LoopWrapper",
+        vec![c_parameter("data", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::owned_memory(CMemorySegment::new(
+            CExpression::Variable("data".into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(1)),
+        ))],
+        vec![],
+    );
+    let requirement = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "LoopWrapper".into(),
+        vec![CExpression::Variable("p".into())],
+        vec![CType::Int32Pointer],
+    );
+    let wrong_loop_frame = CLoopEffectCheck::new_with_span(
+        CLoopEffect::Mutable(vec![CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(1)),
+            CExpression::Value(int32(2)),
+        )]),
+        CLoopEffectSpan::Whole,
+        Some("loop 0 inherited owned resource frame".into()),
+    );
+    let body = CStatement::While {
+        condition: c_int32_literal(0),
+        invariant: vec![],
+        invariant_checks: vec![],
+        effect_checks: vec![wrong_loop_frame],
+        resource_specs: vec![],
+        ranking_measures: vec![],
+        do_while: false,
+        body: Box::new(CStatement::Skip),
+    };
+    let function = c_function(
+        CType::Void,
+        "wrong_loop_wrapper_frame",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        body,
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![requirement], vec![])
+    .with_composite_resource_definitions(vec![definition])
+    .with_resource_derived_mutable_frame();
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block, 4));
+    let result = validate_resource_derived_loop_frames(
+        &function,
+        &state,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(result.is_err());
+}
+
+#[test]
 fn unresolved_call_requirements_retain_selected_source_site_identity() {
     let function = c_function(
         CType::Int32,
