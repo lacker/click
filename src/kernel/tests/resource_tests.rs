@@ -5178,7 +5178,8 @@ fn observed_projection_tracks_loaded_address_prerequisite() {
     let memory = CMemory::new()
         .with_block("loaded-address-selector", 4)
         .with_block("loaded-address-data", 32)
-        .with_block("loaded-address-unrelated", 4);
+        .with_block("loaded-address-unrelated", 4)
+        .store(selector.clone(), int32(0));
     let selector_load = Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory_ref(&memory),
         Box::new(selector.clone()),
@@ -5232,6 +5233,85 @@ fn observed_projection_tracks_loaded_address_prerequisite() {
         after_selector_write
             .resources()
             .contains_exact_representation(&support)
+    );
+    assert!(
+        after_selector_write
+            .resources()
+            .contains_exact_representation(&unrelated)
+    );
+}
+
+#[test]
+fn observed_projection_tracks_loaded_base_and_start_prerequisites() {
+    let support = CResourceFact::own_composite("loaded_base_start_support".to_string(), Vec::new());
+    let selector = Pointer {
+        block: "base-start-selector".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new()
+        .with_block("base-start-selector", 8)
+        .with_block("base-start-data", 32)
+        .with_block("base-start-unrelated", 4)
+        .store(selector.clone(), int16(0));
+    let selector_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(selector.clone()),
+    );
+    let base_projected = CResourceFact::view_memory(CMemoryRange::new(
+        Pointer {
+            block: "base-start-data".into(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(selector_load.clone()),
+                byte_width: 4,
+            },
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    let start_projected = CResourceFact::view_memory(CMemoryRange::new(
+        Pointer {
+            block: "base-start-data".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        },
+        selector_load.clone(),
+        Bitvector32Term::Add(
+            Box::new(selector_load),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+    ));
+    let unrelated = CResourceFact::view_memory(CMemoryRange::new(
+        Pointer {
+            block: "base-start-unrelated".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    let resources = ResourceContext::new().unchecked_with_fact(support.clone());
+    let occurrence = resources.owned_occurrences_for_fact(&support)[0];
+    let resources = resources.unchecked_with_supported_facts_from_occurrence_with_memory(
+        occurrence,
+        &support,
+        [
+            base_projected.clone(),
+            start_projected.clone(),
+            unrelated.clone(),
+        ],
+        &memory,
+    );
+    let after_selector_write = CState::new()
+        .with_memory(memory.clone())
+        .with_resource_context(resources)
+        .with_memory(memory.store(selector, int16(1)));
+    assert!(
+        !after_selector_write
+            .resources()
+            .contains_exact_representation(&base_projected)
+    );
+    assert!(
+        !after_selector_write
+            .resources()
+            .contains_exact_representation(&start_projected)
     );
     assert!(
         after_selector_write
