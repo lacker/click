@@ -246,7 +246,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         click_function_environment,
         claim_label,
     )?;
-    let function = annotated_function(
+    let function = annotated_function_with_assumptions(
         function_block,
         parsed_function,
         &state,
@@ -254,6 +254,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        Some(&assumptions_from_propositions(&pure_facts)),
     )?;
     let state = canonical_claim_caller_state(
         state,
@@ -423,7 +424,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         click_function_environment,
         &proof_label,
     )?;
-    let function = annotated_function(
+    let function = annotated_function_with_assumptions(
         function_block,
         parsed_function,
         &state,
@@ -431,6 +432,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        Some(&assumptions_from_propositions(&pure_facts)),
     )?;
     let state = canonical_claim_caller_state(
         state,
@@ -1223,7 +1225,7 @@ pub(super) fn finish_ordered_proof<'a>(
     let frontier_function = frontier_function_block
         .as_ref()
         .map(|frontier_function_block| {
-            annotated_function(
+            annotated_function_with_assumptions(
                 frontier_function_block,
                 parsed_function,
                 pre_state,
@@ -1231,6 +1233,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 predicate_environment,
                 click_function_environment,
                 resource_environment,
+                Some(&assumptions_from_propositions(&pure_facts)),
             )
         })
         .transpose()?;

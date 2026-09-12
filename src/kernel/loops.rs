@@ -2246,6 +2246,10 @@ fn evaluate_whole_loop_effect_ranges(
             // enclosing immutable claim.
             CLoopEffect::Mutable(_) if !include_mutable_summaries => continue,
             CLoopEffect::Mutable(segments) => {
+                if let Some(validated) = check.validated_ranges() {
+                    ranges_by_summary.push(validated.to_vec());
+                    continue;
+                }
                 let mut ranges = Vec::new();
                 let mut failed = false;
                 for segment in segments {
@@ -3169,31 +3173,43 @@ pub(super) fn collect_loop_effect_check_obligations(
         let segments = match check.effect() {
             CLoopEffect::Immutable => Vec::new(),
             CLoopEffect::Mutable(segments) => {
-                let mut evaluated = Vec::new();
-                for (segment_index, segment) in segments.iter().enumerate() {
-                    match evaluate_loop_effect_segment(
-                        before_state,
-                        segment,
-                        &effective_assumptions,
-                        budget,
-                    )? {
-                        Ok(segment) => evaluated.push(segment),
-                        Err(message) => {
-                            segment_evaluation_failed = true;
-                            push_false_loop_effect_obligation(
-                                &mut obligations,
-                                loop_effect_failure_context(
-                                    check,
-                                    format!(
-                                        "could not evaluate mutable segment {segment_index} in {:?}: {message}",
-                                        check.effect()
+                if let Some(validated) = check.validated_ranges() {
+                    validated
+                        .iter()
+                        .map(|range| EvaluatedMemorySegment {
+                            base: range.base.clone(),
+                            start: range.start.clone(),
+                            end: range.end.clone(),
+                            element_width: range.element_width,
+                        })
+                        .collect()
+                } else {
+                    let mut evaluated = Vec::new();
+                    for (segment_index, segment) in segments.iter().enumerate() {
+                        match evaluate_loop_effect_segment(
+                            before_state,
+                            segment,
+                            &effective_assumptions,
+                            budget,
+                        )? {
+                            Ok(segment) => evaluated.push(segment),
+                            Err(message) => {
+                                segment_evaluation_failed = true;
+                                push_false_loop_effect_obligation(
+                                    &mut obligations,
+                                    loop_effect_failure_context(
+                                        check,
+                                        format!(
+                                            "could not evaluate mutable segment {segment_index} in {:?}: {message}",
+                                            check.effect()
+                                        ),
                                     ),
-                                ),
-                            );
+                                );
+                            }
                         }
                     }
+                    evaluated
                 }
-                evaluated
             }
         };
 

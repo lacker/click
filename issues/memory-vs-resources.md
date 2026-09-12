@@ -618,20 +618,29 @@ resource context rather than applying abstract call havoc.
 
 Refinement compares target and implementation projections, including
 resource-derived ranges even when their retained surface metadata is empty;
-guarded explicit effects retain exact-route refusal. Resource-derived frame
-metadata is stored separately from startup/explicit segments, and marking a
-mixed interface is rejected. Before certification, inherited loop-frame
-metadata is checked against the same entry projection; storage checks receive
-the checked resource facts used to construct their projection rather than
-reevaluating an ambient surface frame.
+guarded explicit effects retain exact-route refusal and range candidates are
+indexed by memory family/width before endpoint containment. Resource-derived
+frame metadata is stored separately from startup/explicit segments, and
+marking a mixed interface is rejected; the checked evidence identity includes
+both the retained metadata and mixed-frame bit. Inherited loop frames carry a
+typed origin and are rewritten to canonical entry ranges before loop proof,
+so a pointer-field mutation cannot retarget a back edge. Before storage
+certification iterates paths, it constructs one checked entry transition from
+entry-only certification facts; path/body facts are used only for the later
+write-coverage check and cannot bootstrap that transition.
+
+Loop-frame setup adds only the existing entry-only nonnegativity assumptions
+for counted resource quantities, then evaluates the checked transition once;
+if that transition cannot be established, retained source-oriented metadata
+cannot authorize a frame. The post-setup loop check validates only the typed
+canonical carrier and does not re-evaluate resource expressions.
 
 The surface `collect_owned_resource_memory_segments` traversal remains as
-checked, source-oriented metadata for body/loop proof framing and the
-certification storage diagnostic. It is not used as the modular call effect
-source; the kernel projection is authoritative there. The explicit refinement
-guard-decision helper remains a conservative adapter for its unreachable
-explicit-case route, while automatic refinement and storage checks use the
-authoritative projection.
+checked, source-oriented metadata for body diagnostics; it is not used as a
+modular call effect source or as loop/storage authority. The kernel projection
+is authoritative there. The explicit refinement guard-decision helper remains
+a conservative adapter for its unreachable explicit-case route, while
+automatic refinement and storage checks use the authoritative projection.
 
 The deterministic regressions use sizes `1, 4, 16, 64`: one checks explicit
 effect members with 256 unrelated memory frames, one runs actual transition

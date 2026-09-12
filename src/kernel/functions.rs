@@ -3333,8 +3333,9 @@ fn predicate_interfaces_are_explicitly_compatible(
 }
 
 /// Writes to file-scope or static storage that a checked path performs outside
-/// the contract's owned footprint, described for diagnostics. The caller may
-/// pass the checked resource facts from certification; this keeps the storage
+/// the contract's owned footprint, described for diagnostics. The caller
+/// passes the checked resource facts and, for resource-derived contracts, the
+/// already prepared projection from certification; this keeps the storage
 /// decision on the same transition artifact as modular effects. `None` is
 /// retained for explicit-effect callers. Caller memory reached through a
 /// pointer is checked by the resource transition at each store; storage is
@@ -3347,6 +3348,7 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     facts: &[ExecutionPureFact],
     assumptions: &PureFactContext,
     transition_resources: Option<&[CCheckedResourceFact]>,
+    prepared_projection: Option<&CFunctionMemoryEffectProjection>,
 ) -> ExecutionResult<Option<Vec<String>>> {
     let is_storage = |pointer: &Pointer| {
         pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
@@ -3370,16 +3372,20 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     if storage_writes.is_empty() && storage_summaries.is_empty() {
         return Ok(Some(Vec::new()));
     }
-    let mut budget = ExecutionBudget::default();
-    let owned = match project_contract_memory_effects(
-        entry,
-        contract.contract_interface(),
-        transition_resources,
-        assumptions,
-        &mut budget,
-    )? {
-        Ok(projection) => projection.ranges().to_vec(),
-        Err(_) => return Ok(None),
+    let owned = if let Some(projection) = prepared_projection {
+        projection.ranges().to_vec()
+    } else {
+        let mut budget = ExecutionBudget::default();
+        match project_contract_memory_effects(
+            entry,
+            contract.contract_interface(),
+            transition_resources,
+            assumptions,
+            &mut budget,
+        )? {
+            Ok(projection) => projection.ranges().to_vec(),
+            Err(_) => return Ok(None),
+        }
     };
     let mut outside = Vec::new();
     for pointer in &storage_writes {
@@ -3440,7 +3446,7 @@ fn project_explicit_memory_segments(
     require_decided_guards: bool,
 ) -> ExecutionResult<Result<(Vec<CMemoryRange>, Vec<ExecutionPureFact>), String>> {
     let mut projection_assumptions = assumptions.clone();
-    let mut ranges = Vec::new();
+    let mut ranges = BTreeSet::new();
     let mut evidence_facts = Vec::new();
     for segment in segments {
         if let Some(guard) = segment.guard() {
@@ -3470,14 +3476,12 @@ fn project_explicit_memory_segments(
                     segment.end,
                     segment.element_width,
                 ));
-                if !ranges.contains(&range) {
-                    ranges.push(range);
-                }
+                ranges.insert(range);
             }
             Err(message) => return Ok(Err(message)),
         }
     }
-    Ok(Ok((ranges, evidence_facts)))
+    Ok(Ok((ranges.into_iter().collect(), evidence_facts)))
 }
 
 pub(crate) fn project_contract_memory_effects_with_guard_policy(
@@ -3529,10 +3533,9 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
             "resource transition contains an inconsistent transfer role".to_string(),
         ));
     }
-    let mut ranges = Vec::with_capacity(
-        interface.contract_mutable().len()
-            + transition_resources.map_or(0, <[CCheckedResourceFact]>::len),
-    );
+    // Canonical ranges are indexed while the transition is projected. This
+    // keeps duplicate wrapper members from triggering a quadratic scan.
+    let mut ranges = BTreeSet::new();
     let mut evidence_facts = Vec::new();
     if interface.resource_derived_mutable_frame()
         && let Some(resources) = transition_resources
@@ -3559,9 +3562,7 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
                 let range = fact.memory_own_range()?;
                 Some(canonical_memory_range(range.clone()))
             }) {
-                if !ranges.contains(&range) {
-                    ranges.push(range);
-                }
+                ranges.insert(range);
             }
         }
     }
@@ -3588,21 +3589,114 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
     ranges.extend(explicit_ranges);
     evidence_facts.extend(explicit_evidence);
     Ok(Ok(CFunctionMemoryEffectProjection {
-        ranges,
+        ranges: ranges.into_iter().collect(),
         evidence_facts,
     }))
 }
 
-/// Check that retained inherited loop-frame metadata is exactly the checked
-/// resource-derived effect. The loop lowering keeps source expressions because
-/// it must re-evaluate dependent addresses at each back edge; this gate makes
-/// that metadata a checked view of the same entry transition rather than an
-/// independent source of memory authority.
-pub(crate) fn validate_resource_derived_loop_frames(
-    function: &CFunction,
+/// Establish the inherited loop frame from the one checked entry transition.
+/// The source segments remain attached for diagnostics, but loop execution
+/// consumes these fixed ranges thereafter. In particular, a pointer field
+/// changed by the body cannot retarget an inherited frame on a back edge.
+pub(crate) fn establish_resource_derived_loop_frames(
+    function: CFunction,
     entry: &CState,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CFunction, String>> {
+    if !function.resource_derived_mutable_frame() {
+        return Ok(Ok(function));
+    }
+    // Quantified resource counts are an entry invariant.  Establish the same
+    // non-negativity facts used by contract certification before evaluating
+    // the transition, so a later body proof can never be the source of loop
+    // authority.  In particular, do not fall back to the retained
+    // source-derived segments when this checked setup fails.
+    let mut transition_assumptions = assumptions.clone();
+    for population in entry.counted_populations.iter() {
+        transition_assumptions =
+            transition_assumptions.assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    population.count.clone(),
+                ),
+                true,
+            ));
+    }
+    let quantity_assumptions = match quantified_resource_requirement_assumptions(
+        entry,
+        function.resource_requires(),
+        &transition_assumptions,
+        budget,
+    )? {
+        Ok(assumptions) => assumptions,
+        Err(error) => {
+            return Ok(Err(format!(
+                "could not evaluate resource quantities: {error:?}"
+            )));
+        }
+    };
+    for proposition in quantity_assumptions {
+        transition_assumptions = transition_assumptions.assume_proposition(proposition);
+    }
+    let projection = match project_contract_memory_effects(
+        entry,
+        function.contract_interface(),
+        None,
+        &transition_assumptions,
+        budget,
+    )? {
+        Ok(projection) => projection,
+        Err(message) => return Ok(Err(message)),
+    };
+    fn rewrite(statement: &mut CStatement, ranges: &[CMemoryRange]) {
+        match statement {
+            CStatement::Seq(first, second) => {
+                rewrite(std::sync::Arc::make_mut(first), ranges);
+                rewrite(std::sync::Arc::make_mut(second), ranges);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                rewrite(then_branch, ranges);
+                rewrite(else_branch, ranges);
+            }
+            CStatement::While {
+                effect_checks,
+                body,
+                ..
+            } => {
+                for check in effect_checks {
+                    if check.origin() == CLoopEffectOrigin::InheritedResourceDerived {
+                        *check = check.clone().with_validated_ranges(ranges.to_vec());
+                    }
+                }
+                rewrite(body, ranges);
+            }
+            CStatement::Switch { cases, .. } => {
+                for case in cases {
+                    rewrite(&mut case.body, ranges);
+                }
+            }
+            CStatement::ContinueWithStep { step } => rewrite(step, ranges),
+            _ => {}
+        }
+    }
+    let mut body = function.body().clone();
+    rewrite(&mut body, projection.ranges());
+    Ok(Ok(function.with_body(body)))
+}
+
+/// Check that inherited loop-frame metadata was established from the checked
+/// entry transition before proof generation. This is an invariant check, not
+/// a second evaluator: source expressions are never re-evaluated here.
+pub(crate) fn validate_resource_derived_loop_frames(
+    function: &CFunction,
+    _entry: &CState,
+    _assumptions: &PureFactContext,
+    _budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<(), String>> {
     fn has_inherited_loop_frame(statement: &CStatement) -> bool {
         match statement {
@@ -3619,11 +3713,10 @@ pub(crate) fn validate_resource_derived_loop_frames(
                 body,
                 ..
             } => {
-                effect_checks.iter().any(|check| {
-                    check
-                        .context()
-                        .is_some_and(|context| context.contains("inherited owned resource frame"))
-                }) || has_inherited_loop_frame(body)
+                effect_checks
+                    .iter()
+                    .any(|check| check.origin() == CLoopEffectOrigin::InheritedResourceDerived)
+                    || has_inherited_loop_frame(body)
             }
             CStatement::Switch { cases, .. } => cases
                 .iter()
@@ -3635,81 +3728,21 @@ pub(crate) fn validate_resource_derived_loop_frames(
     if !function.resource_derived_mutable_frame() || !has_inherited_loop_frame(function.body()) {
         return Ok(Ok(()));
     }
-    let projection = match project_contract_memory_effects(
-        entry,
-        function.contract_interface(),
-        None,
-        assumptions,
-        budget,
-    )? {
-        Ok(projection) => projection,
-        Err(message) => return Ok(Err(message)),
-    };
-    fn check_statement(
-        statement: &CStatement,
-        entry: &CState,
-        assumptions: &PureFactContext,
-        budget: &mut ExecutionBudget,
-        expected: &[CMemoryRange],
-    ) -> ExecutionResult<Result<(), String>> {
-        let mut check = |checks: &[CLoopEffectCheck]| -> ExecutionResult<Result<(), String>> {
+    fn check_statement(statement: &CStatement) -> ExecutionResult<Result<(), String>> {
+        let check = |checks: &[CLoopEffectCheck]| -> ExecutionResult<Result<(), String>> {
             for effect_check in checks {
-                if !effect_check
-                    .context()
-                    .is_some_and(|context| context.contains("inherited owned resource frame"))
-                {
+                if effect_check.origin() != CLoopEffectOrigin::InheritedResourceDerived {
                     continue;
                 }
-                let CLoopEffect::Mutable(segments) = effect_check.effect() else {
+                let Some(actual) = effect_check.validated_ranges() else {
                     return Ok(Err(
-                        "resource-derived loop frame lost its mutable metadata".to_string()
+                        "resource-derived loop frame was not established at function entry"
+                            .to_string(),
                     ));
                 };
-                let Ok((actual, _)) =
-                    project_explicit_memory_segments(entry, segments, assumptions, budget, false)?
-                else {
+                if actual.windows(2).any(|pair| pair[1] <= pair[0]) {
                     return Ok(Err(
-                        "could not evaluate inherited resource-derived loop frame".to_string(),
-                    ));
-                };
-                // Resource definitions may split one logical range across
-                // adjacent members while the source-oriented collector keeps
-                // those members separate. Coalesce only adjacent ranges with
-                // the same base and element width before checking equality;
-                // this is a derived normalization, not another authority.
-                let coalesce = |mut ranges: Vec<CMemoryRange>| {
-                    ranges.sort_by(|left, right| {
-                        left.base
-                            .cmp(&right.base)
-                            .then_with(|| left.start.cmp(&right.start))
-                            .then_with(|| left.end.cmp(&right.end))
-                    });
-                    let mut merged: Vec<CMemoryRange> = Vec::with_capacity(ranges.len());
-                    for range in ranges {
-                        if let Some(previous) = merged.last_mut()
-                            && previous.base == range.base
-                            && previous.element_width == range.element_width
-                            && previous.end == range.start
-                        {
-                            previous.end = range.end;
-                        } else {
-                            merged.push(range);
-                        }
-                    }
-                    merged
-                };
-                let actual = coalesce(actual);
-                let expected = coalesce(expected.to_vec());
-                let equivalent = |left: &[CMemoryRange], right: &[CMemoryRange]| {
-                    left.iter().all(|range| {
-                        right
-                            .iter()
-                            .any(|candidate| memory_range_covers(candidate, range, assumptions))
-                    })
-                };
-                if !equivalent(&actual, &expected) || !equivalent(&expected, &actual) {
-                    return Ok(Err(
-                        "inherited loop frame disagrees with checked resource effect".to_string(),
+                        "inherited loop frame is not in canonical checked form".to_string()
                     ));
                 }
             }
@@ -3717,22 +3750,20 @@ pub(crate) fn validate_resource_derived_loop_frames(
         };
         match statement {
             CStatement::Seq(first, second) => {
-                if let Err(error) = check_statement(first, entry, assumptions, budget, expected)? {
+                if let Err(error) = check_statement(first)? {
                     return Ok(Err(error));
                 }
-                check_statement(second, entry, assumptions, budget, expected)
+                check_statement(second)
             }
             CStatement::If {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                if let Err(error) =
-                    check_statement(then_branch, entry, assumptions, budget, expected)?
-                {
+                if let Err(error) = check_statement(then_branch)? {
                     return Ok(Err(error));
                 }
-                check_statement(else_branch, entry, assumptions, budget, expected)
+                check_statement(else_branch)
             }
             CStatement::While {
                 effect_checks,
@@ -3742,31 +3773,21 @@ pub(crate) fn validate_resource_derived_loop_frames(
                 if let Err(error) = check(effect_checks)? {
                     return Ok(Err(error));
                 }
-                check_statement(body, entry, assumptions, budget, expected)
+                check_statement(body)
             }
             CStatement::Switch { cases, .. } => {
                 for case in cases {
-                    if let Err(error) =
-                        check_statement(&case.body, entry, assumptions, budget, expected)?
-                    {
+                    if let Err(error) = check_statement(&case.body)? {
                         return Ok(Err(error));
                     }
                 }
                 Ok(Ok(()))
             }
-            CStatement::ContinueWithStep { step } => {
-                check_statement(step, entry, assumptions, budget, expected)
-            }
+            CStatement::ContinueWithStep { step } => check_statement(step),
             _ => Ok(Ok(())),
         }
     }
-    check_statement(
-        function.body(),
-        entry,
-        assumptions,
-        budget,
-        projection.ranges(),
-    )
+    check_statement(function.body())
 }
 
 fn evaluate_contract_mutable_ranges_for_interface(
@@ -4203,10 +4224,31 @@ fn mutable_footprint_is_compatible_for_interfaces(
     else {
         return Ok(false);
     };
+    // Range containment is indexed by memory family and element width before
+    // the proof-sensitive endpoint check. This avoids comparing every
+    // implementation range with every unrelated target range while retaining
+    // the shallow alias fallback for symbolic blocks.
+    let mut available_by_family: BTreeMap<(PointerBlock, u32), Vec<&CMemoryRange>> =
+        BTreeMap::new();
+    for available in contract_projection.ranges() {
+        available_by_family
+            .entry((available.base.block.clone(), available.element_width))
+            .or_default()
+            .push(available);
+    }
     Ok(function_projection.ranges().iter().all(|required_range| {
-        contract_projection.ranges().iter().any(|available_range| {
-            memory_range_covers(available_range, required_range, assumptions)
-        })
+        if let Some(candidates) = available_by_family.get(&(
+            required_range.base.block.clone(),
+            required_range.element_width,
+        )) {
+            candidates.iter().any(|available_range| {
+                memory_range_covers(available_range, required_range, assumptions)
+            })
+        } else {
+            contract_projection.ranges().iter().any(|available_range| {
+                memory_range_covers(available_range, required_range, assumptions)
+            })
+        }
     }))
 }
 

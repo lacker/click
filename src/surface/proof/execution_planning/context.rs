@@ -30,7 +30,7 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
             click_function_environment,
             &label,
         )?;
-    let function = annotated_function(
+    let function = annotated_function_with_assumptions(
         function_block,
         parsed_function,
         &initial_state,
@@ -38,6 +38,7 @@ pub(in crate::surface) fn verify_loop_execution_proofs(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        Some(&assumptions_from_propositions(&requirement_facts)),
     )?;
 
     let entry_state = c_function_contract_entry_state(

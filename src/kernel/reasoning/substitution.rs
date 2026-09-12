@@ -2645,6 +2645,8 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
                     effect: substitute_bitvector_variable_in_loop_effect(check.effect(), from, to),
                     span: check.span,
                     context: check.context.clone(),
+                    origin: check.origin,
+                    validated_ranges: check.validated_ranges.clone(),
                 })
                 .collect(),
             do_while: *do_while,
@@ -5553,6 +5555,8 @@ fn substitute_pointer_variable_in_c_statement(
                     effect: substitute_pointer_variable_in_loop_effect(check.effect(), from, to),
                     span: check.span,
                     context: check.context.clone(),
+                    origin: check.origin,
+                    validated_ranges: check.validated_ranges.clone(),
                 })
                 .collect(),
             do_while: *do_while,

@@ -1552,7 +1552,7 @@ fn verify_c0_sources_with_context(
             });
         }
         let has_frontier_loop_rules = frontier_loop_artifacts.is_some();
-        let contract_function = annotated_function(
+        let contract_function = annotated_function_with_assumptions(
             &certification_function_block,
             parsed_function,
             &certification_state,
@@ -1560,6 +1560,7 @@ fn verify_c0_sources_with_context(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
+            Some(&assumptions_from_propositions(&certification_facts)),
         )?;
         if contract_function.resource_derived_mutable_frame() {
             let loop_assumptions = assumptions_from_propositions(&certification_facts);
@@ -1615,6 +1616,85 @@ fn verify_c0_sources_with_context(
                     function_block.signature.name()
                 )));
             };
+            // Resource clauses are an entry transition.  Prepare this once
+            // from certification facts before visiting any checked path;
+            // path facts describe body/post states and must not bootstrap an
+            // entry-dependent pointer or range.
+            let entry_assumptions = assumptions_from_propositions(&certification_facts);
+            let has_any_storage_effect = function_verified.iter().any(|verified| {
+                verified.checked_execution.paths().iter().any(|path| {
+                    crate::kernel::memory_effect_write_pointers(path.effect_facts())
+                        .iter()
+                        .any(|pointer| {
+                            pointer.block.starts_with("global:")
+                                || pointer.block.starts_with("static:")
+                        })
+                        || path.effect_facts().iter().any(|fact| {
+                            matches!(
+                                fact.proposition(),
+                                Proposition::CMemoryEffectSummary { mutable_ranges, .. }
+                                    if mutable_ranges.iter().any(|range| {
+                                        range.base().block.starts_with("global:")
+                                            || range.base().block.starts_with("static:")
+                                    })
+                            )
+                        })
+                })
+            });
+            let checked_transition = if has_any_storage_effect
+                && contract_function.resource_derived_mutable_frame()
+            {
+                let mut transition_budget = crate::kernel::ExecutionBudget::default();
+                match crate::kernel::evaluate_function_resource_context_with_metadata(
+                    &storage_entry_state,
+                    contract_function.resource_requires(),
+                    contract_function.composite_resource_definitions(),
+                    &entry_assumptions,
+                    &mut transition_budget,
+                ) {
+                    Ok(Ok((_, checked))) => Some(checked),
+                    Ok(Err(error)) => {
+                        return Err(ClickError::new(format!(
+                            "`{}`: could not evaluate the checked storage resource transition: {error:?}",
+                            function_block.signature.name()
+                        )));
+                    }
+                    Err(limit) => {
+                        return Err(ClickError::new(format!(
+                            "`{}`: checked storage resource transition exceeded its execution budget: {limit:?}",
+                            function_block.signature.name()
+                        )));
+                    }
+                }
+            } else {
+                None
+            };
+            let checked_projection = if let Some(checked) = checked_transition.as_deref() {
+                let mut projection_budget = crate::kernel::ExecutionBudget::default();
+                match crate::kernel::project_contract_memory_effects(
+                    &storage_entry_state,
+                    contract_function.contract_interface(),
+                    Some(checked),
+                    &entry_assumptions,
+                    &mut projection_budget,
+                ) {
+                    Ok(Ok(projection)) => Some(projection),
+                    Ok(Err(error)) => {
+                        return Err(ClickError::new(format!(
+                            "`{}`: could not project the checked storage resource transition: {error}",
+                            function_block.signature.name()
+                        )));
+                    }
+                    Err(limit) => {
+                        return Err(ClickError::new(format!(
+                            "`{}`: checked storage resource effect projection exceeded its execution budget: {limit:?}",
+                            function_block.signature.name()
+                        )));
+                    }
+                }
+            } else {
+                None
+            };
             for verified in &function_verified {
                 for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
                     let Proposition::CFunctionVerifies { outcome, .. } =
@@ -1632,55 +1712,13 @@ fn verify_c0_sources_with_context(
                     available_pure_facts
                         .extend(path.facts().iter().map(|fact| fact.proposition().clone()));
                     let assumptions = assumptions_from_propositions(&available_pure_facts);
-                    let storage_pointer = |pointer: &crate::kernel::Pointer| {
-                        pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
-                    };
-                    let has_storage_effect = crate::kernel::memory_effect_write_pointers(
-                        path.effect_facts(),
-                    )
-                    .iter()
-                    .any(storage_pointer)
-                        || path.effect_facts().iter().any(|fact| {
-                            matches!(
-                                fact.proposition(),
-                                Proposition::CMemoryEffectSummary { mutable_ranges, .. }
-                                    if mutable_ranges.iter().any(|range| storage_pointer(range.base()))
-                            )
-                        });
-                    let checked_transition = if has_storage_effect
-                        && contract_function.resource_derived_mutable_frame()
-                    {
-                        let mut transition_budget = crate::kernel::ExecutionBudget::default();
-                        match crate::kernel::evaluate_function_resource_context_with_metadata(
-                            &storage_entry_state,
-                            contract_function.resource_requires(),
-                            contract_function.composite_resource_definitions(),
-                            &assumptions,
-                            &mut transition_budget,
-                        ) {
-                            Ok(Ok((_, checked))) => Some(checked),
-                            Ok(Err(error)) => {
-                                return Err(ClickError::new(format!(
-                                    "`{}` path {path_index}: could not evaluate the checked resource transition: {error:?}",
-                                    function_block.signature.name()
-                                )));
-                            }
-                            Err(limit) => {
-                                return Err(ClickError::new(format!(
-                                    "`{}` path {path_index}: checked resource transition exceeded its execution budget: {limit:?}",
-                                    function_block.signature.name()
-                                )));
-                            }
-                        }
-                    } else {
-                        None
-                    };
                     match crate::kernel::storage_writes_outside_owned_footprint(
                         &contract_function,
                         &storage_entry_state,
                         path.effect_facts(),
                         &assumptions,
                         checked_transition.as_deref(),
+                        checked_projection.as_ref(),
                     ) {
                         Ok(Some(outside)) if outside.is_empty() => {}
                         Ok(Some(outside)) => {

@@ -1777,6 +1777,20 @@ pub struct CLoopEffectCheck {
     pub(super) effect: CLoopEffect,
     pub(super) span: CLoopEffectSpan,
     pub(super) context: Option<String>,
+    /// Semantic provenance is typed so diagnostics cannot be mistaken for
+    /// authority.  Inherited resource frames are replaced by
+    /// `validated_ranges` at the function entry before loop proof starts.
+    pub(super) origin: CLoopEffectOrigin,
+    pub(super) validated_ranges: Option<Vec<CMemoryRange>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CLoopEffectOrigin {
+    #[default]
+    Unspecified,
+    Explicit,
+    DeclaredResource,
+    InheritedResourceDerived,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

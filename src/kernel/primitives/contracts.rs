@@ -968,6 +968,11 @@ impl CFunction {
         self
     }
 
+    pub(crate) fn with_body(mut self, body: CStatement) -> Self {
+        self.body = body;
+        self
+    }
+
     pub fn with_resource_summary(
         mut self,
         requires: Vec<CResourceSpec>,
@@ -1445,6 +1450,8 @@ impl CLoopEffectCheck {
             effect,
             span: CLoopEffectSpan::Step,
             context,
+            origin: CLoopEffectOrigin::Unspecified,
+            validated_ranges: None,
         }
     }
 
@@ -1457,7 +1464,29 @@ impl CLoopEffectCheck {
             effect,
             span,
             context,
+            origin: CLoopEffectOrigin::Unspecified,
+            validated_ranges: None,
         }
+    }
+
+    pub fn new_with_origin(
+        effect: CLoopEffect,
+        span: CLoopEffectSpan,
+        origin: CLoopEffectOrigin,
+        context: Option<String>,
+    ) -> Self {
+        Self {
+            effect,
+            span,
+            context,
+            origin,
+            validated_ranges: None,
+        }
+    }
+
+    pub(crate) fn with_validated_ranges(mut self, ranges: Vec<CMemoryRange>) -> Self {
+        self.validated_ranges = Some(ranges);
+        self
     }
 
     pub fn effect(&self) -> &CLoopEffect {
@@ -1470,6 +1499,14 @@ impl CLoopEffectCheck {
 
     pub fn context(&self) -> Option<&str> {
         self.context.as_deref()
+    }
+
+    pub fn origin(&self) -> CLoopEffectOrigin {
+        self.origin
+    }
+
+    pub(crate) fn validated_ranges(&self) -> Option<&[CMemoryRange]> {
+        self.validated_ranges.as_deref()
     }
 }
 

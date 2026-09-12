@@ -1,5 +1,5 @@
 use super::*;
-use crate::kernel::{AlgebraicTerm, AlgebraicTermNode};
+use crate::kernel::{AlgebraicTerm, AlgebraicTermNode, CLoopEffectOrigin};
 
 fn integer_comparison_operator(
     operator: ComparisonOperator,
@@ -443,6 +443,28 @@ pub(in crate::surface) fn annotated_function(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<CFunction, ClickError> {
+    annotated_function_with_assumptions(
+        function_block,
+        parsed_function,
+        entry_state,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        None,
+    )
+}
+
+pub(in crate::surface) fn annotated_function_with_assumptions(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    entry_state: &CState,
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    entry_assumptions: Option<&crate::kernel::PureFactContext>,
+) -> Result<CFunction, ClickError> {
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, parsed_function, resource_environment)?;
     let resource_constructors = function_resource_constructors(function_block)?;
@@ -590,6 +612,46 @@ pub(in crate::surface) fn annotated_function(
         )
         .with_contract_requirement_sources(contract_requirement_sources);
     let function = function.with_resource_derived_mutable_segments(resource_derived_mutable);
+    let function = if resource_derived_mutable_frame {
+        let function = function.with_resource_derived_mutable_frame();
+        if !function_block.is_external()
+            && let Some(entry_assumptions) = entry_assumptions
+        {
+            let frame_entry =
+                crate::kernel::c_function_entry_state(entry_state, &function, arguments)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "could not construct the resource-derived loop entry for `{}`",
+                            parsed_function.name()
+                        ))
+                    })?;
+            let mut budget = crate::kernel::ExecutionBudget::default();
+            match crate::kernel::establish_resource_derived_loop_frames(
+                function,
+                &frame_entry,
+                entry_assumptions,
+                &mut budget,
+            ) {
+                Ok(Ok(function)) => function,
+                Ok(Err(message)) => {
+                    return Err(ClickError::new(format!(
+                        "could not establish resource-derived loop frames for `{}`: {message}",
+                        parsed_function.name()
+                    )));
+                }
+                Err(limit) => {
+                    return Err(ClickError::new(format!(
+                        "resource-derived loop-frame establishment for `{}` exceeded its execution budget: {limit:?}",
+                        parsed_function.name()
+                    )));
+                }
+            }
+        } else {
+            function
+        }
+    } else {
+        function
+    };
     if let Some(parameter) =
         crate::kernel::modified_by_value_aggregate_parameter_with_current_ensure_in_source(
             &function,
@@ -599,11 +661,7 @@ pub(in crate::surface) fn annotated_function(
             "by-value aggregate parameter `{parameter}` is modified, but a postcondition reads its current state"
         )));
     }
-    Ok(if resource_derived_mutable_frame {
-        function.with_resource_derived_mutable_frame()
-    } else {
-        function
-    })
+    Ok(function)
 }
 
 /// Lowers one `branch ensuring` fact as a state-parametric kernel
@@ -4966,17 +5024,19 @@ impl AnnotationLowerer<'_> {
             // A loop that declares its own resources has the shape of a
             // callee: its footprint is the memory it owns, not everything the
             // function owns. The claim stays checked at every back edge.
-            checks.push(CLoopEffectCheck::new_with_span(
+            checks.push(CLoopEffectCheck::new_with_origin(
                 CLoopEffect::Mutable(declaration.owned_segments.clone()),
                 CLoopEffectSpan::Whole,
+                CLoopEffectOrigin::DeclaredResource,
                 Some(format!("loop {loop_index} declared owned resource frame")),
             ));
         } else if self.inherits_resource_derived_frame
             || !self.implicit_contract_mutable_segments.is_empty()
         {
-            checks.push(CLoopEffectCheck::new_with_span(
+            checks.push(CLoopEffectCheck::new_with_origin(
                 CLoopEffect::Mutable(self.implicit_contract_mutable_segments.to_vec()),
                 CLoopEffectSpan::Whole,
+                CLoopEffectOrigin::InheritedResourceDerived,
                 Some(format!("loop {loop_index} inherited owned resource frame")),
             ));
         }

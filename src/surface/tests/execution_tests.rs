@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::CLoopEffectOrigin;
 
 #[test]
 fn verifies_loadable_segment_proposition_for_indexed_read() {
@@ -604,7 +605,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     );
     assert_eq!(
         verified.specification.arguments(),
-        &[crate::kernel::c_pointer_value(base)]
+        &[crate::kernel::c_pointer_value(base.clone())]
     );
     assert_eq!(
         verified.specification.outcome(),
@@ -649,15 +650,25 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                                 condition,
                                 invariant,
                                 invariant_checks,
-                                vec![CLoopEffectCheck::new_with_span(
-                                    CLoopEffect::Mutable(vec![CMemorySegment::new(
-                                        crate::kernel::c_variable("p"),
-                                        crate::kernel::c_int32_literal(0),
-                                        crate::kernel::c_int32_literal(3),
-                                    )]),
-                                    CLoopEffectSpan::Whole,
-                                    Some("loop 0 inherited owned resource frame".to_string()),
-                                )],
+                                vec![
+                                    CLoopEffectCheck::new_with_origin(
+                                        CLoopEffect::Mutable(vec![CMemorySegment::new(
+                                            crate::kernel::c_variable("p"),
+                                            crate::kernel::c_int32_literal(0),
+                                            crate::kernel::c_int32_literal(3),
+                                        )]),
+                                        CLoopEffectSpan::Whole,
+                                        CLoopEffectOrigin::InheritedResourceDerived,
+                                        Some("loop 0 inherited owned resource frame".to_string()),
+                                    )
+                                    .with_validated_ranges(
+                                        vec![CMemoryRange::new(
+                                            base.clone(),
+                                            Bitvector32Term::Constant(0),
+                                            Bitvector32Term::Constant(3),
+                                        )],
+                                    ),
+                                ],
                                 body.as_ref().clone(),
                             ),
                             result.as_ref().clone(),

@@ -970,13 +970,14 @@ fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
         vec![CExpression::Variable("p".into())],
         vec![CType::Int32Pointer],
     );
-    let wrong_loop_frame = CLoopEffectCheck::new_with_span(
+    let wrong_loop_frame = CLoopEffectCheck::new_with_origin(
         CLoopEffect::Mutable(vec![CMemorySegment::new(
             CExpression::Variable("p".into()),
             CExpression::Value(int32(1)),
             CExpression::Value(int32(2)),
         )]),
         CLoopEffectSpan::Whole,
+        CLoopEffectOrigin::InheritedResourceDerived,
         Some("loop 0 inherited owned resource frame".into()),
     );
     let body = CStatement::While {
@@ -1010,6 +1011,75 @@ fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
     )
     .unwrap();
     assert!(result.is_err());
+}
+
+#[test]
+fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:loop-fallback:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let source_segment = CMemorySegment::new(
+        CExpression::Variable("p".into()),
+        CExpression::Value(int32(0)),
+        CExpression::Value(int32(1)),
+    );
+    let token = CResourceSpec::declared(
+        ResourceFamily::Token,
+        CResourceAccessMode::Own,
+        "slot".into(),
+        vec![],
+        vec![],
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    let quantity = CResourceSpec::quantified(
+        CExpression::Variable("missing_quantity".into()),
+        token,
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Current,
+    )
+    .unwrap();
+    let inherited = CLoopEffectCheck::new_with_origin(
+        CLoopEffect::Mutable(vec![source_segment.clone()]),
+        CLoopEffectSpan::Whole,
+        CLoopEffectOrigin::InheritedResourceDerived,
+        Some("loop 0 inherited owned resource frame".into()),
+    );
+    let function = c_function(
+        CType::Void,
+        "reject_loop_surface_fallback",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::While {
+            condition: c_int32_literal(0),
+            invariant: vec![],
+            invariant_checks: vec![],
+            effect_checks: vec![inherited],
+            resource_specs: vec![],
+            ranking_measures: vec![],
+            do_while: false,
+            body: Box::new(CStatement::Skip),
+        },
+    )
+    .with_contract(vec![], vec![], vec![], vec![], true)
+    .with_resource_summary(vec![quantity], vec![])
+    .with_resource_derived_mutable_frame()
+    .with_resource_derived_mutable_segments(vec![source_segment]);
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block, 4));
+    let result = establish_resource_derived_loop_frames(
+        function,
+        &state,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(
+        result.is_err(),
+        "unchecked metadata must not authorize a loop frame"
+    );
 }
 
 #[test]
