@@ -36,10 +36,10 @@ int32 read_terminator(uint8 bytes[]) {
                         } and {
                             extract(at(function.entry, loadable(bytes[0..found_len + 1])));
                             transport(
-                                at(function.exit, loadable(bytes[0..found_len + 1])),
+                                at(function.entry, loadable(bytes[0..found_len + 1])),
                                 loadable(bytes[0..found_len + 1])
                             ) using {
-                                at(function.exit, loadable(bytes[0..found_len + 1]));
+                                at(statement(1).entry, loadable(bytes[0..found_len + 1]));
                             }
                         }
                     } and {
@@ -57,5 +57,5 @@ int32 read_terminator(uint8 bytes[]) {
 ```
 
 ```expect
-fail: could not lower `transport using` premise
+fail: `transport using` requires an exact premise
 ```
