@@ -579,6 +579,26 @@ enough to become the first regression of the package that fixes them.
     `if`), an audit disagreement; a `do ... while` whose body breaks routes
     its guard-false exit through the final-exit channel and can hit the old
     "exactly one statement successor" message. Package T8.
+56. **A proof `match` around a ranked loop breaks contract certification.**
+    A24: `rb_ascending_walk_to_root.md` wrapped in nothing but `match
+    t.model { Empty => contradiction, Node(..) => { <the existing proof> }
+    }` fails with "the checked execution started at a different entry
+    state than the contract and could not be rebased onto it". The insert
+    fixup's loop sits inside such a match. Package A26.
+57. **Three more loop-body limits from A24.** `branch` is not accepted
+    inside a ranked loop's `preserve` ("did not verify as a checked
+    preservation operation"), so an `if` in the body must be stepped with
+    its guard decided in the enclosing proof arm; an unfolded child's arm
+    cannot be refuted from path facts (`contradiction(u.model == Top)` on
+    `u` from `unfold(c) as { up: u }` is refused; refutation runs at
+    lowering and loop heads only), which forced A24's two-frame regression
+    onto a memory-free resource; a contracted call before a ranked loop
+    blows the path budget ("could not lower entry invariants: Paths") when
+    the binder takes over an instance the call renamed. Package A26.
+58. **Diagnostics from A24, not scheduled.** `resource_clause_position`
+    names clause 1 when clause 2 failed; `ensures sub.model != Empty` on a
+    produced instance reports "could not apply checked contract resource
+    effect" instead of an unproved claim.
 
 ## Design decisions
 
@@ -894,6 +914,15 @@ appears to need one reports the need instead of adding it.
   them.
 - 2026-09-12: A23 (2b64528d) is on master; gap 54 found; A25 and T8
   dispatched. A24 and C2c in progress.
+- 2026-09-12: A24 (2d84c565) is on master: the loop-frame pre-pass uses
+  the contract's checked entry state, `decreases` accepts a strict
+  descendant through unfolded arms, the null constant is a pure pointer
+  argument, and `produces u: rb_at(root->rb_node)` names the exit; the
+  insert fixture now stops at its loop's fourth entry invariant. C2c
+  (181d6db6) is on master: `ctx_rb`, `ctx_almost_rb_insert`,
+  `plug_rb_from_ctx_rb`, and the frame-level fixup case theorems (167
+  theorems, audit 447 of 447). A26 dispatched; A25 and T8 in progress; C3
+  resumes after A25 and A26.
 
 ## Work packages
 
@@ -1230,6 +1259,17 @@ exits (gap 55).** Scope: the path-aligned certificate offset defect, the
 expansion that emits an undecidable `step` for a two-`break` loop (audit
 must agree with verify), and the `do ... while` break exit channel.
 Regressions per mode as `verify -> expand -> reverify` tests.
+
+**A26. Loop bodies inside proof matches (gaps 56, 57).** Scope: certify a
+ranked loop whose enclosing proof is a `match` arm (the checked execution's
+entry state is the arm's, and the contract's rebase must accept the arm's
+case premise); accept `branch` inside `preserve`; publish refuted arms for
+instances introduced by `unfold ... as` at the point of the unfold
+(A13's site) so a child's `Top` arm closes from the path; and keep the
+path budget when a contracted call precedes a ranked loop. Regressions:
+`rb_ascending_walk_to_root.md` wrapped in an entry `match`; A24's
+two-frame descent on the rbtree pair; a `preserve` with a `branch`; a
+contracted call before a ranked loop. C3 depends on it.
 
 **C2b. Port the pure red-black library to the re-keyed model.** Scope:
 `examples/rbtree-model` on `RbTree::Node(identity, parent, color, left,
