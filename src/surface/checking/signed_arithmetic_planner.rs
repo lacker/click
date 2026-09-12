@@ -233,11 +233,17 @@ fn affine_difference(
     while let Some((term, coefficient)) = pending.pop() {
         charge_work(coefficient.bits() as usize + 1)?;
         if let Bitvector32Term::Constant(value) = term {
-            constant += coefficient * BigInt::from(*value as i32);
+            let value = BigInt::from(*value as i32);
+            charge_bigint_binary_work(&coefficient, &value)?;
+            let product = &coefficient * &value;
+            charge_bigint_binary_work(&constant, &product)?;
+            constant += product;
         } else {
             let atom = SignedArithmeticAtom::from_term(term)?;
             charge_map_update_work(terms.len(), &atom, &coefficient)?;
-            let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
+            let previous = terms.get(&atom).cloned().unwrap_or_default();
+            charge_bigint_binary_work(&previous, &coefficient)?;
+            let updated = previous + coefficient;
             if updated.is_zero() {
                 terms.remove(&atom);
             } else {
@@ -259,7 +265,11 @@ fn decomposed_affine_difference(
         charge_work(coefficient.bits() as usize + 1)?;
         match term {
             Bitvector32Term::Constant(value) => {
-                constant += coefficient * BigInt::from(*value as i32);
+                let value = BigInt::from(*value as i32);
+                charge_bigint_binary_work(&coefficient, &value)?;
+                let product = &coefficient * &value;
+                charge_bigint_binary_work(&constant, &product)?;
+                constant += product;
             }
             Bitvector32Term::Add(left, right) => {
                 pending.push((right, coefficient.clone()));
@@ -272,7 +282,9 @@ fn decomposed_affine_difference(
             _ => {
                 let atom = SignedArithmeticAtom::from_term(term)?;
                 charge_map_update_work(terms.len(), &atom, &coefficient)?;
-                let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
+                let previous = terms.get(&atom).cloned().unwrap_or_default();
+                charge_bigint_binary_work(&previous, &coefficient)?;
+                let updated = previous + coefficient;
                 if updated.is_zero() {
                     terms.remove(&atom);
                 } else {
@@ -443,22 +455,41 @@ fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) 
             return None;
         }
         return (source.constant != BigInt::zero())
-            .then(|| target.constant.clone() / &source.constant)
-            .filter(|coefficient| source.constant.clone() * coefficient == target.constant);
+            .then(|| {
+                charge_bigint_binary_work(&target.constant, &source.constant)?;
+                let coefficient = target.constant.clone() / &source.constant;
+                charge_bigint_binary_work(&source.constant, &coefficient)?;
+                let product = source.constant.clone() * &coefficient;
+                charge_bigint_binary_work(&product, &target.constant)?;
+                (product == target.constant).then_some(coefficient)
+            })
+            .flatten();
     }
     let mut factor = None;
     for (atom, coefficient) in &source.terms {
         charge_work(coefficient.bits() as usize + 1)?;
+        charge_work(
+            atom.work()
+                .saturating_mul(
+                    (usize::BITS - source.terms.len().saturating_add(1).leading_zeros()) as usize,
+                )
+                .max(1),
+        )?;
+        charge_map_lookup_work(target.terms.len(), atom)?;
         let target_coefficient = target.terms.get(atom).cloned().unwrap_or_default();
         charge_work(target_coefficient.bits() as usize + 1)?;
         if coefficient.is_zero() {
             continue;
         }
         let quotient = &target_coefficient / coefficient;
-        if coefficient * &quotient != target_coefficient {
+        charge_bigint_binary_work(&target_coefficient, coefficient)?;
+        let product = coefficient * &quotient;
+        charge_bigint_binary_work(coefficient, &quotient)?;
+        if product != target_coefficient {
             return None;
         }
         if let Some(existing) = &factor {
+            charge_bigint_binary_work(existing, &quotient)?;
             if existing != &quotient {
                 return None;
             }
@@ -468,11 +499,14 @@ fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) 
     }
     let factor = factor?;
     charge_work(source.constant.bits() as usize + factor.bits() as usize + 2)?;
-    if source.constant.clone() * &factor != target.constant {
+    charge_bigint_binary_work(&source.constant, &factor)?;
+    let product = source.constant.clone() * &factor;
+    charge_bigint_binary_work(&product, &target.constant)?;
+    if product != target.constant {
         return None;
     }
     for atom in target.terms.keys() {
-        charge_work(1)?;
+        charge_map_lookup_work(source.terms.len(), atom)?;
         if !source.terms.contains_key(atom) {
             return None;
         }
@@ -495,13 +529,16 @@ fn add_affine_claims(
     let mut terms = left.terms.clone();
     for (atom, coefficient) in &right.terms {
         charge_map_update_work(terms.len(), atom, coefficient)?;
-        let updated = terms.entry(atom.clone()).or_default().clone() + coefficient;
+        let previous = terms.get(atom).cloned().unwrap_or_default();
+        charge_bigint_binary_work(&previous, coefficient)?;
+        let updated = previous + coefficient;
         if updated.is_zero() {
             terms.remove(atom);
         } else {
             terms.insert(atom.clone(), updated);
         }
     }
+    charge_bigint_binary_work(&left.constant, &right.constant)?;
     Some(SignedArithmeticClaim {
         carrier: left.carrier,
         relation: SignedArithmeticRelation::LessEqual,
@@ -533,8 +570,18 @@ fn charge_map_update_work(
     charge_work(
         atom.work()
             .saturating_add(coefficient.bits() as usize + 1)
-            .saturating_mul(logarithmic.max(1)),
+            .saturating_mul(logarithmic.max(1))
+            .saturating_mul(3),
     )
+}
+
+fn charge_bigint_binary_work(left: &BigInt, right: &BigInt) -> Option<()> {
+    charge_work((left.bits() as usize + 1).saturating_mul(right.bits() as usize + 1))
+}
+
+fn charge_map_lookup_work(map_len: usize, atom: &SignedArithmeticAtom) -> Option<()> {
+    let logarithmic = (usize::BITS - map_len.saturating_add(1).leading_zeros()) as usize;
+    charge_work(atom.work().saturating_mul(logarithmic.max(1)))
 }
 
 fn equality_direction(source: &SignedArithmeticClaim, reverse: bool) -> SignedArithmeticClaim {
@@ -1146,12 +1193,20 @@ fn exact_definedness(proposition: &Proposition, term: &Bitvector32Term) -> bool 
         | (
             ConditionTerm::Bitvector32SignedDivideOverflows(left, right),
             Bitvector32Term::Remainder(a, b),
-        ) => {
-            SignedArithmeticAtom::from_term(left) == SignedArithmeticAtom::from_term(a)
-                && SignedArithmeticAtom::from_term(right) == SignedArithmeticAtom::from_term(b)
-        }
+        ) => terms_equal(left, a) && terms_equal(right, b),
         _ => false,
     }
+}
+
+fn terms_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    let (Some(left), Some(right)) = (
+        SignedArithmeticAtom::from_term(left),
+        SignedArithmeticAtom::from_term(right),
+    ) else {
+        return false;
+    };
+    charge_work(left.work().saturating_add(right.work()).saturating_add(1)).is_some()
+        && left == right
 }
 
 fn plan_interval_goal(
@@ -1519,6 +1574,35 @@ mod tests {
             );
         }
         assert!(wrong_expression.check(&goal, &premises).is_err());
+    }
+
+    #[test]
+    fn scale_factor_work_charges_large_coefficients_and_key_lookups() {
+        let atom = SignedArithmeticAtom::from_term(&var(31)).unwrap();
+        let source = SignedArithmeticClaim {
+            carrier: SignedArithmeticCarrier::SignedInt32,
+            relation: SignedArithmeticRelation::LessEqual,
+            terms: BTreeMap::from([(atom.clone(), BigInt::one())]),
+            constant: BigInt::zero(),
+        };
+        let mut measurements = Vec::new();
+        for bits in [8usize, 16, 32, 64] {
+            let target = SignedArithmeticClaim {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                relation: SignedArithmeticRelation::LessEqual,
+                terms: BTreeMap::from([(atom.clone(), BigInt::one() << bits)]),
+                constant: BigInt::zero(),
+            };
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                scale_factor(&source, &target)
+            });
+            assert_eq!(result, Some(BigInt::one() << bits));
+            measurements.push(work);
+        }
+        assert!(
+            measurements.windows(2).all(|pair| pair[1] > pair[0]),
+            "scale-factor BigInt work must scale: {measurements:?}"
+        );
     }
 
     #[test]
