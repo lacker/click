@@ -1083,6 +1083,33 @@ cannot shadow resource parameters or fields. Fold/unfold requires constructor
 evidence for the actual instance field (for example,
 `c.model == Maybe<int32>::Some(expected)`); an unknown field does not cause
 implicit proof-by-cases. Only the selected arm's memory and facts are exposed.
+
+A contract section selects an arm as well, before any proof step runs. When the
+section's requirements together with constructor exhaustiveness leave exactly
+one arm possible, lowering exposes that arm's cells as read authority while the
+instance stays folded, so another requirement or resource clause of the same
+contract can read through it:
+
+<!-- verified-example: mdtests/resource_match_arm_selected_at_contract.md -->
+```click
+owns c: cell(node);
+requires c.model != Maybe::None;
+requires node->value >= 0;
+```
+
+`c.model != Maybe::None` selects `Some` because `Maybe` has two constructors,
+and `exists (v: int32) { c.model == Maybe::Some(v) }` selects it directly. A
+disequality against a constructor that carries fields rules nothing out:
+`c.model != Maybe::Some(3)` still leaves `Some` possible. If no single arm is
+entailed the instance stays folded and the read is refused with a diagnostic
+naming the instance and the field whose arm nothing selects; there is no
+implicit proof by cases. Selection grants read authority only — ownership moves
+only through an explicit `unfold` — and it does not expose contained child
+instances. A loop head decides the same way, with its invariants in the part
+the requirements play. The regressions are
+`mdtests/resource_match_arm_selected_at_contract.md`,
+`mdtests/resource_match_arm_selected_by_existential.md`, and
+`mdtests/resource_match_arm_needs_one_entailed_arm.md`.
 An explicit fold selects the arm from its proposed model, so an update can
 change constructors when the new arm's ownership and facts are established.
 The regression is `mdtests/resource_conditional_construction.md`.

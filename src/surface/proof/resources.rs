@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::ResourceInstance;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -317,6 +318,50 @@ fn materialize_folded_composite_resource_memory(
     Ok(memory)
 }
 
+/// The match arm one section's premises select for a held resource instance,
+/// as a resource definition whose body is that arm's own.
+///
+/// This is the contract-lowering and loop-head half of decision D7. The
+/// decision itself is the kernel's [`crate::kernel::select_resource_model_arm`]:
+/// a constructor premise, an existential witness, or disequalities that leave
+/// one variant. When nothing selects an arm the instance stays folded, exactly
+/// as it does today, and a read through it fails with the note
+/// `folded_matched_instance_note` adds.
+///
+/// The returned definition is the arm scope `resource_match_arm_scopes` builds:
+/// its `contains` holds only the arm's own memory clauses, so projecting it
+/// exposes cells and never a contained instance, which only an explicit
+/// `unfold` may produce.
+pub(in crate::surface) fn selected_resource_instance_arm(
+    resource_environment: &ResourceEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    instance: &ResourceInstance,
+    assumptions: &PureFactContext,
+) -> Option<ResourceDefinition> {
+    let definition = resource_environment.get(instance.name())?;
+    let matched = definition
+        .composite_body()
+        .and_then(|body| body.matched.as_ref())?;
+    let field_index = definition
+        .fields()
+        .iter()
+        .position(|field| field.name() == matched.field)?;
+    let AlgebraicValue::Algebraic(model) = instance.fields().get(field_index)? else {
+        return None;
+    };
+    let selection = crate::kernel::select_resource_model_arm(model, assumptions)?;
+    let scopes = crate::surface::validation::resource_match_arm_scopes(definition, |name| {
+        click_function_environment
+            .algebraic_type_definitions
+            .get(name)
+    })
+    .ok()?;
+    scopes
+        .into_iter()
+        .find(|(variant, _, _)| variant == selection.variant())
+        .map(|(_, _, arm)| arm)
+}
+
 pub(super) fn project_initial_composite_resource_cores(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
@@ -330,6 +375,30 @@ pub(super) fn project_initial_composite_resource_cores(
 ) -> Result<CState, ClickError> {
     let assumptions = assumptions_from_propositions(available_pure_facts);
     for resource in state.resources().facts().to_vec() {
+        // A matched instance exposes the arm its section selects, and nothing
+        // when no arm is selected (D7). The arm scope's body holds only that
+        // arm's own memory clauses, so this projects cells and never a
+        // contained instance.
+        if let CResource::Instance(instance) = resource.resource() {
+            let Some(arm) = selected_resource_instance_arm(
+                resource_environment,
+                click_function_environment,
+                instance,
+                &assumptions,
+            ) else {
+                continue;
+            };
+            state = project_selected_instance_arm_cells(
+                &arm,
+                instance,
+                parameters,
+                arguments,
+                state,
+                &assumptions,
+                include_owned,
+            );
+            continue;
+        }
         let (name, resource_arguments, is_owned) = match resource {
             CResourceFact::View(CResource::Composite { name, arguments }) => {
                 (name, arguments, false)
@@ -420,6 +489,86 @@ pub(super) fn project_initial_composite_resource_cores(
         state = state.with_memory(memory).with_resource_context(resources);
     }
     Ok(state)
+}
+
+/// Materializes the selected arm's own cells and, when owned cores are being
+/// projected, adds their read authority.
+///
+/// A failure to instantiate a clause is not an error here: the arm simply
+/// exposes nothing, which is the same outcome as an unselected arm. The read
+/// that needed the cell reports it.
+fn project_selected_instance_arm_cells(
+    arm: &ResourceDefinition,
+    instance: &ResourceInstance,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: CState,
+    assumptions: &PureFactContext,
+    include_owned: bool,
+) -> CState {
+    let Some(body) = arm.composite_body() else {
+        return state;
+    };
+    let Ok(substitutions) = resource_value_substitutions_for_parameters(
+        arm.name(),
+        instance.arguments(),
+        arm.parameters(),
+    ) else {
+        return state;
+    };
+    let Ok((memory, contained_resources)) = instantiate_composite_resource_body_resources(
+        arm.name(),
+        body,
+        &substitutions,
+        parameters,
+        arguments,
+        state.memory().clone(),
+    ) else {
+        return state;
+    };
+    let state = state.with_memory(memory);
+    if !include_owned {
+        return state;
+    }
+    let viewed = contained_resources
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.core_with_assumptions(assumptions))
+        .collect::<Vec<_>>();
+    match state
+        .resources()
+        .clone()
+        .try_compose_with_facts_delaying_normalization(viewed, assumptions)
+    {
+        Ok(resources) => state.with_resource_context(resources),
+        Err(_) => state,
+    }
+}
+
+/// The parameter substitutions for one arm scope. The arm's parameter list
+/// begins with the resource's own parameters and continues with the C-typed
+/// constructor bindings, which no memory clause of the arm may name.
+fn resource_value_substitutions_for_parameters(
+    name: &str,
+    instance_arguments: &[AlgebraicValue],
+    parameters: &[FunctionParameter],
+) -> Result<BTreeMap<String, ContractExpression>, String> {
+    if parameters.len() < instance_arguments.len() {
+        return Err(format!("resource `{name}` received too many arguments"));
+    }
+    parameters
+        .iter()
+        .zip(instance_arguments)
+        .map(|(parameter, argument)| {
+            let argument = argument
+                .as_c_value()
+                .ok_or_else(|| format!("resource `{name}` has a non-C argument"))?;
+            Ok((
+                parameter.name().to_string(),
+                ContractExpression::CFragment(CExpression::Value(argument.clone())),
+            ))
+        })
+        .collect()
 }
 
 pub(super) fn project_initial_resource_facts(

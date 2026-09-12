@@ -772,7 +772,7 @@ fn describe_resource_subject(resource: &ResourceSubject) -> String {
     }
 }
 
-fn format_declared_resource(
+pub(super) fn format_declared_resource(
     name: &str,
     resource_arguments: &[AlgebraicValue],
     parameters: &[syntax::C0Parameter],

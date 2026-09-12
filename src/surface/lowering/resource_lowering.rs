@@ -462,14 +462,79 @@ fn check_segment_base_loadability(
     if crate::kernel::c_state_justifies_loadability_obligation(state, &obligation, assumptions) {
         return Ok(());
     }
-    Err(crate::surface::diagnostics::describe_missing_pure_fact(
-        &obligation,
-        &[],
-        &[],
-        parameters,
-        arguments,
-        &[],
+    Err(format!(
+        "{}{}",
+        crate::surface::diagnostics::describe_missing_pure_fact(
+            &obligation,
+            &[],
+            &[],
+            parameters,
+            arguments,
+            &[],
+        ),
+        folded_matched_instance_note(state, parameters, arguments, assumptions)
     ))
+}
+
+/// Says why the cells a folded matched instance owns are unreadable here.
+///
+/// A resource whose body is `match model { ... }` exposes nothing until one
+/// arm is selected, so a requirement or a resource clause that reads through
+/// it fails for a loadability that names no resource at all. Name the instance
+/// and the evidence that would select an arm, rather than leaving the reader
+/// with an unexplained missing fact.
+///
+/// The note costs the contract's own resource clauses, never the project: it
+/// reads the clause set this entry state already holds.
+pub(in crate::surface) fn folded_matched_instance_note(
+    state: &CState,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+) -> String {
+    // Only an instance whose arm nothing selects explains a missing cell. One
+    // whose arm is selected already published its cells, so naming it here
+    // would send the reader to a clause that is fine.
+    fn undecided<'a>(
+        instance: &'a crate::kernel::ResourceInstance,
+        assumptions: &PureFactContext,
+    ) -> Option<&'a str> {
+        instance
+            .schema()
+            .fields()
+            .iter()
+            .zip(instance.fields())
+            .filter_map(|((name, _), value)| match value {
+                AlgebraicValue::Algebraic(model) => Some((name.as_str(), model)),
+                _ => None,
+            })
+            .find(|(_, model)| {
+                crate::kernel::select_resource_model_arm(model, assumptions).is_none()
+            })
+            .map(|(name, _)| name)
+    }
+    let Some((instance, field)) = state
+        .resources()
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.resource() {
+            CResource::Instance(instance) => Some(instance),
+            _ => None,
+        })
+        .find_map(|instance| undecided(instance, assumptions).map(|field| (instance, field)))
+    else {
+        return String::new();
+    };
+    format!(
+        "\n  `{}` stays folded: no requirement of this contract selects one arm of its `{field}` \
+         field, so the cells its arms own are not readable here",
+        crate::surface::diagnostics::format_declared_resource(
+            instance.name(),
+            instance.arguments(),
+            parameters,
+            arguments,
+        )
+    )
 }
 
 fn materialize_access_segment_cells(
@@ -2028,7 +2093,8 @@ pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
             assumptions,
         )
     }) {
-        return Err(ClickError::new(
+        return Err(ClickError::new(format!(
+            "{}{}",
             crate::surface::diagnostics::describe_missing_pure_fact(
                 obligation,
                 &[],
@@ -2037,7 +2103,8 @@ pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
                 arguments,
                 &[],
             ),
-        ));
+            folded_matched_instance_note(&lowering_state, parameters, arguments, assumptions)
+        )));
     }
     Ok(lowered)
 }

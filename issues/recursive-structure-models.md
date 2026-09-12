@@ -79,6 +79,35 @@ enough to become the first regression of the package that fixes them.
 4. **Loop `decreases` accepts only integer expressions.** The structural form
    exists only on recursive C functions and is spelled
    `decreases resource list(node)`. Package A4, spelling per D6.
+5. **A struct-pointer constructor binding cannot be a memory base inside an
+   arm body.** Found by package A2: with `Context::Left(parent, ...) => {
+   owns parent->value; ... }`, fold fails with `could not evaluate instance
+   memory body` and width-unknown loads. `parse_algebraic_field_type` keeps
+   only the C type of a spec-enum field and drops the struct name, and arm
+   bindings are registered as contract bindings but not as struct
+   parameters, so `resolve_field_metadata` finds no layout for `parent`. The
+   D3 spelling `ctx_at(child)` keys the frame by the focused child and owns
+   the parent's cells through the binding, so this blocks B1 and C1. A2's
+   fixture keys the frame by its own node instead. Package A5.
+6. **A pointer-typed model payload cannot be related to a C pointer.** Found
+   by package B2 on `tree_contains`: the C test is `root == target`, the model
+   test is `node == target` with `node` the `HeapTree::Node` identity binding,
+   and the resource fact `p == identity` cannot bridge them. `have node ==
+   target by { simp(); }` and a pure accessor `heap_node(t.model) == root`
+   both fail with `the kernel lowering produced 0 paths, not one`;
+   `normalize() using { node == target; }` reports the premise is not exactly
+   available. Compounding it, match-arm bindings are out of scope inside a
+   nested `branch` or proof `if` arm, a `have` mentioning a C variable loses
+   the arm bindings, and a `have` mentioning a binding cannot mention a C
+   variable. Traversal results and membership are MVR claims, so this blocks
+   B2's membership postcondition, C4, and every "designated node" claim.
+   Package A6.
+7. **Structural termination ignores matched bodies.** Found by package B2:
+   `structural_resource_children` in `src/kernel/termination.rs` requires an
+   `if`-guarded body and walks `contains()`, so `decreases resource
+   tree_at(root)` is refused ("has fields; bind it with `owns name: ...`")
+   and no spelling names a fielded child. Package A4 must accept a matched
+   body's named arm children, for functions and loops alike.
 
 ## Design decisions
 
@@ -173,6 +202,11 @@ declare `owns name: resource(args);`. Semantics mirror a callee contract:
 - A loop name may reuse an enclosing binder name; that is a rebinding.
   `old(name.field)` keeps its meaning, the function-entry instance of the
   function-level binder. No loop-entry snapshot in the first slice.
+  Landed behavior (A3): a loop binder takes the unique owned instance of its
+  family with provably equal arguments and renames it, so a fresh name
+  consumes the enclosing name for the rest of the function and cannot appear
+  in `ensures`; reuse the enclosing name. The head gives the binder fresh
+  fields, so its model at the head is exactly what the invariants state.
 
 **D6. Structural loop measure is `decreases name;` with no keyword.**
 Functions and resources share one namespace (declaring both is rejected), so
@@ -275,10 +309,24 @@ reading an undeclared binder, and a body writing through an undeclared
 instance. Update `docs/concepts/loops-and-invariants.md` and the language
 reference. No dependencies.
 
-**A4. Structural loop measure `decreases name;` (D6).**
+**A4. Structural measure `decreases name;` for loops and fielded resources (D6).**
 Scope: parse `decreases` as one expression and classify after resolution;
-loop back-edge ancestry check reusing the function-level checker; migrate
-the `decreases resource` spelling in fixtures and docs. Regressions: the
+extend `structural_resource_children` so a matched body's named arm children
+are structural children (gap 7), for the existing function-level rule and
+the new loop back-edge rule alike; loop back-edge ancestry check reusing the
+function-level checker; migrate the `decreases resource` spelling in fixtures
+and docs. Also finish D5's argument rule, which A3 left at the existing
+loop-resource convention: loop-binder arguments are evaluated once at loop
+entry, so `owns sub: tree_at(root);` over a body that assigns `root =
+root->left` fails the back-edge comparison. The head must build its declared
+instance at the havocked arguments and the back edge must re-evaluate them
+in the current state (`loop_body_resource_context` and
+`rebind_loop_binder_instances` in `src/kernel/loops.rs`). First
+regressions: the scaffold's recursive `tree_contains` with `decreases t;`
+on its `owns t: tree_at(root)` binder, and a descending loop whose binder
+argument is the reassigned cursor. Also restore `return node->value;` in
+`mdtests/loop_owns_modeled_instance.md`, which A3 changed to `return i;`
+because arm selection at a loop head was not yet available. Regressions: the
 three loop shapes from
 [structural-loop-termination.md](structural-loop-termination.md) on the
 scaffold (descend to leftmost, ascend through a context, rotate then
@@ -286,6 +334,33 @@ ascend), with negatives for staying on the same node, moving to an unrelated
 node, and refolding a consumed frame. Depends on A3; the ascending shapes
 depend on A2 and B1's context definition. Closes the loop-termination issue
 when its acceptance criteria are met.
+
+**A5. Struct-pointer constructor bindings as memory bases in arm bodies.**
+Scope: carry the struct name on a spec-enum field of struct-pointer type and
+make matched-arm bindings of that type usable as struct bases in the arm's
+`owns`, `fact`, and child-argument clauses. Declaration order does not create
+scope (see `docs/reference/language/grammar.md`), so resolve the binding
+types in a pass that has the datatype available rather than adding an order
+rule. Regressions: the D3 frame `ctx_at(child)` whose `Left(parent, value,
+sibling_model, up_model)` arm owns `parent->value`, `parent->left`,
+`parent->right`, `sibling: tree_at(parent->right)`, and `up: ctx_at(parent)`
+with `fact parent->left == child`, folded, unfolded with `as { ... }`, and
+refolded; a negative where a binding of non-struct-pointer type is used as a
+base; a negative where the binding's struct has no such field. Depends on
+A2. B1 and C1 depend on it.
+
+**A6. Pointer payloads and arm bindings in propositions.**
+Scope: let a pointer-typed constructor binding or pure-function result be
+compared with a C pointer in `have`, `ensures`, `normalize() using`, and
+`rewrite`, bridged by the resource fact `p == identity`; keep match-arm
+bindings in scope inside nested `branch` and proof `if` arms and inside a
+`have` that also mentions C variables. Regressions: the scaffold's
+`tree_contains` with `ensures result == heap_member(old(t.model), target)`
+(B2 left the partial contract in place); a small mdtest equating a
+`Node` identity binding with a parameter under `fact p == identity`; a
+negative where the pointers are provably different. No new syntax: this is
+lowering and kernel scope. Depends on nothing; C4 and the B2 membership
+result depend on it.
 
 ### Phase B: models on the fixed scaffold
 
@@ -323,7 +398,8 @@ Scope: the rbtree model and resource; contracts for `rb_link_node`,
 and `rb_red_parent`, each stating its effect on the model or on the frame
 that owns the written cell. Regressions: positive per helper, negatives for
 a wrong color bit and a parent word pointing at the wrong node. Depends on
-A1; the `__rb_change_child` case at the root depends on B1's frame shape.
+A1 and A5; the `__rb_change_child` case at the root depends on B1's frame
+shape.
 
 **C2. Red-black pure library (D10).**
 Scope: `Color`, `black_height`, `is_rb`, `almost_rb_insert`,
@@ -343,7 +419,8 @@ on A4, B1, C1, C2.
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with
 results stated as first, last, successor, predecessor in `inorder`, and
-replacement as the identity substitution in the model. Depends on B1, C1.
+replacement as the identity substitution in the model. Depends on A6, B1,
+C1.
 
 **C5. Erase (D3, D4, D10).**
 Scope: `__rb_erase_augmented` and `____rb_erase_color`, contracted so the

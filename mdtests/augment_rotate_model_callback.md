@@ -14,15 +14,23 @@ promises its model back unchanged:
 contract AugmentRotate(t: tree_at(new)) for void(struct node* old, struct node* new)
 ```
 
-The rotation helper still takes the root's two link cells and the two subtree
-resources rather than one folded `tree_at(node)`, where the memory-only fixture
-now consumes one folded `shape(node)`. The reason is no longer clause order: a
-resource clause does read cells the rest of its contract supplies, including
-cells inside a folded composite, which
-`mdtests/contract_owns_through_composite_field.md` pins. It is that `tree_at`
-decides which links it owns from its `model` field, so nothing can read
-`node->right` out of a folded `tree_at(node)` until a proof step has selected
-the `Shape::Node` arm, and a contract is lowered before any proof step runs.
+The rotation helper consumes one folded `tree_at(node)`, exactly as the
+memory-only fixture consumes one folded `shape(node)`. `tree_at` decides which
+links it owns from its `model` field, and a contract is lowered before any
+proof step runs, so `owns node->right->augmented` can only address its cell if
+the contract itself settles the arm. `requires t.model != Shape::Empty` does:
+`Shape` has two constructors, so ruling `Empty` out leaves `Shape::Node`, and
+the `Node` arm's `node->left` and `node->right` become readable while
+`tree_at(node)` stays folded. A resource clause also reads cells the rest of
+its contract supplies, which `mdtests/contract_owns_through_composite_field.md`
+pins; here both rules are needed at once.
+
+The second requirement, `shape_right(t.model) != Shape::Empty`, is the old
+`r.model != Shape::Empty` written against the whole tree's model: with no
+separate binder for the right subtree, the model function names it. It does not
+select an arm of `tree_at(node)` — it is a premise about a different value — and
+the proof uses it to close the `Shape::Empty` case of the inner constructor
+match.
 
 `bump` and `reset` state model preservation in their own contracts — a
 callee's post instance fields are always fresh, so preservation that is not
@@ -33,17 +41,21 @@ same argument as the contract's one proof parameter, so the binding is forced.
 
 The model guarantee is load-bearing rather than decorative: `rotate_left`
 states the whole rotated model, `Shape::Node(pivot, Shape::Node(node, left,
-middle), far)`, and that guarantee survives the indirect call only because
+middle), far)`, entirely in `shape_left` and `shape_right` applied to
+`old(t.model)`, and that guarantee survives the indirect call only because
 `AugmentRotate` returns `t.model` unchanged. `rotate_bump` and `rotate_reset`
-carry the same statement across an ordinary C call, binding the helper's two
-consumed subtrees and its produced result through the call's binder map.
+carry the same statement across an ordinary C call, binding the helper's one
+consumed tree and its produced result through the call's binder map.
 
-Two proof-shaping notes. The equations that unfold `shape_left` and
-`shape_right` are proved before the callback call, but the model equation
-itself has to be restated after it: the callee returns fresh instance fields
-tied to the entry fields only by `t.model == old(t.model)`. The closing
-`simp()` now orients the retained `shape_*` equations through the returned
-constructor, so the `have` after the call needs no explicit rewrites.
+Two proof-shaping notes. Both constructor matches run at the unchanged function
+entry, before anything is unfolded, because that is where the `match` tactic
+introduces cases; the two `unfold`s then follow inside the innermost arm. The
+equations that unfold `shape_left` and `shape_right` are proved before the
+callback call, but the model equation itself has to be restated after it: the
+callee returns fresh instance fields tied to the entry fields only by
+`t.model == old(t.model)`. The closing `simp()` orients the retained `shape_*`
+equations through the returned constructor, so the `have` after the call needs
+no explicit rewrites.
 
 ```c filename=augment_rotate_model.c
 struct node {
@@ -171,56 +183,75 @@ struct node* rotate_left(
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
-    consumes l: tree_at(node->left);
-    consumes r: tree_at(node->right);
-    requires r.model != Shape::Empty;
+    consumes t: tree_at(node);
+    requires t.model != Shape::Empty;
+    requires shape_right(t.model) != Shape::Empty;
     owns node->augmented;
     owns node->right->augmented;
-    produces rotated: tree_at(result);
+    produces r: tree_at(result);
 
     ensures result == old(node->right);
-    ensures rotated.model == Shape::Node(old(node->right),
-        Shape::Node(node, old(l.model), shape_left(old(r.model))),
-        shape_right(old(r.model)));
+    ensures r.model == Shape::Node(old(node->right),
+        Shape::Node(node, shape_left(old(t.model)),
+            shape_left(shape_right(old(t.model)))),
+        shape_right(shape_right(old(t.model))));
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
-    match r.model {
-        Shape::Empty => { contradiction(r.model == Shape::Empty); },
-        Shape::Node(pivot_node, middle_model, far_model) => {
-            unfold(r) as { left: m, right: z };
-            step();
-            step();
-            step();
-            step();
-            step();
-            step();
-            let lower = fold(tree_at(node), {
-                model: Shape::Node(node, l.model, m.model)
-            }, { left: l, right: m });
-            let rotated = fold(tree_at(pivot), {
-                model: Shape::Node(pivot, lower.model, z.model)
-            }, { left: lower, right: z });
-            have shape_left(old(r.model)) == middle_model by {
-                rewrite(old(r.model) == Shape::Node(pivot_node, middle_model, far_model));
-                unfold(shape_left(Shape::Node(pivot_node, middle_model, far_model)));
+    match t.model {
+        Shape::Empty => { contradiction(t.model == Shape::Empty); },
+        Shape::Node(root_node, left_model, right_model) => {
+            have shape_left(old(t.model)) == left_model by {
+                rewrite(old(t.model) == Shape::Node(root_node, left_model, right_model));
+                unfold(shape_left(Shape::Node(root_node, left_model, right_model)));
                 normalize();
             }
-            have shape_right(old(r.model)) == far_model by {
-                rewrite(old(r.model) == Shape::Node(pivot_node, middle_model, far_model));
-                unfold(shape_right(Shape::Node(pivot_node, middle_model, far_model)));
+            have shape_right(old(t.model)) == right_model by {
+                rewrite(old(t.model) == Shape::Node(root_node, left_model, right_model));
+                unfold(shape_right(Shape::Node(root_node, left_model, right_model)));
                 normalize();
             }
-            step(AugmentRotate(rotated));
-            have rotated.model == Shape::Node(old(node->right),
-                Shape::Node(node, old(l.model), shape_left(old(r.model))),
-                shape_right(old(r.model))) by {
-                simp();
+            have right_model != Shape::Empty by { simp(); }
+            match right_model {
+                Shape::Empty => { contradiction(right_model == Shape::Empty); },
+                Shape::Node(pivot_node, middle_model, far_model) => {
+                    have shape_left(shape_right(old(t.model))) == middle_model by {
+                        rewrite(shape_right(old(t.model)) == right_model);
+                        rewrite(right_model == Shape::Node(pivot_node, middle_model, far_model));
+                        unfold(shape_left(Shape::Node(pivot_node, middle_model, far_model)));
+                        normalize();
+                    }
+                    have shape_right(shape_right(old(t.model))) == far_model by {
+                        rewrite(shape_right(old(t.model)) == right_model);
+                        rewrite(right_model == Shape::Node(pivot_node, middle_model, far_model));
+                        unfold(shape_right(Shape::Node(pivot_node, middle_model, far_model)));
+                        normalize();
+                    }
+                    unfold(t) as { left: l, right: rs };
+                    unfold(rs) as { left: m, right: z };
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    let lower = fold(tree_at(node), {
+                        model: Shape::Node(node, l.model, m.model)
+                    }, { left: l, right: m });
+                    let r = fold(tree_at(pivot), {
+                        model: Shape::Node(pivot, lower.model, z.model)
+                    }, { left: lower, right: z });
+                    step(AugmentRotate(r));
+                    have r.model == Shape::Node(old(node->right),
+                        Shape::Node(node, shape_left(old(t.model)),
+                            shape_left(shape_right(old(t.model)))),
+                        shape_right(shape_right(old(t.model)))) by {
+                        simp();
+                    }
+                    step();
+                    simp();
+                },
             }
-            step();
-            simp();
         },
     }
 }
@@ -231,23 +262,22 @@ struct node* rotate_bump(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
-    consumes a: tree_at(node->left);
-    consumes b: tree_at(node->right);
-    requires b.model != Shape::Empty;
+    consumes a: tree_at(node);
+    requires a.model != Shape::Empty;
+    requires shape_right(a.model) != Shape::Empty;
     owns node->augmented;
     owns node->right->augmented;
     produces rotated: tree_at(result);
 
     ensures result == old(node->right);
     ensures rotated.model == Shape::Node(old(node->right),
-        Shape::Node(node, old(a.model), shape_left(old(b.model))),
-        shape_right(old(b.model)));
+        Shape::Node(node, shape_left(old(a.model)),
+            shape_left(shape_right(old(a.model)))),
+        shape_right(shape_right(old(a.model))));
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
-    let rotated = step(rotate_left(node, &bump), { l: a, r: b });
+    let rotated = step(rotate_left(node, &bump), { t: a });
     execute();
     simp();
 }
@@ -258,23 +288,22 @@ struct node* rotate_reset(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
-    consumes a: tree_at(node->left);
-    consumes b: tree_at(node->right);
-    requires b.model != Shape::Empty;
+    consumes a: tree_at(node);
+    requires a.model != Shape::Empty;
+    requires shape_right(a.model) != Shape::Empty;
     owns node->augmented;
     owns node->right->augmented;
     produces rotated: tree_at(result);
 
     ensures result == old(node->right);
     ensures rotated.model == Shape::Node(old(node->right),
-        Shape::Node(node, old(a.model), shape_left(old(b.model))),
-        shape_right(old(b.model)));
+        Shape::Node(node, shape_left(old(a.model)),
+            shape_left(shape_right(old(a.model)))),
+        shape_right(shape_right(old(a.model))));
     ensures 0 <= result->augmented;
     ensures result->augmented <= 1000;
 } by {
-    let rotated = step(rotate_left(node, &reset), { l: a, r: b });
+    let rotated = step(rotate_left(node, &reset), { t: a });
     execute();
     simp();
 }
