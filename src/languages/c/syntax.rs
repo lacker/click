@@ -1559,6 +1559,11 @@ struct ParsedType {
     volatile_levels: u8,
     is_constant: bool,
     pointee_constant: bool,
+    /// Pointer `*` tokens written in this type specifier itself, so a
+    /// declaration list can tell `struct rb_node *parent, *tmp;` — where every
+    /// declarator repeats the same depth — from a list that would give two
+    /// declarators different types.
+    pointer_depth: u8,
 }
 
 impl ParsedType {
@@ -8564,6 +8569,7 @@ impl Parser {
                 volatile_levels: 0,
                 is_constant: false,
                 pointee_constant: false,
+                pointer_depth: 0,
             },
             Some(Token::Ident(name)) if name == "union" => ParsedType {
                 // A union has no runtime aggregate value in C0. Keep its tag
@@ -8585,6 +8591,7 @@ impl Parser {
                 volatile_levels: 0,
                 is_constant: false,
                 pointee_constant: false,
+                pointer_depth: 0,
             },
             Some(Token::Ident(name)) if name == "enum" => ParsedType {
                 c_type: C0Type::Int32,
@@ -8603,6 +8610,7 @@ impl Parser {
                 volatile_levels: 0,
                 is_constant: false,
                 pointee_constant: false,
+                pointer_depth: 0,
             },
             Some(Token::Ident(name)) => self.parse_named_type(name)?,
             Some(token) => {
@@ -8634,7 +8642,9 @@ impl Parser {
             object_constant = true;
         }
         let mut saw_pointer = false;
+        let mut pointer_depth: u8 = 0;
         while self.peek() == Some(&Token::Star) {
+            pointer_depth = pointer_depth.saturating_add(1);
             if saw_pointer && pointee_constant {
                 return Err(self.error_at_previous(
                     "const qualification beyond the first pointer level is not supported",
@@ -8742,6 +8752,7 @@ impl Parser {
             volatile_levels,
             is_constant: object_constant,
             pointee_constant,
+            pointer_depth,
         })
     }
 
@@ -8805,6 +8816,7 @@ impl Parser {
             volatile_levels: 0,
             is_constant: self.expression_is_constant_lvalue(&expression),
             pointee_constant: self.expression_pointee_is_constant(&expression),
+            pointer_depth: 0,
         })
     }
 
@@ -9014,6 +9026,7 @@ impl Parser {
             volatile_levels: 0,
             is_constant: false,
             pointee_constant: false,
+            pointer_depth: 0,
         })
     }
 
@@ -10732,7 +10745,28 @@ impl Parser {
             );
         }
         let mut declarations = Vec::new();
+        let mut first_declarator = true;
         loop {
+            // C writes each declarator's pointer `*` with the declarator, not
+            // with the type specifier, so `struct rb_node *parent, *gparent;`
+            // repeats the star the type specifier already carries. Accept a
+            // repetition of exactly that depth, which gives every declarator
+            // the type the first one has, and refuse any other depth by name
+            // rather than typing a later declarator from the first one's.
+            if !first_declarator {
+                let mut declarator_depth: u8 = 0;
+                while self.peek() == Some(&Token::Star) {
+                    declarator_depth = declarator_depth.saturating_add(1);
+                    self.position += 1;
+                }
+                if declarator_depth != parsed_type.pointer_depth {
+                    return Err(self.error_here(format!(
+                        "a declarator with {declarator_depth} pointer `*` in a declaration whose type specifier writes {}; declare it separately",
+                        parsed_type.pointer_depth
+                    )));
+                }
+            }
+            first_declarator = false;
             let source_name = self.expect_ident("local name")?;
             let name = self.declare_name(&source_name)?;
             let struct_value_layout =
