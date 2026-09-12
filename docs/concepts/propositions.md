@@ -101,6 +101,49 @@ The payload bindings a proof `match` introduces stay in scope for the whole
 arm, including inside a `branch` arm, a proof-level `if` arm, and the body of
 a `have` — see `mdtests/match_bindings_in_branch_arm.md`.
 
+## Pointer disequality
+
+Two pointers are decided different when the context already says so about the
+pointers themselves, in one of two ways.
+
+The first is null-ness. One pointer is null and the other is not, so they
+cannot be the same pointer:
+
+<!-- verified-example: mdtests/pointer_disequality_from_null.md -->
+```click
+requires p == 0;
+requires q != 0;
+```
+
+With those, the C test `if (p == q)` is decided false before it splits. The
+null side may be read out of an owned cell (`requires node->left == 0;`)
+rather than named by a parameter; a loaded pointer is a pointer like any
+other. `mdtests/rb_ctx_change_child_right_frame.md` is the same step on the
+unchanged Linux `__rb_change_child`: the right-child frame's empty left
+sibling makes `parent->rb_left` null, the caller's child exists, and the
+helper's inner `parent->rb_left == old` test is decided with no requirement
+about `parent->rb_left`.
+
+The second is separate ownership. Two objects owned at once are separate, and
+two ranges that both hold their own first element cannot be separate at the
+same address, so their pointers differ:
+
+<!-- verified-example: mdtests/pointer_disequality_from_separation.md -->
+```click
+owns a->left;
+owns b->left;
+```
+
+Nothing needs to be stated: the composition of those two `owns` clauses
+already projects the separation. This route needs the two objects to be
+separate in *one* composition; ownership that reaches a frontier as two
+independent compositions states no separation between them.
+
+Neither rule ever decides a comparison true, and neither searches. When
+nothing settles one of the two pointers the comparison stays undecided,
+execution keeps both paths, and the proof has to handle both — see
+`mdtests/pointer_disequality_rejects_undecided.md`.
+
 ## Old values
 
 `old(expr)` means the value of `expr` in the function-entry state:
