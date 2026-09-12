@@ -210,8 +210,31 @@ fn record_resource_clause_attempt() {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CFunctionResourceTransfer {
+    /// The complete checked entry transition.  The two partitions are kept
+    /// explicitly so callers cannot accidentally treat a borrowed view as a
+    /// consumed capability when reconstructing the caller successor.
+    borrowed_inputs: ResourceContext,
+    consumed_inputs: ResourceContext,
     callee_resources: ResourceContext,
+    /// Resources left in the caller after the entry requirements have been
+    /// consumed; this is the caller frame for the remainder of the call.
     caller_resources_after_requirements: ResourceContext,
+    /// Filled by the verified-application preparer once entry guards and
+    /// dependent addresses have been checked.  It is the sole memory-effect
+    /// projection used by modular call havoc and its effect fact.
+    memory_effects: Vec<CMemoryRange>,
+    /// Snapshot identities make the state used for dependent addresses
+    /// explicit in the transition record; no ambient state is consulted by
+    /// its consumers.
+    entry_snapshot: CMemorySnapshotIdentity,
+    post_snapshot: Option<CMemorySnapshotIdentity>,
+    post_outputs: Option<ResourceContext>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CFunctionMemoryEffectProjection {
+    ranges: Vec<CMemoryRange>,
+    evidence_facts: Vec<ExecutionPureFact>,
 }
 
 #[derive(Clone, Debug)]
@@ -1226,7 +1249,7 @@ fn execute_verified_function_applications(
                 !call.interface.resource_requires().is_empty()
                     || !call.interface.resource_ensures().is_empty()
                     || !call.interface.resource_constructors().is_empty()
-                    || !call.mutable_ranges.is_empty()
+                    || !call.transfer.memory_effects.is_empty()
             })
         {
             paths.push(CFunctionPath {
@@ -1256,29 +1279,28 @@ fn execute_verified_function_applications(
             argument_values,
             entry_state,
             entry_contract_state,
-            transfer,
+            mut transfer,
             mut facts,
             obligations,
             effective_assumptions,
-            mutable_ranges,
             bindings: selected_bindings,
         } = primary;
         let additional_calls = applicable.into_iter();
-        let memory = if mutable_ranges.is_empty() {
+        let memory = if transfer.memory_effects.is_empty() {
             entry_state.memory.clone()
         } else {
             entry_state.memory.clone().with_call_memory_havoc(
                 memory_identity,
-                &mutable_ranges,
+                &transfer.memory_effects,
                 &effective_assumptions,
             )
         };
-        if !mutable_ranges.is_empty() {
+        if !transfer.memory_effects.is_empty() {
             facts.push(
                 ExecutionPureFact::internal(Proposition::CMemoryEffectSummary {
                     before: entry_state.memory.clone(),
                     after: memory.clone(),
-                    mutable_ranges: mutable_ranges.clone(),
+                    mutable_ranges: transfer.memory_effects.clone(),
                 })
                 .into_certified(),
             );
@@ -1590,6 +1612,8 @@ fn execute_verified_function_applications(
         };
         facts.extend(allocation_effects);
         post_state.memory = memory;
+        transfer.post_snapshot = Some(CMemorySnapshotIdentity::of(&post_state.memory));
+        transfer.post_outputs = Some(return_resources.clone());
         let post_contract_state =
             with_contract_interface_argument_views(&post_state, interface, &argument_values);
 
@@ -1690,7 +1714,6 @@ struct PreparedVerifiedFunctionCall<'a> {
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     effective_assumptions: PureFactContext,
-    mutable_ranges: Vec<CMemoryRange>,
     /// The binder map this interface was selected with, if any. A `produces`
     /// binder reads its caller-side identity from exactly this map.
     bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
@@ -2146,7 +2169,7 @@ fn prepare_verified_function_call<'a>(
     }
 
     let call_entry_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-    let mut effective_assumptions =
+    let effective_assumptions =
         assumptions_with_propositions(&call_entry_assumptions, &established_requirements)
             .transport_memory_load_condition_facts();
 
@@ -2166,68 +2189,40 @@ fn prepare_verified_function_call<'a>(
     }
 
     let footprint_state = entry_contract_state.clone();
-    let mut mutable_ranges = Vec::new();
-    let mut footprint_error = None;
     let footprint_timing = crate::instrumentation::OperationTiming::new(
         application.name,
         "verified function rule application",
         "verified call mutable footprint lowering",
     );
-    for segment in contract_interface.contract_mutable() {
-        let element_width = segment.element_width();
-        if segment.guard().is_some_and(|guard| {
-            evaluate_guarded_contract_condition(
-                guard,
-                &entry_contract_state,
-                &effective_assumptions,
-                budget,
-            ) == Some(false)
-        }) {
-            continue;
+    let projection = match project_contract_memory_effects(
+        &footprint_state,
+        contract_interface,
+        Some(&transfer.callee_resources),
+        &effective_assumptions,
+        budget,
+    )? {
+        Ok(projection) => projection,
+        Err(message) => {
+            return Ok(Err(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not evaluate mutable footprint: {message}"
+                ))),
+                facts,
+                obligations,
+            }));
         }
-        match evaluate_loop_effect_segment_with_facts(
-            &footprint_state,
-            segment,
-            &effective_assumptions,
-            budget,
-        )? {
-            Ok((segment, segment_facts)) => {
-                for fact in &segment_facts {
-                    if !facts.contains(fact) {
-                        facts.push(fact.clone());
-                    }
-                }
-                effective_assumptions =
-                    assumptions_with_path_context(&effective_assumptions, &segment_facts, &[]);
-                // The call derivation and its effect summary share one
-                // assumption-free canonical footprint. Proof-specific
-                // vocabulary belongs in an explicit derived view, not in
-                // the stored identity of the call.
-                mutable_ranges.push(canonical_memory_range(
-                    CMemoryRange::new_with_element_width(
-                        segment.base,
-                        segment.start,
-                        segment.end,
-                        element_width,
-                    ),
-                ))
-            }
-            Err(message) => {
-                footprint_error = Some(message);
-                break;
-            }
+    };
+    let mutable_ranges = projection.ranges;
+    for fact in projection.evidence_facts {
+        if !facts.contains(&fact) {
+            facts.push(fact);
         }
     }
     drop(footprint_timing);
-    if let Some(message) = footprint_error {
-        return Ok(Err(CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "could not evaluate mutable footprint: {message}"
-            ))),
-            facts,
-            obligations,
-        }));
-    }
+    // The projection above is also retained on the transition record below;
+    // no later call path reconstructs the footprint from source clauses.
+    let mut transfer = transfer;
+    transfer.memory_effects = mutable_ranges.clone();
     // A direct store into read-only storage is rejected where it is
     // executed, but a modular call performs its writes abstractly through
     // this footprint. Without the same check, passing read-only storage to
@@ -2260,7 +2255,6 @@ fn prepare_verified_function_call<'a>(
         facts,
         obligations,
         effective_assumptions,
-        mutable_ranges,
         bindings: resource_application.map(|application| application.bindings.clone()),
     }))
 }
@@ -3398,6 +3392,81 @@ fn evaluate_contract_mutable_ranges(
     )
 }
 
+/// Project the checked resource transition's memory effects.  This is the
+/// only kernel derivation of a contract write footprint: callers consume the
+/// ranges and the checked load facts together, while the surface summary is
+/// only source metadata used to construct the interface.
+fn project_contract_memory_effects(
+    entry: &CState,
+    interface: &CFunctionContractInterface,
+    transition_resources: Option<&ResourceContext>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CFunctionMemoryEffectProjection, String>> {
+    let mut ranges = Vec::with_capacity(
+        interface.contract_mutable().len()
+            + transition_resources.map_or(0, |resources| resources.facts().len()),
+    );
+    let mut evidence_facts = Vec::new();
+    if interface.resource_derived_mutable_frame()
+        && let Some(resources) = transition_resources
+    {
+        let Some(expanded) = expand_all_composite_resource_facts(
+            resources,
+            interface.composite_resource_definitions(),
+            entry.memory(),
+            assumptions,
+        ) else {
+            return Ok(Err(
+                "could not expand the checked resource transition".to_string()
+            ));
+        };
+        for range in expanded.facts().iter().filter_map(|fact| {
+            let range = fact.memory_own_range()?;
+            Some(canonical_memory_range(range.clone()))
+        }) {
+            if !ranges.contains(&range) {
+                ranges.push(range);
+            }
+        }
+    }
+    let mut projection_assumptions = assumptions.clone();
+    for segment in interface.contract_mutable() {
+        if segment.guard().is_some_and(|guard| {
+            evaluate_guarded_contract_condition(guard, entry, &projection_assumptions, budget)
+                == Some(false)
+        }) {
+            continue;
+        }
+        match evaluate_loop_effect_segment_with_facts(
+            entry,
+            segment,
+            &projection_assumptions,
+            budget,
+        )? {
+            Ok((segment, facts)) => {
+                projection_assumptions =
+                    assumptions_with_path_context(&projection_assumptions, &facts, &[]);
+                evidence_facts.extend(facts);
+                let range = canonical_memory_range(CMemoryRange::new_with_element_width(
+                    segment.base,
+                    segment.start,
+                    segment.end,
+                    segment.element_width,
+                ));
+                if !ranges.contains(&range) {
+                    ranges.push(range);
+                }
+            }
+            Err(message) => return Ok(Err(message)),
+        }
+    }
+    Ok(Ok(CFunctionMemoryEffectProjection {
+        ranges,
+        evidence_facts,
+    }))
+}
+
 fn evaluate_contract_mutable_ranges_for_interface(
     interface: &CFunctionContractInterface,
     entry: &CState,
@@ -3405,18 +3474,20 @@ fn evaluate_contract_mutable_ranges_for_interface(
     budget: &mut ExecutionBudget,
     require_unguarded: bool,
 ) -> ExecutionResult<Option<Vec<CMemoryRange>>> {
-    let mut ranges = Vec::with_capacity(interface.contract_mutable().len());
-    for segment in interface.contract_mutable() {
-        if require_unguarded && segment.guard().is_some() {
-            return Ok(None);
-        }
-        let Some(range) = evaluate_contract_mutable_range(entry, segment, assumptions, budget)?
-        else {
-            return Ok(None);
-        };
-        ranges.push(range);
+    if require_unguarded
+        && interface
+            .contract_mutable()
+            .iter()
+            .any(|s| s.guard().is_some())
+    {
+        return Ok(None);
     }
-    Ok(Some(ranges))
+    Ok(
+        match project_contract_memory_effects(entry, interface, None, assumptions, budget)? {
+            Ok(projection) => Some(projection.ranges),
+            Err(_) => None,
+        },
+    )
 }
 
 /// Evaluates exactly the concrete ranges active in one explicit proof case.
@@ -8642,8 +8713,14 @@ fn prepare_contract_resource_transfer(
     // repeatedly enumerate the caller's unrelated resource frame.
     if interface.resource_requires().is_empty() && !preserve_explicit_representation {
         return Ok(Ok(CFunctionResourceTransfer {
+            borrowed_inputs: ResourceContext::new(),
+            consumed_inputs: ResourceContext::new(),
             callee_resources: ResourceContext::new(),
             caller_resources_after_requirements: caller_state.resources().clone(),
+            memory_effects: Vec::new(),
+            entry_snapshot: CMemorySnapshotIdentity::of(caller_state.memory()),
+            post_snapshot: None,
+            post_outputs: None,
         }));
     }
     let preserve_explicit_representation = preserve_explicit_representation
@@ -8824,9 +8901,29 @@ fn prepare_contract_resource_transfer(
         };
         return_resources = resources;
     }
+    let borrowed_inputs = ResourceContext::new().unchecked_with_facts(
+        required_resources
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_view())
+            .cloned(),
+    );
+    let consumed_inputs = ResourceContext::new().unchecked_with_facts(
+        required_resources
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_own())
+            .cloned(),
+    );
     Ok(Ok(CFunctionResourceTransfer {
+        borrowed_inputs,
+        consumed_inputs,
         callee_resources,
         caller_resources_after_requirements: return_resources,
+        memory_effects: Vec::new(),
+        entry_snapshot: CMemorySnapshotIdentity::of(callee_state.memory()),
+        post_snapshot: None,
+        post_outputs: None,
     }))
 }
 

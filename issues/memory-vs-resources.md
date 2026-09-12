@@ -588,6 +588,50 @@ was introduced. W3 did not merge or push; the manager should cherry-pick
 `56958fa6` and this documentation commit after checking the primary branch
 base.
 
+## W4 handoff (2026-09-11)
+
+W4 starts from `fa86dd96` in the isolated `codex/mvr-w4` worktree. The
+verified application path now carries one checked `CFunctionResourceTransfer`
+record for its entry transition: borrowed inputs, consumed inputs, callee
+resources, the caller residual after requirements, entry snapshot identity,
+and the canonical memory-effect projection. After return-resource evaluation
+the same record also retains the post snapshot and post outputs. The memory
+projection is produced by `project_contract_memory_effects`, which evaluates
+resource-derived owned memory from the checked transition when the interface
+marks that frame, then evaluates explicit effect guards/dependent addresses
+and canonical physical ranges together with their checked evidence facts.
+
+Modular call havoc, `CMemoryEffectSummary`, callback transition ambiguity,
+automatic refinement containment, and storage-write footprint checking now
+consume that projection helper. The old inline mutable-range traversal in
+verified application preparation was removed. Tokens and views contribute no
+write range; resource-derived owned memory, guarded/subrange ranges, read-only
+storage rejection, allocation continuity, recursive explicit representations,
+instance identity/fresh fields, and dynamic-population rejection remain on
+their existing specialized paths. A resource summary alone does not imply
+abstract havoc; only the checked resource-derived-frame marker permits its
+owned memory to enter the projection. Direct body execution still checks
+stores against the transferred resource context rather than applying abstract
+call havoc.
+
+The surface `collect_owned_resource_memory_segments` traversal remains as
+checked, source-oriented metadata for loop back-edge framing and the
+certification storage diagnostic. It is not used as the modular call effect
+source; the kernel projection is authoritative there. The explicit refinement
+guard-decision helper remains a conservative adapter for its unreachable
+explicit-case route, while automatic refinement and storage checks use the
+authoritative projection.
+
+The new deterministic regression
+`authoritative_memory_projection_scales_with_used_members_not_unrelated_frames`
+uses used-member sizes `1, 4, 16, 64` and 256 unrelated memory frames per
+case; it checks that projection work is charged to the explicitly used effect
+segments. Existing callback, resource, guarded-refinement, read-only,
+deallocation, return-indexed, wrapper, certification, and expansion fixtures
+remain the behavioral regressions for R4 and the memory half of R5. No C
+source, Click syntax, budget, quarantine, excluded semantics, or new issue
+changed.
+
 ## Language-preservation contract
 
 Every worker must preserve the following. A proposal that needs a different

@@ -543,6 +543,97 @@ fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
 }
 
 #[test]
+fn authoritative_memory_projection_scales_with_used_members_not_unrelated_frames() {
+    let pointer = Pointer {
+        block: PointerBlock::Concrete("local:projection:data".to_string()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::pointer(pointer.clone()))
+        .with_memory(CMemory::new().with_block(pointer.block.clone(), 512));
+    let mut samples = Vec::new();
+    for used_members in [1usize, 4, 16, 64] {
+        let mut memory = state.memory.clone();
+        for unrelated in 0..256 {
+            memory = memory.with_block(format!("local:projection:frame:{unrelated}"), 4);
+        }
+        let state = state.clone().with_memory(memory);
+        let function = c_function(
+            CType::Void,
+            format!("project_{used_members}"),
+            vec![c_parameter("p", CType::Int32Pointer)],
+            CStatement::Skip,
+        )
+        .with_contract(
+            vec![],
+            vec![],
+            (0..used_members)
+                .map(|index| {
+                    CMemorySegment::new(
+                        c_variable("p"),
+                        c_int32_literal(index as u32),
+                        c_int32_literal(index as u32 + 1),
+                    )
+                })
+                .collect(),
+            vec![],
+            true,
+        );
+        let mut budget = ExecutionBudget::default();
+        let (projection, work) = crate::instrumentation::measure_deterministic_work(|| {
+            project_contract_memory_effects(
+                &state,
+                function.contract_interface(),
+                None,
+                &PureFactContext::new(),
+                &mut budget,
+            )
+        });
+        assert_eq!(projection.unwrap().unwrap().ranges.len(), used_members);
+        samples.push((used_members, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 * (pair[1].0 / pair[0].0).max(1) + 64,
+            "memory projection should charge used members, not unrelated frames: {samples:?}"
+        );
+    }
+
+    // Resource-derived frames use the checked transition as their source of
+    // memory authority. A bare resource summary without this marker must not
+    // turn an abstract callback into an unconditional memory havoc.
+    let resource = CResourceSpec::owned_memory(CMemorySegment::new(
+        c_variable("p"),
+        c_int32_literal(0),
+        c_int32_literal(1),
+    ));
+    let resource_function = c_function(
+        CType::Void,
+        "project_resource",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        CStatement::Skip,
+    )
+    .with_resource_summary(vec![resource], vec![])
+    .with_resource_derived_mutable_frame();
+    let checked_resources =
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+            pointer,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )));
+    let projection = project_contract_memory_effects(
+        &state,
+        resource_function.contract_interface(),
+        Some(&checked_resources),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(projection.ranges.len(), 1);
+}
+
+#[test]
 fn unresolved_call_requirements_retain_selected_source_site_identity() {
     let function = c_function(
         CType::Int32,
