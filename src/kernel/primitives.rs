@@ -2400,13 +2400,47 @@ pub struct CVerifiedFunctionRule {
 
 /// A nominal, body-independent behavioral interface for an indirect call.
 ///
-/// The contained function is a contract template: its parameters, result,
-/// requirements, resource transition, effects, and ensures are meaningful;
-/// its name and body are not a concrete call target.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+/// Named contracts retain only their nominal name and this checked interface.
+/// A source function may be used to build the interface, but its body, globals,
+/// and static storage are not part of a callback contract and are discarded at
+/// construction. This keeps indirect application independent of an arbitrary
+/// source/template representation.
+#[derive(Clone, Debug)]
 pub struct CFunctionContract {
     pub(super) name: String,
-    pub(super) function: CFunction,
+    /// Source-name provenance retained only for diagnostics. It is not part
+    /// of the contract identity and cannot alter callback behavior.
+    pub(super) callee_name: String,
+    pub(super) interface: CFunctionContractInterface,
+}
+
+impl PartialEq for CFunctionContract {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.interface == other.interface
+    }
+}
+
+impl Eq for CFunctionContract {}
+
+impl std::hash::Hash for CFunctionContract {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.interface.hash(state);
+    }
+}
+
+impl PartialOrd for CFunctionContract {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CFunctionContract {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name
+            .cmp(&other.name)
+            .then_with(|| self.interface.cmp(&other.interface))
+    }
 }
 
 /// A contract supplied for a C function whose implementation is outside the
@@ -4457,7 +4491,11 @@ pub struct CVerifiedPureTheorem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CFunctionContractRefinementContext {
     pub(super) contract: CFunctionContract,
-    pub(super) function: CFunction,
+    /// The implementation side of refinement is an interface judgment too;
+    /// concrete body evidence is checked before this context is opened and is
+    /// not needed to lower the symbolic relation.
+    pub(super) function_interface: CFunctionContractInterface,
+    pub(super) function_name: String,
     pub(super) pointer: CPointerValue,
     pub(super) source_contract: Option<CFunctionContract>,
     pub(super) argument_values: Vec<CValue>,

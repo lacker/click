@@ -2896,6 +2896,7 @@ pub(in crate::kernel) fn proof_evidence_function_refines_same_source(
         && original.source_body() == checked.source_body()
         && original.resource_requires() == checked.resource_requires()
         && original.resource_ensures() == checked.resource_ensures()
+        && original.resource_constructors() == checked.resource_constructors()
         && original.contract_requires() == checked.contract_requires()
         && original.contract_ensures() == checked.contract_ensures()
         && original.contract_mutable() == checked.contract_mutable()
@@ -4964,9 +4965,10 @@ pub fn c_contract_refinement_context(
     {
         return None;
     }
-    let mut context = prepare_function_contract_refinement_context(
+    let mut context = super::functions::contract_refinement_context_for_interface(
         target,
-        source.template(),
+        source.name(),
+        source.interface(),
         &mut ExecutionBudget::default(),
     )?;
     context.pointer = pointer.clone();
@@ -5037,7 +5039,7 @@ pub(crate) fn prove_c_function_contract_refinement(
     let theorem = match &context.source_contract {
         None => {
             if context.pointer.pointer().block
-                != PointerBlock::Function(context.function.name().to_string())
+                != PointerBlock::Function(context.function_name.clone())
             {
                 return None;
             }

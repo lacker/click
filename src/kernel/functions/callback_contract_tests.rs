@@ -97,6 +97,123 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
     }
 }
 
+#[test]
+fn named_contract_application_discards_template_body_and_storage() {
+    let body_variable = Variable(987_654);
+    let pointer_parameter = c_parameter("p", CType::UInt8Pointer);
+    let body_with_load = CStatement::Return(CExpression::Load(Box::new(CExpression::Variable(
+        "p".into(),
+    ))));
+    let body_with_variable = CStatement::Return(CExpression::Value(CValue::Int32(
+        Bitvector32Term::Variable(body_variable),
+    )));
+    let with_body_and_storage = c_function(
+        CType::Void,
+        "callback_template",
+        vec![pointer_parameter.clone()],
+        body_with_load,
+    )
+    .with_string_literals(vec![CStringLiteral::new("literal", b"x\0".to_vec())]);
+    let with_different_body = c_function(
+        CType::Void,
+        "callback_template",
+        vec![pointer_parameter],
+        body_with_variable,
+    );
+    let first = CFunctionContract::new("BodyIndependent", with_body_and_storage).unwrap();
+    let second = CFunctionContract::new("BodyIndependent", with_different_body).unwrap();
+
+    // The named-contract identity contains only the nominal name and the
+    // interface. In particular, body/storage differences cannot become
+    // callback identity or callback facts.
+    assert_eq!(first, second);
+    let environment = CExecutionEnvironment::new().with_function_contract(first.clone());
+    let variables = crate::kernel::reasoning::execution_environment_variable_index(&environment);
+    assert!(
+        !variables.contains(&body_variable),
+        "named-contract variable collection must not inspect its discarded body"
+    );
+
+    let argument = CExpression::Value(CValue::typed_pointer(
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    ));
+    let run = |contract: &CFunctionContract| {
+        execute_c_function_contracts_paths(
+            &CState::new(),
+            &[contract],
+            std::slice::from_ref(&argument),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap()
+    };
+    let first_paths = run(&first);
+    let second_paths = run(&second);
+    assert_eq!(first_paths, second_paths);
+    assert!(matches!(
+        first_paths[0].outcome,
+        CFunctionOutcome::Return { .. }
+    ));
+}
+
+#[test]
+fn resource_constructors_are_direct_only_and_part_of_identity() {
+    let constructor = CResourceSpec::token(
+        CResourceAccessMode::Own,
+        "constructed_token".into(),
+        vec![c_int32_literal(7)],
+        vec![CType::Int32],
+    );
+    let function = c_function(
+        CType::Void,
+        "construct_token",
+        vec![],
+        c_return(c_void_value()),
+    )
+    .with_resource_constructors(vec![constructor]);
+    let constructed = CResourceFact::own_token("constructed_token".into(), vec![int32(7)]);
+    let state = construct_c_function_resource(
+        &CState::new(),
+        &function,
+        &[],
+        &CValue::Void,
+        &constructed,
+        &PureFactContext::new(),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        state
+            .resources()
+            .satisfies_fact(&constructed, &PureFactContext::new())
+    );
+
+    // Named callback contracts cannot expose a zero-source transition that
+    // their application engine does not perform. Direct outcome construction
+    // remains supported, while formation and refinement fail closed.
+    assert!(CFunctionContract::new("ConstructCallback", function.clone()).is_none());
+    let without_constructor = c_function(
+        CType::Void,
+        "construct_token",
+        vec![],
+        c_return(c_void_value()),
+    );
+    let contract =
+        CFunctionContract::new("ConstructCallback", without_constructor.clone()).unwrap();
+    assert!(!contract.exactly_matches(&function));
+    assert!(
+        !crate::kernel::api::proof_evidence_function_refines_same_source(
+            &without_constructor,
+            &function,
+        )
+    );
+}
+
 fn direct_and_callback_resource_transition(
     function: &CFunction,
     state: &CState,
@@ -402,10 +519,11 @@ fn pure_callback_preparation_does_not_enumerate_the_resource_frame() {
         );
         assert!(resources.storage.materialized.get().is_none());
         let state = CState::new().with_resource_context(resources.clone());
-        let transfer = prepare_function_resource_transfer(
+        let transfer = prepare_contract_resource_transfer(
             &state,
             &CState::new(),
-            contract.template(),
+            contract.name(),
+            contract.interface(),
             &PureFactContext::new(),
             &mut ExecutionBudget::default(),
             false,

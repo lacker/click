@@ -981,22 +981,36 @@ pub(in crate::kernel) fn collect_c_function_bound_variables(
     function: &CFunction,
     variables: &mut BTreeSet<Variable>,
 ) {
-    for resource in function.resource_requires() {
+    collect_c_function_contract_interface_bound_variables(function.contract_interface(), variables);
+    collect_c_statement_bound_variables(function.body(), variables);
+}
+
+/// Collects only bound variables in the body-independent contract interface.
+/// This is the companion to the bitvector collector used for named callback
+/// contracts; no template statement or storage is traversed.
+pub(in crate::kernel) fn collect_c_function_contract_interface_bound_variables(
+    interface: &CFunctionContractInterface,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for resource in interface
+        .proof_parameters()
+        .iter()
+        .chain(interface.resource_requires())
+        .chain(interface.resource_ensures())
+        .chain(interface.resource_constructors())
+    {
         collect_c_resource_spec_bound_variables(resource, variables);
     }
-    for resource in function.resource_ensures() {
-        collect_c_resource_spec_bound_variables(resource, variables);
-    }
-    for proposition in function.contract_requires() {
+    for proposition in interface
+        .contract_requires()
+        .iter()
+        .chain(interface.contract_ensures())
+    {
         collect_spec_proposition_bound_variables(proposition, variables);
     }
-    for proposition in function.contract_ensures() {
-        collect_spec_proposition_bound_variables(proposition, variables);
-    }
-    for segment in function.contract_mutable() {
+    for segment in interface.contract_mutable() {
         collect_c_memory_segment_bound_variables(segment, variables);
     }
-    collect_c_statement_bound_variables(function.body(), variables);
 }
 
 fn collect_c_function_specification_bound_variables(

@@ -1533,22 +1533,38 @@ pub(in crate::kernel) fn collect_c_function_bitvector_variables(
     function: &CFunction,
     variables: &mut BTreeSet<Variable>,
 ) {
-    for resource in function.resource_requires() {
+    collect_c_function_contract_interface_bitvector_variables(
+        function.contract_interface(),
+        variables,
+    );
+    collect_c_statement_bitvector_variables(function.body(), variables);
+}
+
+/// Collects variables from the body-independent contract interface only.
+/// Named callback application uses this collector so unrelated template
+/// statements, globals, and storage cannot affect fresh identities or
+/// callback behavior.
+pub(in crate::kernel) fn collect_c_function_contract_interface_bitvector_variables(
+    interface: &CFunctionContractInterface,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for resource in interface
+        .proof_parameters()
+        .iter()
+        .chain(interface.resource_requires())
+        .chain(interface.resource_ensures())
+        .chain(interface.resource_constructors())
+    {
         collect_resource_spec_bitvector_variables(resource, variables);
     }
-    for resource in function.resource_ensures() {
-        collect_resource_spec_bitvector_variables(resource, variables);
-    }
-    for resource in function.resource_constructors() {
-        collect_resource_spec_bitvector_variables(resource, variables);
-    }
-    for proposition in function.contract_requires() {
+    for proposition in interface
+        .contract_requires()
+        .iter()
+        .chain(interface.contract_ensures())
+    {
         collect_spec_proposition_bitvector_variables(proposition, variables);
     }
-    for proposition in function.contract_ensures() {
-        collect_spec_proposition_bitvector_variables(proposition, variables);
-    }
-    for segment in function.contract_mutable() {
+    for segment in interface.contract_mutable() {
         collect_c_expression_bitvector_variables(&segment.base, variables);
         collect_c_expression_bitvector_variables(&segment.start, variables);
         collect_c_expression_bitvector_variables(&segment.end, variables);
@@ -1556,7 +1572,6 @@ pub(in crate::kernel) fn collect_c_function_bitvector_variables(
             collect_spec_proposition_bitvector_variables(guard, variables);
         }
     }
-    collect_c_statement_bitvector_variables(function.body(), variables);
 }
 
 pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
@@ -1663,8 +1678,8 @@ fn collect_execution_environment_variables_uncached(
         collect_c_function_bound_variables(function, variables);
     }
     for contract in environment.function_contracts.values() {
-        collect_c_function_bitvector_variables(&contract.function, variables);
-        collect_c_function_bound_variables(&contract.function, variables);
+        collect_c_function_contract_interface_bitvector_variables(contract.interface(), variables);
+        collect_c_function_contract_interface_bound_variables(contract.interface(), variables);
     }
     for rule in environment.verified_function_rules.values() {
         collect_c_function_bitvector_variables(&rule.function, variables);

@@ -39,9 +39,10 @@ locations are navigation hints; follow symbols if files have moved.
 - `CResourceSpec` and surface `ResourceClause` use dedicated owned/viewed
   memory variants, while declared-resource variants carry an access mode.
   This duplicates generic clause handling above the family algebra.
-- `CFunction` stores resource preconditions, returns, borrowed-return indices,
-  pure clauses, and `contract_mutable` separately. `CFunctionContract` embeds
-  a `CFunction` template whose name and body are not the callback target.
+- `CFunction` retains concrete body/storage evidence alongside its contract
+  metadata. Named `CFunctionContract` values retain only the
+  body-independent interface (plus nominal/provenance names); their source
+  function is not a callback template or execution target.
 - `src/surface/lowering/annotations.rs`:
   `collect_owned_resource_memory_segments` traverses resource definitions to
   construct a separate memory footprint; `annotated_function` installs the
@@ -49,7 +50,7 @@ locations are navigation hints; follow symbols if files have moved.
 - `src/surface/proof.rs`: `initial_claim_context` materializes/projects
   resources and establishes entry facts. `src/surface/verification.rs`:
   `build_function_environment` prepares named contracts through that path.
-- `src/kernel/functions.rs`: `execute_verified_function_templates`,
+- `src/kernel/functions.rs`: `execute_verified_function_applications`,
   `prepare_function_resource_transfer`, `evaluate_function_resource_context`,
   `evaluate_function_return_resource_context`, and refinement preparation
   already share substantial machinery. Consolidate remaining differences;
@@ -172,7 +173,7 @@ specification above it.
 | Path | Current entry and duplicated preparation | Narrow boundary for W1-W6 |
 | --- | --- | --- |
 | Direct verified C call | `execute_c_function_call_paths` dispatches a verified rule or body; `prepare_verified_function_call` separately binds arguments, evaluates `resource_requires`, calls `prepare_function_resource_transfer`, lowers contract requirements, and later evaluates returns. | W2 supplies one body-independent contract interface; W3 supplies a dependency-aware clause elaboration result (term plus checked load/guard obligations); W4 consumes one transition record for transfer, effects, and return. |
-| Named callback call | `execute_c_function_contracts_paths` selects a `CFunctionContract`, optionally builds `ResourceCallApplication`, then re-enters `execute_verified_function_templates` and the same `prepare_verified_function_call`; exact pointer `Contract(p)` facts are checked by `function_contract_requirement_is_proven`. | W1's normalized resource terms and W2's interface are shared with direct calls. The callback fact remains an exact-pointer evidence input; W5 owns support/provenance invalidation, not a global retention list. |
+| Named callback call | `execute_c_function_contracts_paths` selects a `CFunctionContract`, optionally builds `ResourceCallApplication`, then applies a body-independent `CFunctionContractApplication` through `execute_verified_function_applications`; exact pointer `Contract(p)` facts are checked by `function_contract_requirement_is_proven`. | W1's normalized resource terms and W2's interface are shared with direct calls. The callback fact remains an exact-pointer evidence input; W5 owns support/provenance invalidation, not a global retention list. |
 | Explicit execution theorem | `surface/proof/pure_theorems/execution_theorems.rs::verify_execution_theorem` rewrites the target clauses and builds a one-call block, then uses grouped checked execution and `prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems`; concrete targets use ordinary C, abstract targets use source contracts. | W2/W6 provide the same contract/binder instantiation; W4 receives the same checked transition. The theorem's closed checked artifact remains distinct authority from a verified body or external assumption. |
 | Automatic formation | `function_refines_named_contract` calls `prepare_automatic_contract_refinement_context`, then `function_refines_named_contract_in_case`; concrete pointer formation is accepted only for a verified/external exact target and compatible vocabulary/effects. | W2 owns the body-independent relation; W3 supplies checked entry/post clause obligations; W6 supplies identity-based binder maps. Keep bounded candidate applicability and exact/forced pairing. |
 | Contract certification | `verification.rs::build_function_environment` prepares named contracts through `initial_claim_context` and `annotated_function`. Function certification constructs a fresh entry context, invokes checked artifacts through `prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems`, then claims are finalized in `kernel/api/contract_certification/contract_claims.rs`. | W1/W3 must make named and ordinary entry lowering agree. W4's transition/effect projection is the sole checked footprint source. Certification may reuse checked artifacts, but must not rerun a concrete body or turn pending obligations into authority. |
@@ -301,6 +302,20 @@ callback instance fields remain fresh symbolic post-state values rather than
 an invented preservation guarantee. This worktree is committed but
 intentionally not merged or pushed; the manager should integrate its coherent
 commit.
+
+Review follow-up: `CFunctionContract` now stores only its nominal name, a
+source-name provenance string for diagnostics, and an owned
+`CFunctionContractInterface`; construction discards the source function's
+body, globals, and static storage. The shared application descriptor carries
+that interface plus optional concrete evidence, so named callbacks and
+external assumptions never scan or execute a template body, while verified
+direct calls retain their separate body-safety evidence. Interface variable
+collection is likewise body-independent. `constructs` remains a direct
+outcome-proof transition: named-contract formation rejects nonempty
+constructor clauses, and constructor lists participate in exact interface,
+refinement, and checked-source identity. The added regressions cover
+body/storage-independent named application identity and direct-only
+constructors; the focused gate is now 193/193.
 
 ## Language-preservation contract
 

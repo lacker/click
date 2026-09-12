@@ -813,6 +813,7 @@ impl CFunctionContractInterface {
             && self.proof_parameters == other.proof_parameters
             && self.resource_requires == other.resource_requires
             && self.resource_ensures == other.resource_ensures
+            && self.resource_constructors == other.resource_constructors
             && self.contract_requires == other.contract_requires
             && self.contract_ensures == other.contract_ensures
             && self.contract_mutable == other.contract_mutable
@@ -846,6 +847,7 @@ impl CFunctionContractInterface {
                         && left.constant == right.constant
                         && left.pointee_constant == right.pointee_constant
                 })
+            && self.resource_constructors == other.resource_constructors
             && self.composite_resource_definitions == other.composite_resource_definitions
     }
 
@@ -1619,22 +1621,40 @@ impl CFunctionContract {
     const PREDICATE_PREFIX: &'static str = "__click_function_contract::";
 
     pub(crate) fn with_proof_parameters(mut self, parameters: Vec<CResourceSpec>) -> Self {
-        self.function.contract_interface = self
-            .function
-            .contract_interface
-            .clone()
-            .with_proof_parameters(parameters);
+        self.interface = self.interface.with_proof_parameters(parameters);
         self
     }
 
     pub fn new(name: impl Into<String>, function: CFunction) -> Option<Self> {
         let name = name.into();
-        (function.opaque_contract_supported() && !name.is_empty())
-            .then_some(Self { name, function })
+        Self::from_interface_with_callee_name(
+            name,
+            function.name().to_string(),
+            function.contract_interface().clone(),
+        )
+    }
+
+    fn from_interface_with_callee_name(
+        name: String,
+        callee_name: String,
+        interface: CFunctionContractInterface,
+    ) -> Option<Self> {
+        (interface.opaque_contract_supported()
+            && interface.resource_constructors().is_empty()
+            && !name.is_empty())
+        .then_some(Self {
+            name,
+            callee_name,
+            interface,
+        })
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn callee_name(&self) -> &str {
+        &self.callee_name
     }
 
     pub fn function_pointer_type(&self) -> CType {
@@ -1653,12 +1673,8 @@ impl CFunctionContract {
         name.strip_prefix(Self::PREDICATE_PREFIX)
     }
 
-    pub(crate) fn template(&self) -> &CFunction {
-        &self.function
-    }
-
     pub(crate) fn proof_parameters(&self) -> &[CResourceSpec] {
-        self.interface().proof_parameters()
+        self.interface.proof_parameters()
     }
 
     /// First-slice formation rule: a concrete target must expose exactly the
@@ -1667,7 +1683,7 @@ impl CFunctionContract {
     pub(crate) fn exactly_matches(&self, function: &CFunction) -> bool {
         self.proof_parameters().is_empty()
             && self
-                .interface()
+                .interface
                 .exactly_matches(function.contract_interface())
     }
 
@@ -1680,7 +1696,7 @@ impl CFunctionContract {
         &self,
         function: &CFunction,
     ) -> bool {
-        self.interface()
+        self.interface
             .has_compatible_signature_and_resource_vocabulary(function.contract_interface())
     }
 
@@ -1695,20 +1711,20 @@ impl CFunctionContract {
         &self,
         function: &CFunction,
     ) -> bool {
-        self.interface()
+        self.interface
             .has_compatible_signature_and_composite_vocabulary(function.contract_interface())
     }
 
     /// Opaque predicate identities may be compared definitionally only when
     /// an explicit refinement proof names the definitions it unfolds.
     pub(crate) fn has_same_predicate_unfoldings(&self, function: &CFunction) -> bool {
-        self.interface()
+        self.interface
             .has_same_predicate_unfoldings(function.contract_interface())
     }
 
     /// The body-independent interface selected by this nominal contract.
     pub fn interface(&self) -> &CFunctionContractInterface {
-        self.function.contract_interface()
+        &self.interface
     }
 }
 

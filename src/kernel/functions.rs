@@ -719,13 +719,21 @@ pub(super) fn execute_c_function_call_paths(
         // External summaries use the same body-independent application
         // interface as verified rules, but remain an assumption: do not
         // repackage one as `CVerifiedFunctionRule`, whose type carries body
-        // safety evidence. Applying the shared rule engine does not execute
-        // or certify the external body.
-        let binder_application = selected_call_binder_application(&rule.function, environment);
-        return execute_verified_function_templates(
+        // safety evidence. Applying the shared rule engine does not execute,
+        // inspect, or certify the external body's storage.
+        let binder_application = selected_call_binder_application(
+            rule.function.name(),
+            rule.function.contract_interface(),
+            environment,
+        );
+        return execute_verified_function_applications(
             caller_state,
-            &[&rule.function],
-            None,
+            &[CFunctionContractApplication {
+                name: rule.function.name(),
+                interface_name: rule.function.name(),
+                interface: rule.function.contract_interface(),
+                evidence: None,
+            }],
             None,
             binder_application
                 .as_ref()
@@ -951,11 +959,19 @@ fn execute_verified_function_rule(
     // A `step(callee(...), { binder: instance })` names exactly this call.
     // The map is the whole binding: every instance binder the callee declares
     // is looked up once, and nothing else is consulted.
-    let binder_application = selected_call_binder_application(&rule.function, environment);
-    execute_verified_function_templates(
+    let binder_application = selected_call_binder_application(
+        rule.function.name(),
+        rule.function.contract_interface(),
+        environment,
+    );
+    execute_verified_function_applications(
         caller_state,
-        &[&rule.function],
-        None,
+        &[CFunctionContractApplication {
+            name: rule.function.name(),
+            interface_name: rule.function.name(),
+            interface: rule.function.contract_interface(),
+            evidence: Some(&rule.function),
+        }],
         None,
         binder_application
             .as_ref()
@@ -971,16 +987,17 @@ fn execute_verified_function_rule(
 /// step named this callee. The transported instances are exactly the
 /// function's own `owns`, `consumes`, and `produces` binders.
 fn selected_call_binder_application(
-    function: &CFunction,
+    function_name: &str,
+    interface: &CFunctionContractInterface,
     environment: &CExecutionEnvironment,
 ) -> Option<ResourceCallApplication> {
     let transport = environment.selected_call_binders.as_ref()?;
-    if transport.function.as_ref() != function.name() {
+    if transport.function.as_ref() != function_name {
         return None;
     }
     // Only the binders required at entry are checked here; a `produces`
     // binder has no instance to check until the call returns.
-    let parameters = function
+    let parameters = interface
         .resource_requires()
         .iter()
         .filter(|resource| resource.is_instance())
@@ -992,10 +1009,25 @@ fn selected_call_binder_application(
     })
 }
 
-fn execute_verified_function_templates(
+/// One candidate contract application. The interface is the complete input
+/// to callback preparation; optional concrete evidence is consulted only by
+/// verified direct calls for body-specific safety checks and loadable literal
+/// facts. Named callbacks and external assumptions carry no `CFunction` here,
+/// so arbitrary template bodies/storage cannot affect their behavior.
+#[derive(Clone, Copy)]
+struct CFunctionContractApplication<'a> {
+    /// Concrete callee name used for diagnostics and call provenance.
+    name: &'a str,
+    /// Nominal interface name used to distinguish candidates and their source
+    /// requirement metadata.
+    interface_name: &'a str,
+    interface: &'a CFunctionContractInterface,
+    evidence: Option<&'a CFunction>,
+}
+
+fn execute_verified_function_applications(
     caller_state: &CState,
-    functions: &[&CFunction],
-    contract_interfaces: Option<&[&CFunctionContract]>,
+    applications: &[CFunctionContractApplication<'_>],
     selected_contract: Option<usize>,
     resource_application: Option<(usize, &ResourceCallApplication)>,
     arguments: &[CExpression],
@@ -1003,34 +1035,39 @@ fn execute_verified_function_templates(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    if contract_interfaces.is_some_and(|interfaces| interfaces.len() != functions.len()) {
+    if applications.is_empty() {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                "call interface identity map does not match candidate functions".to_string(),
+                "call requires at least one contract application".to_string(),
             )),
             facts: Vec::new(),
             obligations: Vec::new(),
         }]);
     }
-    let function = functions[0];
+    let application = applications[0];
     // Every named instance the callee declares must be bound by the selected
     // application. The check is one map lookup per declared binder, so an
     // unbound binder is refused here rather than transported silently.
-    if let Some(unbound) = functions.iter().enumerate().find_map(|(index, function)| {
-        let bindings = resource_application
-            .filter(|(selected, _)| *selected == index)
-            .map(|(_, application)| &application.bindings);
-        function
-            .resource_requires()
-            .iter()
-            .chain(function.resource_ensures())
-            .find(|resource| {
-                resource.instance_identity().is_some_and(|identity| {
-                    !bindings.is_some_and(|bindings| bindings.contains_key(&identity))
+    if let Some(unbound) = applications
+        .iter()
+        .enumerate()
+        .find_map(|(index, application)| {
+            let bindings = resource_application
+                .filter(|(selected, _)| *selected == index)
+                .map(|(_, application)| &application.bindings);
+            application
+                .interface
+                .resource_requires()
+                .iter()
+                .chain(application.interface.resource_ensures())
+                .find(|resource| {
+                    resource.instance_identity().is_some_and(|identity| {
+                        !bindings.is_some_and(|bindings| bindings.contains_key(&identity))
+                    })
                 })
-            })
-            .map(|_| function.name().to_string())
-    }) {
+                .map(|_| application.name.to_string())
+        })
+    {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
                 "calls with named resource instances require checked binder transport: `{unbound}` has an unbound instance binder"
@@ -1041,14 +1078,17 @@ fn execute_verified_function_templates(
     }
     budget.consume_function_call()?;
     let existing_variables = crate::instrumentation::measure_operation(
-        function.name(),
+        application.name,
         "verified function rule application",
         "verified call variable collection",
         || {
             let mut existing_variables = BTreeSet::new();
             collect_c_state_bitvector_variables(caller_state, &mut existing_variables);
-            for function in functions {
-                collect_c_function_bitvector_variables(function, &mut existing_variables);
+            for application in applications {
+                collect_c_function_contract_interface_bitvector_variables(
+                    application.interface,
+                    &mut existing_variables,
+                );
             }
             for argument in arguments {
                 collect_c_expression_bitvector_variables(argument, &mut existing_variables);
@@ -1082,22 +1122,14 @@ fn execute_verified_function_templates(
         let mut applicable = Vec::new();
         let mut first_failure = None;
         let mut selected_position = None;
-        for (index, function) in functions.iter().enumerate() {
-            let contract_interface = contract_interfaces
-                .map(|contracts| contracts[index].interface())
-                .unwrap_or_else(|| function.contract_interface());
-            let interface_name = contract_interfaces
-                .map(|contracts| contracts[index].name())
-                .unwrap_or_else(|| function.name());
+        for (index, application) in applications.iter().enumerate() {
             let prepared = prepare_verified_function_call(
                 caller_state,
-                function,
-                interface_name,
-                contract_interface,
+                *application,
                 index,
                 arguments,
                 arguments_path.clone(),
-                functions.len() > 1 || selected_contract.is_some(),
+                applications.len() > 1 || selected_contract.is_some(),
                 assumptions,
                 environment,
                 budget,
@@ -1159,7 +1191,9 @@ fn execute_verified_function_templates(
             });
         let primary = applicable.remove(selected_position.unwrap_or(0));
         let PreparedVerifiedFunctionCall {
-            function,
+            name,
+            interface_name: _interface_name,
+            evidence,
             interface,
             argument_values,
             entry_state,
@@ -1288,14 +1322,14 @@ fn execute_verified_function_templates(
         };
         let mut transition_state = post_state.clone().with_resource_context(callee_resources);
         let population_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
+            name,
             "verified function rule application",
             "verified call population transition",
         );
         let population_transition = match apply_counted_population_transitions_with_interface(
             caller_state,
             &mut transition_state,
-            function,
+            evidence,
             interface,
             &argument_values,
             &effective_assumptions,
@@ -1416,7 +1450,7 @@ fn execute_verified_function_templates(
             with_contract_interface_argument_views(&entry_state, interface, &argument_values);
 
         let return_resource_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
+            name,
             "verified function rule application",
             "verified call return resource evaluation",
         );
@@ -1424,7 +1458,7 @@ fn execute_verified_function_templates(
             &caller_resources_after_requirements,
             &entry_resource_state,
             &output_resource_state,
-            function.name(),
+            name,
             interface,
             &effective_assumptions,
             budget,
@@ -1452,7 +1486,7 @@ fn execute_verified_function_templates(
             with_contract_interface_argument_views(&post_state, interface, &argument_values);
         let mut provisional_facts = facts.clone();
         let provisional_ensure_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
+            name,
             "verified function rule application",
             "verified call provisional ensure lowering",
         );
@@ -1469,7 +1503,7 @@ fn execute_verified_function_templates(
         drop(provisional_ensure_timing);
 
         let allocation_delta_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
+            name,
             "verified function rule application",
             "verified call heap allocation delta",
         );
@@ -1480,7 +1514,7 @@ fn execute_verified_function_templates(
             &transfer.callee_resources,
             &caller_resources_after_requirements,
             &return_resources,
-            function,
+            interface,
             &allocation_assumptions,
         );
         drop(allocation_delta_timing);
@@ -1502,7 +1536,7 @@ fn execute_verified_function_templates(
             with_contract_interface_argument_views(&post_state, interface, &argument_values);
 
         let ensure_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
+            name,
             "verified function rule application",
             "verified call ensure lowering",
         );
@@ -1566,7 +1600,9 @@ fn execute_verified_function_templates(
             value: result,
             state: return_state,
         };
-        append_string_literal_loadable_facts(function, &outcome, &mut facts);
+        if let Some(function) = evidence {
+            append_string_literal_loadable_facts(function, &outcome, &mut facts);
+        }
         paths.push(CFunctionPath {
             outcome,
             facts,
@@ -1578,7 +1614,13 @@ fn execute_verified_function_templates(
 }
 
 struct PreparedVerifiedFunctionCall<'a> {
-    function: &'a CFunction,
+    /// The nominal callee name used for diagnostics and provenance. It is not
+    /// a source-body handle for named callbacks.
+    name: &'a str,
+    interface_name: &'a str,
+    /// Concrete evidence is present only for a verified direct rule. Named
+    /// contracts and external assumptions deliberately carry none.
+    evidence: Option<&'a CFunction>,
     /// The body-independent interface used to prepare this application. It is
     /// explicit even when it is the concrete function's own interface, so
     /// callback and ordinary calls cannot silently grow separate evaluators.
@@ -1598,9 +1640,7 @@ struct PreparedVerifiedFunctionCall<'a> {
 
 fn prepare_verified_function_call<'a>(
     caller_state: &CState,
-    function: &'a CFunction,
-    interface_name: &str,
-    contract_interface: &'a CFunctionContractInterface,
+    application: CFunctionContractApplication<'a>,
     candidate_ordinal: usize,
     source_arguments: &[CExpression],
     arguments_path: CArgumentsPath,
@@ -1610,6 +1650,7 @@ fn prepare_verified_function_call<'a>(
     budget: &mut ExecutionBudget,
     resource_application: Option<&ResourceCallApplication>,
 ) -> ExecutionResult<Result<PreparedVerifiedFunctionCall<'a>, CFunctionPath>> {
+    let contract_interface = application.interface;
     if contract_interface.contract_requirement_sources().len()
         != contract_interface.contract_requires().len()
     {
@@ -1636,17 +1677,30 @@ fn prepare_verified_function_call<'a>(
     ) else {
         return Ok(Err(CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                argument_binding_error(function, &arguments_path.values).to_string(),
+                contract_argument_binding_error(
+                    contract_interface,
+                    application.name,
+                    &arguments_path.values,
+                ),
             )),
             facts: arguments_path.facts,
             obligations: arguments_path.obligations,
         }));
     };
-    let Some(mut entry_state) = bind_c_function_arguments(caller_state, function, &argument_values)
+    let Some(mut entry_state) = application
+        .evidence
+        .map(|function| bind_c_function_arguments(caller_state, function, &argument_values))
+        .unwrap_or_else(|| {
+            bind_c_contract_arguments(caller_state, contract_interface, &argument_values)
+        })
     else {
         return Ok(Err(CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                argument_binding_error(function, &argument_values).to_string(),
+                contract_argument_binding_error(
+                    contract_interface,
+                    application.name,
+                    &argument_values,
+                ),
             )),
             facts: arguments_path.facts,
             obligations: argument_obligations,
@@ -1669,14 +1723,14 @@ fn prepare_verified_function_call<'a>(
         }
     }
     let transfer = match crate::instrumentation::measure_operation(
-        function.name(),
+        application.name,
         "verified function rule application",
         "verified call resource transfer preparation",
         || {
             prepare_contract_resource_transfer(
                 caller_state,
                 &entry_state,
-                interface_name,
+                application.name,
                 contract_interface,
                 &path_assumptions,
                 budget,
@@ -1701,7 +1755,7 @@ fn prepare_verified_function_call<'a>(
     let mut facts = arguments_path.facts;
     let mut established_requirements = Vec::new();
     let requirement_timing = crate::instrumentation::OperationTiming::new(
-        function.name(),
+        application.name,
         "verified function rule application",
         "verified call requirement checking",
     );
@@ -1723,8 +1777,8 @@ fn prepare_verified_function_call<'a>(
             let site = call_requirement_site
                 .get_or_insert_with(|| {
                     std::sync::Arc::new(CallRequirementSite::for_requirement(
-                        function.name(),
-                        interface_name,
+                        application.name,
+                        application.interface_name,
                         candidate_ordinal,
                         source_arguments,
                         &caller_state.memory,
@@ -1758,7 +1812,7 @@ fn prepare_verified_function_call<'a>(
             obligations.push(
                 ProofObligation::verification_condition(false_equals_true_proposition())
                     .with_call_requirement_site(source_for_requirement())
-                    .with_context(format!("{} precondition", function.name())),
+                    .with_context(format!("{} precondition", application.name)),
             );
             continue;
         }
@@ -1794,7 +1848,7 @@ fn prepare_verified_function_call<'a>(
                         ProofObligation::verification_condition(guarded.clone())
                             .with_introductions(guard_introductions)
                             .with_call_requirement_site(call_requirement_site.clone())
-                            .with_context(format!("{} precondition", function.name())),
+                            .with_context(format!("{} precondition", application.name)),
                     );
                 }
                 established_requirements.push(guarded);
@@ -1865,7 +1919,7 @@ fn prepare_verified_function_call<'a>(
                         ProofObligation::verification_condition(guarded_requirement.clone())
                             .with_introductions(introductions)
                             .with_call_requirement_site(call_requirement_site.clone())
-                            .with_context(format!("{} precondition", function.name())),
+                            .with_context(format!("{} precondition", application.name)),
                     );
                 }
             }
@@ -1892,12 +1946,14 @@ fn prepare_verified_function_call<'a>(
         assumptions_with_propositions(&call_entry_assumptions, &established_requirements)
             .transport_memory_load_condition_facts();
 
-    if let Some(undefined_behavior) = verified_call_uninitialized_read(
-        &entry_contract_state,
-        function,
-        &call_entry_assumptions.transport_memory_load_condition_facts(),
-        budget,
-    )? {
+    if let Some(function) = application.evidence
+        && let Some(undefined_behavior) = verified_call_uninitialized_read(
+            &entry_contract_state,
+            function,
+            &call_entry_assumptions.transport_memory_load_condition_facts(),
+            budget,
+        )?
+    {
         return Ok(Err(CFunctionPath {
             outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
             facts,
@@ -1909,7 +1965,7 @@ fn prepare_verified_function_call<'a>(
     let mut mutable_ranges = Vec::new();
     let mut footprint_error = None;
     let footprint_timing = crate::instrumentation::OperationTiming::new(
-        function.name(),
+        application.name,
         "verified function rule application",
         "verified call mutable footprint lowering",
     );
@@ -1989,7 +2045,9 @@ fn prepare_verified_function_call<'a>(
     }
 
     Ok(Ok(PreparedVerifiedFunctionCall {
-        function,
+        name: application.name,
+        interface_name: application.interface_name,
+        evidence: application.evidence,
         interface: contract_interface,
         argument_values,
         entry_state,
@@ -2073,14 +2131,18 @@ pub(super) fn execute_c_function_contracts_paths(
     } else {
         None
     };
-    let functions = contracts
+    let applications = contracts
         .iter()
-        .map(|contract| contract.template())
+        .map(|contract| CFunctionContractApplication {
+            name: contract.callee_name(),
+            interface_name: contract.name(),
+            interface: contract.interface(),
+            evidence: None,
+        })
         .collect::<Vec<_>>();
-    execute_verified_function_templates(
+    execute_verified_function_applications(
         caller_state,
-        &functions,
-        Some(&contracts),
+        &applications,
         selected_index,
         selected_index.zip(resource_application.as_ref()),
         arguments,
@@ -2386,8 +2448,22 @@ fn contract_refinement_context_for_checked_interfaces(
     function: &CFunction,
     budget: &mut ExecutionBudget,
 ) -> Option<CFunctionContractRefinementContext> {
-    let mut argument_values = Vec::with_capacity(function.parameters().len());
-    for parameter in function.parameters() {
+    contract_refinement_context_for_interface(
+        contract,
+        function.name(),
+        function.contract_interface(),
+        budget,
+    )
+}
+
+pub(super) fn contract_refinement_context_for_interface(
+    contract: &CFunctionContract,
+    function_name: &str,
+    function_interface: &CFunctionContractInterface,
+    budget: &mut ExecutionBudget,
+) -> Option<CFunctionContractRefinementContext> {
+    let mut argument_values = Vec::with_capacity(function_interface.parameters().len());
+    for parameter in function_interface.parameters() {
         let variable = Variable(budget.next_kernel_variable);
         budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
         argument_values.push(symbolic_call_result(parameter.c_type(), variable));
@@ -2396,10 +2472,11 @@ fn contract_refinement_context_for_checked_interfaces(
     budget.next_kernel_variable = budget.next_kernel_variable.wrapping_add(1);
     Some(CFunctionContractRefinementContext {
         contract: contract.clone(),
-        function: function.clone(),
+        function_interface: function_interface.clone(),
+        function_name: function_name.to_string(),
         pointer: CPointerValue::new(
             Pointer {
-                block: PointerBlock::Function(function.name().to_string()),
+                block: PointerBlock::Function(function_name.to_string()),
                 offset: PointerOffsetTerm::Constant(0),
             },
             contract.function_pointer_type(),
@@ -2414,9 +2491,9 @@ fn contract_refinement_context_for_checked_interfaces(
 pub(super) fn function_contract_refinement_entry_state(
     context: &CFunctionContractRefinementContext,
 ) -> CState {
-    with_contract_argument_views(
+    with_contract_interface_argument_views(
         &CState::new(),
-        context.contract.template(),
+        &context.contract.interface,
         &context.argument_values,
     )
 }
@@ -2424,15 +2501,15 @@ pub(super) fn function_contract_refinement_entry_state(
 pub(super) fn prepare_contract_refinement_obligations(
     context: &CFunctionContractRefinementContext,
 ) -> Option<CFunctionContractRefinementObligations> {
-    let target = context.contract.template();
-    let source = &context.function;
+    let target = context.contract.interface();
+    let source = &context.function_interface;
     let mut budget = ExecutionBudget {
         next_kernel_variable: context.next_kernel_variable,
         ..ExecutionBudget::default()
     };
     let entry = function_contract_refinement_entry_state(context);
     let source_entry =
-        with_contract_argument_views(&CState::new(), source, &context.argument_values);
+        with_contract_interface_argument_views(&CState::new(), source, &context.argument_values);
     let mut assumptions = PureFactContext::new();
     if !assume_contract_propositions(
         &entry,
@@ -2448,9 +2525,14 @@ pub(super) fn prepare_contract_refinement_obligations(
     // A single conservative post memory covers every possible source write.
     // This does not enumerate guard combinations or assert that a guarded
     // write happened. Resource/effect containment is checked independently.
-    let ranges =
-        evaluate_contract_mutable_ranges(source, &source_entry, &assumptions, &mut budget, false)
-            .ok()??;
+    let ranges = evaluate_contract_mutable_ranges_for_interface(
+        source,
+        &source_entry,
+        &assumptions,
+        &mut budget,
+        false,
+    )
+    .ok()??;
     let memory = entry.memory().clone().with_call_memory_havoc(
         Variable(budget.next_kernel_variable),
         &ranges,
@@ -2461,8 +2543,8 @@ pub(super) fn prepare_contract_refinement_obligations(
     let mut post = entry.clone().with_memory(memory.clone());
     let mut source_post = source_entry.clone().with_memory(memory);
     if source.return_type() != CType::Void {
-        set_function_result(&mut post, target, result.clone());
-        set_function_result(&mut source_post, source, result);
+        set_contract_result(&mut post, target, result.clone());
+        set_contract_result(&mut source_post, source, result);
     }
     if !compatible_resource_and_effect_interfaces(
         target,
@@ -2488,13 +2570,13 @@ pub(super) fn prepare_contract_refinement_obligations(
             ))
     }
     fn lower(
-        function: &CFunction,
+        interface: &CFunctionContractInterface,
         specs: &[SpecProposition],
         state: &CState,
         entry: &CState,
         budget: &mut ExecutionBudget,
     ) -> Option<Proposition> {
-        let definitions = function
+        let definitions = interface
             .predicate_unfoldings()
             .iter()
             .map(|definition| (definition.body(), definition.predicate()))
@@ -2674,8 +2756,8 @@ fn index_declared_instances_by_family(
 /// applies to returned ownership: the identity survives, the field values do
 /// not, and only the implementation's guarantees relate the two.
 fn forced_refinement_instance_bindings(
-    contract: &CFunctionContract,
-    function: &CFunction,
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     contract_entry: &CState,
     function_entry: &CState,
     assumptions: &PureFactContext,
@@ -2823,9 +2905,8 @@ fn function_refines_named_contract_in_case(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<bool> {
     let contract = &context.contract;
-    let function = &context.function;
+    let function_interface = &context.function_interface;
     let contract_interface = contract.interface();
-    let function_interface = function.contract_interface();
     if !predicate_interfaces_are_explicitly_compatible(
         contract_interface,
         function_interface,
@@ -2866,8 +2947,8 @@ fn function_refines_named_contract_in_case(
     // views above already bind, so the pairing is decided before either
     // contract's own requirements are assumed.
     let Some(instances) = forced_refinement_instance_bindings(
-        contract,
-        function,
+        contract_interface,
+        function_interface,
         &contract_frame,
         &function_frame,
         &PureFactContext::new(),
@@ -2972,8 +3053,8 @@ fn function_refines_named_contract_in_case(
         set_contract_result(&mut function_post, function_interface, result);
     }
     if !compatible_resource_and_effect_interfaces(
-        contract.template(),
-        function,
+        contract_interface,
+        function_interface,
         &contract_entry,
         &function_entry,
         &contract_post,
@@ -3207,8 +3288,8 @@ fn evaluate_contract_mutable_range(
 }
 
 fn compatible_resource_and_effect_interfaces(
-    contract: &CFunction,
-    function: &CFunction,
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     contract_entry: &CState,
     function_entry: &CState,
     contract_post: &CState,
@@ -3228,7 +3309,7 @@ fn compatible_resource_and_effect_interfaces(
     )? {
         return Ok(false);
     }
-    mutable_footprint_is_compatible(
+    mutable_footprint_is_compatible_for_interfaces(
         contract,
         function,
         contract_entry,
@@ -3240,8 +3321,8 @@ fn compatible_resource_and_effect_interfaces(
 
 #[allow(clippy::too_many_arguments)]
 fn resource_transition_is_compatible(
-    contract: &CFunction,
-    function: &CFunction,
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     contract_entry: &CState,
     function_entry: &CState,
     contract_post: &CState,
@@ -3275,8 +3356,8 @@ fn resource_transition_is_compatible(
 
 #[allow(clippy::too_many_arguments)]
 fn exact_resource_interfaces_match(
-    contract: &CFunction,
-    function: &CFunction,
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     contract_entry: &CState,
     function_entry: &CState,
     contract_post: &CState,
@@ -3406,8 +3487,8 @@ fn evaluate_refinement_resource_context(
 /// functions, composite definitions, or unrelated proof state are inspected.
 #[allow(clippy::too_many_arguments)]
 fn framed_resource_transition_refines(
-    contract: &CFunction,
-    function: &CFunction,
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     contract_entry: &CState,
     function_entry: &CState,
     contract_post: &CState,
@@ -3517,9 +3598,9 @@ fn framed_resource_transition_refines(
 /// covering segment at every reached site. So this is a discharge, and a
 /// finite disjunction over the declared segments would spell a choice that
 /// nothing consumes.
-fn mutable_footprint_is_compatible(
-    contract: &CFunction,
-    function: &CFunction,
+fn mutable_footprint_is_compatible_for_interfaces(
+    contract: &CFunctionContractInterface,
+    function: &CFunctionContractInterface,
     contract_entry: &CState,
     function_entry: &CState,
     assumptions: &PureFactContext,
@@ -3529,13 +3610,21 @@ fn mutable_footprint_is_compatible(
         return Ok(true);
     }
     let mut guard_assumptions = assumptions.clone();
-    let Some(contract_guards) =
-        lower_refinement_mutable_guards(contract, contract_entry, &mut guard_assumptions, budget)?
+    let Some(contract_guards) = lower_refinement_mutable_guards_for_interface(
+        contract,
+        contract_entry,
+        &mut guard_assumptions,
+        budget,
+    )?
     else {
         return Ok(false);
     };
-    let Some(function_guards) =
-        lower_refinement_mutable_guards(function, function_entry, &mut guard_assumptions, budget)?
+    let Some(function_guards) = lower_refinement_mutable_guards_for_interface(
+        function,
+        function_entry,
+        &mut guard_assumptions,
+        budget,
+    )?
     else {
         return Ok(false);
     };
@@ -3600,24 +3689,20 @@ fn mutable_footprint_is_compatible(
     Ok(true)
 }
 
-/// Lowers each load-free entry guard once. Facts produced while evaluating a
-/// guard are unconditional after its obligations have been proved, so later
-/// guards and range expressions may reuse them without searching unrelated
-/// functions or proof state.
-///
-/// The obligation check below is route-restricted with the rest of package
-/// 10(b) but has no reaching fixture. A mutable-segment guard is the guard of
-/// a resource body, and a resource condition must be load-free, so the
-/// lowered guard path carries no obligation to discharge.
-fn lower_refinement_mutable_guards(
+#[cfg(test)]
+fn mutable_footprint_is_compatible(
+    contract: &CFunction,
     function: &CFunction,
-    entry: &CState,
-    assumptions: &mut PureFactContext,
+    contract_entry: &CState,
+    function_entry: &CState,
+    assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Option<Vec<Option<Proposition>>>> {
-    lower_refinement_mutable_guards_for_interface(
+) -> ExecutionResult<bool> {
+    mutable_footprint_is_compatible_for_interfaces(
+        contract.contract_interface(),
         function.contract_interface(),
-        entry,
+        contract_entry,
+        function_entry,
         assumptions,
         budget,
     )
@@ -5936,13 +6021,13 @@ fn apply_verified_heap_allocation_delta(
     input_resources: &ResourceContext,
     preserved_caller_resources: &ResourceContext,
     output_resources: &ResourceContext,
-    function: &CFunction,
+    interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
 ) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError> {
     let mut effects = Vec::new();
     let input = expand_all_composite_resource_facts(
         input_resources,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         &memory,
         assumptions,
     )
@@ -5953,7 +6038,7 @@ fn apply_verified_heap_allocation_delta(
     })?;
     let output = expand_all_composite_resource_facts(
         output_resources,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         &memory,
         assumptions,
     )
@@ -5968,7 +6053,7 @@ fn apply_verified_heap_allocation_delta(
     // allocation is freed.
     let preserved = expand_all_composite_resource_facts(
         preserved_caller_resources,
-        function.composite_resource_definitions(),
+        interface.composite_resource_definitions(),
         &memory,
         assumptions,
     )
@@ -6003,7 +6088,7 @@ fn apply_verified_heap_allocation_delta(
             || expose_composite_resource_fact(
                 &output,
                 fact,
-                function.composite_resource_definitions(),
+                interface.composite_resource_definitions(),
                 &memory,
                 &allocation_assumptions,
             )
@@ -6482,7 +6567,15 @@ fn type_function_address_value(
 }
 
 fn argument_binding_error(function: &CFunction, values: &[CValue]) -> String {
-    if function
+    contract_argument_binding_error(function.contract_interface(), function.name(), values)
+}
+
+fn contract_argument_binding_error(
+    interface: &CFunctionContractInterface,
+    name: &str,
+    values: &[CValue],
+) -> String {
+    if interface
         .parameters()
         .iter()
         .zip(values)
@@ -6497,10 +6590,10 @@ fn argument_binding_error(function: &CFunction, values: &[CValue]) -> String {
     {
         format!(
             "incompatible signature for function pointer argument to {}",
-            function.name()
+            name
         )
     } else {
-        format!("could not bind arguments for {}", function.name())
+        format!("could not bind arguments for {name}")
     }
 }
 
@@ -6896,6 +6989,73 @@ pub(super) fn bind_c_function_arguments(
                 parameter.pointee_is_constant(),
             );
         }
+    }
+    Some(callee_state)
+}
+
+/// Binds only the locals needed to instantiate a body-independent contract
+/// interface. This intentionally does not inspect a statement body, collect
+/// address-taken locals, initialize globals, or allocate static storage. It is
+/// the binding path for named callbacks and external assumptions, whose
+/// applications have no concrete body evidence.
+fn bind_c_contract_arguments(
+    caller_state: &CState,
+    interface: &CFunctionContractInterface,
+    values: &[CValue],
+) -> Option<CState> {
+    if values.len() != interface.parameters().len() {
+        return None;
+    }
+    let frame = caller_state.next_local_frame();
+    let has_aggregate_parameters = interface
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.aggregate_layout().is_some());
+    let mut callee_state = CState::new()
+        .with_memory(caller_state.memory.clone())
+        .with_resource_context(caller_state.resources.clone())
+        .with_next_local_frame(if has_aggregate_parameters {
+            frame.saturating_add(1)
+        } else {
+            frame
+        })
+        .with_next_local_lifetime(caller_state.next_local_lifetime());
+    callee_state.counted_populations = caller_state.counted_populations.clone();
+    for (parameter, value) in interface.parameters().iter().zip(values) {
+        if let Some(layout) = parameter.aggregate_layout() {
+            let CValue::Pointer(pointer) = value else {
+                return None;
+            };
+            if pointer.is_null() {
+                return None;
+            }
+            let source = pointer.pointer().clone();
+            let slot = CMemory::frame_local_pointer(frame, parameter.name());
+            register_block_alignment(&slot.block, layout.alignment_bytes());
+            callee_state.memory =
+                copy_aggregate_fields(callee_state.memory, &source, &slot, layout);
+            callee_state.memory = callee_state
+                .memory
+                .with_block(slot.block.clone(), layout.size_bytes());
+            callee_state.locals.set_aggregate_object_at(
+                parameter.name().to_string(),
+                layout.clone(),
+                slot,
+            );
+            continue;
+        }
+        let value = coerce_c_function_argument_without_obligations(value, parameter)?
+            .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
+            .with_pointer_pointee_constant(parameter.pointee_is_constant());
+        callee_state.locals.set_typed_with_all_qualifiers(
+            parameter.name().to_string(),
+            value,
+            parameter.c_type(),
+            parameter.is_volatile(),
+            parameter.pointee_is_volatile(),
+            parameter.is_constant(),
+            parameter.pointee_is_constant(),
+        );
     }
     Some(callee_state)
 }
@@ -8913,7 +9073,7 @@ fn apply_counted_population_transitions(
     apply_counted_population_transitions_with_interface(
         caller_state,
         post_state,
-        function,
+        Some(function),
         function.contract_interface(),
         argument_values,
         assumptions,
@@ -8926,7 +9086,7 @@ fn apply_counted_population_transitions(
 fn apply_counted_population_transitions_with_interface(
     caller_state: &CState,
     post_state: &mut CState,
-    function: &CFunction,
+    evidence: Option<&CFunction>,
     interface: &CFunctionContractInterface,
     argument_values: &[CValue],
     assumptions: &PureFactContext,
@@ -8934,7 +9094,9 @@ fn apply_counted_population_transitions_with_interface(
     track_ordinary_populations: bool,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
-    let Some(mut entry_state) = bind_c_function_arguments(caller_state, function, argument_values)
+    let Some(mut entry_state) = evidence
+        .map(|function| bind_c_function_arguments(caller_state, function, argument_values))
+        .unwrap_or_else(|| bind_c_contract_arguments(caller_state, interface, argument_values))
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };
@@ -8991,7 +9153,7 @@ fn apply_counted_population_transitions_with_interface(
     let mut transition = CCountedPopulationTransition::default();
     let mut transition_guaranteed_facts = Vec::new();
     for (name, arguments) in keys {
-        let declared_population_definition = function
+        let declared_population_definition = interface
             .composite_resource_definitions()
             .iter()
             .find(|definition| definition.name() == name);
