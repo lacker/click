@@ -202,6 +202,11 @@ declare `owns name: resource(args);`. Semantics mirror a callee contract:
 - A loop name may reuse an enclosing binder name; that is a rebinding.
   `old(name.field)` keeps its meaning, the function-entry instance of the
   function-level binder. No loop-entry snapshot in the first slice.
+  Landed behavior (A3): a loop binder takes the unique owned instance of its
+  family with provably equal arguments and renames it, so a fresh name
+  consumes the enclosing name for the rest of the function and cannot appear
+  in `ensures`; reuse the enclosing name. The head gives the binder fresh
+  fields, so its model at the head is exactly what the invariants state.
 
 **D6. Structural loop measure is `decreases name;` with no keyword.**
 Functions and resources share one namespace (declaring both is rejected), so
@@ -310,8 +315,18 @@ extend `structural_resource_children` so a matched body's named arm children
 are structural children (gap 7), for the existing function-level rule and
 the new loop back-edge rule alike; loop back-edge ancestry check reusing the
 function-level checker; migrate the `decreases resource` spelling in fixtures
-and docs. First regression: the scaffold's recursive `tree_contains` with
-`decreases t;` on its `owns t: tree_at(root)` binder. Regressions: the
+and docs. Also finish D5's argument rule, which A3 left at the existing
+loop-resource convention: loop-binder arguments are evaluated once at loop
+entry, so `owns sub: tree_at(root);` over a body that assigns `root =
+root->left` fails the back-edge comparison. The head must build its declared
+instance at the havocked arguments and the back edge must re-evaluate them
+in the current state (`loop_body_resource_context` and
+`rebind_loop_binder_instances` in `src/kernel/loops.rs`). First
+regressions: the scaffold's recursive `tree_contains` with `decreases t;`
+on its `owns t: tree_at(root)` binder, and a descending loop whose binder
+argument is the reassigned cursor. Also restore `return node->value;` in
+`mdtests/loop_owns_modeled_instance.md`, which A3 changed to `return i;`
+because arm selection at a loop head was not yet available. Regressions: the
 three loop shapes from
 [structural-loop-termination.md](structural-loop-termination.md) on the
 scaffold (descend to leftmost, ascend through a context, rotate then
