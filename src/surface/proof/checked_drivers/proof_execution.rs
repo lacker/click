@@ -291,6 +291,25 @@ fn checked_execution_region_contains_source(node: &InternalProofNode, source_ind
     checked_execution_region_contains_source_at(node, source_index, 0)
 }
 
+/// Records that a dropped execution region held the selected source tactic.
+/// The work is bounded by the region the driver just skipped: it walks only
+/// that arm, and only while a tactic is actually selected for this site.
+fn note_dropped_execution_region(
+    expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    region: &InternalProofNode,
+) {
+    let Some(site) = proof_site else {
+        return;
+    };
+    let Some(wanted) = selected_tactic_index_for_site(expansion_capture.as_deref(), site) else {
+        return;
+    };
+    if checked_execution_region_contains_source(region, wanted) {
+        note_dropped_path_tactic_occurrence(expansion_capture);
+    }
+}
+
 fn checked_execution_region_contains_source_at(
     node: &InternalProofNode,
     source_index: usize,
@@ -2343,6 +2362,12 @@ fn advance_checked_branch_arms<'a>(
     let mut advanced = split;
     for (take_then, region) in [(true, then_branch), (false, else_branch)] {
         if record.arm_id(take_then).is_none() {
+            // The kernel proved this C path infeasible, so the arm's tactics
+            // never run. A selected smart tactic written there contributes no
+            // checked operation to any retained certificate; tell expansion
+            // so it answers with the empty rewrite instead of reporting the
+            // occurrence as missing.
+            note_dropped_execution_region(expansion_capture.as_deref_mut(), proof_site, region);
             continue;
         }
         let Some(next) = advance_focused_execution_region(

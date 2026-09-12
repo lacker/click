@@ -184,6 +184,25 @@ enough to become the first regression of the package that fixes them.
     different mode from gap 11, for example `could not lower 'have'
     proposition: the kernel lowering produced 0 paths`; confirmed
     pre-existing on an unmodified base. Package T3.
+15. **Wide proof matches are superlinear.** Found by package A8: a debug
+    `click verify` on an N-arm execution match with identical arms takes
+    0.08 s at 4 arms, 0.49 s at 16, and 6.6 s at 32, about thirteen times
+    per doubling; `click profile` puts most of it in the frontier split and
+    join bookkeeping (deep clones of proof and contract expressions), not
+    in tactics or certification, and nested `branch` joins scale the same
+    way. The rbtree's three-arm matches are unaffected. This violates the
+    complexity contract in `docs/internals/verification-efficiency.md`.
+    Package T4.
+16. **A fold inside a proof-match arm loses facts about owned, unwritten
+    cells after a sibling write.** Found by package A8, pre-existing: in a
+    two-constructor match whose arm owns `parent->__rb_parent_color` and
+    `parent->rb_left` and states `fact parent->__rb_parent_color == 1`,
+    executing a write to `parent->rb_left` and then folding fails with
+    `fold requires the instance body facts for the proposed fields`; the
+    identical proof with `requires c.model == Context::Left(...)` instead
+    of the match arm passes. Every rbtree fixup step writes one link and
+    refolds a frame whose other facts are unchanged, so this blocks C3 and
+    C5. Package A10.
 
 ## Design decisions
 
@@ -380,7 +399,11 @@ appears to need one reports the need instead of adding it.
   binder arguments, arm views at loop heads, 2ab5dba3) is on master with a
   confirming full gate; its positive loop fixtures wait on A9. T1 (audit on
   an infeasible `branch` arm, fixed by expanding the dropped arm's tactic by
-  removal) is gating; T3 dispatched for gap 14.
+  removal, 531b5651) is on master; the scaffold audits 26 of 26 sites. T3
+  dispatched for gap 14; T2 is gating.
+- 2026-09-12: A8 (proof `match` of any width, with excluded arms grouped
+  correctly) is green and gating; it found gaps 15 and 16. A9 dispatches
+  when A8 lands; A10 alongside it.
 
 ## Work packages
 
@@ -528,6 +551,22 @@ recursive definitions consistently (A4 bypassed it in
 `structural_resource_children` only). No new syntax. Depends on A4 and
 A8; B1 and C3 depend on it.
 
+**A10. Keep an arm's unwritten-cell facts across a sibling write.**
+Scope: reduce gap 16, find why the arm's body facts about cells the
+execution did not write are not carried to the post-write fold when the arm
+was introduced by a proof `match` rather than a contract requirement, and
+fix it in the match-arm path (likely where the arm's facts are recorded as
+path premises versus contract assumptions). Regressions: the reduction as a
+positive; the same with the fact genuinely invalidated by the write as a
+negative. Depends on A8; C3 and C5 depend on it.
+
+**T4. Make wide execution joins linear.**
+Scope: profile the frontier split and join path on the N-arm match and
+nested `branch` fixtures from gap 15, remove the deep clones or make them
+share structure, and add a deterministic scaling regression over several
+widths per `docs/internals/verification-efficiency.md`. Not on the rbtree
+critical path; schedule after the Phase A packages.
+
 ### Phase B: models on the fixed scaffold
 
 **B1. Context resource, `plug`, and the iterative walks (D3).**
@@ -580,7 +619,7 @@ Scope: the fixup loop contracted over `ctx_at(node, root)` and
 `rb_at(node, parent)` with entry model almost-red-black at `node` and exit
 model red-black with `inorder(plug(...))` unchanged; `decreases ctx;`.
 Regressions: the verbatim function; a negative that skips a recolor. Depends
-on A4, A8, A9, B1, C1, C2.
+on A4, A8, A9, A10, B1, C1, C2.
 
 **C4. Traversal and replacement.**
 Scope: `rb_first`, `rb_last`, `rb_next`, `rb_prev`, `rb_replace_node`, with

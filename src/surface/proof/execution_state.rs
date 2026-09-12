@@ -168,6 +168,7 @@ pub(in crate::surface) fn capture_c0_tactic_expansion(
     let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
     let verification =
         verify_c0_sources_with_expansion_capture(click_source, c_sources, &mut capture);
+    let dropped_path_occurrence = capture.dropped_path_occurrence;
     if let Some(result) = capture.result {
         return result.map_err(ClickError::new);
     }
@@ -186,6 +187,7 @@ pub(in crate::surface) fn capture_c0_tactic_expansion(
                 None => Err(error),
             }
         }
+        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
         Ok(_) => Err(ClickError::new(format!(
             "selected {} proof has no source tactic {source_index}",
             site.description()
@@ -203,11 +205,13 @@ pub(in crate::surface) fn capture_c0_prepared_tactic_expansion(
     let sources = CSourceContext::prepared(imports);
     let verification =
         verify_c0_sources_with_expansion_capture_context(click_source, &sources, &mut capture);
+    let dropped_path_occurrence = capture.dropped_path_occurrence;
     if let Some(result) = capture.result {
         return result.map_err(ClickError::new);
     }
     match verification {
         Err(error) => Err(error),
+        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
         Ok(_) => Err(ClickError::new(format!(
             "selected {} proof has no source tactic {source_index}",
             site.description()
@@ -304,6 +308,22 @@ pub(super) fn record_proof_site_tactic_expansion(
             ));
         }
         Some(Err(_)) => {}
+    }
+}
+
+/// Notes that the selected source tactic occurrence sits inside a checked
+/// execution region the kernel proved infeasible, so the driver drops the
+/// region without running it.
+///
+/// This is only a fallback answer. Verification continues, and an occurrence
+/// that also runs on a feasible path records its real expansion into
+/// `result`, which wins. Without the note, expansion could not tell a tactic
+/// that legitimately performed no checked work on any retained path from a
+/// capture the lowering lost, so it reported both as a missing source tactic
+/// while `click verify` accepted the proof.
+pub(super) fn note_dropped_path_tactic_occurrence(capture: Option<&mut ExpansionCapture>) {
+    if let Some(capture) = capture {
+        capture.dropped_path_occurrence = true;
     }
 }
 

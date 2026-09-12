@@ -1109,6 +1109,11 @@ pub(super) struct ExpansionCapture {
     /// First completed capture wins; site-certificate recorders additionally
     /// require agreement across proof obligations.
     pub(super) result: Option<Result<Vec<ProofTactic>, String>>,
+    /// The selected occurrence was found inside a C branch arm the kernel
+    /// proved infeasible, so checked execution dropped that arm without
+    /// running the tactic. This is the fallback answer only: an occurrence
+    /// that also runs on a feasible path fills in `result` and that wins.
+    pub(super) dropped_path_occurrence: bool,
 }
 
 impl ExpansionCapture {
@@ -1118,6 +1123,7 @@ impl ExpansionCapture {
             source_index: Some(source_index),
             active: false,
             result: None,
+            dropped_path_occurrence: false,
         }
     }
 
@@ -1127,6 +1133,7 @@ impl ExpansionCapture {
             source_index: None,
             active: false,
             result: None,
+            dropped_path_occurrence: false,
         }
     }
 }

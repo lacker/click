@@ -59,7 +59,10 @@ option is an error.
 
 Without an output option, the command writes the complete rewritten source to
 standard output. An empty expansion deletes the selected tactic because the
-smart success contributed no surface-expressible steps.
+smart success contributed no surface-expressible steps. A tactic written inside
+a `branch` arm whose C path verification proved infeasible expands the same
+way: the arm never runs, so the rewrite removes the tactic rather than
+reporting a missing source occurrence.
 
 The command exits with status 1 and writes no requested artifact when
 selection, expansion extraction, rewritten proof verification, the
