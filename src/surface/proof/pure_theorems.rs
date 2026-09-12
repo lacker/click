@@ -2264,7 +2264,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
         | ProofStep::Normalize
         | ProofStep::NormalizeUsing(_)
         | ProofStep::ArithmeticUsing(_)
-        | ProofStep::IntegerCertificate(_)
+        | ProofStep::ArithmeticCertificate(_)
         | ProofStep::Intro
         | ProofStep::Witness(_)
         | ProofStep::Choose(_)
@@ -2364,7 +2364,7 @@ fn check_pure_script_with_proof(
                 tactic,
                 ProofTactic::ArithmeticUsing(_)
                     | ProofTactic::NormalizeUsing(_)
-                    | ProofTactic::IntegerCertificate(_)
+                    | ProofTactic::ArithmeticCertificate(_)
                     | ProofTactic::Witness(_)
                     | ProofTactic::Choose(_)
             )

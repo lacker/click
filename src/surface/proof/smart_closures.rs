@@ -524,7 +524,9 @@ impl<'a> Proof<'a> {
                 }],
                 conclusion: 0,
             };
-            if let Ok(proof) = self.apply_step(ProofStep::IntegerCertificate(certificate)) {
+            if let Ok(proof) = self.apply_step(ProofStep::ArithmeticCertificate(
+                ArithmeticCertificate::integer(certificate),
+            )) {
                 return Ok(Some(proof));
             }
         }
@@ -580,7 +582,9 @@ impl<'a> Proof<'a> {
             )
             && let Some(certificate) =
                 integer_plan_to_surface_certificate(&plan, &anchored_pairs, surface_goal)
-            && let Ok(proof) = self.apply_step(ProofStep::IntegerCertificate(certificate))
+            && let Ok(proof) = self.apply_step(ProofStep::ArithmeticCertificate(
+                ArithmeticCertificate::integer(certificate),
+            ))
         {
             return Ok(Some(proof));
         }
@@ -3426,7 +3430,9 @@ impl<'a> Proof<'a> {
             && let Some(plan) = plan_integer_affine_certificate(goal, &restricted)
             && let Some(certificate) =
                 integer_plan_to_surface_certificate(&plan, &premise_pairs, surface_goal)
-            && let Ok(closed) = proof.apply_step(ProofStep::IntegerCertificate(certificate))
+            && let Ok(closed) = proof.apply_step(ProofStep::ArithmeticCertificate(
+                ArithmeticCertificate::integer(certificate),
+            ))
             && closed.is_complete()
         {
             return Some(closed);

@@ -59,8 +59,8 @@ impl<'a> Proof<'a> {
             ProofStep::Normalize => Some(self.apply_normalize()),
             ProofStep::NormalizeUsing(premises) => Some(self.apply_normalize_using(premises)),
             ProofStep::ArithmeticUsing(premises) => Some(self.apply_arithmetic_using(premises)),
-            ProofStep::IntegerCertificate(certificate) => {
-                Some(self.apply_integer_certificate(certificate))
+            ProofStep::ArithmeticCertificate(certificate) => {
+                Some(self.apply_arithmetic_certificate(certificate))
             }
             ProofStep::Intro => Some(self.apply_intro()),
             ProofStep::Split => Some(self.apply_split()),
@@ -309,7 +309,18 @@ impl<'a> Proof<'a> {
             })
     }
 
-    pub(super) fn apply_integer_certificate(
+    pub(super) fn apply_arithmetic_certificate(
+        &self,
+        certificate: &ArithmeticCertificate,
+    ) -> Result<KernelProofHandle, ClickError> {
+        match &certificate.family {
+            ArithmeticCertificateFamily::Integer(certificate) => {
+                self.apply_integer_certificate(certificate)
+            }
+        }
+    }
+
+    fn apply_integer_certificate(
         &self,
         certificate: &IntegerCertificate,
     ) -> Result<KernelProofHandle, ClickError> {

@@ -150,12 +150,12 @@ fn integer_source_certificates_reject_missing_facts_and_tampered_nodes() {
         ),
     ] {
         let source = format!(
-            "theorem tamper(x: Integer, y: Integer) {{ {requires} ensures {claim} by {{ integer_certificate {{ {nodes} conclusion {conclusion}; }} }} }}"
+            "theorem tamper(x: Integer, y: Integer) {{ {requires} ensures {claim} by {{ arithmetic_certificate {{ {nodes} conclusion {conclusion}; }} }} }}"
         );
         let error = verify_click_theorems(&source).expect_err("tampered evidence must fail");
         assert!(error.message().contains(diagnostic), "{}", error.message());
     }
-    verify_click_theorems("theorem zero_premises() { ensures 0 == 0 by { integer_certificate { trivial => 0 == 0; conclusion 0; } } }").unwrap();
+    verify_click_theorems("theorem zero_premises() { ensures 0 == 0 by { arithmetic_certificate { trivial => 0 == 0; conclusion 0; } } }").unwrap();
 }
 
 #[test]
@@ -827,7 +827,9 @@ fn arithmetic_certificate_is_canonical_with_integer_alias_compatibility() {
         };
         assert!(matches!(
             tactics.as_slice(),
-            [ProofTactic::IntegerCertificate(_)]
+            [ProofTactic::ArithmeticCertificate(ArithmeticCertificate {
+                family: ArithmeticCertificateFamily::Integer(_),
+            })]
         ));
         let printed = super::printing::format_partial_tactic_sequence(tactics);
         assert!(printed.contains("arithmetic_certificate {"), "{printed}");

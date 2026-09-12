@@ -4630,10 +4630,9 @@ impl Parser {
         if nodes.is_empty() {
             return Err(self.error("integer certificate must contain a node"));
         }
-        Ok(ProofTactic::IntegerCertificate(IntegerCertificate {
-            nodes,
-            conclusion,
-        }))
+        Ok(ProofTactic::ArithmeticCertificate(
+            ArithmeticCertificate::integer(IntegerCertificate { nodes, conclusion }),
+        ))
     }
 
     fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {

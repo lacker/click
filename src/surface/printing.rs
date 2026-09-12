@@ -528,7 +528,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::SimpUsing(simp) => {
             write_using_premises(output, "simp()", &simp.premises, indent)
         }
-        ProofTactic::IntegerCertificate(certificate) => {
+        ProofTactic::ArithmeticCertificate(certificate) => {
             write_arithmetic_certificate(output, certificate, indent)
         }
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
@@ -594,9 +594,10 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
 
 fn write_arithmetic_certificate(
     output: &mut String,
-    certificate: &IntegerCertificate,
+    certificate: &ArithmeticCertificate,
     indent: usize,
 ) {
+    let ArithmeticCertificateFamily::Integer(certificate) = &certificate.family;
     let prefix = "    ".repeat(indent);
     line(output, &prefix, "arithmetic_certificate {");
     let body = "    ".repeat(indent + 1);

@@ -2508,7 +2508,7 @@ pub enum ProofTactic {
     },
     Simp,
     SimpUsing(ProofSimpUsing),
-    IntegerCertificate(IntegerCertificate),
+    ArithmeticCertificate(ArithmeticCertificate),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2900,7 +2900,7 @@ pub enum ProofStep {
     Normalize,
     NormalizeUsing(Vec<ClickProposition>),
     ArithmeticUsing(Vec<ClickProposition>),
-    IntegerCertificate(IntegerCertificate),
+    ArithmeticCertificate(ArithmeticCertificate),
     Intro,
     Split,
     Left,
@@ -3154,8 +3154,8 @@ impl ProofStep {
             ProofTactic::Normalize => Self::Normalize,
             ProofTactic::NormalizeUsing(premises) => Self::NormalizeUsing(premises.clone()),
             ProofTactic::ArithmeticUsing(premises) => Self::ArithmeticUsing(premises.clone()),
-            ProofTactic::IntegerCertificate(certificate) => {
-                Self::IntegerCertificate(certificate.clone())
+            ProofTactic::ArithmeticCertificate(certificate) => {
+                Self::ArithmeticCertificate(certificate.clone())
             }
             ProofTactic::Intro => Self::Intro,
             ProofTactic::Split => Self::Split,
@@ -3356,8 +3356,8 @@ impl ProofStep {
             Self::Normalize => ProofTactic::Normalize,
             Self::NormalizeUsing(premises) => ProofTactic::NormalizeUsing(premises.clone()),
             Self::ArithmeticUsing(premises) => ProofTactic::ArithmeticUsing(premises.clone()),
-            Self::IntegerCertificate(certificate) => {
-                ProofTactic::IntegerCertificate(certificate.clone())
+            Self::ArithmeticCertificate(certificate) => {
+                ProofTactic::ArithmeticCertificate(certificate.clone())
             }
             Self::Intro => ProofTactic::Intro,
             Self::Split => ProofTactic::Split,
@@ -3483,7 +3483,7 @@ fn certificate_step_class(step: &ProofStep) -> TacticClass {
         ProofStep::Normalize | ProofStep::NormalizeUsing(_) => {
             TacticClass::Simple(SimpleTactic::Normalize)
         }
-        ProofStep::ArithmeticUsing(_) | ProofStep::IntegerCertificate(_) => {
+        ProofStep::ArithmeticUsing(_) | ProofStep::ArithmeticCertificate(_) => {
             TacticClass::Simple(SimpleTactic::Arithmetic)
         }
         ProofStep::Intro => TacticClass::Simple(SimpleTactic::Intro),
@@ -3765,7 +3765,7 @@ impl ProofTactic {
                 TacticClass::Simple(SimpleTactic::Normalize)
             }
             Self::ArithmeticUsing(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
-            Self::IntegerCertificate(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
+            Self::ArithmeticCertificate(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
             Self::Split => TacticClass::Simple(SimpleTactic::Split),
             Self::Left => TacticClass::Simple(SimpleTactic::Left),
@@ -3878,8 +3878,29 @@ pub struct ProofSimpUsing {
     premises: Vec<ClickProposition>,
 }
 
-/// A source printable Integer arithmetic certificate. Every node carries its
-/// source proposition for exact lowering and its claimed normalized result.
+/// The public arithmetic-certificate envelope. The family tag is explicit in
+/// the in-memory proof object even while the source form remains compact; a
+/// future family can be added without another top-level proof tactic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArithmeticCertificate {
+    pub family: ArithmeticCertificateFamily,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ArithmeticCertificateFamily {
+    Integer(IntegerCertificate),
+}
+
+impl ArithmeticCertificate {
+    pub fn integer(certificate: IntegerCertificate) -> Self {
+        Self {
+            family: ArithmeticCertificateFamily::Integer(certificate),
+        }
+    }
+}
+
+/// The mathematical Integer rule family. Every node carries its source
+/// proposition for exact lowering and its claimed normalized result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IntegerCertificate {
     pub nodes: Vec<IntegerCertificateNode>,

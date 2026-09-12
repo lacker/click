@@ -1803,7 +1803,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Extract(_)
             | ProofTactic::Normalize
             | ProofTactic::NormalizeUsing(_)
-            | ProofTactic::IntegerCertificate(_)
+            | ProofTactic::ArithmeticCertificate(_)
             | ProofTactic::ArithmeticUsing(_)
             | ProofTactic::Intro
             | ProofTactic::Split
@@ -1921,7 +1921,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::InstantiateUsing { .. } => "instantiate",
         ProofTactic::Simp => "simp",
         ProofTactic::SimpUsing(_) => "simp",
-        ProofTactic::IntegerCertificate(_) => "arithmetic_certificate",
+        ProofTactic::ArithmeticCertificate(_) => "arithmetic_certificate",
     }
 }
 
