@@ -384,14 +384,51 @@ impl ResourceContext {
                     .into_iter()
                     .flat_map(ResourceEntryIds::iter)
                 {
+                    let support = context
+                        .storage
+                        .support_occurrence_by_projection
+                        .get(entry)
+                        .copied();
                     *counts
-                        .entry(context.storage.supported_by.get(entry).cloned())
+                        .entry((support, context.storage.supported_by.get(entry).cloned()))
                         .or_insert(0usize) += 1;
                 }
                 counts
             };
+            let cached_expansions = |context: &Self| {
+                context
+                    .storage
+                    .index
+                    .exact
+                    .get(&fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .filter_map(|entry| {
+                        let occurrence = context.occurrence(*entry);
+                        let cache_key = if context
+                            .storage
+                            .projections_by_support_occurrence
+                            .get(&occurrence)
+                            .is_some()
+                        {
+                            occurrence
+                        } else {
+                            let (_, rank) = context.support_cache_key(*entry);
+                            ResourceOccurrenceId {
+                                arena: 0,
+                                ordinal: rank as u64,
+                            }
+                        };
+                        context
+                            .storage
+                            .expansions_by_support_occurrence
+                            .get(&occurrence)
+                            .map(|expansion| (cache_key, expansion.clone()))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
             if representations(self) != representations(other)
-                || self.cached_expansion_for_fact(&fact) != other.cached_expansion_for_fact(&fact)
+                || cached_expansions(self) != cached_expansions(other)
             {
                 return false;
             }
@@ -413,7 +450,7 @@ impl ResourceContext {
         let mut changed = left.changed_facts_since(ancestor)?;
         changed.extend(right.changed_facts_since(ancestor)?);
         let representations = |context: &Self, fact: &CResourceFact| {
-            let mut explicit = 0;
+            let mut explicit = 0usize;
             let mut supported = BTreeMap::<(CResourceFact, ResourceOccurrenceId), usize>::new();
             for entry in context
                 .storage
@@ -453,42 +490,65 @@ impl ResourceContext {
                         .map(|right_count| (support, left_count.min(*right_count)))
                 })
                 .collect::<Vec<_>>();
-            let expansion = left
-                .cached_expansion_with_occurrence_for_fact(fact)
-                .filter(|left_expansion| {
-                    right.cached_expansion_with_occurrence_for_fact(fact) == Some(*left_expansion)
-                })
-                .map(|(occurrence, expansion)| (occurrence, expansion.as_ref().clone()));
-            common_representations.push((
-                fact.clone(),
-                left_explicit.min(right_explicit),
-                supported,
-                expansion,
-            ));
-        }
-
-        let mut common = left.clone();
-        let exact_count = |context: &Self, fact: &CResourceFact| {
-            context
+            let shared_owned = if fact.is_own() {
+                let left_occurrences = left
+                    .storage
+                    .index
+                    .exact
+                    .get(fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .map(|entry| left.occurrence(*entry))
+                    .collect::<BTreeSet<_>>();
+                right
+                    .storage
+                    .index
+                    .exact
+                    .get(fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .map(|entry| right.occurrence(*entry))
+                    .filter(|occurrence| left_occurrences.contains(occurrence))
+                    .collect::<BTreeSet<_>>()
+            } else {
+                BTreeSet::new()
+            };
+            let common_expansions = left
                 .storage
                 .index
                 .exact
                 .get(fact)
-                .map_or(0, ResourceEntryIds::len)
-        };
-        let preserved_owned = common_representations
-            .iter()
-            .filter_map(|(fact, _, _, _)| {
-                (fact.is_own()
-                    && exact_count(ancestor, fact) == exact_count(left, fact)
-                    && exact_count(left, fact) == exact_count(right, fact))
-                .then_some(fact.clone())
-            })
-            .collect::<BTreeSet<_>>();
-        for fact in &changed {
-            if preserved_owned.contains(fact) {
-                continue;
-            }
+                .into_iter()
+                .flat_map(ResourceEntryIds::iter)
+                .filter_map(|entry| {
+                    let occurrence = left.occurrence(*entry);
+                    let left_expansion = left
+                        .storage
+                        .expansions_by_support_occurrence
+                        .get(&occurrence)?;
+                    let right_entry = right.storage.entry_by_occurrence.get(&occurrence)?;
+                    if right.fact(*right_entry) != fact {
+                        return None;
+                    }
+                    let right_expansion = right
+                        .storage
+                        .expansions_by_support_occurrence
+                        .get(&occurrence)?;
+                    (left_expansion == right_expansion)
+                        .then(|| (occurrence, left_expansion.clone()))
+                })
+                .collect::<Vec<_>>();
+            common_representations.push((
+                fact.clone(),
+                left_explicit.min(right_explicit),
+                supported,
+                shared_owned,
+                common_expansions,
+            ));
+        }
+
+        let mut common = left.clone();
+        for (fact, _, _, shared_owned, common_expansions) in &common_representations {
             let entries = common
                 .storage
                 .index
@@ -497,20 +557,46 @@ impl ResourceContext {
                 .cloned()
                 .unwrap_or_default();
             for entry in entries.iter().copied() {
-                if common.storage.facts.contains_key(&entry) {
+                let preserve = fact.is_own() && shared_owned.contains(&common.occurrence(entry));
+                if !preserve && common.storage.facts.contains_key(&entry) {
                     common.remove_entry(entry);
                 }
             }
-        }
-        for (fact, explicit, _, _) in &common_representations {
-            if preserved_owned.contains(fact) {
-                continue;
+            if fact.is_own() {
+                let retained_expansions = common_expansions
+                    .iter()
+                    .map(|(occurrence, _)| *occurrence)
+                    .collect::<BTreeSet<_>>();
+                let retained_entries = common
+                    .storage
+                    .index
+                    .exact
+                    .get(fact)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .copied()
+                    .collect::<Vec<_>>();
+                for entry in retained_entries {
+                    let occurrence = common.occurrence(entry);
+                    if common
+                        .storage
+                        .expansions_by_support_occurrence
+                        .contains_key(&occurrence)
+                        && !retained_expansions.contains(&occurrence)
+                    {
+                        common =
+                            common.without_cached_supported_expansion_for_occurrence(occurrence);
+                    }
+                }
             }
-            for _ in 0..*explicit {
+        }
+        for (fact, explicit, _, shared_owned, _) in &common_representations {
+            let additions = (*explicit).saturating_sub(shared_owned.len());
+            for _ in 0..additions {
                 common.insert_fact(fact.clone());
             }
         }
-        for (fact, _, supported, _) in &common_representations {
+        for (fact, _, supported, _, _) in &common_representations {
             for ((support, support_occurrence), count) in supported.iter() {
                 if !common.storage.index.exact.contains_key(support) {
                     continue;
@@ -531,33 +617,6 @@ impl ResourceContext {
                 }
             }
         }
-        for (_support, _, _, expansion) in &common_representations {
-            if let Some((occurrence, expansion)) = expansion
-                && common
-                    .storage
-                    .entry_by_occurrence
-                    .get(occurrence)
-                    .is_some_and(|entry| common.fact(*entry).is_own())
-            {
-                let support_entry = common
-                    .storage
-                    .entry_by_occurrence
-                    .get(occurrence)
-                    .copied()
-                    .expect("cached expansion occurrence was checked above");
-                let support_fact = common.fact(support_entry).clone();
-                common = common.with_cached_supported_expansion_for_occurrence(
-                    *occurrence,
-                    &support_fact,
-                    expansion.clone(),
-                );
-            }
-        }
-        for (support, _, _, expansion) in &common_representations {
-            if expansion.is_none() {
-                common = common.without_cached_supported_expansion(support);
-            }
-        }
         Some(common)
     }
 
@@ -572,12 +631,27 @@ impl ResourceContext {
             .expect("resource index refers to a live entry")
     }
 
-    fn occurrence(&self, entry: ResourceEntryId) -> ResourceOccurrenceId {
+    pub(crate) fn occurrence(&self, entry: ResourceEntryId) -> ResourceOccurrenceId {
         *self
             .storage
             .occurrence_by_entry
             .get(&entry)
             .expect("resource index refers to a live occurrence")
+    }
+
+    fn support_cache_key(&self, entry: ResourceEntryId) -> (CResourceFact, usize) {
+        let fact = self.fact(entry).clone();
+        let rank = self
+            .storage
+            .index
+            .exact
+            .get(&fact)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter(|candidate| self.fact(**candidate).is_own())
+            .take_while(|candidate| **candidate != entry)
+            .count();
+        (fact, rank)
     }
 
     fn insert_fact(&mut self, fact: CResourceFact) {
@@ -666,6 +740,7 @@ impl ResourceContext {
             projections_by_support,
             projections_by_support_occurrence,
             expansions_by_support_occurrence: self.storage.expansions_by_support_occurrence.clone(),
+            expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact,
@@ -719,6 +794,17 @@ impl ResourceContext {
             },
         );
         let occurrence = self.occurrence(entry);
+        let expansions_by_support_entry = if self
+            .storage
+            .expansions_by_support_occurrence
+            .contains_key(&occurrence)
+        {
+            self.storage
+                .expansions_by_support_entry
+                .without_key(&self.support_cache_key(entry))
+        } else {
+            self.storage.expansions_by_support_entry.clone()
+        };
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.without_key(&entry),
             next_entry_id: self.storage.next_entry_id,
@@ -733,6 +819,7 @@ impl ResourceContext {
                 .storage
                 .expansions_by_support_occurrence
                 .without_key(&occurrence),
+            expansions_by_support_entry,
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact: fact.clone(),
@@ -748,13 +835,27 @@ impl ResourceContext {
         facts: impl IntoIterator<Item = CResourceFact>,
         changed_facts: impl IntoIterator<Item = CResourceFact>,
     ) {
+        // Normalization rebuilds the indexed representation, but unchanged
+        // facts keep their opaque authority occurrence. This lets the
+        // support relation be restored after an unrelated merge without
+        // manufacturing a fresh scope for an observation.
+        let mut reusable_occurrences = BTreeMap::<CResourceFact, Vec<ResourceOccurrenceId>>::new();
+        for (entry, fact) in self.storage.facts.iter() {
+            reusable_occurrences
+                .entry(fact.clone())
+                .or_default()
+                .push(self.occurrence(*entry));
+        }
         let mut replacement_facts = PersistentMap::default();
         let mut replacement_index = ResourceContextIndex::default();
         let mut replacement_occurrences = PersistentMap::default();
         let mut replacement_entries = PersistentMap::default();
         let mut next_entry_id = 0_u64;
         for fact in facts {
-            let occurrence = ResourceOccurrenceId::fresh();
+            let occurrence = reusable_occurrences
+                .get_mut(&fact)
+                .and_then(Vec::pop)
+                .unwrap_or_else(ResourceOccurrenceId::fresh);
             replacement_facts = replacement_facts.with_inserted(next_entry_id, fact.clone());
             replacement_index = replacement_index.with_inserted(next_entry_id, &fact);
             replacement_occurrences =
@@ -782,6 +883,7 @@ impl ResourceContext {
             projections_by_support: PersistentMap::default(),
             projections_by_support_occurrence: PersistentMap::default(),
             expansions_by_support_occurrence: PersistentMap::default(),
+            expansions_by_support_entry: PersistentMap::default(),
             origin: self.storage.origin.clone(),
             history,
             materialized: std::sync::OnceLock::new(),
@@ -826,6 +928,49 @@ impl ResourceContext {
     ) -> Option<&CResourceFact> {
         self.direct_match_candidates(required)
             .find(|available| resource_fact_entails(available, required, assumptions))
+    }
+
+    /// Select an exact owned occurrence for a fact-only API. Equal owned
+    /// facts are distinct authorities, so callers that need to attach a
+    /// projection must reject an ambiguous value-only lookup.
+    pub(crate) fn unique_owned_occurrence_for_fact(
+        &self,
+        required: &CResourceFact,
+    ) -> Option<(ResourceOccurrenceId, &CResourceFact)> {
+        let mut entries = self
+            .storage
+            .index
+            .exact
+            .get(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter(|entry| self.fact(**entry).is_own())
+            .copied();
+        let entry = entries.next()?;
+        if entries.next().is_some() {
+            return None;
+        }
+        Some((self.occurrence(entry), self.fact(entry)))
+    }
+
+    /// Select the newest exact owned occurrence. Callers that have just
+    /// composed a returned/folded authority use this to identify that
+    /// operation's entry even when an equal caller authority is also live.
+    pub(crate) fn latest_owned_occurrence_for_fact(
+        &self,
+        required: &CResourceFact,
+    ) -> Option<(ResourceOccurrenceId, &CResourceFact)> {
+        let entry = self
+            .storage
+            .index
+            .exact
+            .get(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .rev()
+            .find(|entry| self.fact(**entry).is_own())
+            .copied()?;
+        Some((self.occurrence(entry), self.fact(entry)))
     }
 
     /// Finds the owned authority that directly supports a requirement. A
@@ -1289,6 +1434,7 @@ impl ResourceContext {
     ///
     /// The reverse support index makes later removal proportional to the
     /// projections of this authority rather than the size of the context.
+    #[allow(dead_code)]
     pub(crate) fn unchecked_with_supported_facts(
         self,
         support: &CResourceFact,
@@ -1296,15 +1442,15 @@ impl ResourceContext {
     ) -> Self {
         debug_assert!(support.is_own());
         debug_assert!(self.storage.index.exact.contains_key(support));
-        let support_entry = self
-            .storage
-            .index
-            .exact
-            .get(support)
-            .into_iter()
-            .flat_map(ResourceEntryIds::iter)
-            .find(|entry| self.fact(**entry) == support && self.fact(**entry).is_own())
-            .copied();
+        let support_entry =
+            self.unique_owned_occurrence_for_fact(support)
+                .map(|(occurrence, _)| {
+                    self.storage
+                        .entry_by_occurrence
+                        .get(&occurrence)
+                        .copied()
+                        .expect("owned occurrence must refer to a live entry")
+                });
         self.unchecked_with_supported_facts_from_entry(
             support_entry.expect("supported projections require an owned support entry"),
             support,
@@ -1312,6 +1458,7 @@ impl ResourceContext {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn unchecked_with_supported_facts_from_entry(
         self,
         support_entry: ResourceEntryId,
@@ -1348,6 +1495,7 @@ impl ResourceContext {
         self
     }
 
+    #[allow(dead_code)]
     pub(crate) fn with_cached_supported_expansion(
         self,
         support: &CResourceFact,
@@ -1355,21 +1503,13 @@ impl ResourceContext {
     ) -> Self {
         debug_assert!(support.is_own());
         debug_assert!(self.storage.index.exact.contains_key(support));
-        let support_entry = self
-            .storage
-            .index
-            .exact
-            .get(support)
-            .into_iter()
-            .flat_map(ResourceEntryIds::iter)
-            .find(|entry| self.fact(**entry).is_own())
-            .copied()
-            .expect("cached expansions require an owned support entry");
-        let support_occurrence = self.occurrence(support_entry);
+        let (support_occurrence, _) = self
+            .unique_owned_occurrence_for_fact(support)
+            .expect("cached expansions require one unambiguous owned support entry");
         self.with_cached_supported_expansion_for_occurrence(support_occurrence, support, expansion)
     }
 
-    fn with_cached_supported_expansion_for_occurrence(
+    pub(crate) fn with_cached_supported_expansion_for_occurrence(
         mut self,
         support_occurrence: ResourceOccurrenceId,
         support: &CResourceFact,
@@ -1381,6 +1521,13 @@ impl ResourceContext {
                 .get(&support_occurrence)
                 .is_some_and(|entry| self.fact(*entry) == support)
         );
+        let support_entry = *self
+            .storage
+            .entry_by_occurrence
+            .get(&support_occurrence)
+            .expect("cached expansion occurrence must be live");
+        let support_cache_key = self.support_cache_key(support_entry);
+        let expansion = std::sync::Arc::new(expansion);
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.clone(),
             next_entry_id: self.storage.next_entry_id,
@@ -1397,7 +1544,11 @@ impl ResourceContext {
             expansions_by_support_occurrence: self
                 .storage
                 .expansions_by_support_occurrence
-                .with_inserted(support_occurrence, std::sync::Arc::new(expansion)),
+                .with_inserted(support_occurrence, expansion.clone()),
+            expansions_by_support_entry: self
+                .storage
+                .expansions_by_support_entry
+                .with_inserted(support_cache_key, expansion),
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact: support.clone(),
@@ -1428,24 +1579,33 @@ impl ResourceContext {
         &self,
         support: &CResourceFact,
     ) -> Option<(ResourceOccurrenceId, &std::sync::Arc<Vec<CResourceFact>>)> {
-        self.storage
+        let mut matches = self
+            .storage
             .index
             .exact
             .get(support)
             .into_iter()
             .flat_map(ResourceEntryIds::iter)
-            .find_map(|entry| {
+            .filter_map(|entry| {
                 self.storage
                     .expansions_by_support_occurrence
                     .get(&self.occurrence(*entry))
                     .map(|expansion| (self.occurrence(*entry), expansion))
-            })
+            });
+        let result = matches.next()?;
+        matches.next().is_none().then_some(result)
     }
 
-    fn without_cached_supported_expansion(mut self, support: &CResourceFact) -> Self {
-        let Some((occurrence, _)) = self.cached_expansion_with_occurrence_for_fact(support) else {
-            return self;
-        };
+    fn without_cached_supported_expansion_for_occurrence(
+        mut self,
+        occurrence: ResourceOccurrenceId,
+    ) -> Self {
+        let support_entry = *self
+            .storage
+            .entry_by_occurrence
+            .get(&occurrence)
+            .expect("cached expansion occurrence must be live");
+        let support_cache_key = self.support_cache_key(support_entry);
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.clone(),
             next_entry_id: self.storage.next_entry_id,
@@ -1463,6 +1623,10 @@ impl ResourceContext {
                 .storage
                 .expansions_by_support_occurrence
                 .without_key(&occurrence),
+            expansions_by_support_entry: self
+                .storage
+                .expansions_by_support_entry
+                .without_key(&support_cache_key),
             origin: self.storage.origin.clone(),
             history: self.storage.history.clone(),
             materialized: std::sync::OnceLock::new(),
@@ -2260,6 +2424,7 @@ impl ResourceContext {
                     .projections_by_support_occurrence
                     .clone(),
                 expansions_by_support_occurrence: PersistentMap::default(),
+                expansions_by_support_entry: PersistentMap::default(),
                 origin: self.storage.origin.clone(),
                 history: self.storage.history.clone(),
                 materialized: std::sync::OnceLock::new(),

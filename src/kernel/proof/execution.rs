@@ -434,10 +434,12 @@ impl CheckedResourceRewrite {
             )?;
             let mut unchanged = after_state.clone();
             unchanged.resources = before_state.resources.clone();
-            if unchanged != *before_state
-                || !expected
-                    .resources
-                    .same_exchange_from(&after_state.resources, &before_state.resources)
+            if unchanged != *before_state {
+                return Err("instance rewrite changed an unchecked part of the state");
+            }
+            if !expected
+                .resources
+                .same_exchange_from(&after_state.resources, &before_state.resources)
             {
                 return Err("instance rewrite changed an unchecked part of the state");
             }

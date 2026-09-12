@@ -2363,6 +2363,30 @@ fn equal_support_occurrences_keep_their_own_projections() {
 }
 
 #[test]
+fn resource_equality_and_exchange_preserve_support_occurrence_identity() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let view = CResourceFact::view_token("derived".to_string(), Vec::new());
+    let root = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_fact(authority.clone());
+    let left =
+        root.clone()
+            .unchecked_with_supported_facts_from_entry(0, &authority, [view.clone()]);
+    let right = root
+        .clone()
+        .unchecked_with_supported_facts_from_entry(1, &authority, [view]);
+
+    assert_ne!(
+        left, right,
+        "swapping equal support occurrences changes authority"
+    );
+    assert!(
+        !left.same_exchange_from(&right, &root),
+        "the exact exchange frontier must reject a forged support occurrence"
+    );
+}
+
+#[test]
 fn forked_siblings_allocate_distinct_occurrence_identity() {
     let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
     let root = ResourceContext::new();
@@ -2455,6 +2479,27 @@ fn normalization_preserves_projection_support() {
             .storage
             .expansions_by_support_occurrence
             .is_empty()
+    );
+}
+
+#[test]
+fn normalization_preserves_support_through_unrelated_merge() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let view = CResourceFact::view_token("derived".to_string(), vec![int32(7)]);
+    let unit = CResourceFact::own_token("mergeable".to_string(), Vec::new());
+    let context = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts(&authority, [view.clone()])
+        .unchecked_with_fact(unit.clone())
+        .unchecked_with_fact(unit)
+        .normalized(&PureFactContext::new());
+
+    assert_eq!(
+        context
+            .directly_supporting_owned_entry(&view, &PureFactContext::new())
+            .map(|(_, support)| support),
+        Some(&authority),
+        "an unrelated normalization must not detach an observation",
     );
 }
 
@@ -2658,6 +2703,14 @@ fn resource_common_descendant_visits_only_branch_local_changes() {
         .clone()
         .without_exact_representation(&duplicate)
         .expect("one duplicate should be removable");
+    let shared_occurrence = duplicate_right
+        .storage
+        .index
+        .exact
+        .get(&duplicate)
+        .and_then(|entries| entries.iter().next())
+        .map(|entry| duplicate_right.occurrence(*entry))
+        .expect("the right branch should retain one authority occurrence");
     let duplicate_common = ResourceContext::common_exact_descendant(
         &duplicate_left,
         &duplicate_right,
@@ -2674,6 +2727,14 @@ fn resource_common_descendant_visits_only_branch_local_changes() {
         1,
         "the exact common descendant must retain the minimum multiplicity"
     );
+    let common_occurrence = duplicate_common
+        .storage
+        .index
+        .exact
+        .get(&duplicate)
+        .and_then(|entries| entries.iter().next())
+        .map(|entry| duplicate_common.occurrence(*entry));
+    assert_eq!(common_occurrence, Some(shared_occurrence));
 }
 
 #[test]

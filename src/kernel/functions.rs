@@ -9590,14 +9590,23 @@ fn evaluate_contract_return_resources(
     // certified ownership, not independent persistent caller capabilities.
     // Record their exact support so consuming that ownership removes only
     // its projections through the reverse index.
-    let return_resources = projected_cores_by_support.into_iter().fold(
-        return_resources,
-        |resources, (support, expansion, projected)| {
-            resources
-                .unchecked_with_supported_facts(&support, projected)
-                .with_cached_supported_expansion(&support, expansion)
-        },
-    );
+    let mut return_resources = return_resources;
+    for (support, expansion, projected) in projected_cores_by_support {
+        let Some((support_occurrence, _)) =
+            return_resources.latest_owned_occurrence_for_fact(&support)
+        else {
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "ensured resource support is ambiguous after call: {support:?}"
+            ))));
+        };
+        return_resources = return_resources
+            .unchecked_with_supported_facts_from_occurrence(support_occurrence, &support, projected)
+            .with_cached_supported_expansion_for_occurrence(
+                support_occurrence,
+                &support,
+                expansion,
+            );
+    }
     Ok(Ok(return_resources))
 }
 

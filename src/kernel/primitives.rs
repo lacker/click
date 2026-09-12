@@ -3622,6 +3622,12 @@ pub(super) struct ResourceContextStorage {
     /// fresh symbolic load identities at each later transition.
     pub(super) expansions_by_support_occurrence:
         PersistentMap<ResourceOccurrenceId, std::sync::Arc<Vec<CResourceFact>>>,
+    /// The same cache keyed by the snapshot-local owner entry. This is a
+    /// canonical comparison view: independently built equivalent snapshots
+    /// can compare their support graph without exposing opaque occurrence
+    /// allocation order, while invalidation remains occurrence-keyed above.
+    pub(super) expansions_by_support_entry:
+        PersistentMap<(CResourceFact, usize), std::sync::Arc<Vec<CResourceFact>>>,
     /// Persistent mutation ancestry used by checked Proof joins. The origin
     /// distinguishes unrelated snapshots; the history names only exact facts
     /// whose multiplicity or representation changed.
@@ -3674,7 +3680,8 @@ impl PartialEq for ResourceContext {
         }
         self.facts() == other.facts()
             && self.storage.supported_by == other.storage.supported_by
-            && self.cached_expansions() == other.cached_expansions()
+            && compare_support_graph(self, other) == std::cmp::Ordering::Equal
+            && self.storage.expansions_by_support_entry == other.storage.expansions_by_support_entry
     }
 }
 
@@ -3686,7 +3693,13 @@ impl std::hash::Hash for ResourceContext {
         for entry in self.storage.supported_by.iter() {
             entry.hash(state);
         }
-        self.cached_expansions().hash(state);
+        for (projection, occurrence) in self.storage.support_occurrence_by_projection.iter() {
+            projection.hash(state);
+            self.storage.entry_by_occurrence.get(occurrence).hash(state);
+        }
+        for entry in self.storage.expansions_by_support_entry.iter() {
+            entry.hash(state);
+        }
     }
 }
 
@@ -3700,7 +3713,13 @@ impl Ord for ResourceContext {
                     .iter()
                     .cmp(other.storage.supported_by.iter())
             })
-            .then_with(|| self.cached_expansions().cmp(&other.cached_expansions()))
+            .then_with(|| compare_support_graph(self, other))
+            .then_with(|| {
+                self.storage
+                    .expansions_by_support_entry
+                    .iter()
+                    .cmp(other.storage.expansions_by_support_entry.iter())
+            })
     }
 }
 
@@ -3710,20 +3729,32 @@ impl PartialOrd for ResourceContext {
     }
 }
 
-impl ResourceContext {
-    fn cached_expansions(&self) -> Vec<(CResourceFact, Vec<CResourceFact>)> {
-        let mut expansions = self
-            .storage
-            .expansions_by_support_occurrence
-            .iter()
-            .filter_map(|(occurrence, expansion)| {
-                let entry = self.storage.entry_by_occurrence.get(occurrence)?;
-                let support = self.storage.facts.get(entry)?;
-                Some((support.clone(), expansion.as_ref().clone()))
-            })
-            .collect::<Vec<_>>();
-        expansions.sort();
-        expansions
+/// Compare only the support graph, using each snapshot's stable entry
+/// ordinals instead of the process-local opaque occurrence allocation. This
+/// avoids materializing or sorting the ambient resource population.
+fn compare_support_graph(left: &ResourceContext, right: &ResourceContext) -> std::cmp::Ordering {
+    let mut left_entries = left.storage.support_occurrence_by_projection.iter();
+    let mut right_entries = right.storage.support_occurrence_by_projection.iter();
+    loop {
+        match (left_entries.next(), right_entries.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (
+                Some((left_projection, left_occurrence)),
+                Some((right_projection, right_occurrence)),
+            ) => {
+                let ordering = left_projection.cmp(right_projection).then_with(|| {
+                    left.storage
+                        .entry_by_occurrence
+                        .get(left_occurrence)
+                        .cmp(&right.storage.entry_by_occurrence.get(right_occurrence))
+                });
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+        }
     }
 }
 

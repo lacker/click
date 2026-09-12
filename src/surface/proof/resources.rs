@@ -785,9 +785,6 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
-    let observation_support = state
-        .resources()
-        .directly_supporting_owned_entry(&requested_resource, &assumptions);
     let abstract_resource = state
         .resources()
         .directly_supporting_fact(&requested_resource, &assumptions)
@@ -820,6 +817,13 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 )
             ))
         })?;
+    // The first lookup may have matched a supported view rather than the
+    // requested owned spelling. Resolve support from the representation that
+    // actually supplied this observation, so nested observations retain the
+    // same exact authority.
+    let observation_support = state
+        .resources()
+        .directly_supporting_owned_entry(&abstract_resource, &assumptions);
     let (observed_quantity, counted_resource, explicit_quantity) = match resource {
         ResourceClause::Named { .. } => {
             return Err(ClickError::new(
@@ -3001,10 +3005,9 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &value,
             )?;
             let assumptions = pure_facts.assumptions();
-            let Some(authority) = post_state
+            let Some((authority_occurrence, authority)) = post_state
                 .resources()
-                .directly_supporting_fact(&abstract_resource, assumptions)
-                .cloned()
+                .latest_owned_occurrence_for_fact(&abstract_resource)
             else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` path {path_index}: `fold({})` lost its folded authority",
@@ -3020,7 +3023,11 @@ fn fold_composite_resources_on_outcome_with_facts(
                 let resources = post_state
                     .resources()
                     .clone()
-                    .unchecked_with_supported_facts(&authority, projections);
+                    .unchecked_with_supported_facts_from_occurrence(
+                        authority_occurrence,
+                        authority,
+                        projections,
+                    );
                 post_state = post_state.with_resource_context(resources);
             }
         }
