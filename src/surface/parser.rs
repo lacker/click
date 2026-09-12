@@ -1769,6 +1769,10 @@ impl Parser {
             .iter()
             .map(|parameter| parameter.name().to_string())
             .collect::<BTreeSet<_>>();
+        let previous_integer_params = std::mem::take(&mut self.current_integer_params);
+        let previous_integer_lets = std::mem::take(&mut self.current_integer_lets);
+        let previous_integer_literal_context =
+            std::mem::replace(&mut self.integer_literal_context, false);
         let mut contract_lets = Vec::new();
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
@@ -1853,6 +1857,21 @@ impl Parser {
                         }
                     };
                     contract_lets.push(ContractLetBinding { kind, ..binding });
+                    if matches!(
+                        contract_lets
+                            .last()
+                            .and_then(|binding| binding.click_type.as_ref()),
+                        Some(ClickType::Integer)
+                    ) {
+                        self.integer_literal_context = true;
+                        self.current_integer_lets.insert(
+                            contract_lets
+                                .last()
+                                .expect("just pushed let binding")
+                                .name
+                                .clone(),
+                        );
+                    }
                 }
                 Some("requires") => {
                     let requirement = self.parse_requirement()?;
@@ -2030,6 +2049,9 @@ impl Parser {
         self.current_aggregate_objects = previous_aggregate_objects;
         self.current_global_array_shapes = previous_global_array_shapes;
         self.current_struct_array_params = previous_struct_array_params;
+        self.current_integer_params = previous_integer_params;
+        self.current_integer_lets = previous_integer_lets;
+        self.integer_literal_context = previous_integer_literal_context;
 
         let requires: Vec<Requirement> = requires
             .into_iter()
@@ -8118,5 +8140,41 @@ mod integer_quantifier_parser_tests {
         let mut restored =
             Parser::new("forall (z: Integer) { exists (z: int32) { z == 0 } and z > 0 }").unwrap();
         assert!(restored.parse_proposition().is_ok());
+    }
+
+    #[test]
+    fn function_integer_let_scope_is_available_then_restored() {
+        let source = r#"
+            int32 first(int32 x) {
+                let saved: Integer = to_integer(x);
+                ensures saved == saved;
+            }
+            int32 second(int32 saved) {
+                ensures saved == saved;
+            }
+        "#;
+        let file = Parser::new(source)
+            .unwrap()
+            .parse_file_items()
+            .expect("adjacent function contracts should parse");
+        let Ensure::Proposition(ClickProposition::Comparison { left, .. }) =
+            file.function_blocks()[0].ensures()[0].ensure()
+        else {
+            panic!("expected the first function's proposition");
+        };
+        assert!(matches!(
+            left,
+            ContractExpression::Let { body, .. }
+                if matches!(body.as_ref(), ContractExpression::Binding(name) if name == "saved")
+        ));
+        let Ensure::Proposition(ClickProposition::Comparison { left, .. }) =
+            file.function_blocks()[1].ensures()[0].ensure()
+        else {
+            panic!("expected the second function's proposition");
+        };
+        assert!(matches!(
+            left,
+            ContractExpression::CFragment(CExpression::Variable(name)) if name == "saved"
+        ));
     }
 }
